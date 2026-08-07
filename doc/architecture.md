@@ -296,6 +296,9 @@ in VISION §8.
 
 ## 12. Conventions
 
+Structural rules only. Style — comments, commit practice — is in
+[conventions.md](conventions.md).
+
 - Errors: `thiserror` enums in the domain, typed and matched on. `anyhow` is
   permitted in `lc-app` wiring only. A failed query is a `Msg`, never a panic
   and never an early return that unwinds the loop.
