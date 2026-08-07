@@ -1,0 +1,33 @@
+[licenses]
+# Exactly what the tree currently resolves to. Adding a licence here is a
+# deliberate decision, which is the point — a new one showing up should fail
+# the gate rather than slip in.
+allow = ["Apache-2.0", "MIT", "BSL-1.0", "Unicode-3.0", "Zlib"]
+
+[licenses.private]
+# Our own crates carry no licence field and are never published.
+ignore = true
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+# Our own crates are path dependencies without a version, which reads as a
+# wildcard. The ban is meant for registry deps.
+allow-wildcard-paths = true
+
+# Duplicates are denied so a new one has to be looked at, and the known ones
+# are listed rather than tolerated in bulk. Each is upstream's transitive
+# choice, not ours; delete the entry once the tree converges.
+skip = [
+    { crate = "hashbrown@0.16.1", reason = "lru 0.18 lags ratatui's 0.17" },
+    { crate = "syn@2.0.119", reason = "several proc-macro crates have not moved to syn 3" },
+]
+
+[advisories]
+yanked = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# conventions.md §4: no main-branch git dependencies.
+allow-git = []

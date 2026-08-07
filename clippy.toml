@@ -1,0 +1,4 @@
+# architecture.md §12 bans unwrap/expect *outside* tests. Encoding the
+# carve-out here keeps it one decision rather than an #[allow] per test module.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

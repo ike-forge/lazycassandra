@@ -56,7 +56,7 @@ A cargo workspace, so the dependency rule is checked by the compiler:
 
 ```
 crates/
-  lc-domain/      # pure core. depends on: std, serde, thiserror
+  lc-domain/      # pure core. depends on: std, serde, thiserror, async-trait
   lc-inbound/     # TUI adapter. depends on: lc-domain, ratatui, crossterm
   lc-outbound/    # driver + config + storage adapters. depends on: lc-domain, tokio, <driver>
   lc-app/         # binary: composition root, effect runtime, main loop
@@ -90,9 +90,15 @@ effect results  ───┘         ▲                                        
                                        (spawns tokio tasks, sends Msg back)
 ```
 
+`async-trait` is in the domain's list because the port traits in §5 are defined
+here and must stay `dyn`-compatible. It is a proc macro over boxed futures, not
+a runtime — it pulls in no executor, so the rule above still holds.
+
 ```rust
 enum Msg {
-    Input(KeyEvent),
+    // Not crossterm's KeyEvent: the domain owns its own input vocabulary and
+    // lc-inbound translates. Same direction of travel as §6's style tokens.
+    Input(KeyPress),
     Tick,
     SchemaLoaded { conn: ConnId, schema: Schema },
     PageReady   { query: QueryId, page: Result<Page, DbError> },
