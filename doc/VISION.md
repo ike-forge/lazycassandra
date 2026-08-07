@@ -131,18 +131,31 @@ persistent named panels in fixed positions, navigated with predictable motions.
 You build muscle memory for *where things are*, not just what keys do. Layout
 does not rearrange itself under you.
 
-**5. Destructive things are obvious, reversible, or confirmed — pick two.**
+**5. Wear the terminal's clothes.**
+The default theme is *your terminal's* theme. LazyCassandra draws with the
+sixteen ANSI colors and inherits whatever palette you already configured, so it
+sits inside your setup instead of shouting over it — no hardcoded background, no
+imported color scheme, nothing that clashes with the split next to it. Colour
+carries meaning (write posture, severity, key structure) and nothing else;
+decoration is not a reason to spend a colour.
+
+Themes are supported for people who want them, and one may ship for terminals
+with poor palettes. But the out-of-the-box experience is deliberately the least
+disruptive one, and the default must stay legible on light and dark backgrounds
+alike, because it cannot know which it is on.
+
+**6. Destructive things are obvious, reversible, or confirmed — pick two.**
 Read-only is the default posture on any connection not explicitly marked
 writable. Writes are visibly distinct. Drops and truncates require typed
 confirmation. The tool should never be the reason a keyspace disappeared.
 
-**6. Speed is a feature of the interface, not just the engine.**
+**7. Speed is a feature of the interface, not just the engine.**
 Sub-frame response to keypresses. Nothing blocks the UI thread. A query running
 against a slow cluster does not freeze the tool — it shows progress and can be
 cancelled. Perceived latency is a UX property, and Rust is chosen partly for
 this.
 
-**7. Density with a floor of legibility.**
+**8. Density with a floor of legibility.**
 Terminal real estate is scarce and experts want it packed. But a screen that
 requires you to already know what it means is a screen that only serves experts.
 Every dense view has a label, and every abbreviation is expandable.
@@ -237,7 +250,8 @@ Write-posture enforcement and confirmation flows.
 **Phase 4 — Operate.** Node and ring view, compaction and repair state, metrics.
 The k9s-adjacent surface.
 
-**Phase 5 — Extend.** Themes, user-defined keybindings, saved queries, plugin
+**Phase 5 — Extend.** User-supplied themes (the terminal-inheriting default
+lands in Phase 0), user-defined keybindings, saved queries, plugin
 or scripting surface. Possibly ScyllaDB support, if the driver story is clean.
 
 ## 8. Open research questions
@@ -290,7 +304,7 @@ real-time display that a novice can still read) · `tig`, `gitui`, `bottom`,
 
 ## 10. Technical direction
 
-**Rust.** Chosen for the latency floor (principle 6), for a single static binary
+**Rust.** Chosen for the latency floor (principle 7), for a single static binary
 with no runtime, and because a long-lived TUI holding cluster state benefits
 from the type system. `ratatui` for rendering. Driver selection is deliberately
 open pending Phase 0 evaluation.
