@@ -148,15 +148,22 @@ day.** A build or a test suite is only evidence if it is reproducible; one that
 varies is not telling you about your code, it is telling you about your
 environment.
 
-**Pin everything.** Exact versions, never floating ranges or `latest`:
+**Pin what actually gets used.** The requirement is on the *resolved* version —
+that two checkouts of the same commit build the same bytes — not on the syntax
+of a version requirement. How that is achieved differs by ecosystem:
 
-- The toolchain and dev tools are pinned in `mise.toml`, and `mise.lock`
-  records checksums where a tool supports it.
-- `Cargo.lock` is committed. This is a binary, not a library — there is no
-  argument for letting downstream resolution float.
-- Container images for the integration tier pin a digest, not a moving tag.
+- **Cargo:** ordinary caret requirements in `Cargo.toml`, with `Cargo.lock`
+  committed. The lockfile is what pins; it covers transitive dependencies,
+  which `=` requirements do not. `=` is for pinning a specific dependency
+  against a known-bad release, not a default.
+- **Tools:** exact versions in `mise.toml`, since there is no lockfile
+  equivalent by default. `mise.lock` records checksums where a tool supports
+  it.
+- **Containers:** the integration tier pins a digest, not a moving tag.
   `cassandra:5` is a different database next month.
-- `cargo deny` guards what the lockfile lets in.
+- `cargo deny` guards what the lockfile admits.
+
+No `latest`, no `*`, no `main`-branch git dependencies.
 
 Upgrades are deliberate, reviewable commits. That is the point of pinning: not
 that versions never change, but that they never change *by accident*, on
