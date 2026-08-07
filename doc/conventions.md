@@ -141,7 +141,60 @@ When an exception is genuinely unavoidable:
 A deprecation warning is a scheduled breakage, so treat it as work with a
 deadline rather than as background noise.
 
-## 4. Git
+## 4. Determinism and reproducibility
+
+**Same input, same result — on every machine, in any order, at any time of
+day.** A build or a test suite is only evidence if it is reproducible; one that
+varies is not telling you about your code, it is telling you about your
+environment.
+
+**Pin everything.** Exact versions, never floating ranges or `latest`:
+
+- The toolchain and dev tools are pinned in `mise.toml`, and `mise.lock`
+  records checksums where a tool supports it.
+- `Cargo.lock` is committed. This is a binary, not a library — there is no
+  argument for letting downstream resolution float.
+- Container images for the integration tier pin a digest, not a moving tag.
+  `cassandra:5` is a different database next month.
+- `cargo deny` guards what the lockfile lets in.
+
+Upgrades are deliberate, reviewable commits. That is the point of pinning: not
+that versions never change, but that they never change *by accident*, on
+someone else's machine, in the middle of debugging something unrelated.
+
+**A flaky test is worse than no test.** It costs the suite its authority —
+once re-running a red build is normal, a real failure gets re-run too. Under §3
+a flaky test is a failing test, and quarantining or `#[ignore]`-ing one is not
+a fix.
+
+The fast tiers (architecture.md §10) must have no contact with the outside
+world. In practice that means no:
+
+- **Wall-clock time.** Time enters the domain as `Msg::Tick`, and `update` is
+  pure and synchronous (architecture.md §3) — a test supplies the tick it
+  wants. Nothing in the domain calls `SystemTime::now()`.
+- **Network, filesystem, or real cluster.** The fake `Cluster` and the port
+  traits (architecture.md §5) exist for this; a test reaching a socket has
+  escaped its tier.
+- **Unseeded randomness.** Seed it explicitly and record the seed in the
+  failure output.
+- **`sleep` as synchronization.** Wait on the actual condition. A sleep is a
+  race that passes on your laptop and fails in CI.
+- **Unspecified iteration order.** Don't assert against `HashMap` order. Sort,
+  or use an ordered collection, or compare as sets.
+- **Order-dependence and shared mutable state.** Tests run in parallel and in
+  arbitrary order. Each owns its fixtures.
+
+The architecture is built to make this the easy path — `update` as a pure
+function of `(State, Msg)`, results arriving as messages, `TestBackend` for
+render tests. Determinism should fall out of testing at the right tier. Needing
+to work around it is a sign the test belongs in the integration tier instead.
+
+**The integration tier is where real I/O is allowed**, and it is still held to
+pinned images and explicit waits on cluster readiness rather than sleeps. Its
+non-determinism budget is the network, not our code.
+
+## 5. Git
 
 **Never pull. Never push.** Neither happens automatically, as a convenience, or
 as the tail end of some other task. Both are explicit human actions.
