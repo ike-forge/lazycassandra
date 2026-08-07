@@ -1,0 +1,76 @@
+# LazyCassandra development environment.
+#
+# This file pins *tooling*. Crate dependencies (ratatui, crossterm, tokio,
+# serde, thiserror, and the CQL driver) live in Cargo.toml — see
+# doc/architecture.md §2 for the workspace layout and §8 for why the driver
+# is deliberately not chosen yet.
+#
+# Committed on purpose: clone, `mise install`, and you have the same toolchain
+# as everyone else.
+
+min_version = "2025.1.0"
+
+[tools]
+# Pinned exactly, not "stable". doc/architecture.md §12 denies clippy warnings
+# in CI, so a floating toolchain would turn each new clippy lint into a red
+# build on an unrelated commit. Bump this deliberately.
+#
+# profile = "default" is what supplies rustfmt and clippy (§12 requires both).
+# rust-src is for rust-analyzer's std resolution.
+rust = { version = "1.97.1", profile = "default", components = ["rust-src"] }
+
+# Lets the cargo backend below fetch a prebuilt binary instead of compiling
+# from source. Must be listed before/alongside any cargo: tool to take effect.
+cargo-binstall = "1.21.1"
+
+# doc/architecture.md §10 defines four test tiers with different speeds; the
+# fast three run by default and the container tier runs separately. nextest
+# gives per-test process isolation and filter expressions — `cargo test` gives
+# neither.
+"cargo:cargo-nextest" = "0.9.143"
+
+# Dependency licence and advisory gate. Doubles as the honest way to compare
+# the three driver candidates' dependency trees during the §8 spike, rather
+# than eyeballing them.
+"aqua:EmbarkStudios/cargo-deny" = "0.20.2"
+
+[env]
+RUST_BACKTRACE = "1"
+
+# --- tasks -------------------------------------------------------------------
+
+[tasks.build]
+description = "Build the workspace"
+run = "cargo build --workspace"
+
+[tasks.fmt]
+description = "Format the workspace"
+run = "cargo fmt --all"
+
+[tasks."fmt:check"]
+description = "Check formatting without writing"
+run = "cargo fmt --all -- --check"
+
+[tasks.lint]
+description = "Clippy with warnings denied (architecture.md §12)"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks.test]
+description = "Fast test tiers: domain, scenario, render (architecture.md §10)"
+run = "cargo nextest run --workspace"
+
+# NOTE: placeholder. The integration tier (§10) runs against a real Cassandra
+# in a container, and neither the workspace nor the container setup exists yet.
+# The `integration` feature name is a guess — reconcile this with whatever
+# Phase 0 actually adopts.
+[tasks."test:it"]
+description = "Integration tier against a real Cassandra (requires a container)"
+run = "cargo nextest run --workspace --features integration"
+
+[tasks.deny]
+description = "Check dependency licences and advisories"
+run = "cargo deny check"
+
+[tasks.ci]
+description = "Everything CI gates on"
+depends = ["fmt:check", "lint", "test", "deny"]
