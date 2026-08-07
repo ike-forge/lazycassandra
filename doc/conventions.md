@@ -50,7 +50,39 @@ the crate everything else is written against, and its public items carry `///`
 docs (architecture.md §12). Documenting an API contract is not the same as
 narrating an implementation — the rules above constrain the latter only.
 
-## 2. Git
+## 2. Warnings and failures
+
+**Zero tolerance.** A clean build is the normal state, not an aspiration. No
+compiler warnings, no clippy warnings, no deprecation warnings, no failing or
+ignored tests. The bar applies to local work exactly as it applies to CI —
+`mise run ci` is the gate, and a red gate is not something to work alongside.
+
+This is not perfectionism. Warning output has value only while it is empty by
+default: the moment three known warnings are tolerated, the fourth — the real
+one — scrolls past unread. The cost of a tolerated warning is not the warning,
+it is every future warning it hides.
+
+**The only exception is genuine impossibility**, not inconvenience. Two
+dependencies with incompatible requirements, a deprecated API whose replacement
+is not yet released, an upstream bug with no workaround. "It's noisy to fix",
+"we'll get to it", and "it's only a warning" are not exceptions.
+
+When an exception is genuinely unavoidable:
+
+- **Silence it as narrowly as possible.** `#[allow(...)]` on the specific item,
+  never a crate-level `#![allow(...)]`, never a blanket lint disable in
+  `Cargo.toml` or CI flags.
+- **Justify it in place**, per §1's upstream-defect rule: what forces it, which
+  dependency and version, and the upstream issue. An `#[allow]` without a
+  reason is itself a defect.
+- **Make it removable.** The justification exists so the next person can delete
+  the suppression when the blocking condition lifts, instead of assuming it was
+  always necessary.
+
+A deprecation warning is a scheduled breakage, so treat it as work with a
+deadline rather than as background noise.
+
+## 3. Git
 
 **Never pull. Never push.** Neither happens automatically, as a convenience, or
 as the tail end of some other task. Both are explicit human actions.
