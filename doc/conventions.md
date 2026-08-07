@@ -9,7 +9,66 @@ are not repeated here.
 
 ---
 
-## 1. Comments
+## 1. Lean on the compiler
+
+**Push invariants into types until the compiler is the one enforcing them.**
+This is not a style preference; it is the reason the language was chosen
+(vision.md §10). A rule the compiler checks cannot rot, cannot be forgotten
+under deadline, and does not depend on the next reader having read this
+document.
+
+architecture.md already works this way, and those are the pattern to follow:
+the domain crate cannot import `tokio` because the dependency is absent, not
+because a guideline says so (architecture.md §2). `PrimaryKey` distinguishes
+partition from clustering columns structurally rather than by convention
+(architecture.md §4). `CredentialRef` has no `Password(String)` variant, so a
+literal secret in a committed file is a parse error instead of a leak
+(architecture.md §7).
+
+The general move: prefer a newtype to a validated `String`, an enum to a
+`bool` plus a comment, an unrepresentable state to a runtime check, and a
+compile error to a `debug_assert!`.
+
+**Avoid what the compiler cannot vouch for.** In rough order of how much they
+cost us:
+
+- **`unsafe`** — forfeits the guarantee the language exists to provide.
+- **FFI** — forfeits it *and* the single static binary (vision.md §10), and
+  adds a C toolchain to everyone's build.
+- **Escaping the type system in-language** — `Any` and downcasting,
+  stringly-typed state, `transmute`, parsing our own `Debug` output, invariants
+  documented in prose and checked nowhere.
+- **Build-time and runtime indirection** the compiler cannot follow — codegen
+  or macro machinery elaborate enough that the generated code becomes the real
+  source, dynamic dispatch chosen where a static type would do.
+
+`dyn`-compatible ports (architecture.md §5) are not on this list. Dynamic
+dispatch chosen deliberately, at a boundary, to make a fake swappable is a
+design decision the type system still checks end to end.
+
+**This has one live consequence.** `cassandra-cpp` is FFI over the DataStax C++
+driver, and the driver spike (architecture.md §8) is still open. This
+convention does not veto it — battle-tested protocol handling is a real
+argument — but it does mean the FFI candidate must clear a bar the pure-Rust
+ones do not, rather than competing on features alone.
+
+**The exception is genuine impossibility**, judged as in §3: no reasonable
+alternative, not merely a less convenient one. If it becomes unavoidable:
+
+- **Confine it.** `unsafe` and FFI live behind a safe, narrow wrapper at the
+  outermost adapter, never scattered through calling code. The rest of the
+  workspace stays in safe Rust.
+- **Discharge the proof.** Every `unsafe` block carries a `// SAFETY:` comment
+  stating the invariant that makes it sound and why it holds here. This is an
+  explicit carve-out from §2 — it is mandatory even for expert readers, because
+  it is a proof obligation rather than an explanation.
+- **Raise it first.** Introducing `unsafe` or FFI is a design decision, not an
+  implementation detail. It gets discussed before it gets written.
+
+Enforcement is `unsafe_code = "forbid"` in the workspace lints, so the
+exception requires a visible, reviewable edit rather than passing unnoticed.
+
+## 2. Comments
 
 **Assume an expert Rust reader.** Nobody working in this codebase needs `?`,
 lifetimes, `impl Trait`, or a builder chain explained to them. A comment that
@@ -50,7 +109,7 @@ the crate everything else is written against, and its public items carry `///`
 docs (architecture.md §12). Documenting an API contract is not the same as
 narrating an implementation — the rules above constrain the latter only.
 
-## 2. Warnings and failures
+## 3. Warnings and failures
 
 **Zero tolerance.** A clean build is the normal state, not an aspiration. No
 compiler warnings, no clippy warnings, no deprecation warnings, no failing or
@@ -72,7 +131,7 @@ When an exception is genuinely unavoidable:
 - **Silence it as narrowly as possible.** `#[allow(...)]` on the specific item,
   never a crate-level `#![allow(...)]`, never a blanket lint disable in
   `Cargo.toml` or CI flags.
-- **Justify it in place**, per §1's upstream-defect rule: what forces it, which
+- **Justify it in place**, per §2's upstream-defect rule: what forces it, which
   dependency and version, and the upstream issue. An `#[allow]` without a
   reason is itself a defect.
 - **Make it removable.** The justification exists so the next person can delete
@@ -82,7 +141,7 @@ When an exception is genuinely unavoidable:
 A deprecation warning is a scheduled breakage, so treat it as work with a
 deadline rather than as background noise.
 
-## 3. Git
+## 4. Git
 
 **Never pull. Never push.** Neither happens automatically, as a convenience, or
 as the tail end of some other task. Both are explicit human actions.
