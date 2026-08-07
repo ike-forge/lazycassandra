@@ -210,6 +210,13 @@ as the tail end of some other task. Both are explicit human actions.
 ordinary work. Branch when there is an actual reason to isolate the work, not
 as a default.
 
-Commit messages: imperative subject, and a body that explains *why* when the
-reason is not evident from the diff. Reference the architecture or vision
-section a change follows from where it clarifies the intent.
+**Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).**
+Subject line is `<type>[optional scope]: <description>`, imperative,
+lowercase description, no trailing period. Common types: `feat`, `fix`,
+`refactor`, `test`, `docs`, `chore`, `perf`, `ci`. A breaking change is
+flagged with `!` after the type/scope (`refactor!: ...`) or a
+`BREAKING CHANGE:` footer, not by prose alone.
+
+The body explains *why* when the reason is not evident from the diff.
+Reference the architecture or vision section a change follows from where it
+clarifies the intent.

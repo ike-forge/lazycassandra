@@ -33,6 +33,10 @@ violate by default. They do not replace that document — read it for the why.
   `Msg::Tick`. Real I/O belongs in the integration tier.
 - **Git: commit freely (including to `main`), never `pull`, never `push`.**
   Both are explicit human actions only.
+- **Conventional Commits.** Subject is `<type>[scope]: <description>`,
+  imperative, lowercase, no trailing period (`feat`, `fix`, `refactor`,
+  `test`, `docs`, `chore`, `perf`, `ci`). Flag breaking changes with `!` or a
+  `BREAKING CHANGE:` footer.
 
 ## Workflow
 
