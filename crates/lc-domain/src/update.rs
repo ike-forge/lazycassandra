@@ -199,8 +199,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<Vec<Effect>, DbError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::StatementKind;
-    use crate::model::{Keyspace, Replication};
+    use crate::model::{Keyspace, Replication, StatementKind};
     use crate::state::Connection;
     use std::collections::BTreeMap;
 
@@ -231,6 +230,13 @@ mod tests {
             }),
             ..State::default()
         }
+    }
+
+    fn current_conn(state: &State) -> ConnId {
+        let ConnectionState::Connected(connection) = &state.connection else {
+            panic!("the helper builds a connected state");
+        };
+        connection.id
     }
 
     fn statement(kind: StatementKind) -> Statement {
@@ -390,6 +396,25 @@ mod tests {
     }
 
     #[test]
+    fn a_connected_message_for_a_stale_attempt_is_ignored() {
+        let (mut state, _) = init(ConnId::next());
+
+        let effects = update(
+            &mut state,
+            Msg::Connected {
+                conn: ConnId::next(),
+                posture: Posture::ReadOnly,
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert!(
+            matches!(state.connection, ConnectionState::Connecting(_)),
+            "a Connected message for a connection we are no longer waiting on must not be applied"
+        );
+    }
+
+    #[test]
     fn a_failed_connection_is_recorded_and_raised() {
         let conn = ConnId::next();
         let (mut state, _) = init(conn);
@@ -446,6 +471,28 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_schema_for_a_stale_connection_is_dropped() {
+        let mut state = connected(Posture::ReadOnly);
+
+        update(
+            &mut state,
+            Msg::SchemaFailed {
+                conn: ConnId::next(),
+                error: DbError::Invalid("unauthorized".to_owned()),
+            },
+        );
+
+        assert!(state.overlay.is_none(), "a stale failure must not be shown");
+        let ConnectionState::Connected(connection) = &state.connection else {
+            panic!("still connected");
+        };
+        assert!(
+            matches!(connection.schema, SchemaState::Loading),
+            "schema failure from a connection we are no longer on must not be applied"
+        );
+    }
+
+    #[test]
     fn a_loaded_schema_pulls_the_selection_back_inside_it() {
         let mut state = connected(Posture::ReadOnly);
         let conn = current_conn(&state);
@@ -466,12 +513,5 @@ mod tests {
             1,
             "a selection past the end of a smaller schema must be pulled in"
         );
-    }
-
-    fn current_conn(state: &State) -> ConnId {
-        let ConnectionState::Connected(connection) = &state.connection else {
-            panic!("the helper builds a connected state");
-        };
-        connection.id
     }
 }
