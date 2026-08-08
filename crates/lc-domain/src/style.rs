@@ -15,6 +15,8 @@ pub enum Token {
     Posture(Posture),
     Severity(Severity),
     Muted,
+    /// The panel accepting input.
+    Focused,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -43,6 +43,51 @@ impl Theme {
                 Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
             }
             Token::Muted => Style::new().add_modifier(Modifier::DIM),
+            // Bold rather than a colour: focus has to read on a terminal
+            // whose palette is unusable, and it must not compete with the
+            // colours that carry meaning.
+            Token::Focused => Style::new().add_modifier(Modifier::BOLD),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn focus_is_drawn_without_spending_a_colour() {
+        let style = Theme::TerminalDefault.style(Token::Focused);
+
+        assert!(style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(
+            style.fg, None,
+            "focus must survive a terminal with a poor palette"
+        );
+    }
+
+    #[test]
+    fn no_token_sets_a_background() {
+        let tokens = [
+            Token::PartitionKey,
+            Token::ClusteringKey,
+            Token::RegularColumn,
+            Token::Posture(Posture::ReadOnly),
+            Token::Posture(Posture::Writable),
+            Token::Posture(Posture::Protected),
+            Token::Severity(Severity::Info),
+            Token::Severity(Severity::Warning),
+            Token::Severity(Severity::Danger),
+            Token::Muted,
+            Token::Focused,
+        ];
+
+        for token in tokens {
+            assert_eq!(
+                Theme::TerminalDefault.style(token).bg,
+                None,
+                "{token:?} set a background (vision.md §4, principle 5)"
+            );
         }
     }
 }
