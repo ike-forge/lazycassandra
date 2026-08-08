@@ -83,6 +83,7 @@ mod tests {
             Token::Severity(Severity::Danger),
             Token::Muted,
             Token::Focused,
+            Token::Selected,
         ];
 
         for token in tokens {
@@ -92,5 +93,16 @@ mod tests {
                 "{token:?} set a background (vision.md §4, principle 5)"
             );
         }
+    }
+
+    #[test]
+    fn the_selected_row_is_marked_without_spending_a_colour() {
+        let style = Theme::TerminalDefault.style(Token::Selected);
+
+        assert!(style.add_modifier.contains(Modifier::REVERSED));
+        assert_eq!(
+            style.fg, None,
+            "the selection inverts the user's own palette rather than replacing it"
+        );
     }
 }

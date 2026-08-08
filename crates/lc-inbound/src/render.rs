@@ -24,18 +24,23 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
             block = block.border_style(theme.style(Token::Focused));
         }
 
+        let inner = block.inner(area);
         frame.render_widget(block, area);
+        crate::body::render(frame, inner, &panel.body, theme);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::Panel;
+    use lc_domain::model::{ConnId, Keyspace, Replication, Schema};
+    use lc_domain::posture::Posture;
+    use lc_domain::state::{Connection, ConnectionState, Panel, SchemaState};
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
     use ratatui::style::Modifier;
+    use std::collections::BTreeMap;
 
     use super::*;
 
@@ -72,7 +77,7 @@ mod tests {
         let buffer = draw(40, 12);
 
         assert_eq!(row(&buffer, 0), "┌Tables────────┐┌Table contents────────┐");
-        assert_eq!(row(&buffer, 1), "│              ││                      │");
+        assert_eq!(row(&buffer, 1), "│Not connected ││                      │");
         assert_eq!(row(&buffer, 7), "└──────────────┘│                      │");
         assert_eq!(row(&buffer, 8), "┌Table DDL─────┐└──────────────────────┘");
         assert_eq!(row(&buffer, 9), "│              │┌Queries───────────────┐");
@@ -125,5 +130,101 @@ mod tests {
         assert!(contains("Table contents"));
         assert!(!contains("Table DDL"), "Ddl collapsed to zero rows");
         assert!(!contains("Queries"), "Queries collapsed to zero rows");
+    }
+
+    fn schema_of(names: &[&str]) -> Schema {
+        Schema {
+            keyspaces: names
+                .iter()
+                .map(|name| {
+                    (
+                        (*name).to_owned(),
+                        Keyspace {
+                            name: (*name).to_owned(),
+                            replication: Replication::SimpleStrategy { factor: 1 },
+                            tables: BTreeMap::new(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn browsing(names: &[&str], selected: usize) -> State {
+        let mut state = State {
+            connection: ConnectionState::Connected(Connection {
+                id: ConnId::next(),
+                posture: Posture::ReadOnly,
+                schema: SchemaState::Loaded(schema_of(names)),
+            }),
+            ..State::default()
+        };
+        for _ in 0..selected {
+            state.tables.cursor.down(names.len());
+        }
+        state
+    }
+
+    fn draw_state(width: u16, height: u16, state: &State) -> Buffer {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| render(frame, &view_model(state), Theme::TerminalDefault))
+            .expect("TestBackend always draws");
+
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn keyspaces_are_listed_inside_the_tables_panel() {
+        let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo", "system"], 0));
+
+        assert_eq!(row(&buffer, 1), "│▸ shop        ││                      │");
+        assert_eq!(row(&buffer, 2), "│▸ typezoo     ││                      │");
+        assert_eq!(row(&buffer, 3), "│▸ system      ││                      │");
+    }
+
+    #[test]
+    fn the_clusters_own_keyspaces_are_dimmed() {
+        let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
+        let dim = |y: u16| {
+            buffer
+                .cell((1, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::DIM)
+        };
+
+        assert!(!dim(1), "shop is the user's");
+        assert!(dim(2), "system is the cluster's");
+    }
+
+    #[test]
+    fn the_selected_row_is_the_one_the_cursor_is_on() {
+        let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo", "system"], 1));
+        let reversed = |y: u16| {
+            buffer
+                .cell((1, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        assert!(!reversed(1));
+        assert!(reversed(2), "typezoo is selected");
+        assert!(!reversed(3));
+    }
+
+    #[test]
+    fn a_panel_with_nothing_to_list_says_what_it_is_waiting_for() {
+        let state = State {
+            connection: ConnectionState::Connecting(ConnId::next()),
+            ..State::default()
+        };
+
+        let buffer = draw_state(40, 12, &state);
+
+        assert_eq!(row(&buffer, 1), "│Connecting…   ││                      │");
     }
 }

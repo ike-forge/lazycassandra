@@ -7,6 +7,7 @@
 //! [`lc_domain::model::KeyPress`], and [`lc_domain::style::Token`] into a
 //! concrete `ratatui` style.
 
+mod body;
 pub mod input;
 pub mod layout;
 pub mod render;
