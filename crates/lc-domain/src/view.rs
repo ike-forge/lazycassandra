@@ -4,7 +4,9 @@
 //! per-panel view models with dirty tracking stays open until panels carry
 //! enough content to measure.
 
-use crate::state::{Panel, State};
+use crate::model::{KeyspaceKind, Schema};
+use crate::state::{ConnectionState, Overlay, Panel, SchemaState, State};
+use crate::style::Token;
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +14,8 @@ pub struct ViewModel {
     /// In [`Panel::ALL`] order.
     pub panels: [PanelView; 4],
     pub focus: Panel,
+    /// Drawn over the panels when something needs saying.
+    pub overlay: Option<Overlay>,
 }
 
 /// One panel, described without reference to how it is drawn.
@@ -19,6 +23,28 @@ pub struct ViewModel {
 pub struct PanelView {
     pub panel: Panel,
     pub title: String,
+    pub body: PanelBody,
+}
+
+/// What a panel has to show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PanelBody {
+    Blank,
+    /// A sentence where content would be: waiting, empty, or failed.
+    Notice(String),
+    Keyspaces {
+        rows: Vec<KeyspaceRow>,
+        selected: usize,
+    },
+}
+
+/// One row of the keyspace list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyspaceRow {
+    pub name: String,
+    /// `Some(Token::Muted)` for the cluster's own keyspaces. A user keyspace
+    /// spends no token: it is the baseline everything else is read against.
+    pub token: Option<Token>,
 }
 
 /// Project `state` into the frame a renderer draws.
@@ -28,8 +54,10 @@ pub fn view_model(state: &State) -> ViewModel {
         panels: Panel::ALL.map(|panel| PanelView {
             panel,
             title: title(panel).to_owned(),
+            body: body(state, panel),
         }),
         focus: state.focus,
+        overlay: state.overlay.clone(),
     }
 }
 
@@ -42,9 +70,53 @@ const fn title(panel: Panel) -> &'static str {
     }
 }
 
+fn body(state: &State, panel: Panel) -> PanelBody {
+    match panel {
+        Panel::Tables => tables_body(state),
+        Panel::Ddl | Panel::Contents | Panel::Queries => PanelBody::Blank,
+    }
+}
+
+fn tables_body(state: &State) -> PanelBody {
+    match &state.connection {
+        ConnectionState::Disconnected => PanelBody::Notice("Not connected".to_owned()),
+        ConnectionState::Connecting(_) => PanelBody::Notice("Connecting…".to_owned()),
+        ConnectionState::Failed(error) => PanelBody::Notice(error.to_string()),
+        ConnectionState::Connected(connection) => match &connection.schema {
+            SchemaState::Loading => PanelBody::Notice("Loading schema…".to_owned()),
+            SchemaState::Failed(error) => PanelBody::Notice(error.to_string()),
+            SchemaState::Loaded(schema) => keyspaces(schema, state.tables.cursor.index()),
+        },
+    }
+}
+
+fn keyspaces(schema: &Schema, selected: usize) -> PanelBody {
+    let rows: Vec<KeyspaceRow> = schema
+        .keyspaces_in_display_order()
+        .map(|keyspace| KeyspaceRow {
+            name: keyspace.name.clone(),
+            token: match keyspace.kind() {
+                KeyspaceKind::User => None,
+                KeyspaceKind::System => Some(Token::Muted),
+            },
+        })
+        .collect();
+
+    if rows.is_empty() {
+        return PanelBody::Notice("No keyspaces".to_owned());
+    }
+
+    PanelBody::Keyspaces { rows, selected }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{ConnId, DbError, Keyspace, Replication, Schema};
+    use crate::posture::Posture;
+    use crate::state::{Connection, ConnectionState, Overlay, SchemaState};
+    use crate::style::{Severity, Token};
+    use std::collections::BTreeMap;
 
     #[test]
     fn every_panel_is_projected_in_reading_order() {
@@ -71,5 +143,137 @@ mod tests {
         };
 
         assert_eq!(view_model(&state).focus, Panel::Contents);
+    }
+
+    fn schema_of(names: &[&str]) -> Schema {
+        Schema {
+            keyspaces: names
+                .iter()
+                .map(|name| {
+                    (
+                        (*name).to_owned(),
+                        Keyspace {
+                            name: (*name).to_owned(),
+                            replication: Replication::SimpleStrategy { factor: 1 },
+                            tables: BTreeMap::new(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn state_with(connection: ConnectionState) -> State {
+        State {
+            connection,
+            ..State::default()
+        }
+    }
+
+    fn loaded(names: &[&str]) -> State {
+        state_with(ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(schema_of(names)),
+        }))
+    }
+
+    fn tables_body(state: &State) -> PanelBody {
+        view_model(state).panels[0].body.clone()
+    }
+
+    #[test]
+    fn the_tables_panel_says_what_it_is_waiting_for() {
+        assert_eq!(
+            tables_body(&State::default()),
+            PanelBody::Notice("Not connected".to_owned())
+        );
+        assert_eq!(
+            tables_body(&state_with(ConnectionState::Connecting(ConnId::next()))),
+            PanelBody::Notice("Connecting…".to_owned())
+        );
+        assert_eq!(
+            tables_body(&state_with(ConnectionState::Connected(Connection {
+                id: ConnId::next(),
+                posture: Posture::ReadOnly,
+                schema: SchemaState::Loading,
+            }))),
+            PanelBody::Notice("Loading schema…".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_failure_is_readable_in_the_panel_and_not_only_in_the_overlay() {
+        let body = tables_body(&state_with(ConnectionState::Failed(DbError::Timeout)));
+
+        let PanelBody::Notice(text) = body else {
+            panic!("a failed connection has nothing to list");
+        };
+        assert!(text.contains("timed out"));
+    }
+
+    #[test]
+    fn keyspaces_are_listed_with_the_clusters_own_dimmed_and_last() {
+        let state = loaded(&["system_schema", "typezoo", "shop"]);
+
+        let PanelBody::Keyspaces { rows, selected } = tables_body(&state) else {
+            panic!("a loaded schema lists its keyspaces");
+        };
+
+        assert_eq!(
+            rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+            ["shop", "typezoo", "system_schema"]
+        );
+        assert_eq!(rows[0].token, None, "a user keyspace spends no token");
+        assert_eq!(rows[2].token, Some(Token::Muted));
+        assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn the_selection_is_projected_from_the_cursor() {
+        let mut state = loaded(&["shop", "typezoo"]);
+        state.tables.cursor.down(2);
+
+        let PanelBody::Keyspaces { selected, .. } = tables_body(&state) else {
+            panic!("a loaded schema lists its keyspaces");
+        };
+
+        assert_eq!(selected, 1);
+    }
+
+    #[test]
+    fn a_cluster_with_no_keyspaces_says_so_rather_than_listing_nothing() {
+        assert_eq!(
+            tables_body(&loaded(&[])),
+            PanelBody::Notice("No keyspaces".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_other_three_panels_are_still_blank() {
+        let view = view_model(&loaded(&["shop"]));
+
+        for panel in &view.panels[1..] {
+            assert_eq!(
+                panel.body,
+                PanelBody::Blank,
+                "{:?} has no content yet",
+                panel.panel
+            );
+        }
+    }
+
+    #[test]
+    fn the_overlay_is_carried_to_the_renderer() {
+        let state = State {
+            overlay: Some(Overlay {
+                title: "Connection failed".to_owned(),
+                message: "no route".to_owned(),
+                severity: Severity::Danger,
+            }),
+            ..State::default()
+        };
+
+        assert_eq!(view_model(&state).overlay, state.overlay);
     }
 }

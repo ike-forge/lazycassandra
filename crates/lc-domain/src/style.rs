@@ -17,6 +17,8 @@ pub enum Token {
     Muted,
     /// The panel accepting input.
     Focused,
+    /// The row the cursor is on.
+    Selected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
