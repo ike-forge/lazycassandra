@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, VecDeque};
 use lc_domain::model::{ConnId, DbError, Keyspace, Replication, Schema};
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
-use lc_domain::view::PanelBody;
+use lc_domain::view::{Marker, PanelBody};
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
 
@@ -66,12 +66,19 @@ async fn connecting_and_describing_fills_the_tables_panel() {
 
     run(&cluster, &mut state, effects).await;
 
-    let PanelBody::Keyspaces { rows, selected } = &view_model(&state).panels[0].body else {
+    let PanelBody::Tree { rows, selected } = &view_model(&state).panels[0].body else {
         panic!("a described cluster lists its keyspaces");
     };
     assert_eq!(
-        rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+        rows.iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>(),
         ["shop", "typezoo", "system_schema"]
+    );
+    assert_eq!(
+        rows[0].marker,
+        Marker::Leaf,
+        "these fixtures have no tables to unfold"
     );
     assert_eq!(*selected, 0);
 }

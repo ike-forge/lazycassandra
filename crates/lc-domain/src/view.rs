@@ -7,6 +7,7 @@
 use crate::model::{DbError, KeyspaceKind, Schema};
 use crate::state::{ConnectionState, Overlay, Panel, SchemaState, State};
 use crate::style::{Severity, Token};
+use crate::tree::{Node, TablesPanel};
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,25 +36,38 @@ pub enum PanelBody {
     /// `token` carries the meaning the renderer must draw it with — `None`
     /// styles nothing, `Some(Token::Muted)` for a waiting state,
     /// `Some(Token::Severity(Severity::Danger))` for a failure. Mirrors
-    /// [`KeyspaceRow::token`] so the panel never has to decide what a sentence
+    /// [`TreeRow::token`] so the panel never has to decide what a sentence
     /// means; the domain already knows (architecture.md §6).
     Notice {
         text: String,
         token: Option<Token>,
     },
-    Keyspaces {
-        rows: Vec<KeyspaceRow>,
+    Tree {
+        rows: Vec<TreeRow>,
         selected: usize,
     },
 }
 
-/// One row of the keyspace list.
+/// One row of the Tables tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyspaceRow {
-    pub name: String,
-    /// `Some(Token::Muted)` for the cluster's own keyspaces. A user keyspace
-    /// spends no token: it is the baseline everything else is read against.
+pub struct TreeRow {
+    pub label: String,
+    /// 0 for a keyspace, 1 for a table.
+    pub depth: u8,
+    pub marker: Marker,
+    /// `Some(Token::Muted)` for the cluster's own keyspaces and their tables.
+    /// A user keyspace spends no token: it is the baseline everything else is
+    /// read against.
     pub token: Option<Token>,
+}
+
+/// Whether a row has children, and whether they are showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Marker {
+    Folded,
+    Unfolded,
+    /// Nothing to unfold: a table, or a keyspace with no tables.
+    Leaf,
 }
 
 /// Project `state` into the frame a renderer draws.
@@ -108,28 +122,48 @@ fn tables_body(state: &State) -> PanelBody {
         ConnectionState::Connected(connection) => match &connection.schema {
             SchemaState::Loading => waiting("Loading schema…"),
             SchemaState::Failed(error) => failure(error),
-            SchemaState::Loaded(schema) => keyspaces(schema, state.tables.cursor.index()),
+            SchemaState::Loaded(schema) => tree(&state.tables, schema),
         },
     }
 }
 
-fn keyspaces(schema: &Schema, selected: usize) -> PanelBody {
-    let rows: Vec<KeyspaceRow> = schema
-        .keyspaces_in_display_order()
-        .map(|keyspace| KeyspaceRow {
-            name: keyspace.name.clone(),
-            token: match keyspace.kind() {
-                KeyspaceKind::User => None,
-                KeyspaceKind::System => Some(Token::Muted),
-            },
-        })
-        .collect();
+fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
+    let rows: Vec<TreeRow> = tables.rows(schema).iter().map(tree_row).collect();
 
     if rows.is_empty() {
         return waiting("No keyspaces");
     }
 
-    PanelBody::Keyspaces { rows, selected }
+    PanelBody::Tree {
+        rows,
+        selected: tables.cursor.index(),
+    }
+}
+
+fn tree_row(node: &Node<'_>) -> TreeRow {
+    let (keyspace, label, depth, marker) = match node {
+        Node::Keyspace { keyspace, unfolded } => {
+            let marker = if keyspace.tables.is_empty() {
+                Marker::Leaf
+            } else if *unfolded {
+                Marker::Unfolded
+            } else {
+                Marker::Folded
+            };
+            (*keyspace, keyspace.name.clone(), 0, marker)
+        }
+        Node::Table { keyspace, table } => (*keyspace, table.name.clone(), 1, Marker::Leaf),
+    };
+
+    TreeRow {
+        label,
+        depth,
+        marker,
+        token: match keyspace.kind() {
+            KeyspaceKind::User => None,
+            KeyspaceKind::System => Some(Token::Muted),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +235,14 @@ mod tests {
         }))
     }
 
+    fn tabled(keyspaces: &[(&str, &[&str])]) -> State {
+        state_with(ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(crate::tree::tests_support::schema_of(keyspaces)),
+        }))
+    }
+
     fn tables_body(state: &State) -> PanelBody {
         view_model(state).panels[0].body.clone()
     }
@@ -253,12 +295,14 @@ mod tests {
     fn keyspaces_are_listed_with_the_clusters_own_dimmed_and_last() {
         let state = loaded(&["system_schema", "typezoo", "shop"]);
 
-        let PanelBody::Keyspaces { rows, selected } = tables_body(&state) else {
+        let PanelBody::Tree { rows, selected } = tables_body(&state) else {
             panic!("a loaded schema lists its keyspaces");
         };
 
         assert_eq!(
-            rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
+            rows.iter()
+                .map(|row| row.label.as_str())
+                .collect::<Vec<_>>(),
             ["shop", "typezoo", "system_schema"]
         );
         assert_eq!(rows[0].token, None, "a user keyspace spends no token");
@@ -267,11 +311,73 @@ mod tests {
     }
 
     #[test]
+    fn a_keyspace_with_no_tables_offers_nothing_to_unfold() {
+        let state = loaded(&["shop"]);
+
+        let PanelBody::Tree { rows, .. } = tables_body(&state) else {
+            panic!("a loaded schema lists its keyspaces");
+        };
+
+        assert_eq!(
+            rows[0].marker,
+            Marker::Leaf,
+            "an unfoldable-looking row that unfolds to nothing is worse than none"
+        );
+    }
+
+    #[test]
+    fn a_keyspace_with_tables_is_folded_until_it_is_opened() {
+        let mut state = tabled(&[("shop", &["orders", "users"])]);
+
+        let PanelBody::Tree { rows, .. } = tables_body(&state) else {
+            panic!("a loaded schema lists its keyspaces");
+        };
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].marker, Marker::Folded);
+        assert_eq!(rows[0].depth, 0);
+
+        let schema = state.schema().cloned().expect("loaded");
+        state.tables.open(&schema);
+
+        let PanelBody::Tree { rows, .. } = tables_body(&state) else {
+            panic!("a loaded schema lists its keyspaces");
+        };
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.depth, row.marker, row.label.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (0, Marker::Unfolded, "shop"),
+                (1, Marker::Leaf, "orders"),
+                (1, Marker::Leaf, "users"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_table_is_muted_exactly_when_its_keyspace_is() {
+        let mut state = tabled(&[("system_schema", &["tables"])]);
+        let schema = state.schema().cloned().expect("loaded");
+        state.tables.open(&schema);
+
+        let PanelBody::Tree { rows, .. } = tables_body(&state) else {
+            panic!("a loaded schema lists its keyspaces");
+        };
+
+        assert_eq!(rows[0].token, Some(Token::Muted));
+        assert_eq!(
+            rows[1].token,
+            Some(Token::Muted),
+            "one rule per row, not two rules that can drift"
+        );
+    }
+
+    #[test]
     fn the_selection_is_projected_from_the_cursor() {
         let mut state = loaded(&["shop", "typezoo"]);
         state.tables.cursor.down(2);
 
-        let PanelBody::Keyspaces { selected, .. } = tables_body(&state) else {
+        let PanelBody::Tree { selected, .. } = tables_body(&state) else {
             panic!("a loaded schema lists its keyspaces");
         };
 

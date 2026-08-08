@@ -136,17 +136,39 @@ mod tests {
         assert!(!contains("Queries"), "Queries collapsed to zero rows");
     }
 
+    fn table(name: &str) -> lc_domain::model::Table {
+        lc_domain::model::Table {
+            name: name.to_owned(),
+            primary_key: lc_domain::model::PrimaryKey {
+                partition: vec![lc_domain::model::Column {
+                    name: "id".to_owned(),
+                    cql_type: "uuid".to_owned(),
+                }],
+                clustering: Vec::new(),
+            },
+            static_columns: Vec::new(),
+            regular_columns: Vec::new(),
+        }
+    }
+
     fn schema_of(names: &[&str]) -> Schema {
+        tabled_schema(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
+    }
+
+    fn tabled_schema(keyspaces: &[(&str, &[&str])]) -> Schema {
         Schema {
-            keyspaces: names
+            keyspaces: keyspaces
                 .iter()
-                .map(|name| {
+                .map(|(name, tables)| {
                     (
                         (*name).to_owned(),
                         Keyspace {
                             name: (*name).to_owned(),
                             replication: Replication::SimpleStrategy { factor: 1 },
-                            tables: BTreeMap::new(),
+                            tables: tables
+                                .iter()
+                                .map(|t| ((*t).to_owned(), table(t)))
+                                .collect::<BTreeMap<_, _>>(),
                         },
                     )
                 })
@@ -184,9 +206,37 @@ mod tests {
     fn keyspaces_are_listed_inside_the_tables_panel() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo", "system"], 0));
 
-        assert_eq!(row(&buffer, 1), "│▸ shop        ││                      │");
-        assert_eq!(row(&buffer, 2), "│▸ typezoo     ││                      │");
-        assert_eq!(row(&buffer, 3), "│▸ system      ││                      │");
+        assert_eq!(row(&buffer, 1), "│  shop        ││                      │");
+        assert_eq!(row(&buffer, 2), "│  typezoo     ││                      │");
+        assert_eq!(row(&buffer, 3), "│  system      ││                      │");
+    }
+
+    #[test]
+    fn an_unfolded_keyspaces_tables_are_indented_beneath_it() {
+        let mut state = State {
+            connection: ConnectionState::Connected(Connection {
+                id: ConnId::next(),
+                posture: Posture::ReadOnly,
+                schema: SchemaState::Loaded(tabled_schema(&[
+                    ("shop", &["orders", "users"]),
+                    ("typezoo", &[]),
+                ])),
+            }),
+            ..State::default()
+        };
+        let schema = state.schema().cloned().expect("loaded");
+        state.tables.open(&schema);
+
+        let buffer = draw_state(40, 12, &state);
+
+        assert_eq!(row(&buffer, 1), "│▾ shop        ││                      │");
+        assert_eq!(row(&buffer, 2), "│    orders    ││                      │");
+        assert_eq!(row(&buffer, 3), "│    users     ││                      │");
+        assert_eq!(
+            row(&buffer, 4),
+            "│  typezoo     ││                      │",
+            "a keyspace with no tables draws no marker"
+        );
     }
 
     #[test]
