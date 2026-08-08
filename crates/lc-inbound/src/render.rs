@@ -36,14 +36,14 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::model::{ConnId, Keyspace, Replication, Schema};
+    use lc_domain::model::{ConnId, DbError, Keyspace, Replication, Schema};
     use lc_domain::posture::Posture;
     use lc_domain::state::{Connection, ConnectionState, Panel, SchemaState};
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
-    use ratatui::style::Modifier;
+    use ratatui::style::{Color, Modifier};
     use std::collections::BTreeMap;
 
     use super::*;
@@ -230,5 +230,47 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
 
         assert_eq!(row(&buffer, 1), "│Connecting…   ││                      │");
+    }
+
+    #[test]
+    fn a_failure_notice_is_drawn_in_the_danger_style_rather_than_dimmed() {
+        let state = State {
+            connection: ConnectionState::Failed(DbError::Timeout),
+            ..State::default()
+        };
+
+        let buffer = draw_state(40, 12, &state);
+        let cell = buffer.cell((1, 1)).expect("inside the panel");
+
+        assert_eq!(
+            cell.fg,
+            Color::Red,
+            "a failure notice carries the danger token, not the muted one waiting states use"
+        );
+        assert!(
+            !cell.modifier.contains(Modifier::DIM),
+            "a failure must read as urgent, not as background noise"
+        );
+    }
+
+    #[test]
+    fn the_selection_stays_visible_when_the_list_outgrows_the_panel() {
+        // Six rows of content fit in an eight-row Tables panel at this size;
+        // twelve keyspaces force the scroll a plain `List` (no `ListState`)
+        // would silently fail to perform.
+        let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+        let buffer = draw_state(40, 12, &browsing(&refs, 11));
+        let rows: Vec<String> = (1..7).map(|y| row(&buffer, y)).collect();
+
+        assert!(
+            rows.iter().any(|line| line.contains("ks11")),
+            "the selected row must stay on screen once the list scrolls"
+        );
+        assert!(
+            !rows.iter().any(|line| line.contains("ks00")),
+            "a row scrolled out of view must not still be drawn"
+        );
     }
 }

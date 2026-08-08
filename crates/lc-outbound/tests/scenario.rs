@@ -87,7 +87,7 @@ async fn a_cluster_that_cannot_be_reached_raises_an_overlay() {
     let overlay = view_model(&state).overlay.expect("the failure is shown");
     assert!(overlay.message.contains("no route to host"));
     assert!(
-        matches!(&view_model(&state).panels[0].body, PanelBody::Notice(text) if text.contains("no route to host")),
+        matches!(&view_model(&state).panels[0].body, PanelBody::Notice { text, .. } if text.contains("no route to host")),
         "the panel says it too, so dismissing the overlay does not erase the failure"
     );
 }

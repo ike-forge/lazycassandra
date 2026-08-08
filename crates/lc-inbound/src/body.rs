@@ -22,18 +22,17 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, body: &PanelBody, theme: The
 
     match body {
         PanelBody::Blank => {}
-        PanelBody::Notice(text) => notice(frame, area, text, theme),
+        PanelBody::Notice { text, token } => notice(frame, area, text, *token, theme),
         PanelBody::Keyspaces { rows, selected } => keyspaces(frame, area, rows, *selected, theme),
     }
 }
 
-fn notice(frame: &mut Frame, area: Rect, text: &str, theme: Theme) {
-    frame.render_widget(
-        Paragraph::new(text)
-            .style(theme.style(Token::Muted))
-            .wrap(Wrap { trim: true }),
-        area,
-    );
+fn notice(frame: &mut Frame, area: Rect, text: &str, token: Option<Token>, theme: Theme) {
+    let mut paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
+    if let Some(token) = token {
+        paragraph = paragraph.style(theme.style(token));
+    }
+    frame.render_widget(paragraph, area);
 }
 
 fn keyspaces(frame: &mut Frame, area: Rect, rows: &[KeyspaceRow], selected: usize, theme: Theme) {

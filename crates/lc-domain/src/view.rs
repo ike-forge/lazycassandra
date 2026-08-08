@@ -4,9 +4,9 @@
 //! per-panel view models with dirty tracking stays open until panels carry
 //! enough content to measure.
 
-use crate::model::{KeyspaceKind, Schema};
+use crate::model::{DbError, KeyspaceKind, Schema};
 use crate::state::{ConnectionState, Overlay, Panel, SchemaState, State};
-use crate::style::Token;
+use crate::style::{Severity, Token};
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +31,16 @@ pub struct PanelView {
 pub enum PanelBody {
     Blank,
     /// A sentence where content would be: waiting, empty, or failed.
-    Notice(String),
+    ///
+    /// `token` carries the meaning the renderer must draw it with — `None`
+    /// styles nothing, `Some(Token::Muted)` for a waiting state,
+    /// `Some(Token::Severity(Severity::Danger))` for a failure. Mirrors
+    /// [`KeyspaceRow::token`] so the panel never has to decide what a sentence
+    /// means; the domain already knows (architecture.md §6).
+    Notice {
+        text: String,
+        token: Option<Token>,
+    },
     Keyspaces {
         rows: Vec<KeyspaceRow>,
         selected: usize,
@@ -77,14 +86,28 @@ fn body(state: &State, panel: Panel) -> PanelBody {
     }
 }
 
+fn waiting(text: &str) -> PanelBody {
+    PanelBody::Notice {
+        text: text.to_owned(),
+        token: Some(Token::Muted),
+    }
+}
+
+fn failure(error: &DbError) -> PanelBody {
+    PanelBody::Notice {
+        text: error.to_string(),
+        token: Some(Token::Severity(Severity::Danger)),
+    }
+}
+
 fn tables_body(state: &State) -> PanelBody {
     match &state.connection {
-        ConnectionState::Disconnected => PanelBody::Notice("Not connected".to_owned()),
-        ConnectionState::Connecting(_) => PanelBody::Notice("Connecting…".to_owned()),
-        ConnectionState::Failed(error) => PanelBody::Notice(error.to_string()),
+        ConnectionState::Disconnected => waiting("Not connected"),
+        ConnectionState::Connecting(_) => waiting("Connecting…"),
+        ConnectionState::Failed(error) => failure(error),
         ConnectionState::Connected(connection) => match &connection.schema {
-            SchemaState::Loading => PanelBody::Notice("Loading schema…".to_owned()),
-            SchemaState::Failed(error) => PanelBody::Notice(error.to_string()),
+            SchemaState::Loading => waiting("Loading schema…"),
+            SchemaState::Failed(error) => failure(error),
             SchemaState::Loaded(schema) => keyspaces(schema, state.tables.cursor.index()),
         },
     }
@@ -103,7 +126,7 @@ fn keyspaces(schema: &Schema, selected: usize) -> PanelBody {
         .collect();
 
     if rows.is_empty() {
-        return PanelBody::Notice("No keyspaces".to_owned());
+        return waiting("No keyspaces");
     }
 
     PanelBody::Keyspaces { rows, selected }
@@ -186,11 +209,17 @@ mod tests {
     fn the_tables_panel_says_what_it_is_waiting_for() {
         assert_eq!(
             tables_body(&State::default()),
-            PanelBody::Notice("Not connected".to_owned())
+            PanelBody::Notice {
+                text: "Not connected".to_owned(),
+                token: Some(Token::Muted),
+            }
         );
         assert_eq!(
             tables_body(&state_with(ConnectionState::Connecting(ConnId::next()))),
-            PanelBody::Notice("Connecting…".to_owned())
+            PanelBody::Notice {
+                text: "Connecting…".to_owned(),
+                token: Some(Token::Muted),
+            }
         );
         assert_eq!(
             tables_body(&state_with(ConnectionState::Connected(Connection {
@@ -198,7 +227,10 @@ mod tests {
                 posture: Posture::ReadOnly,
                 schema: SchemaState::Loading,
             }))),
-            PanelBody::Notice("Loading schema…".to_owned())
+            PanelBody::Notice {
+                text: "Loading schema…".to_owned(),
+                token: Some(Token::Muted),
+            }
         );
     }
 
@@ -206,10 +238,15 @@ mod tests {
     fn a_failure_is_readable_in_the_panel_and_not_only_in_the_overlay() {
         let body = tables_body(&state_with(ConnectionState::Failed(DbError::Timeout)));
 
-        let PanelBody::Notice(text) = body else {
+        let PanelBody::Notice { text, token } = body else {
             panic!("a failed connection has nothing to list");
         };
         assert!(text.contains("timed out"));
+        assert_eq!(
+            token,
+            Some(Token::Severity(Severity::Danger)),
+            "a failure must carry the danger token, not the muted one waiting states use"
+        );
     }
 
     #[test]
@@ -245,8 +282,26 @@ mod tests {
     fn a_cluster_with_no_keyspaces_says_so_rather_than_listing_nothing() {
         assert_eq!(
             tables_body(&loaded(&[])),
-            PanelBody::Notice("No keyspaces".to_owned())
+            PanelBody::Notice {
+                text: "No keyspaces".to_owned(),
+                token: Some(Token::Muted),
+            }
         );
+    }
+
+    #[test]
+    fn a_schema_that_failed_to_load_carries_the_danger_token() {
+        let state = state_with(ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Failed(DbError::Invalid("unauthorized".to_owned())),
+        }));
+
+        let PanelBody::Notice { text, token } = tables_body(&state) else {
+            panic!("a failed schema has nothing to list");
+        };
+        assert!(text.contains("unauthorized"));
+        assert_eq!(token, Some(Token::Severity(Severity::Danger)));
     }
 
     #[test]
