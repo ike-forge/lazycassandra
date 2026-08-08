@@ -2,7 +2,7 @@
 # Exactly what the tree currently resolves to. Adding a licence here is a
 # deliberate decision, which is the point — a new one showing up should fail
 # the gate rather than slip in.
-allow = ["Apache-2.0", "MIT", "BSL-1.0", "Unicode-3.0", "Zlib"]
+allow = ["Apache-2.0", "BSD-3-Clause", "MIT", "BSL-1.0", "Unicode-3.0", "Zlib"]
 
 [licenses.private]
 # Our own crates carry no licence field and are never published.
@@ -21,6 +21,16 @@ allow-wildcard-paths = true
 skip = [
     { crate = "hashbrown@0.16.1", reason = "lru 0.18 lags ratatui's 0.17" },
     { crate = "syn@2.0.119", reason = "several proc-macro crates have not moved to syn 3" },
+    { crate = "darling@0.20.11", reason = "scylla's derives lag; darling_core and darling_macro follow it" },
+    { crate = "darling_core@0.20.11", reason = "pulled by darling 0.20" },
+    { crate = "darling_macro@0.20.11", reason = "pulled by darling 0.20" },
+    { crate = "foldhash@0.1.5", reason = "hashbrown 0.15 in scylla's tree lags hashbrown 0.16's foldhash" },
+    { crate = "getrandom@0.3.4", reason = "scylla's rand 0.9 has not moved to getrandom 0.4" },
+    { crate = "hashbrown@0.14.5", reason = "a transitive dependency in scylla's tree lags" },
+    { crate = "hashbrown@0.15.5", reason = "scylla depends on hashbrown 0.15 directly, a version behind kasuari's 0.16" },
+    { crate = "r-efi@5.3.0", reason = "getrandom 0.3.4 in scylla's rand 0.9 tree pulls an older r-efi than getrandom 0.4's 6.0" },
+    { crate = "socket2@0.5.10", reason = "scylla pins socket2 0.5; tokio is on 0.6" },
+    { crate = "windows-sys@0.52.0", reason = "socket2 0.5.10, scylla's pin, pulls an older windows-sys than the rest of the tree's 0.61" },
 ]
 
 [advisories]

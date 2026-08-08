@@ -5,13 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-# No CQL driver yet — architecture.md §8 defers the choice to a Phase 0 spike.
 [dependencies]
 async-trait.workspace = true
 lc-domain.workspace = true
+scylla.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[features]
+# The integration tier (architecture.md §10). Needs a real cluster, so it is
+# not part of `mise run ci`.
+integration = []
 
 [lints]
 workspace = true

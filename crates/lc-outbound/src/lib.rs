@@ -1,9 +1,10 @@
 //! Port implementations: cluster, config, secrets, local store.
 //!
-//! The only crate that talks to the outside world. No CQL driver is wired up
-//! yet — architecture.md §8 defers that to a Phase 0 spike, and the [`Cluster`]
-//! port is what keeps the choice cheap.
+//! The only crate that talks to the outside world. The [`Cluster`] port is
+//! implemented over `scylla` (doc/specs/2026-08-08-keyspace-list-design.md §2);
+//! driver types stop at the adapter.
 //!
 //! [`Cluster`]: lc_domain::ports::Cluster
 
+pub mod cassandra;
 pub mod fake;
