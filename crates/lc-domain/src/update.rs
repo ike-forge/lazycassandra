@@ -139,7 +139,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         }
 
         Msg::SchemaLoaded { conn, schema } => {
-            let rows = schema.keyspaces.len();
+            let rows = schema.keyspaces_in_display_order().count();
             let applied = match &mut state.connection {
                 ConnectionState::Connected(connection) if connection.id == conn => {
                     connection.schema = SchemaState::Loaded(*schema);
@@ -208,7 +208,9 @@ fn move_selection(state: &mut State, motion: Motion) {
         return;
     }
 
-    let rows = state.schema().map_or(0, |schema| schema.keyspaces.len());
+    let rows = state
+        .schema()
+        .map_or(0, |schema| schema.keyspaces_in_display_order().count());
     match motion {
         Motion::Down => state.tables.cursor.down(rows),
         Motion::Up => state.tables.cursor.up(),
@@ -245,7 +247,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<Vec<Effect>, DbError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Keyspace, Replication, StatementKind};
+    use crate::model::{Keyspace, Modifiers, Replication, StatementKind};
     use crate::state::Connection;
     use std::collections::BTreeMap;
 
@@ -537,9 +539,6 @@ mod tests {
             "schema failure from a connection we are no longer on must not be applied"
         );
     }
-
-    use crate::model::{Key, KeyPress, Modifiers};
-    use crate::state::Panel;
 
     fn browsing(keyspaces: &[&str]) -> State {
         let mut state = connected(Posture::ReadOnly);
