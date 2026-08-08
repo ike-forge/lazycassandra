@@ -8,6 +8,7 @@ pub mod ports;
 pub mod posture;
 pub mod state;
 pub mod style;
+pub mod tree;
 pub mod update;
 pub mod view;
 

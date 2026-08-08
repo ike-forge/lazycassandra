@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use crate::model::{ConnId, DbError, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::style::Severity;
+use crate::tree::TablesPanel;
 
 #[derive(Debug, Clone, Default)]
 pub struct State {
@@ -55,13 +56,6 @@ pub enum SchemaState {
     Loading,
     Failed(DbError),
     Loaded(Schema),
-}
-
-/// The Tables panel's own state. A struct rather than a bare field because
-/// the unfold set lands here next (architecture.md §11).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TablesPanel {
-    pub cursor: Cursor,
 }
 
 /// A message drawn over the panels, dismissed with `Esc`.
@@ -149,6 +143,12 @@ impl Cursor {
             self.index = last;
         }
     }
+
+    /// Moves to `index`, or to the last row when the list is shorter.
+    pub const fn go_to(&mut self, index: usize, len: usize) {
+        self.index = index;
+        self.clamp_to(len);
+    }
 }
 
 impl State {
@@ -172,6 +172,21 @@ impl State {
                 schema: SchemaState::Loaded(schema),
                 ..
             }) => Some(schema),
+            _ => None,
+        }
+    }
+
+    /// The tree's state and the schema it is a tree of.
+    ///
+    /// One method rather than two accessors because the borrow checker cannot
+    /// split `&mut self` across separate `tables()` and `schema()` calls, and
+    /// every transition needs both.
+    pub fn tables_and_schema(&mut self) -> Option<(&mut TablesPanel, &Schema)> {
+        match &self.connection {
+            ConnectionState::Connected(Connection {
+                schema: SchemaState::Loaded(schema),
+                ..
+            }) => Some((&mut self.tables, schema)),
             _ => None,
         }
     }
