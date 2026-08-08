@@ -162,7 +162,10 @@ mod tests {
     fn the_clusters_own_keyspaces_are_system_and_the_system_prefixed_ones() {
         assert_eq!(KeyspaceKind::of("system"), KeyspaceKind::System);
         assert_eq!(KeyspaceKind::of("system_schema"), KeyspaceKind::System);
-        assert_eq!(KeyspaceKind::of("system_virtual_schema"), KeyspaceKind::System);
+        assert_eq!(
+            KeyspaceKind::of("system_virtual_schema"),
+            KeyspaceKind::System
+        );
     }
 
     #[test]
