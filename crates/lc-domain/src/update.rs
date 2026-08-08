@@ -139,7 +139,6 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         }
 
         Msg::SchemaLoaded { conn, schema } => {
-            let rows = schema.keyspaces_in_display_order().count();
             let applied = match &mut state.connection {
                 ConnectionState::Connected(connection) if connection.id == conn => {
                     connection.schema = SchemaState::Loaded(*schema);
@@ -148,6 +147,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
                 _ => false,
             };
             if applied {
+                let rows = tree_rows(state);
                 state.tables.cursor.clamp_to(rows);
                 state.mark_dirty();
             }
@@ -197,10 +197,20 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Escape => state.overlay = None,
         Key::Char('j') | Key::Down => move_selection(state, Motion::Down),
         Key::Char('k') | Key::Up => move_selection(state, Motion::Up),
+        Key::Enter | Key::Char(' ') => transition(state, Transition::Toggle),
+        Key::Char('l') | Key::Right => transition(state, Transition::Open),
+        Key::Char('h') | Key::Left => transition(state, Transition::Close),
         _ => {}
     }
 
     Vec::new()
+}
+
+#[derive(Clone, Copy)]
+enum Transition {
+    Toggle,
+    Open,
+    Close,
 }
 
 fn move_selection(state: &mut State, motion: Motion) {
@@ -208,13 +218,33 @@ fn move_selection(state: &mut State, motion: Motion) {
         return;
     }
 
-    let rows = state
-        .schema()
-        .map_or(0, |schema| schema.keyspaces_in_display_order().count());
+    let rows = tree_rows(state);
     match motion {
         Motion::Down => state.tables.cursor.down(rows),
         Motion::Up => state.tables.cursor.up(),
     }
+}
+
+fn transition(state: &mut State, transition: Transition) {
+    if state.focus != Panel::Tables {
+        return;
+    }
+
+    let Some((tables, schema)) = state.tables_and_schema() else {
+        return;
+    };
+
+    match transition {
+        Transition::Toggle => tables.toggle(schema),
+        Transition::Open => tables.open(schema),
+        Transition::Close => tables.close(schema),
+    }
+}
+
+fn tree_rows(state: &State) -> usize {
+    state
+        .schema()
+        .map_or(0, |schema| state.tables.rows(schema).len())
 }
 
 /// Turns a statement into an effect, or refuses.
@@ -247,26 +277,12 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<Vec<Effect>, DbError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Keyspace, Modifiers, Replication, StatementKind};
+    use crate::model::{Modifiers, StatementKind};
     use crate::state::Connection;
-    use std::collections::BTreeMap;
+    use crate::tree::tests_support::schema_of as tabled_schema;
 
     fn schema_of(names: &[&str]) -> Schema {
-        Schema {
-            keyspaces: names
-                .iter()
-                .map(|name| {
-                    (
-                        (*name).to_owned(),
-                        Keyspace {
-                            name: (*name).to_owned(),
-                            replication: Replication::SimpleStrategy { factor: 1 },
-                            tables: BTreeMap::new(),
-                        },
-                    )
-                })
-                .collect(),
-        }
+        tabled_schema(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
     }
 
     fn connected(posture: Posture) -> State {
@@ -673,6 +689,140 @@ mod tests {
             state.tables.cursor.index(),
             1,
             "a selection past the end of a smaller schema must be pulled in"
+        );
+    }
+
+    fn browsing_tables(keyspaces: &[(&str, &[&str])]) -> State {
+        let mut state = connected(Posture::ReadOnly);
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(tabled_schema(keyspaces)),
+            },
+        );
+        state
+    }
+
+    fn row_count(state: &State) -> usize {
+        state
+            .schema()
+            .map_or(0, |schema| state.tables.rows(schema).len())
+    }
+
+    #[test]
+    fn enter_and_space_both_toggle_a_keyspace() {
+        for key in [Key::Enter, Key::Char(' ')] {
+            let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+
+            press(&mut state, key);
+            assert_eq!(row_count(&state), 3, "{key:?} did not unfold");
+
+            press(&mut state, key);
+            assert_eq!(row_count(&state), 1, "{key:?} did not fold");
+        }
+    }
+
+    #[test]
+    fn l_and_right_open_a_keyspace() {
+        for key in [Key::Char('l'), Key::Right] {
+            let mut state = browsing_tables(&[("shop", &["orders"])]);
+
+            press(&mut state, key);
+
+            assert_eq!(row_count(&state), 2, "{key:?} did not open");
+        }
+    }
+
+    #[test]
+    fn h_and_left_close_a_keyspace() {
+        for key in [Key::Char('h'), Key::Left] {
+            let mut state = browsing_tables(&[("shop", &["orders"])]);
+            press(&mut state, Key::Char('l'));
+
+            press(&mut state, key);
+
+            assert_eq!(row_count(&state), 1, "{key:?} did not close");
+        }
+    }
+
+    #[test]
+    fn h_from_a_table_steps_out_to_its_keyspace_before_folding() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('l'));
+        assert_eq!(state.tables.cursor.index(), 1);
+
+        press(&mut state, Key::Char('h'));
+
+        assert_eq!(state.tables.cursor.index(), 0);
+        assert_eq!(row_count(&state), 3, "stepping out must not fold");
+    }
+
+    #[test]
+    fn enter_on_a_table_does_nothing_yet() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('l'));
+        let before = state.tables.clone();
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(
+            state.tables, before,
+            "Enter on a table is reserved for acting on it"
+        );
+    }
+
+    #[test]
+    fn j_walks_into_an_unfolded_keyspaces_tables() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"]), ("typezoo", &[])]);
+        press(&mut state, Key::Char('l'));
+
+        for _ in 0..3 {
+            press(&mut state, Key::Char('j'));
+        }
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            3,
+            "motion counts tree rows, not keyspaces"
+        );
+    }
+
+    #[test]
+    fn a_tree_transition_belongs_to_the_focused_panel_only() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Queries;
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(row_count(&state), 1);
+    }
+
+    #[test]
+    fn a_reload_that_shrinks_the_tree_pulls_the_selection_inside_it() {
+        let mut state = browsing_tables(&[("shop", &["a", "b", "c"])]);
+        let conn = current_conn(&state);
+        press(&mut state, Key::Char('l'));
+        for _ in 0..3 {
+            press(&mut state, Key::Char('j'));
+        }
+        assert_eq!(state.tables.cursor.index(), 3);
+
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(tabled_schema(&[("shop", &["a"])])),
+            },
+        );
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "the clamp must count tree rows, not keyspaces"
         );
     }
 }
