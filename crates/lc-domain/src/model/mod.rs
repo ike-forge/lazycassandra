@@ -16,7 +16,8 @@ pub use ids::{ConnId, QueryId};
 pub use input::{Key, KeyPress, Modifiers};
 pub use page::{Page, PagingState, Row};
 pub use schema::{
-    ClusteringColumn, ClusteringOrder, Column, Keyspace, PrimaryKey, Replication, Schema, Table,
+    ClusteringColumn, ClusteringOrder, Column, Keyspace, KeyspaceKind, PrimaryKey, Replication,
+    Schema, Table,
 };
 pub use statement::{Statement, StatementKind};
 pub use value::CqlValue;

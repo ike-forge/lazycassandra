@@ -86,3 +86,112 @@ impl Table {
             .chain(self.regular_columns.iter())
     }
 }
+
+/// Whether a keyspace is the cluster's own or somebody's schema.
+///
+/// Derived from the name rather than stored on [`Keyspace`], so an adapter
+/// cannot report a kind that disagrees with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum KeyspaceKind {
+    User,
+    System,
+}
+
+impl KeyspaceKind {
+    /// Classifies a keyspace by name. The separator matters: `system_auth` is
+    /// Cassandra's, `systematic` is not.
+    #[must_use]
+    pub fn of(name: &str) -> Self {
+        if name == "system" || name.starts_with("system_") {
+            Self::System
+        } else {
+            Self::User
+        }
+    }
+}
+
+impl Keyspace {
+    /// Whether the cluster owns this keyspace or the user does.
+    #[must_use]
+    pub fn kind(&self) -> KeyspaceKind {
+        KeyspaceKind::of(&self.name)
+    }
+}
+
+impl Schema {
+    /// User keyspaces first, then the cluster's own, each alphabetically.
+    ///
+    /// The alphabetical part is free: `keyspaces` is a `BTreeMap`, so two
+    /// filtered passes are cheaper and clearer than partitioning into vectors.
+    pub fn keyspaces_in_display_order(&self) -> impl Iterator<Item = &Keyspace> {
+        let user = self
+            .keyspaces
+            .values()
+            .filter(|keyspace| keyspace.kind() == KeyspaceKind::User);
+        let system = self
+            .keyspaces
+            .values()
+            .filter(|keyspace| keyspace.kind() == KeyspaceKind::System);
+
+        user.chain(system)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyspace(name: &str) -> Keyspace {
+        Keyspace {
+            name: name.to_owned(),
+            replication: Replication::SimpleStrategy { factor: 1 },
+            tables: BTreeMap::new(),
+        }
+    }
+
+    fn schema(names: &[&str]) -> Schema {
+        Schema {
+            keyspaces: names
+                .iter()
+                .map(|name| ((*name).to_owned(), keyspace(name)))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_clusters_own_keyspaces_are_system_and_the_system_prefixed_ones() {
+        assert_eq!(KeyspaceKind::of("system"), KeyspaceKind::System);
+        assert_eq!(KeyspaceKind::of("system_schema"), KeyspaceKind::System);
+        assert_eq!(KeyspaceKind::of("system_virtual_schema"), KeyspaceKind::System);
+    }
+
+    #[test]
+    fn a_user_keyspace_merely_starting_with_system_is_not_the_clusters() {
+        // The separator is load-bearing: `systematic` is somebody's schema.
+        assert_eq!(KeyspaceKind::of("systematic"), KeyspaceKind::User);
+        assert_eq!(KeyspaceKind::of("shop"), KeyspaceKind::User);
+    }
+
+    #[test]
+    fn a_keyspaces_kind_follows_its_name() {
+        assert_eq!(keyspace("shop").kind(), KeyspaceKind::User);
+        assert_eq!(keyspace("system_auth").kind(), KeyspaceKind::System);
+    }
+
+    #[test]
+    fn display_order_puts_user_keyspaces_before_the_clusters_own() {
+        let schema = schema(&["system_schema", "typezoo", "system", "shop"]);
+
+        let order: Vec<&str> = schema
+            .keyspaces_in_display_order()
+            .map(|keyspace| keyspace.name.as_str())
+            .collect();
+
+        assert_eq!(order, ["shop", "typezoo", "system", "system_schema"]);
+    }
+
+    #[test]
+    fn display_order_of_an_empty_schema_is_empty() {
+        assert_eq!(Schema::default().keyspaces_in_display_order().count(), 0);
+    }
+}
