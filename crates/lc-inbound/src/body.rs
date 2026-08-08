@@ -30,6 +30,10 @@ const INDENT: &str = "  ";
 /// readable until then.
 const MAX_COLUMN_WIDTH: u16 = 24;
 
+/// Cells in a row are separated by one column. Stated rather than left to
+/// ratatui's default because [`fitting`] has to do the same arithmetic.
+const COLUMN_SPACING: u16 = 1;
+
 const ELLIPSIS: char = '…';
 
 pub(crate) fn render(frame: &mut Frame, area: Rect, body: &PanelBody, theme: Theme) {
@@ -78,12 +82,18 @@ fn grid(
     selected: usize,
     theme: Theme,
 ) {
-    let widths = widths(columns, rows);
+    // Only the columns that fit are handed to the widget. `Constraint::Length`
+    // is a request, not a floor: given more of them than the area can hold,
+    // ratatui shrinks every column to fit rather than letting the last one run
+    // off the edge — which truncates values with no ellipsis to say so.
+    let widths = widths(columns, rows, area.width);
+    let shown = fitting(&widths, area.width);
+    let widths = &widths[..shown];
 
     let header = Row::new(
         columns
             .iter()
-            .zip(&widths)
+            .zip(widths)
             .map(|(column, width)| styled(&column.name, column.token, *width, theme)),
     );
 
@@ -91,21 +101,49 @@ fn grid(
         Row::new(
             cells
                 .iter()
-                .zip(&widths)
+                .zip(widths)
                 .map(|(cell, width)| styled(&cell.text, cell.token, *width, theme)),
         )
     });
 
     let table = Table::new(body, widths.iter().copied().map(Constraint::Length))
         .header(header)
+        .column_spacing(COLUMN_SPACING)
         .row_highlight_style(theme.style(Token::Selected));
     let mut state = TableState::default().with_selected(Some(selected));
 
     frame.render_stateful_widget(table, area, &mut state);
 }
 
-/// Each column takes the widest thing in it, capped.
-fn widths(columns: &[GridColumn], rows: &[Vec<GridCell>]) -> Vec<u16> {
+/// How many of `widths` fit before the right edge.
+///
+/// Always at least one: a panel too narrow for even the first column still
+/// shows what it can of it, which is more use than an empty panel.
+fn fitting(widths: &[u16], available: u16) -> usize {
+    let mut used = 0;
+    let mut count = 0;
+
+    for (index, width) in widths.iter().enumerate() {
+        let spacing = if index == 0 { 0 } else { COLUMN_SPACING };
+        let next = used + spacing + width;
+
+        if next > available && count > 0 {
+            break;
+        }
+
+        used = next;
+        count += 1;
+    }
+
+    count
+}
+
+/// Each column takes the widest thing in it, capped — and never wider than
+/// the panel, so the first column is ellipsised rather than squeezed when even
+/// it does not fit.
+fn widths(columns: &[GridColumn], rows: &[Vec<GridCell>], available: u16) -> Vec<u16> {
+    let cap = MAX_COLUMN_WIDTH.min(available.max(1));
+
     columns
         .iter()
         .enumerate()
@@ -118,9 +156,7 @@ fn widths(columns: &[GridColumn], rows: &[Vec<GridCell>]) -> Vec<u16> {
                 .max()
                 .unwrap_or(1);
 
-            u16::try_from(widest)
-                .unwrap_or(MAX_COLUMN_WIDTH)
-                .clamp(1, MAX_COLUMN_WIDTH)
+            u16::try_from(widest).unwrap_or(cap).clamp(1, cap)
         })
         .collect()
 }

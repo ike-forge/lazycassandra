@@ -390,6 +390,32 @@ mod tests {
     }
 
     #[test]
+    fn a_table_too_wide_for_the_panel_drops_columns_rather_than_squeezing_them() {
+        // Four uuid-wide columns want 4×24 + spacing = 99 in a 66-column
+        // panel. `Constraint::Length` is a request, not a floor: handed all
+        // four, ratatui shrinks every one to fit and truncates each value with
+        // no ellipsis to say it did.
+        let wide = "8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01";
+        let state = showing(page_of(
+            &["a", "b", "c", "d"],
+            &[&[text(wide), text(wide), text(wide), text(wide)]],
+        ));
+
+        let buffer = draw_state(90, 12, &state);
+
+        assert_eq!(
+            row(&buffer, 1),
+            "│▸ shop              ││a                        b                                        │",
+            "the two columns that do not fit are not drawn at all"
+        );
+        assert_eq!(
+            row(&buffer, 2),
+            "│                    ││8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…                 │",
+            "and the two that do keep their full width and their ellipsis"
+        );
+    }
+
+    #[test]
     fn the_key_columns_are_drawn_in_the_styles_that_carry_the_physical_shape() {
         let state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
 

@@ -258,10 +258,18 @@ Contents header is a different surface with the width to say it.
 **Widths are the renderer's business**, for the reason scrolling already is:
 the domain has no idea the panel is sixty columns wide. `body.rs` measures each
 column as `max(header, widest cell)` in display width, caps it at 24, and
-truncates anything longer to 23 plus `…`. Columns that fall past the right edge
-are not drawn. Measurement is `unicode-width` — already in the tree via
-ratatui — because a `chars().count()` width is wrong for the CJK text a
-Cassandra cluster will certainly contain.
+truncates anything longer to 23 plus `…`. Measurement is `unicode-width` —
+already in the tree via ratatui — because a `chars().count()` width is wrong
+for the CJK text a Cassandra cluster will certainly contain.
+
+Columns that fall past the right edge are not drawn, and getting that requires
+one non-obvious step: **`Constraint::Length` is a request, not a floor.** Hand
+`Table` more lengths than the area can hold and ratatui shrinks every column
+proportionally rather than letting the last one overflow — so a 36-character
+uuid arrives on screen as 14 characters with no ellipsis to say it was cut.
+Driving the real binary against the fixture is what surfaced it; the render
+tier now pins it. `body.rs` therefore decides how many columns fit *before*
+building the widget and hands it only those.
 
 Vertical scrolling reuses the tree's device exactly: a `TableState` built per
 frame from `selected`, no scroll state stored anywhere.
