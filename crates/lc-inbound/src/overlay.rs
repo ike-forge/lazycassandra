@@ -42,8 +42,7 @@ fn centred(area: Rect, overlay: &Overlay) -> Option<Rect> {
         return None;
     }
 
-    let text = Paragraph::new(overlay.message.as_str()).wrap(Wrap { trim: true });
-    let lines = u16::try_from(text.line_count(width.saturating_sub(2))).unwrap_or(u16::MAX);
+    let lines = wrapped_line_count(&overlay.message, width.saturating_sub(2));
     let height = lines.saturating_add(2).clamp(MIN_H, area.height);
 
     Some(Rect::new(
@@ -52,6 +51,49 @@ fn centred(area: Rect, overlay: &Overlay) -> Option<Rect> {
         width,
         height,
     ))
+}
+
+/// Greedy word wrap, matching `Wrap { trim: true }` closely enough for
+/// sizing: a word joins the current line if it (plus a separating space)
+/// fits, otherwise it starts a new one. A word longer than `width` occupies
+/// `ceil(len / width)` lines by itself. Counts characters, not bytes, since a
+/// CQL error can carry non-ASCII.
+fn wrapped_line_count(message: &str, width: u16) -> u16 {
+    let width = usize::from(width.max(1));
+    let mut lines: usize = 0;
+    let mut current: usize = 0;
+
+    for word in message.split_whitespace() {
+        let word_len = word.chars().count();
+
+        if word_len > width {
+            if current > 0 {
+                lines += 1;
+                current = 0;
+            }
+            lines += word_len.div_ceil(width);
+            continue;
+        }
+
+        let needed = if current == 0 {
+            word_len
+        } else {
+            current + 1 + word_len
+        };
+
+        if needed > width {
+            lines += 1;
+            current = word_len;
+        } else {
+            current = needed;
+        }
+    }
+
+    if current > 0 || lines == 0 {
+        lines += 1;
+    }
+
+    u16::try_from(lines).unwrap_or(u16::MAX)
 }
 
 #[cfg(test)]
@@ -66,6 +108,8 @@ mod tests {
 
     use crate::render::render;
     use crate::theme::Theme;
+
+    use super::wrapped_line_count;
 
     fn draw(width: u16, height: u16, overlay: Option<Overlay>) -> Buffer {
         let state = State {
@@ -150,5 +194,32 @@ mod tests {
 
         assert_ne!(text(&with), text(&without));
         assert!(!text(&without).contains("Connection failed"));
+    }
+
+    #[test]
+    fn a_message_shorter_than_the_width_is_one_line() {
+        assert_eq!(wrapped_line_count("could not reach the cluster", 54), 1);
+    }
+
+    #[test]
+    fn a_message_that_wraps_evenly_is_exactly_two_lines() {
+        // "aaaaa bbbbb" is 11 characters, exactly the width; "ccccc" cannot
+        // join it and starts a second line.
+        assert_eq!(wrapped_line_count("aaaaa bbbbb ccccc", 11), 2);
+    }
+
+    #[test]
+    fn a_single_word_longer_than_the_width_spans_ceil_of_its_length_over_the_width() {
+        // 34 characters at a width of 10 needs ceil(34 / 10) = 4 lines.
+        assert_eq!(
+            wrapped_line_count("supercalifragilisticexpialidocious", 10),
+            4
+        );
+    }
+
+    #[test]
+    fn an_empty_or_whitespace_only_message_is_one_line_never_zero() {
+        assert_eq!(wrapped_line_count("", 20), 1);
+        assert_eq!(wrapped_line_count("   ", 20), 1);
     }
 }

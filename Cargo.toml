@@ -21,7 +21,7 @@ lc-outbound = { path = "crates/lc-outbound" }
 anyhow = "1.0.104"
 async-trait = "0.1.91"
 crossterm = "0.29.0"
-ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info"] }
+ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = [
