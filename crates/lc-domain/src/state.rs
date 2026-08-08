@@ -31,14 +31,25 @@ pub struct Connection {
 
 /// Panels are places: fixed positions, navigated with predictable motions
 /// (vision.md §4, principle 4).
+///
+/// Declaration order is reading order — top-left, bottom-left, top-right,
+/// bottom-right — and [`Panel::ALL`] preserves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Panel {
+    /// Keyspace → table tree.
     #[default]
-    Keyspaces,
     Tables,
-    Editor,
-    Results,
-    Log,
+    /// `CREATE TABLE` for the selected table.
+    Ddl,
+    /// Rows of the selected table.
+    Contents,
+    /// Statement entry and session log.
+    Queries,
+}
+
+impl Panel {
+    /// Every panel, in reading order.
+    pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
 }
 
 impl State {
@@ -53,5 +64,23 @@ impl State {
 
     pub const fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_panels_are_listed_in_reading_order() {
+        assert_eq!(
+            Panel::ALL,
+            [Panel::Tables, Panel::Ddl, Panel::Contents, Panel::Queries]
+        );
+    }
+
+    #[test]
+    fn the_default_panel_is_tables() {
+        assert_eq!(Panel::default(), Panel::Tables);
     }
 }
