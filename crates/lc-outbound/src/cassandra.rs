@@ -154,3 +154,75 @@ fn replication(strategy: &Strategy) -> Replication {
 fn factor(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use scylla::cluster::metadata::Strategy;
+
+    use super::*;
+
+    #[test]
+    fn a_simple_strategy_reports_its_factor() {
+        let strategy = Strategy::SimpleStrategy {
+            replication_factor: 3,
+        };
+
+        assert_eq!(
+            replication(&strategy),
+            Replication::SimpleStrategy { factor: 3 }
+        );
+    }
+
+    #[test]
+    fn a_network_topology_strategy_preserves_every_datacenters_factor() {
+        let strategy = Strategy::NetworkTopologyStrategy {
+            datacenter_repfactors: HashMap::from([
+                ("datacenter1".to_owned(), 3),
+                ("datacenter2".to_owned(), 2),
+            ]),
+        };
+
+        assert_eq!(
+            replication(&strategy),
+            Replication::NetworkTopologyStrategy {
+                factors: BTreeMap::from([
+                    ("datacenter1".to_owned(), 3),
+                    ("datacenter2".to_owned(), 2),
+                ]),
+            }
+        );
+    }
+
+    #[test]
+    fn a_local_strategy_is_reported_by_its_cassandra_name() {
+        assert_eq!(
+            replication(&Strategy::LocalStrategy),
+            Replication::Other {
+                class: "LocalStrategy".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_unrecognised_named_strategy_keeps_its_name_and_drops_its_data() {
+        let strategy = Strategy::Other {
+            name: "SomeOtherStrategy".to_owned(),
+            data: HashMap::from([("some_option".to_owned(), "some_value".to_owned())]),
+        };
+
+        assert_eq!(
+            replication(&strategy),
+            Replication::Other {
+                class: "SomeOtherStrategy".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn factor_saturates_at_u32_max_instead_of_overflowing() {
+        assert_eq!(factor(3), 3);
+        assert_eq!(factor(usize::MAX), u32::MAX);
+    }
+}

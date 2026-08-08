@@ -34,7 +34,7 @@ run = "cargo fmt --all -- --check"
 
 [tasks.lint]
 description = "Clippy with warnings denied (architecture.md §12)"
-run = "cargo clippy --workspace --all-targets -- -D warnings"
+run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 
 [tasks.test]
 description = "Fast test tiers: domain, scenario, render (architecture.md §10)"
