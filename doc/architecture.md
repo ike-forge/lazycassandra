@@ -4,8 +4,9 @@ Companion to [VISION.md](VISION.md). This document covers structure and the
 decisions already made; open questions are marked as such in §11 rather than
 guessed at.
 
-**Status:** pre-implementation, Phase 0 not started.
-**Last updated:** 2026-08-07
+**Status:** Phase 0 in progress — four crates, a running binary, the
+four-panel TUI shell rendering.
+**Last updated:** 2026-08-08
 
 ---
 
@@ -145,11 +146,12 @@ Testing the whole application becomes synchronous. `update` is a function from
 ```
 lc-domain/src/
   model/        # Schema, Keyspace, Table, PrimaryKey, CqlValue, Statement
-  state/        # State, panel focus, selection, in-flight registry
-  update/       # update() and its per-panel handlers
-  ports/        # trait definitions (see §5)
-  posture/      # read-only / writable / protected rules
-  style/        # semantic style tokens (see §6)
+  state.rs      # State, Panel, selection, in-flight registry
+  update.rs     # update() and its per-panel handlers
+  view.rs       # ViewModel projection (see §3)
+  ports.rs      # trait definitions (see §5)
+  posture.rs    # read-only / writable / protected rules
+  style.rs      # semantic style tokens (see §6)
 ```
 
 Two model choices worth stating now:
@@ -291,7 +293,7 @@ in VISION §8.
   arbitrarily large partitions, but scrollback and re-sorting want more retained.
   Needs a bounded cache with an explicit eviction story.
 - **Does `State` stay one struct?** TEA's single-state model gets unwieldy at
-  five panels. Nested per-panel state with message routing is the usual escape
+  four panels. Nested per-panel state with message routing is the usual escape
   hatch; deferring until the shape of Phase 1 is real.
 - **Where schema caching lives.** Domain (testable, but the domain starts
   holding a cache invalidation problem) or adapter (simpler domain, but cache

@@ -1,7 +1,7 @@
 //! The whole application state.
 //!
 //! One struct for now. architecture.md §11 flags that this may need to become
-//! nested per-panel state with message routing once Phase 1 has five real
+//! nested per-panel state with message routing once Phase 1 has four real
 //! panels; deferring until that shape is known rather than guessing at it.
 
 use std::collections::BTreeMap;

@@ -4,7 +4,7 @@
 **Status:** approved, not implemented
 **Source:** `doc/ui-draft.png`
 
-Establishes the TUI shell promised by vision.md §9 Phase 0 — panel layout with
+Establishes the TUI shell promised by vision.md §7 Phase 0 — panel layout with
 titled, proportionally sized blocks. Focus movement, panel content, and
 scrolling are explicitly out of scope.
 
