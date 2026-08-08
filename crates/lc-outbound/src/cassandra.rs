@@ -161,9 +161,12 @@ async fn column_rows(
 /// Builds a table from the driver's key ordering and `system_schema`'s column
 /// detail.
 ///
-/// `None` when a key column has no row: the two reads disagreed because DDL
-/// landed between them, and `PrimaryKey::partition` documents itself as never
-/// empty.
+/// `None` when the two reads disagreed because DDL landed between them: a key
+/// column the driver named has no row in `system_schema`, or the driver's own
+/// `partition_key` came back empty — `collect::<Option<Vec<_>>>()` over an
+/// empty iterator is `Some(vec![])`, not `None`, so that case needs its own
+/// check. Either way `PrimaryKey::partition` documents itself as never empty,
+/// and this is the one place that guarantee is enforced.
 fn to_table(
     name: &str,
     partition_key: &[String],
@@ -179,6 +182,10 @@ fn to_table(
         .iter()
         .map(|name| by_name.get(name.as_str()).map(|row| column(row)))
         .collect::<Option<_>>()?;
+
+    if partition.is_empty() {
+        return None;
+    }
 
     let clustering: Vec<ClusteringColumn> = clustering_key
         .iter()
@@ -263,7 +270,7 @@ fn to_keyspace(
             rows,
         )
         .ok_or_else(|| {
-            DbError::Invalid(format!("schema changed while reading {name}.{table_name}"))
+            DbError::Other(format!("schema changed while reading {name}.{table_name}"))
         })?;
 
         tables.insert(table_name.clone(), mapped);
@@ -507,6 +514,27 @@ mod tests {
         assert!(
             missing.is_none(),
             "a table displayed without its partition key is the one thing that must never happen"
+        );
+    }
+
+    #[test]
+    fn a_table_whose_driver_reported_partition_key_is_empty_is_refused() {
+        // scylla-1.7.0 can report `partition_key: vec![]` for a table its own
+        // metadata read raced against a DDL change, with no error
+        // (`validate_key_columns(vec![])` returns `Ok(vec![])`,
+        // scylla-1.7.0/src/cluster/metadata/fetching.rs:1084-1090). The
+        // columns query can still see that table, so `rows` here is
+        // non-empty even though the partition key is not.
+        let empty_partition = to_table(
+            "ghost",
+            &[],
+            &[],
+            &[column_row("device_id", "partition_key", "text", "none")],
+        );
+
+        assert!(
+            empty_partition.is_none(),
+            "an empty partition key must be refused even though every named key column resolved"
         );
     }
 
