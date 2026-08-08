@@ -822,8 +822,6 @@ dependencies = [
  "async-trait",
  "lc-domain",
  "scylla",
- "serde",
- "thiserror 2.0.19",
  "tokio",
 ]
 

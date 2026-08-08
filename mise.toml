@@ -9,8 +9,8 @@ cargo-binstall = "1.21.1"
 
 "cargo:cargo-nextest" = "0.9.143"
 
-# Also how the architecture.md §8 driver spike compares the three candidates'
-# dependency trees.
+# Also what the architecture.md §8 driver spike used to compare the three
+# candidates' dependency trees, before the spike closed on scylla.
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
 
 [env]
@@ -40,8 +40,7 @@ run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 description = "Fast test tiers: domain, scenario, render (architecture.md §10)"
 run = "cargo nextest run --workspace"
 
-# The `integration` feature name is a guess; Phase 0 has not defined the
-# container tier yet.
+# Against the fixture cluster `db:up` brings up, seeded per docker/seed.
 [tasks."test:it"]
 description = "Integration tier against a real Cassandra (requires a container)"
 run = "cargo nextest run --workspace --features integration"

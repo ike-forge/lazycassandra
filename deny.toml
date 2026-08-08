@@ -2,7 +2,16 @@
 # Exactly what the tree currently resolves to. Adding a licence here is a
 # deliberate decision, which is the point — a new one showing up should fail
 # the gate rather than slip in.
-allow = ["Apache-2.0", "BSD-3-Clause", "MIT", "BSL-1.0", "Unicode-3.0", "Zlib"]
+allow = [
+    "Apache-2.0",
+    # snap 1.1.2, the Snappy codec scylla-cql requires (Snappy is one of the
+    # CQL native protocol's two compression algorithms).
+    "BSD-3-Clause",
+    "MIT",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Zlib",
+]
 
 [licenses.private]
 # Our own crates carry no licence field and are never published.

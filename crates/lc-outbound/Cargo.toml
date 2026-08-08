@@ -9,8 +9,6 @@ publish.workspace = true
 async-trait.workspace = true
 lc-domain.workspace = true
 scylla.workspace = true
-serde.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
 
 [features]

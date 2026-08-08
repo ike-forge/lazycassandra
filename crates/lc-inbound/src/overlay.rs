@@ -14,8 +14,9 @@ const MAX_W: u16 = 60;
 /// box. Same rule the panels follow in `layout`.
 const MIN_W: u16 = 20;
 const MIN_H: u16 = 5;
-/// Two borders and a column of padding on each side.
-const CHROME_W: u16 = 4;
+/// Two columns of outer margin on each side, between the frame edge and the
+/// block. The border itself is accounted for separately, by `Block::inner`.
+const MARGIN_W: u16 = 4;
 
 pub(crate) fn render(frame: &mut Frame, overlay: &Overlay, theme: Theme) {
     let area = frame.area();
@@ -37,7 +38,7 @@ pub(crate) fn render(frame: &mut Frame, overlay: &Overlay, theme: Theme) {
 }
 
 fn centred(area: Rect, overlay: &Overlay) -> Option<Rect> {
-    let width = area.width.saturating_sub(CHROME_W).min(MAX_W);
+    let width = area.width.saturating_sub(MARGIN_W).min(MAX_W);
     if width < MIN_W || area.height < MIN_H {
         return None;
     }
@@ -58,6 +59,11 @@ fn centred(area: Rect, overlay: &Overlay) -> Option<Rect> {
 /// fits, otherwise it starts a new one. A word longer than `width` occupies
 /// `ceil(len / width)` lines by itself. Counts characters, not bytes, since a
 /// CQL error can carry non-ASCII.
+///
+/// Diverges on an embedded `\n`: `split_whitespace` treats it as ordinary
+/// whitespace rather than a forced break, so a multi-line message
+/// under-counts its lines and the block is sized too short, truncating
+/// rather than overflowing.
 fn wrapped_line_count(message: &str, width: u16) -> u16 {
     let width = usize::from(width.max(1));
     let mut lines: usize = 0;
