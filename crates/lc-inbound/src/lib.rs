@@ -5,6 +5,7 @@
 //! [`lc_domain::style::Token`] into a concrete `ratatui` style.
 
 pub mod input;
+pub mod layout;
 pub mod theme;
 
 pub use theme::Theme;
