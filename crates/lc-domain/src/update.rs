@@ -716,11 +716,19 @@ mod tests {
         for key in [Key::Enter, Key::Char(' ')] {
             let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
 
-            press(&mut state, key);
+            let effects = press(&mut state, key);
             assert_eq!(row_count(&state), 3, "{key:?} did not unfold");
+            assert!(
+                effects.is_empty(),
+                "unfolding is a pure state change and must emit no effect (table-list design §2)"
+            );
 
-            press(&mut state, key);
+            let effects = press(&mut state, key);
             assert_eq!(row_count(&state), 1, "{key:?} did not fold");
+            assert!(
+                effects.is_empty(),
+                "folding is a pure state change and must emit no effect (table-list design §2)"
+            );
         }
     }
 
@@ -729,9 +737,13 @@ mod tests {
         for key in [Key::Char('l'), Key::Right] {
             let mut state = browsing_tables(&[("shop", &["orders"])]);
 
-            press(&mut state, key);
+            let effects = press(&mut state, key);
 
             assert_eq!(row_count(&state), 2, "{key:?} did not open");
+            assert!(
+                effects.is_empty(),
+                "opening is a pure state change and must emit no effect (table-list design §2)"
+            );
         }
     }
 
@@ -741,9 +753,13 @@ mod tests {
             let mut state = browsing_tables(&[("shop", &["orders"])]);
             press(&mut state, Key::Char('l'));
 
-            press(&mut state, key);
+            let effects = press(&mut state, key);
 
             assert_eq!(row_count(&state), 1, "{key:?} did not close");
+            assert!(
+                effects.is_empty(),
+                "closing is a pure state change and must emit no effect (table-list design §2)"
+            );
         }
     }
 
