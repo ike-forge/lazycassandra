@@ -183,8 +183,11 @@ enum Motion {
 fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     state.mark_dirty();
 
-    // Modified keys are their own bindings, not slower versions of the plain
-    // ones (vision.md §4, principle 2).
+    // ctrl and alt turn a key into a separate binding, refused here rather
+    // than reinterpreted. shift is not checked: a shifted letter already
+    // arrives as a different Key::Char, and a shifted arrow is left as a
+    // synonym for the plain one so it stays free for a future "extend
+    // selection" binding.
     if press.modifiers.ctrl || press.modifiers.alt {
         return Vec::new();
     }
