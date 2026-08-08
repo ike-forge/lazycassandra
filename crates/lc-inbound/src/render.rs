@@ -119,14 +119,11 @@ mod tests {
     fn a_collapsed_panel_is_not_drawn_at_all() {
         // Five rows leaves no room for a second panel in either column.
         let buffer = draw(40, 5);
-        let screen: String = (0..5).map(|y| row(&buffer, y)).collect();
+        let contains = |needle: &str| (0..5).any(|y| row(&buffer, y).contains(needle));
 
-        assert!(screen.contains("Tables"));
-        assert!(screen.contains("Table contents"));
-        assert!(!screen.contains("Table DDL"), "Ddl collapsed to zero rows");
-        assert!(
-            !screen.contains("Queries"),
-            "Queries collapsed to zero rows"
-        );
+        assert!(contains("Tables"));
+        assert!(contains("Table contents"));
+        assert!(!contains("Table DDL"), "Ddl collapsed to zero rows");
+        assert!(!contains("Queries"), "Queries collapsed to zero rows");
     }
 }
