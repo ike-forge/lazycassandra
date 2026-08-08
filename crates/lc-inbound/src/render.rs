@@ -28,6 +28,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
         frame.render_widget(block, area);
         crate::body::render(frame, inner, &panel.body, theme);
     }
+
+    if let Some(overlay) = &view.overlay {
+        crate::overlay::render(frame, overlay, theme);
+    }
 }
 
 #[cfg(test)]

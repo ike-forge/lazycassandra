@@ -10,6 +10,7 @@
 mod body;
 pub mod input;
 pub mod layout;
+mod overlay;
 pub mod render;
 pub mod theme;
 
