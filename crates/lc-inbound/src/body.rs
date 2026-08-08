@@ -29,6 +29,7 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, body: &PanelBody, theme: The
         PanelBody::Blank => {}
         PanelBody::Notice { text, token } => notice(frame, area, text, *token, theme),
         PanelBody::Tree { rows, selected } => tree(frame, area, rows, *selected, theme),
+        PanelBody::Details(details) => crate::details::render(frame, area, details, theme),
     }
 }
 

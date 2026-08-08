@@ -46,6 +46,86 @@ pub struct Table {
     pub static_columns: Vec<Column>,
     /// Everything that is neither part of the primary key nor static.
     pub regular_columns: Vec<Column>,
+    pub options: TableOptions,
+}
+
+/// Every property `system_schema.tables` reports for one table, as text.
+///
+/// Text rather than a struct of typed fields, and not by omission: the column
+/// set of `system_schema.tables` differs across Cassandra majors — 3.11 has
+/// `read_repair_chance`, 4.0 replaces it with `read_repair`, 5.0 adds
+/// `memtable` — so a fixed field list would encode a claim that is false, and
+/// would silently drop whatever the running cluster knows and we do not. The
+/// ordering below is the part that is real knowledge
+/// (doc/specs/2026-08-09-table-metadata-design.md §3).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TableOptions {
+    by_name: BTreeMap<String, String>,
+}
+
+/// Table options worth seeing first, most important first.
+///
+/// Leads with what silently costs data or latency — what the table is for, the
+/// TTL that deletes rows out from under you, the tombstone window, the
+/// compaction strategy — and trails with what gets looked up once a year.
+const BY_IMPORTANCE: &[&str] = &[
+    "comment",
+    "default_time_to_live",
+    "gc_grace_seconds",
+    "compaction",
+    "compression",
+    "caching",
+    "bloom_filter_fp_chance",
+    "speculative_retry",
+    "additional_write_policy",
+    "read_repair",
+    "cdc",
+    "crc_check_chance",
+    "min_index_interval",
+    "max_index_interval",
+    "memtable",
+    "memtable_flush_period_in_ms",
+    "allow_auto_snapshot",
+    "incremental_backups",
+    "flags",
+    "id",
+    "extensions",
+];
+
+impl TableOptions {
+    #[must_use]
+    pub const fn new(by_name: BTreeMap<String, String>) -> Self {
+        Self { by_name }
+    }
+
+    /// Ranked properties first in [`BY_IMPORTANCE`] order, then everything
+    /// else alphabetically.
+    ///
+    /// The tail is what keeps a cluster whose properties predate or postdate
+    /// that list fully visible rather than half-shown.
+    pub fn in_display_order(&self) -> impl Iterator<Item = (&str, &str)> {
+        let ranked = BY_IMPORTANCE
+            .iter()
+            .filter_map(|name| self.get(name).map(|value| (*name, value)));
+
+        let rest = self
+            .by_name
+            .iter()
+            .filter(|(name, _)| !BY_IMPORTANCE.contains(&name.as_str()))
+            .map(|(name, value)| (name.as_str(), value.as_str()));
+
+        ranked.chain(rest)
+    }
+
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.by_name.get(name).map(String::as_str)
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_name.is_empty()
+    }
 }
 
 /// The physical shape of a table.
@@ -184,6 +264,83 @@ mod tests {
             },
             static_columns: vec![column("firmware", "text")],
             regular_columns: vec![column("temperature_c", "float")],
+            options: TableOptions::default(),
+        }
+    }
+
+    fn options(pairs: &[(&str, &str)]) -> TableOptions {
+        TableOptions::new(
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+        )
+    }
+
+    fn ordered(options: &TableOptions) -> Vec<&str> {
+        options.in_display_order().map(|(name, _)| name).collect()
+    }
+
+    #[test]
+    fn options_are_listed_by_importance_rather_than_by_name() {
+        let options = options(&[
+            ("bloom_filter_fp_chance", "0.01"),
+            ("comment", "orders"),
+            ("gc_grace_seconds", "864000"),
+        ]);
+
+        assert_eq!(
+            ordered(&options),
+            ["comment", "gc_grace_seconds", "bloom_filter_fp_chance"]
+        );
+    }
+
+    #[test]
+    fn a_property_this_cassandra_version_does_not_have_is_simply_absent() {
+        let options = options(&[("comment", "orders"), ("id", "abc")]);
+
+        assert_eq!(ordered(&options), ["comment", "id"]);
+    }
+
+    #[test]
+    fn a_property_the_ranking_has_never_heard_of_is_listed_after_the_ranked_ones() {
+        // 3.11's read repair settings, which 4.0 removed: unranked here, and
+        // still shown, because a cluster's own vocabulary outranks ours.
+        let options = options(&[
+            ("read_repair_chance", "0.0"),
+            ("dclocal_read_repair_chance", "0.1"),
+            ("comment", "orders"),
+            ("id", "abc"),
+        ]);
+
+        assert_eq!(
+            ordered(&options),
+            [
+                "comment",
+                "id",
+                "dclocal_read_repair_chance",
+                "read_repair_chance"
+            ],
+            "unranked properties sort alphabetically after every ranked one"
+        );
+    }
+
+    #[test]
+    fn a_table_whose_options_row_was_missing_lists_nothing() {
+        let options = TableOptions::default();
+
+        assert!(options.is_empty());
+        assert_eq!(ordered(&options), [""; 0]);
+    }
+
+    #[test]
+    fn every_ranked_name_is_listed_once() {
+        let mut seen = std::collections::BTreeSet::new();
+        for name in BY_IMPORTANCE {
+            assert!(
+                seen.insert(*name),
+                "{name} is ranked twice, so one of the two positions is dead"
+            );
         }
     }
 

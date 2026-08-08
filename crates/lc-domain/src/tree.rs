@@ -136,7 +136,7 @@ impl TablesPanel {
 #[cfg(test)]
 pub(crate) mod tests_support {
     use super::*;
-    use crate::model::{Column, PrimaryKey, Replication};
+    use crate::model::{Column, PrimaryKey, Replication, TableOptions};
     use std::collections::BTreeMap;
 
     pub(crate) fn table(name: &str) -> Table {
@@ -151,7 +151,17 @@ pub(crate) mod tests_support {
             },
             static_columns: Vec::new(),
             regular_columns: Vec::new(),
+            options: TableOptions::default(),
         }
+    }
+
+    pub(crate) fn options(pairs: &[(&str, &str)]) -> TableOptions {
+        TableOptions::new(
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+        )
     }
 
     /// `(keyspace name, its table names)`.

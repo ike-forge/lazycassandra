@@ -17,7 +17,7 @@ pub use input::{Key, KeyPress, Modifiers};
 pub use page::{Page, PagingState, Row};
 pub use schema::{
     ClusteringColumn, ClusteringOrder, Column, Keyspace, KeyspaceKind, PrimaryKey, Replication,
-    Schema, Table,
+    Schema, Table, TableOptions,
 };
 pub use statement::{Statement, StatementKind};
 pub use value::CqlValue;
