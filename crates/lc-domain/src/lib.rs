@@ -12,6 +12,6 @@ pub mod update;
 pub mod view;
 
 pub use posture::Posture;
-pub use state::State;
+pub use state::{Connection, ConnectionState, Cursor, Overlay, SchemaState, State, TablesPanel};
 pub use update::{Effect, Msg, update};
 pub use view::{PanelView, ViewModel, view_model};

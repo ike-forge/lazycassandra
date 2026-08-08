@@ -6,7 +6,7 @@
 
 use crate::model::{ConnId, DbError, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::state::State;
+use crate::state::{ConnectionState, SchemaState, State};
 
 /// Everything that can happen. Async results re-enter here through the same
 /// channel as a keystroke.
@@ -66,20 +66,24 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         }
 
         Msg::Connected { conn, posture } => {
-            state.connection = Some(crate::state::Connection {
+            state.connection = ConnectionState::Connected(crate::state::Connection {
                 id: conn,
                 posture,
-                schema: None,
+                schema: SchemaState::Loading,
             });
             state.mark_dirty();
             vec![Effect::LoadSchema(conn)]
         }
 
         Msg::SchemaLoaded { conn, schema } => {
-            if let Some(connection) = state.connection.as_mut()
-                && connection.id == conn
-            {
-                connection.schema = Some(*schema);
+            let applied = match &mut state.connection {
+                ConnectionState::Connected(connection) if connection.id == conn => {
+                    connection.schema = SchemaState::Loaded(*schema);
+                    true
+                }
+                _ => false,
+            };
+            if applied {
                 state.mark_dirty();
             }
             Vec::new()
@@ -137,10 +141,10 @@ mod tests {
 
     fn connected(posture: Posture) -> State {
         State {
-            connection: Some(Connection {
+            connection: ConnectionState::Connected(Connection {
                 id: ConnId::next(),
                 posture,
-                schema: None,
+                schema: SchemaState::Loading,
             }),
             ..State::default()
         }
@@ -265,9 +269,11 @@ mod tests {
         );
 
         assert!(effects.is_empty());
-        let connection = state.connection.expect("connection is still present");
+        let ConnectionState::Connected(connection) = state.connection else {
+            panic!("the connection is still present");
+        };
         assert!(
-            connection.schema.is_none(),
+            matches!(connection.schema, SchemaState::Loading),
             "schema from a connection we are no longer on must not be applied"
         );
     }

@@ -6,13 +6,17 @@
 
 use std::collections::BTreeMap;
 
-use crate::model::{ConnId, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, QueryId, Schema, Statement};
 use crate::posture::Posture;
+use crate::style::Severity;
 
 #[derive(Debug, Clone, Default)]
 pub struct State {
-    pub connection: Option<Connection>,
+    pub connection: ConnectionState,
     pub focus: Panel,
+    pub tables: TablesPanel,
+    /// A message drawn over the panels until it is dismissed.
+    pub overlay: Option<Overlay>,
     /// Queries issued and not yet resolved. A result whose id is absent here
     /// was cancelled, and is dropped rather than applied.
     pub in_flight: BTreeMap<QueryId, Statement>,
@@ -22,11 +26,65 @@ pub struct State {
     pub should_quit: bool,
 }
 
+/// How far along the one connection is.
+///
+/// `Option<Connection>` could not say "connecting" or "failed", and an error
+/// field beside the schema would make illegal combinations representable.
+#[derive(Debug, Clone, Default)]
+pub enum ConnectionState {
+    #[default]
+    Disconnected,
+    /// Carries the id so a failure can be matched to the attempt that is
+    /// outstanding.
+    Connecting(ConnId),
+    Failed(DbError),
+    Connected(Connection),
+}
+
 #[derive(Debug, Clone)]
 pub struct Connection {
     pub id: ConnId,
     pub posture: Posture,
-    pub schema: Option<Schema>,
+    pub schema: SchemaState,
+}
+
+/// Whether the connected cluster has told us its shape yet.
+#[derive(Debug, Clone, Default)]
+pub enum SchemaState {
+    #[default]
+    Loading,
+    Failed(DbError),
+    Loaded(Schema),
+}
+
+/// The Tables panel's own state. A struct rather than a bare field because
+/// the unfold set lands here next (architecture.md §11).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TablesPanel {
+    pub cursor: Cursor,
+}
+
+/// A message drawn over the panels, dismissed with `Esc`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overlay {
+    pub title: String,
+    pub message: String,
+    pub severity: Severity,
+}
+
+impl ConnectionState {
+    /// Whether `conn` is the connection this state is about.
+    ///
+    /// The guard that drops results belonging to a connection the user has
+    /// already left (architecture.md §3).
+    #[must_use]
+    pub fn is_current(&self, conn: ConnId) -> bool {
+        match self {
+            Self::Connecting(id) => *id == conn,
+            Self::Connected(connection) => connection.id == conn,
+            Self::Disconnected | Self::Failed(_) => false,
+        }
+    }
 }
 
 /// Panels are places: fixed positions, navigated with predictable motions
@@ -97,10 +155,25 @@ impl State {
     /// Posture of the current connection, or the safe default when there is
     /// none.
     #[must_use]
-    pub fn posture(&self) -> Posture {
-        self.connection
-            .as_ref()
-            .map_or(Posture::ReadOnly, |c| c.posture)
+    pub const fn posture(&self) -> Posture {
+        match &self.connection {
+            ConnectionState::Connected(connection) => connection.posture,
+            ConnectionState::Disconnected
+            | ConnectionState::Connecting(_)
+            | ConnectionState::Failed(_) => Posture::ReadOnly,
+        }
+    }
+
+    /// The cluster's shape, once it has arrived.
+    #[must_use]
+    pub const fn schema(&self) -> Option<&Schema> {
+        match &self.connection {
+            ConnectionState::Connected(Connection {
+                schema: SchemaState::Loaded(schema),
+                ..
+            }) => Some(schema),
+            _ => None,
+        }
     }
 
     pub const fn mark_dirty(&mut self) {
@@ -111,6 +184,8 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{ConnId, DbError, Schema};
+    use crate::posture::Posture;
 
     #[test]
     fn all_panels_are_listed_in_reading_order_and_none_is_missing() {
@@ -196,5 +271,68 @@ mod tests {
         cursor.clamp_to(10);
 
         assert_eq!(cursor.index(), 1);
+    }
+
+    fn connected(schema: SchemaState) -> State {
+        State {
+            connection: ConnectionState::Connected(Connection {
+                id: ConnId::next(),
+                posture: Posture::Writable,
+                schema,
+            }),
+            ..State::default()
+        }
+    }
+
+    #[test]
+    fn a_state_that_is_not_connected_is_read_only() {
+        for connection in [
+            ConnectionState::Disconnected,
+            ConnectionState::Connecting(ConnId::next()),
+            ConnectionState::Failed(DbError::Timeout),
+        ] {
+            let state = State {
+                connection,
+                ..State::default()
+            };
+
+            assert_eq!(
+                state.posture(),
+                Posture::ReadOnly,
+                "only a live connection may carry a writable posture"
+            );
+        }
+    }
+
+    #[test]
+    fn a_connected_state_carries_its_own_posture() {
+        assert_eq!(connected(SchemaState::Loading).posture(), Posture::Writable);
+    }
+
+    #[test]
+    fn a_schema_is_only_visible_once_it_has_loaded() {
+        assert!(connected(SchemaState::Loading).schema().is_none());
+        assert!(
+            connected(SchemaState::Failed(DbError::Timeout))
+                .schema()
+                .is_none()
+        );
+        assert!(
+            connected(SchemaState::Loaded(Schema::default()))
+                .schema()
+                .is_some()
+        );
+        assert!(State::default().schema().is_none());
+    }
+
+    #[test]
+    fn only_the_outstanding_connection_is_current() {
+        let conn = ConnId::next();
+        let other = ConnId::next();
+
+        assert!(ConnectionState::Connecting(conn).is_current(conn));
+        assert!(!ConnectionState::Connecting(conn).is_current(other));
+        assert!(!ConnectionState::Disconnected.is_current(conn));
+        assert!(!ConnectionState::Failed(DbError::Timeout).is_current(conn));
     }
 }
