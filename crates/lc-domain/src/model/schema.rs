@@ -39,7 +39,12 @@ pub enum Replication {
 pub struct Table {
     pub name: String,
     pub primary_key: PrimaryKey,
-    /// Everything not part of the primary key.
+    /// Columns stored once per partition rather than once per row.
+    ///
+    /// Separate from `regular_columns` because static-ness is a fact about
+    /// physical layout, which is the thing this model exists to keep visible.
+    pub static_columns: Vec<Column>,
+    /// Everything that is neither part of the primary key nor static.
     pub regular_columns: Vec<Column>,
 }
 
@@ -77,12 +82,14 @@ pub struct Column {
 }
 
 impl Table {
-    /// Every column, primary key first, in the order the table declares them.
+    /// Every column: partition key, then clustering key, then static, then
+    /// regular.
     pub fn columns(&self) -> impl Iterator<Item = &Column> {
         self.primary_key
             .partition
             .iter()
             .chain(self.primary_key.clustering.iter().map(|c| &c.column))
+            .chain(self.static_columns.iter())
             .chain(self.regular_columns.iter())
     }
 }
@@ -156,6 +163,39 @@ mod tests {
                 .map(|name| ((*name).to_owned(), keyspace(name)))
                 .collect(),
         }
+    }
+
+    fn column(name: &str, cql_type: &str) -> Column {
+        Column {
+            name: name.to_owned(),
+            cql_type: cql_type.to_owned(),
+        }
+    }
+
+    fn readings() -> Table {
+        Table {
+            name: "readings".to_owned(),
+            primary_key: PrimaryKey {
+                partition: vec![column("device_id", "text")],
+                clustering: vec![ClusteringColumn {
+                    column: column("reading_at", "timestamp"),
+                    order: ClusteringOrder::Descending,
+                }],
+            },
+            static_columns: vec![column("firmware", "text")],
+            regular_columns: vec![column("temperature_c", "float")],
+        }
+    }
+
+    #[test]
+    fn every_column_is_listed_with_the_key_first_and_static_before_regular() {
+        let table = readings();
+        let names: Vec<&str> = table.columns().map(|c| c.name.as_str()).collect();
+
+        assert_eq!(
+            names,
+            ["device_id", "reading_at", "firmware", "temperature_c"]
+        );
     }
 
     #[test]
