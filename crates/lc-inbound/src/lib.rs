@@ -6,6 +6,8 @@
 
 pub mod input;
 pub mod layout;
+pub mod render;
 pub mod theme;
 
+pub use render::render;
 pub use theme::Theme;
