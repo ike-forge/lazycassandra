@@ -175,7 +175,7 @@ pub use schema::{
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `cargo nextest run --package lc-domain model::schema && mise run lint`
+Run: `cargo nextest run --package lc-domain model::schema && mise run ci`
 Expected: 5 tests pass, clippy clean.
 
 - [ ] **Step 5: Commit**
@@ -319,7 +319,7 @@ impl Cursor {
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `cargo nextest run --package lc-domain state:: && mise run lint`
+Run: `cargo nextest run --package lc-domain state:: && mise run ci`
 Expected: 6 new tests pass alongside the 2 existing ones, clippy clean.
 
 - [ ] **Step 5: Commit**
@@ -608,7 +608,7 @@ pub use state::{Connection, ConnectionState, Cursor, Overlay, SchemaState, State
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `mise run test && mise run lint`
+Run: `mise run ci`
 Expected: all domain tests pass, clippy clean.
 
 - [ ] **Step 5: Commit**
@@ -897,7 +897,7 @@ pub use update::{Effect, Msg, init, update};
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `mise run test && mise run lint`
+Run: `mise run ci`
 Expected: all domain tests pass, clippy clean.
 
 - [ ] **Step 5: Commit**
@@ -1133,7 +1133,7 @@ Remove the now-unused `use lc_domain::model::{Key, KeyPress};` from `main.rs`.
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `mise run test && mise run lint`
+Run: `mise run ci`
 Expected: all tests pass, clippy clean. `Motion` is `Copy` and passed by value; a reference to a two-variant fieldless enum trips clippy's `trivially_copy_pass_by_ref`.
 
 - [ ] **Step 5: Commit**
@@ -1431,7 +1431,7 @@ pub use view::{KeyspaceRow, PanelBody, PanelView, ViewModel, view_model};
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `mise run test && mise run lint`
+Run: `mise run ci`
 Expected: all domain tests pass; `lc-inbound` still compiles because it only reads `panel.title` and `panel.panel`.
 
 - [ ] **Step 5: Commit**
@@ -1679,7 +1679,7 @@ pub mod theme;
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `mise run test && mise run lint`
+Run: `mise run ci`
 Expected: all tests pass once one existing assertion is updated. `the_four_panels_are_drawn_where_the_draft_puts_them` draws a `State::default()`, whose Tables body is now the `Not connected` notice, so change its row-1 assertion to:
 
 ```rust
@@ -1913,7 +1913,7 @@ pub mod theme;
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `mise run test && mise run lint`
+Run: `mise run ci`
 Expected: all tests pass, clippy clean.
 
 - [ ] **Step 5: Commit**
@@ -2244,7 +2244,7 @@ pub mod fake;
 
 - [ ] **Step 5: Run the fast tier, the gate, and the integration tier**
 
-Run: `mise run test && mise run lint && mise run deny`
+Run: `mise run ci`
 Expected: PASS. The integration test is compiled out without the feature.
 
 Run: `mise run db:up && mise run test:it`
@@ -2456,7 +2456,7 @@ and the two implicated methods:
 
 - [ ] **Step 4: Run the tests and the gate**
 
-Run: `mise run test && mise run lint`
+Run: `mise run ci`
 Expected: the three scenario tests pass alongside everything else.
 
 - [ ] **Step 5: Commit**
