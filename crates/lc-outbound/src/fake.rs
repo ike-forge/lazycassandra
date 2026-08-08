@@ -14,23 +14,53 @@ use lc_domain::posture::Posture;
 pub struct FakeCluster {
     schema: Schema,
     posture: Posture,
+    /// What `connect` returns instead of succeeding.
+    connect_error: Option<DbError>,
+    /// What `describe` returns instead of succeeding.
+    describe_error: Option<DbError>,
 }
 
 impl FakeCluster {
     #[must_use]
     pub const fn new(schema: Schema, posture: Posture) -> Self {
-        Self { schema, posture }
+        Self {
+            schema,
+            posture,
+            connect_error: None,
+            describe_error: None,
+        }
+    }
+
+    /// A cluster that cannot be reached at all.
+    #[must_use]
+    pub fn failing(error: DbError) -> Self {
+        Self {
+            connect_error: Some(error),
+            ..Self::default()
+        }
+    }
+
+    /// A cluster that connects and then refuses to describe itself — the shape
+    /// of a connection without the permissions to read `system_schema`.
+    #[must_use]
+    pub fn failing_to_describe(error: DbError) -> Self {
+        Self {
+            describe_error: Some(error),
+            ..Self::default()
+        }
     }
 }
 
 #[async_trait]
 impl Cluster for FakeCluster {
     async fn connect(&self, _conn: ConnId) -> Result<Posture, DbError> {
-        Ok(self.posture)
+        self.connect_error.clone().map_or(Ok(self.posture), Err)
     }
 
     async fn describe(&self, _conn: ConnId) -> Result<Schema, DbError> {
-        Ok(self.schema.clone())
+        self.describe_error
+            .clone()
+            .map_or_else(|| Ok(self.schema.clone()), Err)
     }
 
     async fn execute(&self, _conn: ConnId, _stmt: &Statement) -> Result<Page, DbError> {
