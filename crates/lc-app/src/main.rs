@@ -8,8 +8,7 @@ mod input;
 
 use anyhow::Result;
 use lc_domain::model::{Key, KeyPress};
-use lc_domain::view::view_model;
-use lc_domain::{Msg, State, update};
+use lc_domain::{Msg, State, update, view_model};
 use lc_inbound::Theme;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;

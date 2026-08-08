@@ -82,7 +82,8 @@ mod tests {
                 Panel::Queries => 3,
             };
             assert_eq!(
-                Panel::ALL[expected_position], panel,
+                Panel::ALL[expected_position],
+                panel,
                 "{panel:?} is not at its reading-order position"
             );
         }

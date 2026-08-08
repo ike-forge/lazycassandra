@@ -1,7 +1,7 @@
 //! Drawing a frame.
 
+use lc_domain::ViewModel;
 use lc_domain::style::Token;
-use lc_domain::view::ViewModel;
 use ratatui::Frame;
 use ratatui::widgets::Block;
 
@@ -30,9 +30,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::State;
     use lc_domain::state::Panel;
-    use lc_domain::view::view_model;
+    use lc_domain::{State, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
