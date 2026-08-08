@@ -99,9 +99,16 @@ our `Schema`:
 `LocalStrategy` collapsing into `Other` is the one lossy step, and it applies
 only to `system`.
 
+`Keyspace::tables` is mapped as empty. Filling it means turning scylla's
+`partition_key`/`clustering_key` name lists and its `ColumnKind` map into our
+`PrimaryKey`, which is the unfold slice's job and is not needed to draw a root.
+
 `execute` and `fetch_page` return a typed `DbError` stating they are not
 implemented. Decoding rows means covering the CQL type space, which belongs
 with the Contents panel.
+
+`scylla::cluster::metadata::Strategy` is `#[non_exhaustive]`, so the match
+needs a fallback arm; it maps to `Replication::Other`.
 
 ## 4. Domain
 
@@ -131,10 +138,15 @@ error field beside `schema: Option<Schema>` would make illegal combinations
 representable:
 
 ```rust
-pub enum ConnectionState { Disconnected, Connecting, Failed(DbError), Connected(Connection) }
+pub enum ConnectionState { Disconnected, Connecting(ConnId), Failed(DbError), Connected(Connection) }
 pub struct Connection { pub id: ConnId, pub posture: Posture, pub schema: SchemaState }
-pub enum SchemaState { Loading, Failed(DbError), Loaded(Box<Schema>) }
+pub enum SchemaState { Loading, Failed(DbError), Loaded(Schema) }
 ```
+
+`Connecting` carries the `ConnId` so a failed connect can be matched against
+the attempt that is outstanding; without it, `ConnectFailed` would have nothing
+to guard on. `ConnectionState::is_current(conn)` is that guard, and every
+message uses it.
 
 `State::posture()` yields a real posture only from `Connected`. Every other
 variant is `ReadOnly`, which keeps the safe default structural rather than
@@ -146,9 +158,9 @@ remembered.
 pub struct Cursor { index: usize }   // private
 impl Cursor {
     pub const fn index(self) -> usize;
-    pub fn down(&mut self, len: usize);
-    pub fn up(&mut self);
-    pub fn clamp(&mut self, len: usize);
+    pub const fn down(&mut self, len: usize);
+    pub const fn up(&mut self);
+    pub const fn clamp_to(&mut self, len: usize);
 }
 ```
 
