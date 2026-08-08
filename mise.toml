@@ -20,6 +20,10 @@ RUST_BACKTRACE = "1"
 description = "Build the workspace"
 run = "cargo build --workspace"
 
+[tasks.run]
+description = "Run lazycassandra"
+run = "cargo run --package lc-app"
+
 [tasks.fmt]
 description = "Format the workspace"
 run = "cargo fmt --all"
