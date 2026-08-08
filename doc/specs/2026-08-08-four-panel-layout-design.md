@@ -1,7 +1,7 @@
 # Four-panel layout — design
 
 **Date:** 2026-08-08
-**Status:** approved, not implemented
+**Status:** implemented (see §8 for what was knowingly left)
 **Source:** `doc/ui-draft.png`
 
 Establishes the TUI shell promised by vision.md §7 Phase 0 — panel layout with
@@ -251,3 +251,51 @@ panel · themes beyond `TerminalDefault`.
   a hypothesis.
 - The `split` helper is the single place proportions and floors are decided.
   Adding a fifth panel means another split with its own floors, not a rewrite.
+
+## 8. Known gaps
+
+Raised during implementation review and deliberately not fixed. Recorded here
+because a gap nobody wrote down is indistinguishable from one nobody found.
+
+**One deviation from §6.** Resize *is* handled, contrary to the out-of-scope
+line above. `Event::Resize` was being dropped, so the layout never repainted
+when the terminal changed size — which made "adaptable sizing" untrue in
+practice. `Msg::Resized` carries no geometry; the renderer still reads
+`frame.area()`.
+
+**Deviation from §5.** The render snapshots run at 40×12 and 40×5, not the
+80×24 and 120×40 this document specified. Consequence: no render-tier test at a
+realistic terminal size, and none where the sidebar takes its true 25% — at 40
+columns it sits on its floor. The roomy case is covered at the layout tier
+through the same code path.
+
+**Untested by construction.** `split`'s upper clamp bound never binds at any of
+the three call sites: the collapse branch fires first in every case. The
+generality is deliberate (§7), but the ceiling reads as more exercised than it
+is. Nothing asserts that unfocused panels get *no* border style, only that they
+are not bold. Only zero-*height* collapse is exercised, not zero-*width*, though
+both take the same `area.is_empty()` branch.
+
+**Hand-maintained lists.**
+
+- `Panel::ALL` completeness is enforced by an exhaustive `match` in
+  `state.rs`. Adding a variant stops the compile — but the stop can be
+  silenced by adding a match arm without extending `ALL`, and the panel is
+  then invisible to `view_model`. The accompanying `Panel::ALL.len() == 4`
+  assertion is inert (the length is a compile-time constant) and its message
+  reads backwards.
+- `no_token_sets_a_background` in `theme.rs` iterates a hand-written list of
+  all eleven `Token` values. Complete today; a future variant would be
+  silently unchecked. `Token` is a product of three nested enums, so an
+  exhaustive mechanism is real work for little return — revisit when a second
+  theme exists.
+
+**Ruled won't-fix.** `layout.rs` uses plain `+` for `area.x + side_w` and the
+`area.y` offsets. Overflow needs a `Rect` built by struct literal that already
+violates the invariant `Rect::new` enforces (`x.saturating_add(width) - x`).
+`saturating_add` would trade a debug-build panic for a silently wrong rect,
+which is worse.
+
+**Unverified.** Nobody has run the binary in a real TTY. The render tests
+assert the layout at the buffer level, but no automated check covers terminal
+restoration on `q` or how the panels look at a real terminal size.
