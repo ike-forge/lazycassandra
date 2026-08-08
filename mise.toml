@@ -53,3 +53,28 @@ run = "cargo deny check"
 [tasks.ci]
 description = "Everything CI gates on"
 depends = ["fmt:check", "lint", "test", "deny"]
+
+# The fixture cluster the TUI is developed against. Not part of `ci`: it needs
+# Docker and takes about a minute to come up.
+[tasks."db:up"]
+description = "Start the fixture Cassandra and seed it"
+run = [
+    "docker compose -f docker/compose.yaml up -d --wait cassandra",
+    "docker compose -f docker/compose.yaml run --rm seed",
+]
+
+[tasks."db:seed"]
+description = "Re-run the seed script (idempotent)"
+run = "docker compose -f docker/compose.yaml run --rm seed"
+
+[tasks."db:cqlsh"]
+description = "Open cqlsh against the fixture cluster"
+run = "docker compose -f docker/compose.yaml exec cassandra cqlsh"
+
+[tasks."db:down"]
+description = "Stop the fixture cluster, keeping its data volume"
+run = "docker compose -f docker/compose.yaml down"
+
+[tasks."db:reset"]
+description = "Destroy the fixture cluster and its data volume"
+run = "docker compose -f docker/compose.yaml down --volumes"

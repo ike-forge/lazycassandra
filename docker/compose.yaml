@@ -1,0 +1,52 @@
+name: lazycassandra-fixture
+
+services:
+  cassandra:
+    image: cassandra:5.0.8
+    container_name: lc-cassandra
+    # `materialized_views_enabled` ships as false. The `shop` keyspace has one,
+    # so the flag is flipped before the real entrypoint reads cassandra.yaml.
+    command:
+      - bash
+      - -c
+      - |
+        sed -i 's/^materialized_views_enabled: false/materialized_views_enabled: true/' \
+          /etc/cassandra/cassandra.yaml
+        exec docker-entrypoint.sh cassandra -f
+    environment:
+      CASSANDRA_CLUSTER_NAME: lazycassandra-fixture
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: 1G
+      HEAP_NEWSIZE: 256M
+    ports:
+      # Override when something else already holds 9042:
+      #   LC_CASSANDRA_PORT=9043 mise run db:up
+      - "${LC_CASSANDRA_PORT:-9042}:9042"
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 40
+      start_period: 30s
+
+  seed:
+    image: cassandra:5.0.8
+    container_name: lc-cassandra-seed
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./cql:/fixture/cql:ro
+      - ./seed.sh:/fixture/seed.sh:ro
+    entrypoint: ["bash", "/fixture/seed.sh"]
+    environment:
+      CQLSH_HOST: cassandra
+      CQLSH_PORT: "9042"
+    restart: "no"
+
+volumes:
+  cassandra-data:
