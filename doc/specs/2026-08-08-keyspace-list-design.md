@@ -3,7 +3,7 @@
 Populates the Tables panel with the cluster's keyspaces, and closes
 [architecture.md](../architecture.md) §8 by choosing a driver.
 
-**Status:** approved, not implemented.
+**Status:** implemented.
 **Date:** 2026-08-08
 
 ---

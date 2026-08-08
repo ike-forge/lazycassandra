@@ -5,7 +5,7 @@ decisions already made; open questions are marked as such in §11 rather than
 guessed at.
 
 **Status:** Phase 0 in progress — four crates, a running binary, the
-four-panel TUI shell rendering.
+four-panel TUI shell rendering, the driver decided (§8).
 **Last updated:** 2026-08-08
 
 ---
@@ -20,7 +20,7 @@ four-panel TUI shell rendering.
 | Structure | Hexagonal — domain / inbound / outbound | Keeps the TUI ignorant of Cassandra and vice versa, enforced at crate level |
 | Async runtime | `tokio` | Required by the realistic driver candidates; single multi-threaded runtime |
 | Headless core | Internal boundary only | Drives testability. **No CLI is promised or designed.** See §9 |
-| Driver | Deferred to a Phase 0 spike | See §8 |
+| Driver | `scylla` 1.7 | Its `cluster::metadata` already returns the model §4 declares; the alternatives have no metadata API or are FFI. See §8 |
 
 ## 2. The shape
 
@@ -186,8 +186,8 @@ Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
 `#[async_trait]` on the async ones until native AFIT is `dyn`-safe.
 
 **`Cluster` is defined in our vocabulary, not the driver's.** It returns our
-`Schema` and `Page` types. Driver types stop at the adapter. This is what makes
-§8's deferral cheap — swapping drivers touches one crate.
+`Schema` and `Page` types. Driver types stop at the adapter. This is what made
+§8 cheap to close — swapping drivers touches one crate.
 
 ## 6. Theme plumbing
 
@@ -231,23 +231,27 @@ file is a parse error rather than a leak. Resolution happens through
 `SecretResolver` at connect time, and resolved secrets are never written back to
 disk or into the history store.
 
-## 8. Driver selection — deferred
+## 8. Driver — decided
 
-Per VISION §10, this is a Phase 0 spike, not a guess made now. Candidates:
+`scylla` 1.7, default features. The spike is written up in
+[specs/2026-08-08-keyspace-list-design.md](specs/2026-08-08-keyspace-list-design.md) §2.
 
-| Candidate | Notes |
+| Candidate | Outcome |
 |---|---|
-| `scylla-rust-driver` | Most actively maintained pure-Rust CQL driver; tokio-native; works against Apache Cassandra despite the name; would make an eventual Scylla phase nearly free |
-| `cdrs-tokio` | Pure Rust, Cassandra-first framing; smaller community and slower cadence |
-| `cassandra-cpp` | FFI over the DataStax C++ driver; most battle-tested protocol implementation, but a C build dependency undermines the single-static-binary goal |
+| `scylla-rust-driver` | **Chosen.** `cluster::metadata` returns keyspaces, tables, column kinds and replication strategy as parsed types; `PagingState`/`execute_iter` map onto the `Cluster` port unchanged |
+| `cdrs-tokio` | Rejected: no metadata API at all, so every `system_schema` query and its version drift would be ours |
+| `cassandra-cpp` | Rejected: FFI over the DataStax C++ driver, which `unsafe_code = "forbid"` and the single-binary goal both rule out |
 
-Spike criteria, in priority order: paging API that supports true incremental
-fetch (VISION §5.1 depends on it); prepared statements; TLS and auth; schema
-introspection completeness; token-aware routing; maintenance health; build
-story.
-
-The spike is a throwaway implementation of the `Cluster` port against a real
-cluster. Whichever candidate wins, the port boundary in §5 stands.
+Wiring it in cost ten `deny.toml` skip entries — `darling`, `darling_core`,
+`darling_macro` (0.20 vs. 0.24), `foldhash` 0.1, `getrandom` 0.3, `hashbrown`
+0.14.5 (via `dashmap`), `hashbrown` 0.15.5, `r-efi` 5.3.0, `socket2` 0.5.10 and
+`windows-sys` 0.52.0 — plus one licence, `BSD-3-Clause`, added to the
+allow-list for `snap` 1.1.2, the Snappy codec `scylla-cql` pulls in. Each skip
+entry names whose transitive choice it is, so the tree converging is visible
+rather than silently tolerated. The pre-implementation comparison in the spec
+found `cdrs-tokio` would have cost one skip entry against seven for `scylla`;
+that estimate is what decided the trade, not a promise the finished tree would
+match it exactly.
 
 ## 9. On the headless core
 
