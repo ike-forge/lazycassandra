@@ -31,6 +31,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
 #[cfg(test)]
 mod tests {
     use lc_domain::State;
+    use lc_domain::state::Panel;
     use lc_domain::view::view_model;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -39,8 +40,11 @@ mod tests {
 
     use super::*;
 
-    fn draw(width: u16, height: u16) -> Buffer {
-        let state = State::default();
+    fn draw_focused(width: u16, height: u16, focus: Panel) -> Buffer {
+        let state = State {
+            focus,
+            ..State::default()
+        };
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 
@@ -49,6 +53,10 @@ mod tests {
             .expect("TestBackend always draws");
 
         terminal.backend().buffer().clone()
+    }
+
+    fn draw(width: u16, height: u16) -> Buffer {
+        draw_focused(width, height, Panel::default())
     }
 
     fn row(buffer: &Buffer, y: u16) -> String {
@@ -86,6 +94,24 @@ mod tests {
         // Top-left corner of each panel; Tables is focused by default.
         assert!(bold(0, 0), "Tables is focused");
         assert!(!bold(16, 0), "Contents is not");
+        assert!(!bold(0, 8), "Ddl is not");
+        assert!(!bold(16, 9), "Queries is not");
+    }
+
+    #[test]
+    fn focus_follows_the_state_rather_than_the_draw_order() {
+        // Contents is drawn third, so bolding it cannot be positional luck.
+        let buffer = draw_focused(40, 12, Panel::Contents);
+        let bold = |x, y| {
+            buffer
+                .cell((x, y))
+                .expect("corner is in bounds")
+                .modifier
+                .contains(Modifier::BOLD)
+        };
+
+        assert!(bold(16, 0), "Contents is focused");
+        assert!(!bold(0, 0), "Tables is not");
         assert!(!bold(0, 8), "Ddl is not");
         assert!(!bold(16, 9), "Queries is not");
     }
