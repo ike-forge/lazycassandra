@@ -6,10 +6,13 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use lc_domain::model::{
-    Column, ConnId, DbError, Key, KeyPress, Keyspace, PrimaryKey, Replication, Schema, Table,
+    Column, ConnId, CqlValue, DbError, Key, KeyPress, Keyspace, Page, PrimaryKey, Replication, Row,
+    Schema, Statement, Table,
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
+use lc_domain::style::Token;
+use lc_domain::update::ROW_LIMIT;
 use lc_domain::view::{Marker, PanelBody};
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
@@ -72,6 +75,13 @@ async fn run(cluster: &dyn Cluster, state: &mut State, effects: Vec<Effect>) {
                     schema: Box::new(schema),
                 },
                 Err(error) => Msg::SchemaFailed { conn, error },
+            },
+            Effect::Execute { conn, query, stmt } => match cluster.execute(conn, &stmt).await {
+                Ok(page) => Msg::PageReady {
+                    query,
+                    page: Box::new(page),
+                },
+                Err(error) => Msg::Failed { query, error },
             },
             _ => continue,
         };
@@ -200,5 +210,193 @@ async fn pressing_h_from_a_table_lands_on_its_parent_keyspace() {
         rows[0].marker,
         Marker::Unfolded,
         "stepping out must not fold the keyspace"
+    );
+}
+
+/// The keyspace's one table, its partition key `id` (see [`table`]) and a
+/// regular column.
+fn customers() -> Page {
+    Page {
+        columns: vec!["id".to_owned(), "email".to_owned()],
+        rows: vec![
+            Row {
+                values: vec![
+                    CqlValue::Uuid("8f14e45f".to_owned()),
+                    CqlValue::Text("ada@example.com".to_owned()),
+                ],
+            },
+            Row {
+                values: vec![CqlValue::Uuid("c9f0f895".to_owned()), CqlValue::Null],
+            },
+        ],
+        next: None,
+    }
+}
+
+fn press(state: &mut State, key: Key) -> Vec<Effect> {
+    update(state, Msg::Input(KeyPress::new(key)))
+}
+
+/// Connect, describe, unfold `shop`, step onto `orders`.
+async fn on_a_table(cluster: &FakeCluster) -> State {
+    let conn = ConnId::next();
+    let (mut state, effects) = init(conn);
+    run(cluster, &mut state, effects).await;
+
+    let effects = press(&mut state, Key::Char('l'));
+    run(cluster, &mut state, effects).await;
+    let effects = press(&mut state, Key::Char('l'));
+    run(cluster, &mut state, effects).await;
+
+    state
+}
+
+#[tokio::test]
+async fn pressing_enter_on_a_table_fills_the_contents_panel() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .returning(customers());
+    let mut state = on_a_table(&cluster).await;
+
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+
+    assert_eq!(
+        cluster.executed(),
+        vec![Statement::select_all("shop", "orders", ROW_LIMIT)],
+        "the panel reads exactly the statement it shows"
+    );
+
+    let view = view_model(&state);
+    assert_eq!(
+        view.panels[2].title,
+        "Table contents — shop.orders (2 rows)"
+    );
+
+    let PanelBody::Grid {
+        columns,
+        rows,
+        selected,
+    } = &view.panels[2].body
+    else {
+        panic!("a table that was read draws a grid");
+    };
+    assert_eq!(
+        columns
+            .iter()
+            .map(|column| (column.name.as_str(), column.token))
+            .collect::<Vec<_>>(),
+        [
+            ("id", Some(Token::PartitionKey)),
+            ("email", Some(Token::RegularColumn)),
+        ]
+    );
+    assert_eq!(
+        rows.iter()
+            .map(|row| row
+                .iter()
+                .map(|cell| cell.text.as_str())
+                .collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+        [["8f14e45f", "ada@example.com"], ["c9f0f895", "null"]]
+    );
+    assert_eq!(rows[1][1].token, Some(Token::Muted), "the null is muted");
+    assert_eq!(*selected, 0);
+}
+
+#[tokio::test]
+async fn a_table_that_cannot_be_read_says_so_in_the_panel_alone() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .refusing_to_execute(DbError::Invalid("unauthorized".to_owned()));
+    let mut state = on_a_table(&cluster).await;
+
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+
+    let view = view_model(&state);
+    assert!(
+        matches!(&view.panels[2].body, PanelBody::Notice { text, .. } if text.contains("unauthorized")),
+    );
+    assert!(
+        view.overlay.is_none(),
+        "one panel failing must not interrupt the whole application"
+    );
+}
+
+#[tokio::test]
+async fn tab_moves_focus_and_j_then_walks_the_grid_rather_than_the_tree() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .returning(customers());
+    let mut state = on_a_table(&cluster).await;
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+
+    let PanelBody::Tree { selected, .. } = &view_model(&state).panels[0].body else {
+        panic!("the tree is still showing");
+    };
+    let tree_row = *selected;
+
+    // Tables → Ddl → Contents.
+    press(&mut state, Key::Tab);
+    press(&mut state, Key::Tab);
+    press(&mut state, Key::Char('j'));
+
+    let view = view_model(&state);
+    let PanelBody::Grid { selected, .. } = &view.panels[2].body else {
+        panic!("a table that was read draws a grid");
+    };
+    assert_eq!(*selected, 1, "j moved the grid");
+
+    let PanelBody::Tree { selected, .. } = &view.panels[0].body else {
+        panic!("the tree is still showing");
+    };
+    assert_eq!(*selected, tree_row, "and left the tree where it was");
+}
+
+#[tokio::test]
+async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders", "users"])]),
+        Posture::ReadOnly,
+    )
+    .returning(customers());
+    let mut state = on_a_table(&cluster).await;
+
+    // Deliberately not run yet: the first read has to still be outstanding
+    // when the second is issued.
+    let first = press(&mut state, Key::Enter);
+    press(&mut state, Key::Char('j'));
+    let second = press(&mut state, Key::Enter);
+
+    assert!(
+        second
+            .iter()
+            .any(|effect| matches!(effect, Effect::Cancel(_))),
+        "the superseded read is cancelled"
+    );
+
+    // The cancelled read answers anyway, as a slow coordinator would.
+    run(&cluster, &mut state, first).await;
+    run(&cluster, &mut state, second).await;
+
+    assert_eq!(
+        cluster.executed(),
+        vec![
+            Statement::select_all("shop", "orders", ROW_LIMIT),
+            Statement::select_all("shop", "users", ROW_LIMIT),
+        ]
+    );
+    assert_eq!(
+        view_model(&state).panels[2].title,
+        "Table contents — shop.users (2 rows)",
+        "a late page for a read the user left must not resurrect it"
     );
 }

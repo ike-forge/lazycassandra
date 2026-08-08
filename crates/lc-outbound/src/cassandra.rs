@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Keyspace, Page, PagingState,
-    PrimaryKey, Replication, Schema, Statement, Table,
+    PrimaryKey, Replication, Row, Schema, Statement, Table,
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
@@ -17,7 +17,10 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::metadata::{Keyspace as DriverKeyspace, Strategy};
+use scylla::value::Row as DriverRow;
 use tokio::sync::RwLock;
+
+use crate::value::to_value;
 
 /// One cluster, reached over CQL.
 ///
@@ -96,10 +99,41 @@ impl Cluster for CassandraCluster {
         schema(&session.get_cluster_state(), &columns)
     }
 
-    async fn execute(&self, _conn: ConnId, _stmt: &Statement) -> Result<Page, DbError> {
-        Err(DbError::Other(
-            "executing statements is not implemented yet".to_owned(),
-        ))
+    /// Unpaged because the statement carries its own `LIMIT`
+    /// (doc/specs/2026-08-09-table-contents-design.md §3). `Page::next` is
+    /// `None` for the same reason: there is no cursor to hand back.
+    async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError> {
+        let session = self.session(conn).await?;
+
+        let result = session
+            .query_unpaged(stmt.cql.as_str(), &[])
+            .await
+            .map_err(|error| DbError::Invalid(error.to_string()))?
+            .into_rows_result()
+            .map_err(|error| DbError::Invalid(error.to_string()))?;
+
+        let columns = result
+            .column_specs()
+            .iter()
+            .map(|spec| spec.name().to_owned())
+            .collect();
+
+        let rows = result
+            .rows::<DriverRow>()
+            .map_err(|error| DbError::Invalid(error.to_string()))?
+            .map(|row| {
+                row.map(|row| Row {
+                    values: row.columns.iter().map(|v| to_value(v.as_ref())).collect(),
+                })
+                .map_err(|error| DbError::Invalid(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, DbError>>()?;
+
+        Ok(Page {
+            columns,
+            rows,
+            next: None,
+        })
     }
 
     async fn fetch_page(&self, _conn: ConnId, _cursor: &PagingState) -> Result<Page, DbError> {

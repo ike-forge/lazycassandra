@@ -4,9 +4,10 @@ Companion to [VISION.md](VISION.md). This document covers structure and the
 decisions already made; open questions are marked as such in §11 rather than
 guessed at.
 
-**Status:** Phase 0 in progress — four crates, a running binary, the
-four-panel TUI shell rendering, the driver decided (§8).
-**Last updated:** 2026-08-08
+**Status:** Phase 1 begun — four crates, a running binary, the four-panel TUI
+shell rendering, the driver decided (§8), and the first end-to-end query path:
+a keypress becomes an `Effect::Execute` and a driver page becomes a grid.
+**Last updated:** 2026-08-09
 
 ---
 
@@ -58,7 +59,7 @@ A cargo workspace, so the dependency rule is checked by the compiler:
 ```
 crates/
   lc-domain/      # pure core. depends on: std, serde, thiserror, async-trait
-  lc-inbound/     # TUI adapter. depends on: lc-domain, ratatui, crossterm
+  lc-inbound/     # TUI adapter. depends on: lc-domain, ratatui, crossterm, unicode-width
   lc-outbound/    # driver + config + storage adapters. depends on: lc-domain, tokio, <driver>
   lc-app/         # binary: composition root, effect runtime, main loop
 ```
@@ -110,8 +111,8 @@ enum Msg {
 enum Effect {
     Connect(ConnId),
     LoadSchema(ConnId),
-    Execute { query: QueryId, stmt: Statement },
-    FetchNextPage { query: QueryId, cursor: PagingState },
+    Execute { conn: ConnId, query: QueryId, stmt: Statement },
+    FetchNextPage { conn: ConnId, query: QueryId, cursor: PagingState },
     Cancel(QueryId),
     RecordHistory(Statement),
     Quit,
@@ -148,6 +149,8 @@ lc-domain/src/
   model/        # Schema, Keyspace, Table, PrimaryKey, CqlValue, Statement
   state.rs      # State, Panel, selection, in-flight registry
   tree.rs       # the Tables panel's tree: unfold set, flattening, transitions
+  contents.rs   # the Contents panel: the outstanding read and its result
+  cell.rs       # one CqlValue as the text a grid draws
   update.rs     # update() and its per-panel handlers
   view.rs       # ViewModel projection (see §3)
   ports.rs      # trait definitions (see §5)
@@ -298,8 +301,10 @@ in VISION §8.
   Needs a bounded cache with an explicit eviction story.
 - **Does `State` stay one struct?** TEA's single-state model gets unwieldy at
   four panels. Nested per-panel state with message routing is the usual escape
-  hatch; `TablesPanel` has now taken it, moving to its own module with the
-  unfold set. Whether the other three panels follow is still open.
+  hatch; `TablesPanel` took it first and `ContentsPanel` followed, each a
+  module of its own. Two of four is enough of a pattern that the question is
+  now less "whether" than "what routes messages to them" — `update` still
+  dispatches by hand.
 - **Where schema caching lives.** Domain (testable, but the domain starts
   holding a cache invalidation problem) or adapter (simpler domain, but cache
   behaviour becomes untestable at the fast tier).

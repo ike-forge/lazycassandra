@@ -4,10 +4,18 @@
 //! what should happen next; it cannot open a socket because it has nothing to
 //! open one with (architecture.md §3).
 
+use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::state::{ConnectionState, Overlay, Panel, SchemaState, State};
+use crate::state::{ConnectionState, Cursor, Overlay, Panel, SchemaState, State};
 use crate::style::Severity;
+use crate::tree::Node;
+
+/// How many rows one look at a table brings back.
+///
+/// A wall rather than a window until paging lands
+/// (doc/specs/2026-08-09-table-contents-design.md §3).
+pub const ROW_LIMIT: usize = 200;
 
 /// Everything that can happen. Async results re-enter here through the same
 /// channel as a keystroke.
@@ -52,10 +60,12 @@ pub enum Effect {
     Connect(ConnId),
     LoadSchema(ConnId),
     Execute {
+        conn: ConnId,
         query: QueryId,
         stmt: Box<Statement>,
     },
     FetchNextPage {
+        conn: ConnId,
         query: QueryId,
         cursor: PagingState,
     },
@@ -154,10 +164,23 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
             Vec::new()
         }
 
-        Msg::PageReady { query, page: _ } | Msg::Failed { query, error: _ } => {
-            // A result whose id is no longer in flight belongs to a cancelled
-            // query, and applying it would resurrect a view the user left.
+        // A result whose id is no longer in flight belongs to a cancelled
+        // query, and applying it would resurrect a view the user left. The
+        // panel applies the second gate: whether the result is *its* result.
+        Msg::PageReady { query, page } => {
             if state.in_flight.remove(&query).is_some() {
+                state.contents.page_ready(query, *page);
+                state.mark_dirty();
+            }
+            Vec::new()
+        }
+
+        // No overlay, unlike `SchemaFailed`: a schema failure disables the
+        // application, a failed browse disables one panel, and an overlay per
+        // mistyped table is the warning noise vision.md §8 flags.
+        Msg::Failed { query, error } => {
+            if state.in_flight.remove(&query).is_some() {
+                state.contents.failed(query, error);
                 state.mark_dirty();
             }
             Vec::new()
@@ -195,9 +218,11 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     match press.key {
         Key::Char('q') => return quit(state),
         Key::Escape => state.overlay = None,
+        Key::Tab => state.focus = state.focus.next(),
+        Key::BackTab => state.focus = state.focus.previous(),
         Key::Char('j') | Key::Down => move_selection(state, Motion::Down),
         Key::Char('k') | Key::Up => move_selection(state, Motion::Up),
-        Key::Enter | Key::Char(' ') => transition(state, Transition::Toggle),
+        Key::Enter | Key::Char(' ') => return activate(state),
         Key::Char('l') | Key::Right => transition(state, Transition::Open),
         Key::Char('h') | Key::Left => transition(state, Transition::Close),
         _ => {}
@@ -208,21 +233,87 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
 
 #[derive(Clone, Copy)]
 enum Transition {
-    Toggle,
     Open,
     Close,
 }
 
 fn move_selection(state: &mut State, motion: Motion) {
-    if state.focus != Panel::Tables {
+    let rows = focused_row_count(state);
+
+    let Some(cursor) = focused_cursor(state) else {
         return;
+    };
+
+    match motion {
+        Motion::Down => cursor.down(rows),
+        Motion::Up => cursor.up(),
+    }
+}
+
+/// How many rows the focused panel has to move over. Ddl and Queries have
+/// none, so `j` and `k` are inert there rather than moving another panel's
+/// selection from a distance.
+fn focused_row_count(state: &State) -> usize {
+    match state.focus {
+        Panel::Tables => tree_rows(state),
+        Panel::Contents => state.contents.row_count(),
+        Panel::Ddl | Panel::Queries => 0,
+    }
+}
+
+fn focused_cursor(state: &mut State) -> Option<&mut Cursor> {
+    match state.focus {
+        Panel::Tables => Some(&mut state.tables.cursor),
+        Panel::Contents => Some(&mut state.contents.cursor),
+        Panel::Ddl | Panel::Queries => None,
+    }
+}
+
+/// `Enter` and `Space`: unfold a keyspace, or read a table.
+fn activate(state: &mut State) -> Vec<Effect> {
+    if state.focus != Panel::Tables {
+        return Vec::new();
     }
 
-    let rows = tree_rows(state);
-    match motion {
-        Motion::Down => state.tables.cursor.down(rows),
-        Motion::Up => state.tables.cursor.up(),
+    let table = {
+        let Some((tables, schema)) = state.tables_and_schema() else {
+            return Vec::new();
+        };
+
+        match tables.selected(schema) {
+            Some(Node::Keyspace { .. }) => {
+                tables.toggle(schema);
+                return Vec::new();
+            }
+            Some(Node::Table { keyspace, table }) => TableRef::new(&keyspace.name, &table.name),
+            None => return Vec::new(),
+        }
+    };
+
+    read(state, table)
+}
+
+/// Replaces whatever the Contents panel is showing with a read of `table`.
+fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
+    let mut effects = Vec::new();
+
+    // Dropping the id is what actually stops a late page from being applied;
+    // the effect is still inert (architecture.md §3).
+    if let Some(superseded) = state.contents.outstanding() {
+        state.in_flight.remove(&superseded);
+        effects.push(Effect::Cancel(superseded));
     }
+
+    let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
+    match submit(state, stmt) {
+        Ok((query, submitted)) => {
+            state.contents.requested(query, table);
+            effects.extend(submitted);
+        }
+        Err(error) => state.contents.refused(table, error),
+    }
+
+    effects
 }
 
 fn transition(state: &mut State, transition: Transition) {
@@ -235,7 +326,6 @@ fn transition(state: &mut State, transition: Transition) {
     };
 
     match transition {
-        Transition::Toggle => tables.toggle(schema),
         Transition::Open => tables.open(schema),
         Transition::Close => tables.close(schema),
     }
@@ -252,26 +342,38 @@ fn tree_rows(state: &State) -> usize {
 /// The posture gate lives here rather than in the TUI because the TUI does not
 /// construct effects — there is no path around this one (architecture.md §4).
 ///
+/// Returns the [`QueryId`] alongside the effects, so a panel can record which
+/// result is the one it is waiting for.
+///
 /// # Errors
 ///
 /// [`DbError::ReadOnly`] if the statement mutates and the connection's posture
-/// does not permit it. Nothing is recorded and no effect is emitted.
-pub fn submit(state: &mut State, stmt: Statement) -> Result<Vec<Effect>, DbError> {
+/// does not permit it, and [`DbError::Unreachable`] if there is no connection
+/// to run it on. Nothing is recorded and no effect is emitted.
+pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect>), DbError> {
     if stmt.mutates() && !state.posture().permits_mutation() {
         return Err(DbError::ReadOnly);
     }
+
+    let Some(conn) = state.conn_id() else {
+        return Err(DbError::Unreachable("not connected".to_owned()));
+    };
 
     let query = QueryId::next();
     state.in_flight.insert(query, stmt.clone());
     state.mark_dirty();
 
-    Ok(vec![
-        Effect::Execute {
-            query,
-            stmt: Box::new(stmt.clone()),
-        },
-        Effect::RecordHistory(Box::new(stmt)),
-    ])
+    Ok((
+        query,
+        vec![
+            Effect::Execute {
+                conn,
+                query,
+                stmt: Box::new(stmt.clone()),
+            },
+            Effect::RecordHistory(Box::new(stmt)),
+        ],
+    ))
 }
 
 #[cfg(test)]
@@ -338,7 +440,8 @@ mod tests {
     fn reads_are_permitted_on_a_read_only_connection() {
         let mut state = connected(Posture::ReadOnly);
 
-        let effects = submit(&mut state, statement(StatementKind::Read)).expect("read is allowed");
+        let (_, effects) =
+            submit(&mut state, statement(StatementKind::Read)).expect("read is allowed");
 
         assert_eq!(effects.len(), 2, "expected Execute and RecordHistory");
         assert_eq!(state.in_flight.len(), 1);
@@ -347,21 +450,38 @@ mod tests {
     #[test]
     fn writable_connection_executes_and_records_a_mutating_statement() {
         let mut state = connected(Posture::Writable);
+        let conn = current_conn(&state);
 
-        let effects =
+        let (query, effects) =
             submit(&mut state, statement(StatementKind::Write)).expect("write is allowed");
 
-        let query = *state.in_flight.keys().next().expect("query is in flight");
+        assert_eq!(
+            state.in_flight.keys().copied().collect::<Vec<_>>(),
+            vec![query],
+            "the id handed back is the one registered as in flight"
+        );
         assert_eq!(
             effects,
             vec![
                 Effect::Execute {
+                    conn,
                     query,
                     stmt: Box::new(statement(StatementKind::Write)),
                 },
                 Effect::RecordHistory(Box::new(statement(StatementKind::Write))),
             ]
         );
+    }
+
+    #[test]
+    fn a_statement_with_no_connection_to_run_it_on_is_refused() {
+        let mut state = State::default();
+
+        assert_eq!(
+            submit(&mut state, statement(StatementKind::Read)),
+            Err(DbError::Unreachable("not connected".to_owned()))
+        );
+        assert!(state.in_flight.is_empty());
     }
 
     #[test]
@@ -387,8 +507,8 @@ mod tests {
     #[test]
     fn quitting_cancels_everything_still_in_flight() {
         let mut state = connected(Posture::Writable);
-        submit(&mut state, statement(StatementKind::Write)).expect("write is allowed");
-        let query = *state.in_flight.keys().next().expect("query is in flight");
+        let (query, _) =
+            submit(&mut state, statement(StatementKind::Write)).expect("write is allowed");
 
         let effects = update(&mut state, Msg::Quit);
 
@@ -777,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_a_table_does_nothing_yet() {
+    fn enter_on_a_table_leaves_the_tree_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
@@ -787,7 +907,7 @@ mod tests {
 
         assert_eq!(
             state.tables, before,
-            "Enter on a table is reserved for acting on it"
+            "reading a table must not disturb the tree the cursor is in"
         );
     }
 
@@ -815,6 +935,240 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(row_count(&state), 1);
+    }
+
+    #[test]
+    fn tab_walks_the_panels_in_reading_order_and_wraps() {
+        let mut state = browsing(&["a"]);
+
+        for expected in Panel::ALL.into_iter().skip(1).chain([Panel::ALL[0]]) {
+            press(&mut state, Key::Tab);
+            assert_eq!(state.focus, expected);
+        }
+    }
+
+    #[test]
+    fn shift_tab_walks_them_the_other_way() {
+        let mut state = browsing(&["a"]);
+
+        press(&mut state, Key::BackTab);
+
+        assert_eq!(
+            state.focus,
+            Panel::Queries,
+            "stepping back from the first wraps"
+        );
+
+        press(&mut state, Key::BackTab);
+
+        assert_eq!(state.focus, Panel::Contents);
+    }
+
+    fn read_shop_orders() -> State {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('l'));
+        state
+    }
+
+    fn page_of(rows: usize) -> Page {
+        Page {
+            columns: vec!["id".to_owned()],
+            rows: vec![
+                crate::model::Row {
+                    values: vec![crate::model::CqlValue::Null],
+                };
+                rows
+            ],
+            next: None,
+        }
+    }
+
+    #[test]
+    fn enter_on_a_table_reads_it() {
+        let mut state = read_shop_orders();
+        let conn = current_conn(&state);
+
+        let effects = press(&mut state, Key::Enter);
+
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        assert_eq!(
+            effects,
+            vec![
+                Effect::Execute {
+                    conn,
+                    query,
+                    stmt: Box::new(Statement::select_all("shop", "orders", ROW_LIMIT)),
+                },
+                Effect::RecordHistory(Box::new(Statement::select_all("shop", "orders", ROW_LIMIT))),
+            ]
+        );
+        assert!(state.in_flight.contains_key(&query));
+    }
+
+    #[test]
+    fn space_reads_a_table_the_same_way_enter_does() {
+        let mut state = read_shop_orders();
+
+        press(&mut state, Key::Char(' '));
+
+        assert!(state.contents.outstanding().is_some());
+    }
+
+    #[test]
+    fn reading_a_second_table_cancels_the_first() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let first = state.contents.outstanding().expect("the panel is waiting");
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert_eq!(
+            effects.first(),
+            Some(&Effect::Cancel(first)),
+            "the superseded query is cancelled before the new one is issued"
+        );
+        assert!(
+            !state.in_flight.contains_key(&first),
+            "a superseded query must not still be awaited"
+        );
+        let second = state.contents.outstanding().expect("waiting on the second");
+        assert_ne!(second, first);
+    }
+
+    #[test]
+    fn a_page_reaches_the_panel_that_asked_for_it() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(page_of(3)),
+            },
+        );
+
+        assert_eq!(state.contents.row_count(), 3);
+    }
+
+    #[test]
+    fn a_page_for_a_cancelled_query_never_reaches_the_panel() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let first = state.contents.outstanding().expect("the panel is waiting");
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Enter);
+
+        update(
+            &mut state,
+            Msg::PageReady {
+                query: first,
+                page: Box::new(page_of(3)),
+            },
+        );
+
+        assert_eq!(state.contents.row_count(), 0);
+        assert!(
+            state.contents.outstanding().is_some(),
+            "the second request is still outstanding"
+        );
+    }
+
+    #[test]
+    fn a_failed_query_shows_in_the_panel_and_not_over_it() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+
+        update(
+            &mut state,
+            Msg::Failed {
+                query,
+                error: DbError::Timeout,
+            },
+        );
+
+        assert!(matches!(
+            state.contents.state(),
+            crate::contents::ContentsState::Failed { .. }
+        ));
+        assert!(
+            state.overlay.is_none(),
+            "one panel failing must not interrupt the whole application"
+        );
+    }
+
+    #[test]
+    fn j_and_k_move_the_grid_once_contents_has_focus() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(page_of(4)),
+            },
+        );
+        let tree_row = state.tables.cursor.index();
+
+        state.focus = Panel::Contents;
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.contents.cursor.index(), 2);
+        assert_eq!(
+            state.tables.cursor.index(),
+            tree_row,
+            "the tree must not move while another panel has focus"
+        );
+    }
+
+    #[test]
+    fn the_grid_cursor_cannot_run_off_a_page() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(page_of(2)),
+            },
+        );
+
+        state.focus = Panel::Contents;
+        for _ in 0..5 {
+            press(&mut state, Key::Char('j'));
+        }
+
+        assert_eq!(state.contents.cursor.index(), 1);
+    }
+
+    #[test]
+    fn a_panel_with_no_rows_swallows_motion_rather_than_passing_it_on() {
+        let mut state = read_shop_orders();
+        let tree_row = state.tables.cursor.index();
+
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.tables.cursor.index(), tree_row);
+        assert_eq!(state.contents.cursor.index(), 0);
+    }
+
+    #[test]
+    fn enter_outside_the_tree_reads_nothing() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Contents;
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(effects.is_empty());
+        assert!(state.contents.outstanding().is_none());
     }
 
     #[test]

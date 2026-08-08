@@ -6,7 +6,7 @@
 
 use crate::model::value::CqlValue;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Page {
     pub columns: Vec<String>,
     pub rows: Vec<Row>,
@@ -14,7 +14,7 @@ pub struct Page {
     pub next: Option<PagingState>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Row {
     pub values: Vec<CqlValue>,
 }

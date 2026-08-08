@@ -22,9 +22,21 @@ anyhow = "1.0.104"
 async-trait = "0.1.91"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
-scylla = "1.7.0"
+# `bigdecimal-04` and `num-bigint-04` buy `From<CqlDecimal>` and
+# `From<CqlVarint>` for types that already render themselves. The alternative
+# is hand-writing two's-complement bignum-to-decimal conversion in the adapter.
+scylla = { version = "1.7.0", features = ["bigdecimal-04", "num-bigint-04"] }
+bigdecimal = "0.4.9"
+num-bigint = "0.4.6"
+# Already in the tree as a non-optional dependency of scylla; direct here
+# because the adapter formats timestamps and dates (design §5).
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.19"
+# Already in the tree via ratatui. Direct here because the grid measures its
+# own column widths, and `chars().count()` is the wrong answer for the text a
+# Cassandra cluster will certainly hold.
+unicode-width = "0.2.2"
 tokio = { version = "1.53.1", features = [
     "macros",
     "rt-multi-thread",

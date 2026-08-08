@@ -83,6 +83,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "bigdecimal"
+version = "0.4.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d6867f1565b3aad85681f1015055b087fcfd840d6aeee6eee7f2da317603695"
+dependencies = [
+ "autocfg",
+ "libm",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -813,6 +826,7 @@ dependencies = [
  "crossterm",
  "lc-domain",
  "ratatui",
+ "unicode-width",
 ]
 
 [[package]]
@@ -820,7 +834,10 @@ name = "lc-outbound"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bigdecimal",
+ "chrono",
  "lc-domain",
+ "num-bigint",
  "scylla",
  "tokio",
 ]
@@ -964,6 +981,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -978,6 +1005,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "num-integer"
+version = "0.1.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -1484,11 +1520,13 @@ version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7898c851387b20e0996b33d6d98426c432cc0b45ed9af3cb4bd8b4d540ad7ade"
 dependencies = [
+ "bigdecimal",
  "byteorder",
  "bytes",
  "chrono",
  "itertools",
  "lz4_flex",
+ "num-bigint",
  "scylla-cql-core",
  "snap",
  "stable_deref_trait",
@@ -1504,10 +1542,12 @@ version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e609d59933b27489fb329e0e290469f0a027fd75a598f8d219b1479ed6213d0"
 dependencies = [
+ "bigdecimal",
  "byteorder",
  "bytes",
  "chrono",
  "itertools",
+ "num-bigint",
  "scylla-macros",
  "thiserror 2.0.19",
  "uuid",

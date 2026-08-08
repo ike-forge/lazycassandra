@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::contents::ContentsPanel;
 use crate::model::{ConnId, DbError, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::style::Severity;
@@ -16,6 +17,7 @@ pub struct State {
     pub connection: ConnectionState,
     pub focus: Panel,
     pub tables: TablesPanel,
+    pub contents: ContentsPanel,
     /// A message drawn over the panels until it is dismissed.
     pub overlay: Option<Overlay>,
     /// Queries issued and not yet resolved. A result whose id is absent here
@@ -102,6 +104,28 @@ pub enum Panel {
 impl Panel {
     /// Every panel, in reading order.
     pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
+
+    /// The next panel in reading order, wrapping.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Tables => Self::Ddl,
+            Self::Ddl => Self::Contents,
+            Self::Contents => Self::Queries,
+            Self::Queries => Self::Tables,
+        }
+    }
+
+    /// The previous panel in reading order, wrapping.
+    #[must_use]
+    pub const fn previous(self) -> Self {
+        match self {
+            Self::Tables => Self::Queries,
+            Self::Ddl => Self::Tables,
+            Self::Contents => Self::Ddl,
+            Self::Queries => Self::Contents,
+        }
+    }
 }
 
 /// A selection into a list, which cannot be moved past either end.
@@ -161,6 +185,17 @@ impl State {
             ConnectionState::Disconnected
             | ConnectionState::Connecting(_)
             | ConnectionState::Failed(_) => Posture::ReadOnly,
+        }
+    }
+
+    /// The connection a statement would run on.
+    #[must_use]
+    pub const fn conn_id(&self) -> Option<ConnId> {
+        match &self.connection {
+            ConnectionState::Connected(connection) => Some(connection.id),
+            ConnectionState::Disconnected
+            | ConnectionState::Connecting(_)
+            | ConnectionState::Failed(_) => None,
         }
     }
 
@@ -228,6 +263,27 @@ mod tests {
     #[test]
     fn the_default_panel_is_tables() {
         assert_eq!(Panel::default(), Panel::Tables);
+    }
+
+    #[test]
+    fn the_cycle_walks_reading_order_and_wraps() {
+        // Pinned against ALL rather than restated, so the two orderings cannot
+        // drift apart when a panel is added.
+        let walked: Vec<Panel> =
+            std::iter::successors(Some(Panel::ALL[0]), |panel| Some(panel.next()))
+                .take(Panel::ALL.len())
+                .collect();
+
+        assert_eq!(walked, Panel::ALL);
+        assert_eq!(Panel::ALL[Panel::ALL.len() - 1].next(), Panel::ALL[0]);
+    }
+
+    #[test]
+    fn stepping_back_undoes_stepping_forward() {
+        for panel in Panel::ALL {
+            assert_eq!(panel.next().previous(), panel);
+            assert_eq!(panel.previous().next(), panel);
+        }
     }
 
     #[test]

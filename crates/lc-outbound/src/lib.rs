@@ -8,3 +8,4 @@
 
 pub mod cassandra;
 pub mod fake;
+mod value;

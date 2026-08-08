@@ -36,7 +36,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::model::{ConnId, DbError, Keyspace, Replication, Schema};
+    use lc_domain::contents::TableRef;
+    use lc_domain::model::{
+        ConnId, CqlValue, DbError, Keyspace, Page, QueryId, Replication, Schema,
+    };
     use lc_domain::posture::Posture;
     use lc_domain::state::{Connection, ConnectionState, Panel, SchemaState};
     use lc_domain::{State, view_model};
@@ -81,7 +84,7 @@ mod tests {
         let buffer = draw(40, 12);
 
         assert_eq!(row(&buffer, 0), "┌Tables────────┐┌Table contents────────┐");
-        assert_eq!(row(&buffer, 1), "│Not connected ││                      │");
+        assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
         assert_eq!(row(&buffer, 7), "└──────────────┘│                      │");
         assert_eq!(row(&buffer, 8), "┌Table DDL─────┐└──────────────────────┘");
         assert_eq!(row(&buffer, 9), "│              │┌Queries───────────────┐");
@@ -206,7 +209,7 @@ mod tests {
     fn keyspaces_are_listed_inside_the_tables_panel() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo", "system"], 0));
 
-        assert_eq!(row(&buffer, 1), "│  shop        ││                      │");
+        assert_eq!(row(&buffer, 1), "│  shop        ││Press Enter on a table│");
         assert_eq!(row(&buffer, 2), "│  typezoo     ││                      │");
         assert_eq!(row(&buffer, 3), "│  system      ││                      │");
     }
@@ -229,7 +232,7 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
 
-        assert_eq!(row(&buffer, 1), "│▾ shop        ││                      │");
+        assert_eq!(row(&buffer, 1), "│▾ shop        ││Press Enter on a table│");
         assert_eq!(row(&buffer, 2), "│    orders    ││                      │");
         assert_eq!(row(&buffer, 3), "│    users     ││                      │");
         assert_eq!(
@@ -279,7 +282,7 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
 
-        assert_eq!(row(&buffer, 1), "│Connecting…   ││                      │");
+        assert_eq!(row(&buffer, 1), "│Connecting…   ││Press Enter on a table│");
     }
 
     #[test]
@@ -300,6 +303,184 @@ mod tests {
         assert!(
             !cell.modifier.contains(Modifier::DIM),
             "a failure must read as urgent, not as background noise"
+        );
+    }
+
+    /// A state showing `page` for `shop.orders`, whose partition key is `id`.
+    fn showing(page: Page) -> State {
+        let mut state = State {
+            connection: ConnectionState::Connected(Connection {
+                id: ConnId::next(),
+                posture: Posture::ReadOnly,
+                schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
+            }),
+            focus: Panel::Contents,
+            ..State::default()
+        };
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, TableRef::new("shop", "orders"));
+        state.contents.page_ready(query, page);
+        state
+    }
+
+    fn page_of(columns: &[&str], rows: &[&[CqlValue]]) -> Page {
+        Page {
+            columns: columns.iter().map(|name| (*name).to_owned()).collect(),
+            rows: rows
+                .iter()
+                .map(|values| lc_domain::model::Row {
+                    values: values.to_vec(),
+                })
+                .collect(),
+            next: None,
+        }
+    }
+
+    fn text(value: &str) -> CqlValue {
+        CqlValue::Text(value.to_owned())
+    }
+
+    #[test]
+    fn a_page_is_drawn_as_a_header_over_its_rows() {
+        let state = showing(page_of(
+            &["id", "email"],
+            &[
+                &[CqlValue::Int(1), text("ada@example.com")],
+                &[CqlValue::Int(2), text("bob@example.com")],
+            ],
+        ));
+
+        let buffer = draw_state(60, 12, &state);
+
+        assert_eq!(
+            row(&buffer, 0),
+            "┌Tables────────┐┌Table contents — shop.orders (2 rows)─────┐"
+        );
+        assert_eq!(
+            row(&buffer, 1),
+            "│▸ shop        ││id email                                  │"
+        );
+        assert_eq!(
+            row(&buffer, 2),
+            "│              ││1  ada@example.com                        │"
+        );
+        assert_eq!(
+            row(&buffer, 3),
+            "│              ││2  bob@example.com                        │"
+        );
+    }
+
+    #[test]
+    fn a_column_wider_than_the_cap_is_ellipsised_rather_than_clipped() {
+        // A uuid is 36 columns; the cap is 24.
+        let state = showing(page_of(
+            &["id"],
+            &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
+        ));
+
+        let buffer = draw_state(60, 12, &state);
+
+        assert_eq!(
+            row(&buffer, 2),
+            "│              ││8f14e45f-ceea-467a-9c2b…                  │",
+            "a silently clipped value looks like a shorter value"
+        );
+    }
+
+    #[test]
+    fn the_key_columns_are_drawn_in_the_styles_that_carry_the_physical_shape() {
+        let state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
+
+        let buffer = draw_state(60, 12, &state);
+        let header = |x: u16| buffer.cell((x, 1)).expect("inside the panel");
+
+        assert_eq!(header(17).fg, Color::Yellow, "id is the partition key");
+        assert!(header(17).modifier.contains(Modifier::BOLD));
+        assert_eq!(
+            header(20).fg,
+            Color::Reset,
+            "a regular column spends no colour — it is the baseline"
+        );
+    }
+
+    #[test]
+    fn a_null_is_dimmed_so_it_reads_apart_from_the_word() {
+        let state = showing(page_of(
+            &["id", "email"],
+            &[&[CqlValue::Int(1), CqlValue::Null]],
+        ));
+
+        let buffer = draw_state(60, 12, &state);
+        let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
+
+        assert!(
+            cell(20).modifier.contains(Modifier::DIM),
+            "the null is muted"
+        );
+        assert!(
+            !cell(17).modifier.contains(Modifier::DIM),
+            "the value beside it is not"
+        );
+    }
+
+    #[test]
+    fn the_selected_row_of_the_grid_is_the_one_the_cursor_is_on() {
+        let mut state = showing(page_of(
+            &["id"],
+            &[&[CqlValue::Int(1)], &[CqlValue::Int(2)]],
+        ));
+        state.contents.cursor.down(2);
+
+        let buffer = draw_state(60, 12, &state);
+        let reversed = |y: u16| {
+            buffer
+                .cell((17, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        assert!(!reversed(1), "the header is never the selection");
+        assert!(!reversed(2), "nor is the first row");
+        assert!(reversed(3), "the second row is");
+    }
+
+    #[test]
+    fn the_grid_scrolls_to_keep_the_selection_on_screen() {
+        // The Contents panel holds a header and six rows at this size, so a
+        // twenty-row page forces the scroll a plain `Table` would not perform.
+        let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
+        let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
+        let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
+        let mut state = showing(page_of(&["id"], &rows));
+        for _ in 0..19 {
+            state.contents.cursor.down(20);
+        }
+
+        let buffer = draw_state(60, 12, &state);
+        let drawn: Vec<String> = (2..8).map(|y| row(&buffer, y)).collect();
+
+        assert!(
+            drawn.iter().any(|line| line.contains("row19")),
+            "the selected row must stay on screen once the page scrolls"
+        );
+        assert!(
+            !drawn.iter().any(|line| line.contains("row00")),
+            "a row scrolled out of view must not still be drawn"
+        );
+    }
+
+    #[test]
+    fn a_table_with_no_rows_says_so_where_the_grid_would_be() {
+        let state = showing(page_of(&["id"], &[]));
+
+        let buffer = draw_state(60, 12, &state);
+
+        assert_eq!(
+            row(&buffer, 1),
+            "│▸ shop        ││No rows                                   │"
         );
     }
 

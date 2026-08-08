@@ -40,8 +40,27 @@ pub(crate) fn run(tx: &UnboundedSender<Msg>, cluster: &Arc<dyn Cluster>, effect:
             });
         }
 
-        Effect::Execute { .. }
-        | Effect::FetchNextPage { .. }
+        Effect::Execute { conn, query, stmt } => {
+            let (tx, cluster, conn, query, stmt) = (
+                tx.clone(),
+                Arc::clone(cluster),
+                *conn,
+                *query,
+                stmt.as_ref().clone(),
+            );
+            tokio::spawn(async move {
+                let msg = match cluster.execute(conn, &stmt).await {
+                    Ok(page) => Msg::PageReady {
+                        query,
+                        page: Box::new(page),
+                    },
+                    Err(error) => Msg::Failed { query, error },
+                };
+                let _sent = tx.send(msg);
+            });
+        }
+
+        Effect::FetchNextPage { .. }
         | Effect::Cancel(_)
         | Effect::RecordHistory(_)
         | Effect::Quit => {}

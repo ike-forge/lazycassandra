@@ -5,30 +5,65 @@
 //! behind `#[cfg(test)]`. Deterministic by construction — no clock, no socket
 //! (conventions.md §4).
 
+use std::sync::{Mutex, PoisonError};
+
 use async_trait::async_trait;
 use lc_domain::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct FakeCluster {
     schema: Schema,
     posture: Posture,
+    /// What `execute` hands back, whatever the statement.
+    page: Page,
     /// What `connect` returns instead of succeeding.
     connect_error: Option<DbError>,
     /// What `describe` returns instead of succeeding.
     describe_error: Option<DbError>,
+    /// What `execute` returns instead of a page.
+    execute_error: Option<DbError>,
+    /// The statements `execute` was asked for, in order. Behind a lock
+    /// because the port takes `&self`; a scenario asserts on it afterwards.
+    executed: Mutex<Vec<Statement>>,
 }
 
 impl FakeCluster {
     #[must_use]
-    pub const fn new(schema: Schema, posture: Posture) -> Self {
+    pub fn new(schema: Schema, posture: Posture) -> Self {
         Self {
             schema,
             posture,
-            connect_error: None,
-            describe_error: None,
+            ..Self::default()
         }
+    }
+
+    /// The rows `execute` will hand back.
+    #[must_use]
+    pub fn returning(self, page: Page) -> Self {
+        Self { page, ..self }
+    }
+
+    /// A cluster that connects and describes itself but refuses to read.
+    #[must_use]
+    pub fn refusing_to_execute(self, error: DbError) -> Self {
+        Self {
+            execute_error: Some(error),
+            ..self
+        }
+    }
+
+    /// Every statement `execute` has been handed, in order.
+    ///
+    /// A poisoned lock is recovered from rather than propagated: the panic
+    /// that poisoned it is the failure worth reporting, not this.
+    #[must_use]
+    pub fn executed(&self) -> Vec<Statement> {
+        self.executed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// A cluster that cannot be reached at all.
@@ -63,19 +98,18 @@ impl Cluster for FakeCluster {
             .map_or_else(|| Ok(self.schema.clone()), Err)
     }
 
-    async fn execute(&self, _conn: ConnId, _stmt: &Statement) -> Result<Page, DbError> {
-        Ok(Page {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            next: None,
-        })
+    async fn execute(&self, _conn: ConnId, stmt: &Statement) -> Result<Page, DbError> {
+        self.executed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(stmt.clone());
+
+        self.execute_error
+            .clone()
+            .map_or_else(|| Ok(self.page.clone()), Err)
     }
 
     async fn fetch_page(&self, _conn: ConnId, _cursor: &PagingState) -> Result<Page, DbError> {
-        Ok(Page {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            next: None,
-        })
+        Ok(self.page.clone())
     }
 }
