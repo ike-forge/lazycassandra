@@ -8,10 +8,10 @@ mod input;
 
 use anyhow::Result;
 use lc_domain::model::{Key, KeyPress};
+use lc_domain::view::view_model;
 use lc_domain::{Msg, State, update};
+use lc_inbound::Theme;
 use ratatui::DefaultTerminal;
-use ratatui::style::Stylize;
-use ratatui::text::Line;
 use tokio::sync::mpsc;
 
 #[tokio::main]
@@ -30,8 +30,9 @@ async fn run(mut terminal: DefaultTerminal) -> Result<()> {
     input::spawn_reader(tx.clone());
 
     let mut state = State::default();
+    let theme = Theme::default();
 
-    terminal.draw(|frame| render(frame, &state))?;
+    terminal.draw(|frame| lc_inbound::render(frame, &view_model(&state), theme))?;
 
     while let Some(msg) = rx.recv().await {
         // Bindings live in the domain from Phase 0 onward; until the focus
@@ -54,17 +55,10 @@ async fn run(mut terminal: DefaultTerminal) -> Result<()> {
         }
 
         if state.dirty {
-            terminal.draw(|frame| render(frame, &state))?;
+            terminal.draw(|frame| lc_inbound::render(frame, &view_model(&state), theme))?;
             state.dirty = false;
         }
     }
 
     Ok(())
-}
-
-fn render(frame: &mut ratatui::Frame, _state: &State) {
-    frame.render_widget(
-        Line::from("lazycassandra — press q to quit").dim(),
-        frame.area(),
-    );
 }
