@@ -5,7 +5,9 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use lc_domain::model::{ConnId, DbError, Keyspace, Replication, Schema};
+use lc_domain::model::{
+    Column, ConnId, DbError, Key, KeyPress, Keyspace, PrimaryKey, Replication, Schema, Table,
+};
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
 use lc_domain::view::{Marker, PanelBody};
@@ -13,16 +15,39 @@ use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
 
 fn schema_of(names: &[&str]) -> Schema {
+    tabled_schema_of(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
+}
+
+fn table(name: &str) -> Table {
+    Table {
+        name: name.to_owned(),
+        primary_key: PrimaryKey {
+            partition: vec![Column {
+                name: "id".to_owned(),
+                cql_type: "uuid".to_owned(),
+            }],
+            clustering: Vec::new(),
+        },
+        static_columns: Vec::new(),
+        regular_columns: Vec::new(),
+    }
+}
+
+/// `(keyspace name, its table names)`.
+fn tabled_schema_of(keyspaces: &[(&str, &[&str])]) -> Schema {
     Schema {
-        keyspaces: names
+        keyspaces: keyspaces
             .iter()
-            .map(|name| {
+            .map(|(name, tables)| {
                 (
                     (*name).to_owned(),
                     Keyspace {
                         name: (*name).to_owned(),
                         replication: Replication::SimpleStrategy { factor: 1 },
-                        tables: BTreeMap::new(),
+                        tables: tables
+                            .iter()
+                            .map(|t| ((*t).to_owned(), table(t)))
+                            .collect::<BTreeMap<_, _>>(),
                     },
                 )
             })
@@ -109,4 +134,71 @@ async fn a_cluster_that_connects_but_cannot_be_described_raises_an_overlay() {
 
     let overlay = view_model(&state).overlay.expect("the failure is shown");
     assert_eq!(overlay.title, "Schema unavailable");
+}
+
+#[tokio::test]
+async fn pressing_l_unfolds_a_keyspace_and_the_view_model_shows_its_tables() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders", "users"])]),
+        Posture::ReadOnly,
+    );
+    let conn = ConnId::next();
+    let (mut state, effects) = init(conn);
+    run(&cluster, &mut state, effects).await;
+
+    let effects = update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
+    assert!(
+        effects.is_empty(),
+        "unfolding is a pure state change and must emit no effect (table-list design §2)"
+    );
+
+    let PanelBody::Tree { rows, selected } = &view_model(&state).panels[0].body else {
+        panic!("a described cluster with tables lists a tree");
+    };
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.depth, row.marker, row.label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (0, Marker::Unfolded, "shop"),
+            (1, Marker::Leaf, "orders"),
+            (1, Marker::Leaf, "users"),
+        ]
+    );
+    assert_eq!(*selected, 0);
+}
+
+#[tokio::test]
+async fn pressing_h_from_a_table_lands_on_its_parent_keyspace() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders", "users"])]),
+        Posture::ReadOnly,
+    );
+    let conn = ConnId::next();
+    let (mut state, effects) = init(conn);
+    run(&cluster, &mut state, effects).await;
+
+    update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
+    update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
+
+    let PanelBody::Tree { selected, .. } = &view_model(&state).panels[0].body else {
+        panic!("a described cluster with tables lists a tree");
+    };
+    assert_eq!(*selected, 1, "the second l steps into the first table");
+
+    let effects = update(&mut state, Msg::Input(KeyPress::new(Key::Char('h'))));
+    assert!(
+        effects.is_empty(),
+        "stepping out to the parent is a pure state change and must emit no effect (table-list design §2)"
+    );
+
+    let PanelBody::Tree { rows, selected } = &view_model(&state).panels[0].body else {
+        panic!("a described cluster with tables lists a tree");
+    };
+    assert_eq!(*selected, 0);
+    assert_eq!(
+        rows[0].marker,
+        Marker::Unfolded,
+        "stepping out must not fold the keyspace"
+    );
 }
