@@ -17,6 +17,7 @@ pub(crate) fn spawn_reader(tx: UnboundedSender<Msg>) {
 
             let msg = match event {
                 Event::Key(key) => lc_inbound::input::to_key_press(key).map(Msg::Input),
+                Event::Resize(..) => Some(Msg::Resized),
                 _ => None,
             };
 

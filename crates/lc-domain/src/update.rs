@@ -13,11 +13,26 @@ use crate::state::State;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Msg {
     Input(KeyPress),
+    /// The terminal was resized. Carries no geometry — the renderer reads the
+    /// real size from `frame.area()` — it exists only to trigger a repaint.
+    Resized,
     Tick,
-    Connected { conn: ConnId, posture: Posture },
-    SchemaLoaded { conn: ConnId, schema: Box<Schema> },
-    PageReady { query: QueryId, page: Box<Page> },
-    Failed { query: QueryId, error: DbError },
+    Connected {
+        conn: ConnId,
+        posture: Posture,
+    },
+    SchemaLoaded {
+        conn: ConnId,
+        schema: Box<Schema>,
+    },
+    PageReady {
+        query: QueryId,
+        page: Box<Page>,
+    },
+    Failed {
+        query: QueryId,
+        error: DbError,
+    },
     Quit,
 }
 
@@ -45,7 +60,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::Tick => Vec::new(),
 
-        Msg::Input(_) => {
+        Msg::Input(_) | Msg::Resized => {
             state.mark_dirty();
             Vec::new()
         }
@@ -222,6 +237,19 @@ mod tests {
 
         assert!(state.should_quit);
         assert_eq!(effects, vec![Effect::Cancel(query), Effect::Quit]);
+    }
+
+    #[test]
+    fn a_resize_marks_the_state_dirty_and_emits_no_effects() {
+        let mut state = State::default();
+
+        let effects = update(&mut state, Msg::Resized);
+
+        assert!(
+            effects.is_empty(),
+            "a resize is not an effect-producing event"
+        );
+        assert!(state.dirty, "a resize must force the next frame to repaint");
     }
 
     #[test]
