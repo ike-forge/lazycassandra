@@ -169,11 +169,11 @@ fn tree_row(node: &Node<'_>) -> TreeRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ConnId, DbError, Keyspace, Replication, Schema};
+    use crate::model::{ConnId, DbError, Schema};
     use crate::posture::Posture;
     use crate::state::{Connection, ConnectionState, Overlay, SchemaState};
     use crate::style::{Severity, Token};
-    use std::collections::BTreeMap;
+    use crate::tree::tests_support::schema_of as tabled_schema;
 
     #[test]
     fn every_panel_is_projected_in_reading_order() {
@@ -203,21 +203,7 @@ mod tests {
     }
 
     fn schema_of(names: &[&str]) -> Schema {
-        Schema {
-            keyspaces: names
-                .iter()
-                .map(|name| {
-                    (
-                        (*name).to_owned(),
-                        Keyspace {
-                            name: (*name).to_owned(),
-                            replication: Replication::SimpleStrategy { factor: 1 },
-                            tables: BTreeMap::new(),
-                        },
-                    )
-                })
-                .collect(),
-        }
+        tabled_schema(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
     }
 
     fn state_with(connection: ConnectionState) -> State {
@@ -239,7 +225,7 @@ mod tests {
         state_with(ConnectionState::Connected(Connection {
             id: ConnId::next(),
             posture: Posture::ReadOnly,
-            schema: SchemaState::Loaded(crate::tree::tests_support::schema_of(keyspaces)),
+            schema: SchemaState::Loaded(tabled_schema(keyspaces)),
         }))
     }
 
