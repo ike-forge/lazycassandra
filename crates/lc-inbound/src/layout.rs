@@ -13,7 +13,9 @@ const QUERIES_PERCENT: u16 = 10;
 /// Two borders and one line of content. Below this a block shows nothing.
 const PANEL_MIN_H: u16 = 3;
 const SIDEBAR_MIN_W: u16 = 16;
-const MAIN_MIN_W: u16 = 24;
+/// `split`'s `major_floor` for the root split: how much the main column must
+/// be able to keep before the sidebar is allowed to exist at all.
+const MAIN_RESERVE_W: u16 = 24;
 
 /// Where each panel is drawn this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +43,7 @@ impl PanelRects {
 /// Divide `area` into the four panels of doc/ui-draft.png.
 #[must_use]
 pub fn layout(area: Rect) -> PanelRects {
-    let (main_w, side_w) = split(area.width, SIDEBAR_PERCENT, MAIN_MIN_W, SIDEBAR_MIN_W);
+    let (main_w, side_w) = split(area.width, SIDEBAR_PERCENT, MAIN_RESERVE_W, SIDEBAR_MIN_W);
     let (tables_h, ddl_h) = split(area.height, DDL_PERCENT, PANEL_MIN_H, PANEL_MIN_H);
     let (contents_h, queries_h) = split(area.height, QUERIES_PERCENT, PANEL_MIN_H, PANEL_MIN_H);
 
