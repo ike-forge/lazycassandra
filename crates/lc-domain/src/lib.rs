@@ -9,7 +9,9 @@ pub mod posture;
 pub mod state;
 pub mod style;
 pub mod update;
+pub mod view;
 
 pub use posture::Posture;
 pub use state::State;
 pub use update::{Effect, Msg, update};
+pub use view::{PanelView, ViewModel, view_model};
