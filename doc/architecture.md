@@ -20,7 +20,7 @@ four-panel TUI shell rendering, the driver decided (§8).
 | Structure | Hexagonal — domain / inbound / outbound | Keeps the TUI ignorant of Cassandra and vice versa, enforced at crate level |
 | Async runtime | `tokio` | Required by the realistic driver candidates; single multi-threaded runtime |
 | Headless core | Internal boundary only | Drives testability. **No CLI is promised or designed.** See §9 |
-| Driver | `scylla` 1.7 | Its `cluster::metadata` already returns the model §4 declares; the alternatives have no metadata API or are FFI. See §8 |
+| Driver | `scylla` 1.7.0 | Its `cluster::metadata` already returns the model §4 declares; the alternatives have no metadata API or are FFI. See §8 |
 
 ## 2. The shape
 
@@ -233,7 +233,7 @@ disk or into the history store.
 
 ## 8. Driver — decided
 
-`scylla` 1.7, default features. The spike is written up in
+`scylla` 1.7.0, default features. The spike is written up in
 [specs/2026-08-08-keyspace-list-design.md](specs/2026-08-08-keyspace-list-design.md) §2.
 
 | Candidate | Outcome |
@@ -249,9 +249,8 @@ Wiring it in cost ten `deny.toml` skip entries — `darling`, `darling_core`,
 allow-list for `snap` 1.1.2, the Snappy codec `scylla-cql` pulls in. Each skip
 entry names whose transitive choice it is, so the tree converging is visible
 rather than silently tolerated. The pre-implementation comparison in the spec
-found `cdrs-tokio` would have cost one skip entry against seven for `scylla`;
-that estimate is what decided the trade, not a promise the finished tree would
-match it exactly.
+found `cdrs-tokio` would have cost one skip entry against seven for
+`scylla` — the estimate that decided the trade, not the final count.
 
 ## 9. On the headless core
 

@@ -46,11 +46,13 @@ cost us:
 dispatch chosen deliberately, at a boundary, to make a fake swappable is a
 design decision the type system still checks end to end.
 
-**This has one live consequence.** `cassandra-cpp` is FFI over the DataStax C++
-driver, and the driver spike (architecture.md §8) is still open. This
-convention does not veto it — battle-tested protocol handling is a real
-argument — but it does mean the FFI candidate must clear a bar the pure-Rust
-ones do not, rather than competing on features alone.
+**This had one live consequence.** `cassandra-cpp` is FFI over the DataStax
+C++ driver, and the driver spike (architecture.md §8) ran that comparison for
+real. This convention does not veto FFI outright — battle-tested protocol
+handling is a real argument — but it means an FFI candidate must clear a bar
+the pure-Rust ones do not, rather than compete on features alone.
+`cassandra-cpp` did not clear it: §8 rejected it on exactly this convention,
+not on a feature gap.
 
 **The exception is genuine impossibility**, judged as in §3: no reasonable
 alternative, not merely a less convenient one. If it becomes unavoidable:

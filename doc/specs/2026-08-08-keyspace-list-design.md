@@ -62,6 +62,11 @@ reason that names whose transitive choice it is — the style of the two entries
 already there. Seven skip entries is a smaller and more visible cost than a
 hand-written introspection layer.
 
+This was the pre-implementation estimate that decided the trade. The finished
+tree needed ten skip entries, not seven, plus a `BSD-3-Clause` allow for
+`snap` 1.1.2, pulled in by `scylla-cql`. `deny.toml` is the live record of
+both.
+
 `scylla`'s MSRV is 1.88, under the workspace's 1.97.1. Its `default` feature set
 is empty; TLS lands with the openssl or rustls feature when auth is designed,
 and the duplicate counts above are measured without it.
