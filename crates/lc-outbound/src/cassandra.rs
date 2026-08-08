@@ -68,6 +68,8 @@ impl Cluster for CassandraCluster {
     async fn connect(&self, conn: ConnId) -> Result<Posture, DbError> {
         self.check(conn)?;
 
+        // Boxed to satisfy clippy::large_futures: SessionBuilder::build's
+        // future is large enough to be worth moving off this async fn's stack.
         let session = Box::pin(
             SessionBuilder::new()
                 .known_node(&self.contact_point)
@@ -141,8 +143,10 @@ fn replication(strategy: &Strategy) -> Replication {
         Strategy::Other { name, .. } => Replication::Other {
             class: name.clone(),
         },
-        // `Strategy` is #[non_exhaustive]; a strategy we have never seen is
-        // still a strategy, and its name is the useful part.
+        // `Strategy` is #[non_exhaustive]; a variant we have never seen
+        // still deserves a name. Unlike the `Other` arm above, there is no
+        // field to read one from, so this reports the full Debug rendering
+        // — braces and fields included — rather than a bare name.
         other => Replication::Other {
             class: format!("{other:?}"),
         },
@@ -224,5 +228,15 @@ mod tests {
     fn factor_saturates_at_u32_max_instead_of_overflowing() {
         assert_eq!(factor(3), 3);
         assert_eq!(factor(usize::MAX), u32::MAX);
+    }
+
+    // Not gated behind `integration`: `check` refuses before the adapter ever
+    // opens a socket, so this needs no cluster and belongs in `mise run ci`.
+    #[tokio::test]
+    async fn connecting_with_an_id_the_adapter_does_not_serve_is_refused() {
+        let conn = ConnId::next();
+        let cluster = CassandraCluster::new(conn, "127.0.0.1:0".to_owned(), Posture::ReadOnly);
+
+        assert!(cluster.connect(ConnId::next()).await.is_err());
     }
 }

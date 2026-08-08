@@ -63,11 +63,3 @@ async fn the_clusters_own_keyspaces_sort_after_the_fixtures() {
         "system keyspaces must not be interleaved with the user's"
     );
 }
-
-#[tokio::test]
-async fn connecting_with_an_id_the_adapter_does_not_serve_is_refused() {
-    let conn = ConnId::next();
-    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
-
-    assert!(cluster.connect(ConnId::next()).await.is_err());
-}
