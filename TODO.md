@@ -7,12 +7,6 @@
 
 From the table-list review (doc/specs/2026-08-08-table-list-design.md):
 
-- `mise run test:it` cannot pass from the host: the fixture node advertises
-  `broadcast_address` 172.18.0.2, which a VM-backed container runtime does not
-  route to. `connect` succeeds on the published port, then the driver's pool
-  times out, so `describe` is what fails. Affects every integration test, not
-  just the new ones. Fix in `docker/compose.yaml` (advertise a routable
-  address) or add a task that runs the tier inside the cluster's netns.
 - Give `TablesPanel` its own `down`/`up` taking `&Schema`, so cursor motion
   cannot be handed the wrong row count. Today `update.rs` reaches through the
   public `cursor` field with a caller-supplied `len`; `render.rs` already

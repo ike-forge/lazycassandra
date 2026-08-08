@@ -18,6 +18,14 @@ services:
       CASSANDRA_DC: datacenter1
       CASSANDRA_RACK: rack1
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      # What the node publishes in `system.local.rpc_address` for clients to
+      # build their connection pool from. The entrypoint defaults it to the
+      # container's bridge IP, which a VM-backed container runtime does not
+      # route from the host: the driver's first connection reaches the
+      # published port, then every pool connection times out against
+      # 172.18.x.x. `rpc_address` stays 0.0.0.0, so the port publish still
+      # works and in-network clients are unaffected.
+      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.1
       MAX_HEAP_SIZE: 1G
       HEAP_NEWSIZE: 256M
     ports:
