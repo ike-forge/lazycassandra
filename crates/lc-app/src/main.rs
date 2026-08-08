@@ -7,8 +7,7 @@ mod effects;
 mod input;
 
 use anyhow::Result;
-use lc_domain::model::{Key, KeyPress};
-use lc_domain::{Msg, State, update, view_model};
+use lc_domain::{State, update, view_model};
 use lc_inbound::Theme;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
@@ -34,17 +33,6 @@ async fn run(mut terminal: DefaultTerminal) -> Result<()> {
     terminal.draw(|frame| lc_inbound::render(frame, &view_model(&state), theme))?;
 
     while let Some(msg) = rx.recv().await {
-        // Bindings live in the domain from Phase 0 onward; until the focus
-        // model exists there is one, and it is here so the scaffold is
-        // quittable.
-        let msg = match msg {
-            Msg::Input(KeyPress {
-                key: Key::Char('q'),
-                ..
-            }) => Msg::Quit,
-            other => other,
-        };
-
         for effect in update(&mut state, msg) {
             effects::run(&tx, &effect);
         }

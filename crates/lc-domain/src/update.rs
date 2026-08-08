@@ -4,9 +4,9 @@
 //! what should happen next; it cannot open a socket because it has nothing to
 //! open one with (architecture.md §3).
 
-use crate::model::{ConnId, DbError, KeyPress, Page, PagingState, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::state::{ConnectionState, Overlay, SchemaState, State};
+use crate::state::{ConnectionState, Overlay, Panel, SchemaState, State};
 use crate::style::Severity;
 
 /// Everything that can happen. Async results re-enter here through the same
@@ -85,7 +85,9 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::Tick => Vec::new(),
 
-        Msg::Input(_) | Msg::Resized => {
+        Msg::Input(press) => handle_key(state, press),
+
+        Msg::Resized => {
             state.mark_dirty();
             Vec::new()
         }
@@ -161,11 +163,52 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
             Vec::new()
         }
 
-        Msg::Quit => {
-            state.should_quit = true;
-            let cancels = state.in_flight.keys().copied().map(Effect::Cancel);
-            cancels.chain(std::iter::once(Effect::Quit)).collect()
-        }
+        Msg::Quit => quit(state),
+    }
+}
+
+fn quit(state: &mut State) -> Vec<Effect> {
+    state.should_quit = true;
+    let cancels = state.in_flight.keys().copied().map(Effect::Cancel);
+
+    cancels.chain(std::iter::once(Effect::Quit)).collect()
+}
+
+#[derive(Clone, Copy)]
+enum Motion {
+    Up,
+    Down,
+}
+
+fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
+    state.mark_dirty();
+
+    // Modified keys are their own bindings, not slower versions of the plain
+    // ones (vision.md §4, principle 2).
+    if press.modifiers.ctrl || press.modifiers.alt {
+        return Vec::new();
+    }
+
+    match press.key {
+        Key::Char('q') => return quit(state),
+        Key::Escape => state.overlay = None,
+        Key::Char('j') | Key::Down => move_selection(state, Motion::Down),
+        Key::Char('k') | Key::Up => move_selection(state, Motion::Up),
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+fn move_selection(state: &mut State, motion: Motion) {
+    if state.focus != Panel::Tables {
+        return;
+    }
+
+    let rows = state.schema().map_or(0, |schema| schema.keyspaces.len());
+    match motion {
+        Motion::Down => state.tables.cursor.down(rows),
+        Motion::Up => state.tables.cursor.up(),
     }
 }
 
@@ -489,6 +532,122 @@ mod tests {
         assert!(
             matches!(connection.schema, SchemaState::Loading),
             "schema failure from a connection we are no longer on must not be applied"
+        );
+    }
+
+    use crate::model::{Key, KeyPress, Modifiers};
+    use crate::state::Panel;
+
+    fn browsing(keyspaces: &[&str]) -> State {
+        let mut state = connected(Posture::ReadOnly);
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema_of(keyspaces)),
+            },
+        );
+        state
+    }
+
+    fn press(state: &mut State, key: Key) -> Vec<Effect> {
+        update(state, Msg::Input(KeyPress::new(key)))
+    }
+
+    #[test]
+    fn j_and_k_walk_the_keyspace_list() {
+        let mut state = browsing(&["a", "b", "c"]);
+
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.tables.cursor.index(), 2);
+
+        press(&mut state, Key::Char('k'));
+
+        assert_eq!(state.tables.cursor.index(), 1);
+    }
+
+    #[test]
+    fn the_arrow_keys_do_what_j_and_k_do() {
+        let mut state = browsing(&["a", "b"]);
+
+        press(&mut state, Key::Down);
+
+        assert_eq!(state.tables.cursor.index(), 1);
+
+        press(&mut state, Key::Up);
+
+        assert_eq!(state.tables.cursor.index(), 0);
+    }
+
+    #[test]
+    fn the_selection_cannot_run_off_a_list_it_has_not_loaded() {
+        let mut state = connected(Posture::ReadOnly);
+
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "there are no rows to move onto"
+        );
+    }
+
+    #[test]
+    fn motion_belongs_to_the_focused_panel_only() {
+        let mut state = browsing(&["a", "b", "c"]);
+        state.focus = Panel::Queries;
+
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.tables.cursor.index(), 0);
+    }
+
+    #[test]
+    fn escape_dismisses_the_overlay() {
+        let mut state = browsing(&["a"]);
+        state.overlay = Some(Overlay {
+            title: "Schema unavailable".to_owned(),
+            message: "boom".to_owned(),
+            severity: Severity::Danger,
+        });
+
+        press(&mut state, Key::Escape);
+
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn q_quits() {
+        let mut state = browsing(&["a"]);
+
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(state.should_quit);
+        assert_eq!(effects, vec![Effect::Quit]);
+    }
+
+    #[test]
+    fn a_modified_key_is_not_a_binding() {
+        let mut state = browsing(&["a", "b"]);
+
+        update(
+            &mut state,
+            Msg::Input(KeyPress {
+                key: Key::Char('j'),
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                },
+            }),
+        );
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "ctrl-j is a different binding, not a slower j"
         );
     }
 
