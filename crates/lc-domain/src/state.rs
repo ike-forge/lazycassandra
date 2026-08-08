@@ -72,10 +72,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_panels_are_listed_in_reading_order() {
+    fn all_panels_are_listed_in_reading_order_and_none_is_missing() {
+        for panel in Panel::ALL {
+            // A new variant fails to compile here until it is added to ALL.
+            let expected_position = match panel {
+                Panel::Tables => 0,
+                Panel::Ddl => 1,
+                Panel::Contents => 2,
+                Panel::Queries => 3,
+            };
+            assert_eq!(
+                Panel::ALL[expected_position], panel,
+                "{panel:?} is not at its reading-order position"
+            );
+        }
         assert_eq!(
-            Panel::ALL,
-            [Panel::Tables, Panel::Ddl, Panel::Contents, Panel::Queries]
+            Panel::ALL.len(),
+            4,
+            "a variant was added without extending ALL"
         );
     }
 
