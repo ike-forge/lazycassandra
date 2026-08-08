@@ -4,12 +4,46 @@
 //! become tokio tasks; their results re-enter through the same channel as a
 //! keystroke (architecture.md §3).
 
+use std::sync::Arc;
+
+use lc_domain::ports::Cluster;
 use lc_domain::{Effect, Msg};
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Every effect is inert: no port is implemented yet, because the driver is
-/// still deferred to a Phase 0 spike (architecture.md §8). `Quit` needs no
+/// The effects that still have no port behind them are inert. `Quit` needs no
 /// work here — `update` has already set `State::should_quit`.
-///
-/// The sender is taken now because it is how results will re-enter the loop.
-pub(crate) fn run(_tx: &UnboundedSender<Msg>, _effect: &Effect) {}
+pub(crate) fn run(tx: &UnboundedSender<Msg>, cluster: &Arc<dyn Cluster>, effect: &Effect) {
+    match effect {
+        Effect::Connect(conn) => {
+            let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
+            tokio::spawn(async move {
+                let msg = match cluster.connect(conn).await {
+                    Ok(posture) => Msg::Connected { conn, posture },
+                    Err(error) => Msg::ConnectFailed { conn, error },
+                };
+                // A closed channel means the main loop has already ended.
+                let _sent = tx.send(msg);
+            });
+        }
+
+        Effect::LoadSchema(conn) => {
+            let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
+            tokio::spawn(async move {
+                let msg = match cluster.describe(conn).await {
+                    Ok(schema) => Msg::SchemaLoaded {
+                        conn,
+                        schema: Box::new(schema),
+                    },
+                    Err(error) => Msg::SchemaFailed { conn, error },
+                };
+                let _sent = tx.send(msg);
+            });
+        }
+
+        Effect::Execute { .. }
+        | Effect::FetchNextPage { .. }
+        | Effect::Cancel(_)
+        | Effect::RecordHistory(_)
+        | Effect::Quit => {}
+    }
+}
