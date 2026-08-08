@@ -6,7 +6,8 @@
 
 use crate::model::{ConnId, DbError, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::state::{ConnectionState, SchemaState, State};
+use crate::state::{ConnectionState, Overlay, SchemaState, State};
+use crate::style::Severity;
 
 /// Everything that can happen. Async results re-enter here through the same
 /// channel as a keystroke.
@@ -20,6 +21,14 @@ pub enum Msg {
     Connected {
         conn: ConnId,
         posture: Posture,
+    },
+    ConnectFailed {
+        conn: ConnId,
+        error: DbError,
+    },
+    SchemaFailed {
+        conn: ConnId,
+        error: DbError,
     },
     SchemaLoaded {
         conn: ConnId,
@@ -55,6 +64,22 @@ pub enum Effect {
     Quit,
 }
 
+/// The state the application starts in, and what it must do first.
+///
+/// TEA's `init`: the startup connection is *described* here rather than
+/// performed behind the domain's back, so the first frame can already say
+/// "Connecting…" (architecture.md §3).
+#[must_use]
+pub fn init(conn: ConnId) -> (State, Vec<Effect>) {
+    let state = State {
+        connection: ConnectionState::Connecting(conn),
+        dirty: true,
+        ..State::default()
+    };
+
+    (state, vec![Effect::Connect(conn)])
+}
+
 /// Applies a message and returns the effects it implies.
 pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
@@ -66,6 +91,9 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         }
 
         Msg::Connected { conn, posture } => {
+            if !state.connection.is_current(conn) {
+                return Vec::new();
+            }
             state.connection = ConnectionState::Connected(crate::state::Connection {
                 id: conn,
                 posture,
@@ -75,7 +103,41 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
             vec![Effect::LoadSchema(conn)]
         }
 
+        Msg::ConnectFailed { conn, error } => {
+            if !state.connection.is_current(conn) {
+                return Vec::new();
+            }
+            state.overlay = Some(Overlay {
+                title: "Connection failed".to_owned(),
+                message: error.to_string(),
+                severity: Severity::Danger,
+            });
+            state.connection = ConnectionState::Failed(error);
+            state.mark_dirty();
+            Vec::new()
+        }
+
+        Msg::SchemaFailed { conn, error } => {
+            let applied = match &mut state.connection {
+                ConnectionState::Connected(connection) if connection.id == conn => {
+                    connection.schema = SchemaState::Failed(error.clone());
+                    true
+                }
+                _ => false,
+            };
+            if applied {
+                state.overlay = Some(Overlay {
+                    title: "Schema unavailable".to_owned(),
+                    message: error.to_string(),
+                    severity: Severity::Danger,
+                });
+                state.mark_dirty();
+            }
+            Vec::new()
+        }
+
         Msg::SchemaLoaded { conn, schema } => {
+            let rows = schema.keyspaces.len();
             let applied = match &mut state.connection {
                 ConnectionState::Connected(connection) if connection.id == conn => {
                     connection.schema = SchemaState::Loaded(*schema);
@@ -84,6 +146,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
                 _ => false,
             };
             if applied {
+                state.tables.cursor.clamp_to(rows);
                 state.mark_dirty();
             }
             Vec::new()
@@ -137,7 +200,27 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<Vec<Effect>, DbError
 mod tests {
     use super::*;
     use crate::model::StatementKind;
+    use crate::model::{Keyspace, Replication};
     use crate::state::Connection;
+    use std::collections::BTreeMap;
+
+    fn schema_of(names: &[&str]) -> Schema {
+        Schema {
+            keyspaces: names
+                .iter()
+                .map(|name| {
+                    (
+                        (*name).to_owned(),
+                        Keyspace {
+                            name: (*name).to_owned(),
+                            replication: Replication::SimpleStrategy { factor: 1 },
+                            tables: BTreeMap::new(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
 
     fn connected(posture: Posture) -> State {
         State {
@@ -276,5 +359,119 @@ mod tests {
             matches!(connection.schema, SchemaState::Loading),
             "schema from a connection we are no longer on must not be applied"
         );
+    }
+
+    #[test]
+    fn the_application_starts_by_connecting() {
+        let conn = ConnId::next();
+
+        let (state, effects) = init(conn);
+
+        assert_eq!(effects, vec![Effect::Connect(conn)]);
+        assert!(state.connection.is_current(conn));
+        assert!(state.dirty, "the first frame must be painted");
+    }
+
+    #[test]
+    fn connecting_successfully_asks_for_the_schema() {
+        let conn = ConnId::next();
+        let (mut state, _) = init(conn);
+
+        let effects = update(
+            &mut state,
+            Msg::Connected {
+                conn,
+                posture: Posture::ReadOnly,
+            },
+        );
+
+        assert_eq!(effects, vec![Effect::LoadSchema(conn)]);
+        assert!(state.schema().is_none(), "the schema is still loading");
+    }
+
+    #[test]
+    fn a_failed_connection_is_recorded_and_raised() {
+        let conn = ConnId::next();
+        let (mut state, _) = init(conn);
+
+        let effects = update(
+            &mut state,
+            Msg::ConnectFailed {
+                conn,
+                error: DbError::Unreachable("no route".to_owned()),
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert!(matches!(state.connection, ConnectionState::Failed(_)));
+        let overlay = state.overlay.expect("a failure is shown");
+        assert_eq!(overlay.severity, Severity::Danger);
+        assert!(overlay.message.contains("no route"));
+    }
+
+    #[test]
+    fn a_failed_connection_for_a_stale_attempt_is_dropped() {
+        let (mut state, _) = init(ConnId::next());
+
+        update(
+            &mut state,
+            Msg::ConnectFailed {
+                conn: ConnId::next(),
+                error: DbError::Timeout,
+            },
+        );
+
+        assert!(state.overlay.is_none());
+        assert!(matches!(state.connection, ConnectionState::Connecting(_)));
+    }
+
+    #[test]
+    fn a_failed_schema_is_recorded_and_raised() {
+        let mut state = connected(Posture::ReadOnly);
+        let conn = current_conn(&state);
+
+        update(
+            &mut state,
+            Msg::SchemaFailed {
+                conn,
+                error: DbError::Invalid("unauthorized".to_owned()),
+            },
+        );
+
+        assert!(state.overlay.is_some());
+        let ConnectionState::Connected(connection) = &state.connection else {
+            panic!("still connected");
+        };
+        assert!(matches!(connection.schema, SchemaState::Failed(_)));
+    }
+
+    #[test]
+    fn a_loaded_schema_pulls_the_selection_back_inside_it() {
+        let mut state = connected(Posture::ReadOnly);
+        let conn = current_conn(&state);
+        for _ in 0..5 {
+            state.tables.cursor.down(6);
+        }
+
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema_of(&["shop", "typezoo"])),
+            },
+        );
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "a selection past the end of a smaller schema must be pulled in"
+        );
+    }
+
+    fn current_conn(state: &State) -> ConnId {
+        let ConnectionState::Connected(connection) = &state.connection else {
+            panic!("the helper builds a connected state");
+        };
+        connection.id
     }
 }
