@@ -3,7 +3,7 @@
 Turns the Tables panel from a keyspace list into a tree, and fills
 `Keyspace::tables` for the first time.
 
-**Status:** designed.
+**Status:** implemented.
 **Date:** 2026-08-08
 
 ---

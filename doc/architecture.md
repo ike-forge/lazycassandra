@@ -147,6 +147,7 @@ Testing the whole application becomes synchronous. `update` is a function from
 lc-domain/src/
   model/        # Schema, Keyspace, Table, PrimaryKey, CqlValue, Statement
   state.rs      # State, Panel, selection, in-flight registry
+  tree.rs       # the Tables panel's tree: unfold set, flattening, transitions
   update.rs     # update() and its per-panel handlers
   view.rs       # ViewModel projection (see §3)
   ports.rs      # trait definitions (see §5)
@@ -297,7 +298,8 @@ in VISION §8.
   Needs a bounded cache with an explicit eviction story.
 - **Does `State` stay one struct?** TEA's single-state model gets unwieldy at
   four panels. Nested per-panel state with message routing is the usual escape
-  hatch; deferring until the shape of Phase 1 is real.
+  hatch; `TablesPanel` has now taken it, moving to its own module with the
+  unfold set. Whether the other three panels follow is still open.
 - **Where schema caching lives.** Domain (testable, but the domain starts
   holding a cache invalidation problem) or adapter (simpler domain, but cache
   behaviour becomes untestable at the fast tier).
