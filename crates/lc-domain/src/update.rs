@@ -8,7 +8,7 @@ use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
-use crate::state::{ConnectionState, Cursor, Geometry, Overlay, Panel, SchemaState, State};
+use crate::state::{ConnectionState, Cursor, Geometry, Overlay, Panel, SchemaState, Scroll, State};
 use crate::style::Severity;
 use crate::tree::Node;
 
@@ -100,6 +100,9 @@ pub fn init(conn: ConnId) -> (State, Vec<Effect>) {
 /// Applies a message and returns the effects it implies.
 pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     let subject = described(state);
+    let cursors = cursor_indices(state);
+    let scrolls = (state.tables.scroll, state.contents.scroll);
+
     let effects = apply(state, msg);
 
     // The Ddl offset belongs to the node being described, so a new subject
@@ -107,6 +110,15 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     // rather than at each of the four paths that can move the tree selection.
     if described(state) != subject {
         state.ddl.to_start();
+    }
+
+    clamp_lists(state);
+    follow_moved_cursors(state, cursors);
+
+    // `Msg::Measured` marks nothing dirty by itself, so a clamp it provoked
+    // would otherwise not be drawn until the next unrelated keypress.
+    if (state.tables.scroll, state.contents.scroll) != scrolls {
+        state.mark_dirty();
     }
 
     effects
@@ -334,16 +346,27 @@ fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect> {
     match pointer {
         Pointer::Click(click) => click_at(state, click),
         Pointer::Wheel { panel, direction } => {
-            let motion = match direction {
-                Wheel::Up => Motion::Up,
-                Wheel::Down => Motion::Down,
-            };
-
-            for _ in 0..WHEEL_ROWS {
-                scroll_panel(state, panel, motion);
-            }
-
+            wheel(state, panel, direction);
             Vec::new()
+        }
+    }
+}
+
+/// Scrolls `panel`'s viewport without focusing it and without moving its
+/// selection: the wheel is a look somewhere else, and a keypress returns you
+/// (doc/specs/2026-08-09-list-viewport-design.md §1).
+fn wheel(state: &mut State, panel: Panel, direction: Wheel) {
+    let len = scroll_len(state, panel);
+    let height = state.geometry.height(panel);
+
+    let Some(scroll) = panel_scroll(state, panel) else {
+        return;
+    };
+
+    for _ in 0..WHEEL_ROWS {
+        match direction {
+            Wheel::Down => scroll.down(len, height),
+            Wheel::Up => scroll.up(),
         }
     }
 }
@@ -442,6 +465,78 @@ fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
         Panel::Tables => Some(&mut state.tables.cursor),
         Panel::Contents => Some(&mut state.contents.cursor),
         Panel::Ddl | Panel::Queries => None,
+    }
+}
+
+/// The panels whose viewport `update` maintains. Ddl keeps its own, moved
+/// directly by the motions that scroll it.
+const LISTS: [Panel; 2] = [Panel::Tables, Panel::Contents];
+
+/// The viewport `panel` draws through, for the panels that have one.
+fn panel_scroll(state: &mut State, panel: Panel) -> Option<&mut Scroll> {
+    match panel {
+        Panel::Tables => Some(&mut state.tables.scroll),
+        Panel::Contents => Some(&mut state.contents.scroll),
+        Panel::Ddl => Some(&mut state.ddl),
+        Panel::Queries => None,
+    }
+}
+
+/// How long the document `panel` scrolls over is — wrapped lines in Ddl, rows
+/// elsewhere.
+fn scroll_len(state: &State, panel: Panel) -> usize {
+    match panel {
+        Panel::Ddl => state.geometry.ddl_lines(),
+        Panel::Tables | Panel::Contents => row_count(state, panel),
+        Panel::Queries => 0,
+    }
+}
+
+/// Each list panel's selected index, for the comparison in [`update`].
+fn cursor_indices(state: &State) -> [usize; 2] {
+    [state.tables.cursor.index(), state.contents.cursor.index()]
+}
+
+/// Pulls every list offset back inside its document.
+///
+/// Unconditional because a shrinking list does not change the geometry —
+/// folding a keyspace leaves every panel the same height, so no
+/// [`Msg::Measured`] arrives to clamp against (design §3). `clamp_to` only
+/// ever reduces an offset, so this cannot fight a wheel bounded by the same
+/// arithmetic.
+fn clamp_lists(state: &mut State) {
+    for panel in LISTS {
+        let len = row_count(state, panel);
+        let height = state.geometry.height(panel);
+
+        if let Some(scroll) = panel_scroll(state, panel) {
+            scroll.clamp_to(len, height);
+        }
+    }
+}
+
+/// Pulls the offset of each list whose selection moved, so the selection is
+/// drawn.
+///
+/// Only the ones that moved: a wheel leaves both indices alone, and following
+/// it would undo the scroll it just performed (design §3).
+fn follow_moved_cursors(state: &mut State, before: [usize; 2]) {
+    for (panel, before) in LISTS.into_iter().zip(before) {
+        let index = match panel {
+            Panel::Tables => state.tables.cursor.index(),
+            Panel::Contents => state.contents.cursor.index(),
+            Panel::Ddl | Panel::Queries => continue,
+        };
+
+        if index == before {
+            continue;
+        }
+
+        let height = state.geometry.height(panel);
+
+        if let Some(scroll) = panel_scroll(state, panel) {
+            scroll.follow(index, height);
+        }
     }
 }
 
@@ -1862,7 +1957,12 @@ mod tests {
             },
         );
 
-        assert_eq!(state.contents.cursor.index(), 3, "three rows a notch");
+        assert_eq!(state.contents.scroll.offset(), 3, "three rows a notch");
+        assert_eq!(
+            state.contents.cursor.index(),
+            0,
+            "the wheel does not move the selection"
+        );
         assert_eq!(state.focus, Panel::Tables, "focus stays where it was");
     }
 
@@ -1885,7 +1985,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.contents.cursor.index(), 3);
+        assert_eq!(state.contents.scroll.offset(), 3);
     }
 
     #[test]
@@ -1922,16 +2022,17 @@ mod tests {
     }
 
     #[test]
-    fn a_wheel_over_tables_moves_the_selection_and_restarts_the_ddl_scroll() {
-        // Four keyspaces, so three rows a notch lands on the last one rather
-        // than clamping on the second. `described()` compares the selection
-        // before and after `update`, so moving off "a" onto "d" is a subject
-        // change and resets `state.ddl` — the same rule a `j` held three times
-        // would trigger.
+    fn a_wheel_over_tables_moves_the_viewport_rather_than_the_selection() {
+        // Four keyspaces, so three rows a notch would have landed on the
+        // last one under the old cursor-moving wheel. Now nothing about the
+        // tree selection changes, so `described()` sees no subject change
+        // and `state.ddl` is left alone (design §7).
         let mut state = browsing(&["a", "b", "c", "d"]);
+        state.geometry = Geometry::new([3, 3, 3, 1], 0);
         state.focus = Panel::Queries;
         state.ddl.down(100, 2);
-        assert_ne!(state.ddl.offset(), 0, "the fixture must start scrolled");
+        let ddl_before = state.ddl;
+        assert_ne!(ddl_before.offset(), 0, "the fixture must start scrolled");
 
         let effects = point(
             &mut state,
@@ -1941,16 +2042,13 @@ mod tests {
             },
         );
 
-        assert!(
-            effects.is_empty(),
-            "a selection change alone asks for nothing"
-        );
-        assert_eq!(state.tables.cursor.index(), 3, "three rows a notch");
+        assert!(effects.is_empty(), "a scroll alone asks for nothing");
+        assert_eq!(state.tables.scroll.offset(), 1, "four rows, three visible");
+        assert_eq!(state.tables.cursor.index(), 0, "the selection did not move");
         assert_eq!(state.focus, Panel::Queries, "the wheel does not move focus");
         assert_eq!(
-            state.ddl.offset(),
-            0,
-            "the new subject's Ddl view starts at its top"
+            state.ddl, ddl_before,
+            "no selection changed, so nothing new is described"
         );
     }
 
@@ -1970,5 +2068,148 @@ mod tests {
 
         assert!(state.overlay.is_some(), "only a click dismisses");
         assert_eq!(state.contents.cursor.index(), 0, "and nothing scrolled");
+    }
+
+    /// A Contents panel showing `count` rows in a five-row viewport.
+    fn scrolling_rows(count: usize) -> State {
+        let mut state = showing_rows(count);
+        state.geometry = Geometry::new([5, 5, 5, 1], 0);
+        state
+    }
+
+    fn wheel(state: &mut State, panel: Panel, direction: Wheel) -> Vec<Effect> {
+        point(state, Pointer::Wheel { panel, direction })
+    }
+
+    #[test]
+    fn a_wheel_scrolls_the_view_and_leaves_the_selection_where_it_was() {
+        let mut state = scrolling_rows(40);
+
+        wheel(&mut state, Panel::Contents, Wheel::Down);
+
+        assert_eq!(state.contents.scroll.offset(), 3, "three rows a notch");
+        assert_eq!(
+            state.contents.cursor.index(),
+            0,
+            "the selection is where the user put it"
+        );
+    }
+
+    #[test]
+    fn a_wheel_up_walks_the_view_back() {
+        let mut state = scrolling_rows(40);
+        wheel(&mut state, Panel::Contents, Wheel::Down);
+        wheel(&mut state, Panel::Contents, Wheel::Down);
+
+        wheel(&mut state, Panel::Contents, Wheel::Up);
+
+        assert_eq!(state.contents.scroll.offset(), 3);
+    }
+
+    #[test]
+    fn a_wheel_stops_at_both_ends() {
+        let mut state = scrolling_rows(8);
+
+        for _ in 0..10 {
+            wheel(&mut state, Panel::Contents, Wheel::Down);
+        }
+        assert_eq!(
+            state.contents.scroll.offset(),
+            3,
+            "eight rows in a five-row panel scroll by three and stop"
+        );
+
+        for _ in 0..10 {
+            wheel(&mut state, Panel::Contents, Wheel::Up);
+        }
+        assert_eq!(state.contents.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn a_motion_after_a_wheel_brings_the_selection_back_into_view() {
+        let mut state = scrolling_rows(40);
+        state.focus = Panel::Contents;
+        for _ in 0..5 {
+            wheel(&mut state, Panel::Contents, Wheel::Down);
+        }
+        assert_eq!(state.contents.scroll.offset(), 15, "scrolled well past it");
+
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.contents.cursor.index(), 1);
+        assert_eq!(
+            state.contents.scroll.offset(),
+            1,
+            "the view came back to the selection, the shortest distance `follow` allows"
+        );
+    }
+
+    #[test]
+    fn walking_off_the_bottom_still_drags_the_view_with_it() {
+        let mut state = scrolling_rows(40);
+        state.focus = Panel::Contents;
+
+        for _ in 0..6 {
+            press(&mut state, Key::Char('j'));
+        }
+
+        assert_eq!(state.contents.cursor.index(), 6);
+        assert_eq!(
+            state.contents.scroll.offset(),
+            2,
+            "the sixth row is the last of a five-row viewport"
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_scrolled_row_needs_no_correction() {
+        let mut state = scrolling_rows(40);
+        for _ in 0..4 {
+            wheel(&mut state, Panel::Contents, Wheel::Down);
+        }
+        let offset = state.contents.scroll.offset();
+
+        click_row(&mut state, Panel::Contents, offset + 1);
+
+        assert_eq!(state.contents.cursor.index(), offset + 1);
+        assert_eq!(
+            state.contents.scroll.offset(),
+            offset,
+            "the row was on screen, so the view had no reason to move"
+        );
+    }
+
+    #[test]
+    fn a_list_that_shrank_pulls_its_offset_back() {
+        let mut state = browsing_tables(&[("shop", &["a", "b", "c", "d", "e", "f"])]);
+        state.geometry = Geometry::new([3, 3, 3, 1], 0);
+        click_row(&mut state, Panel::Tables, 0);
+        for _ in 0..3 {
+            wheel(&mut state, Panel::Tables, Wheel::Down);
+        }
+        assert_eq!(state.tables.scroll.offset(), 4, "seven rows, three visible");
+
+        // Folding takes the tree back to one row, which no offset can be past.
+        click_row(&mut state, Panel::Tables, 0);
+
+        assert_eq!(row_count(&state), 1);
+        assert_eq!(state.tables.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn a_wheel_over_tables_no_longer_scrolls_the_ddl_panel_back() {
+        let mut state = browsing_tables(&[("shop", &["a", "b", "c", "d", "e", "f"])]);
+        state.geometry = Geometry::new([3, 3, 3, 1], 40);
+        click_row(&mut state, Panel::Tables, 0);
+        state.ddl.page_down(40, 3);
+        let before = state.ddl;
+        assert_ne!(before.offset(), 0, "the fixture starts scrolled");
+
+        wheel(&mut state, Panel::Tables, Wheel::Down);
+
+        assert_eq!(
+            state.ddl, before,
+            "the wheel moved no selection, so nothing is newly described"
+        );
     }
 }
