@@ -1,8 +1,9 @@
 //! Drawing what a panel contains.
 //!
-//! Scrolling lives here rather than in the domain: the domain has no idea the
-//! panel is eight rows tall. The offset itself comes from the domain; the
-//! renderer contributes only the arithmetic that needs a width or a height.
+//! Scroll offsets are domain state and arrive in the [`PanelBody`]. What lives
+//! here is the arithmetic that needs a width or a height — which columns fit,
+//! and whether the selection falls inside the rows drawn
+//! (doc/specs/2026-08-09-list-viewport-design.md §2).
 
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, TreeRow};
@@ -165,10 +166,9 @@ fn tree(
     }
 }
 
-/// Column widths are computed here rather than in the domain, for the reason
-/// scrolling is: only the renderer knows how wide the panel is. Columns whose
-/// width runs past the right edge are simply not drawn — horizontal navigation
-/// is a later slice.
+/// Column widths are computed here rather than in the domain because only the
+/// renderer knows how wide the panel is. Columns whose width runs past the
+/// right edge are simply not drawn — horizontal navigation is a later slice.
 fn grid(
     frame: &mut Frame,
     area: Rect,
@@ -185,6 +185,11 @@ fn grid(
     let widths = widths(columns, rows, area.width);
     let shown = fitting(&widths, area.width);
     let widths = &widths[..shown];
+    // Both the window `visible` judges against and the extent the scrollbar is
+    // drawn from. Two copies of this subtraction can disagree by a row, and a
+    // selection wrongly called visible makes the widget scroll away from the
+    // stored offset.
+    let height = usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS));
 
     let header = Row::new(
         columns
@@ -208,18 +213,14 @@ fn grid(
         .row_highlight_style(theme.style(Token::Selected));
     let mut state = TableState::default()
         .with_offset(offset)
-        .with_selected(visible(
-            selected,
-            offset,
-            usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS)),
-        ));
+        .with_selected(visible(selected, offset, height));
 
     frame.render_stateful_widget(table, area, &mut state);
 
     Extent {
         position: state.offset(),
         total: rows.len(),
-        visible: usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS)),
+        visible: height,
     }
 }
 

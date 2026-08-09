@@ -664,6 +664,60 @@ mod tests {
                 "row 0 is off screen, so nothing drawn is the selection"
             );
         }
+
+        // A control: the same panel, drawn with the selection inside the
+        // viewport, does highlight it — so the absence above is the rule at
+        // work rather than a fixture that stopped drawing rows.
+        let mut on_screen = showing(page_of(&["id"], &rows));
+        on_screen.contents.cursor.go_to(12, 20);
+        on_screen.contents.scroll.follow(12, 5);
+        let buffer = draw_state(60, 12, &on_screen);
+        let highlighted = (2..7).any(|y| {
+            buffer
+                .cell((17, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        });
+
+        assert!(
+            highlighted,
+            "a selection on screen is drawn as the selection"
+        );
+    }
+
+    #[test]
+    fn a_tree_selection_scrolled_out_of_view_is_not_highlighted() {
+        // The tree's half of the rule in `a_selection_scrolled_out_of_view_is_
+        // not_highlighted`. Without it, handing ratatui a `Some(selected)` it
+        // cannot see would walk the offset back to the selection and the wheel
+        // would scroll Tables nowhere, with every other test still green
+        // (list viewport design §4).
+        let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut state = browsing(&refs, 0);
+        state.tables.scroll.follow(11, 1);
+
+        let (buffer, _map) = draw_mapped(40, 12, &state);
+        let drawn: Vec<String> = (1..6).map(|y| row(&buffer, y)).collect();
+        let reversed = |y: u16| {
+            buffer
+                .cell((1, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        assert!(
+            drawn.iter().any(|line| line.contains("ks11")),
+            "the stored offset decides the top row, got {drawn:?}"
+        );
+        for y in 1..6 {
+            assert!(
+                !reversed(y),
+                "ks00 is off screen, so nothing drawn is the selection"
+            );
+        }
     }
 
     #[test]
@@ -799,7 +853,7 @@ mod tests {
 
     #[test]
     fn the_grid_scrolls_to_keep_the_selection_on_screen() {
-        // The Contents panel holds a header and six rows at this size, so a
+        // The Contents panel holds a header and five rows at this size, so a
         // twenty-row page forces the scroll a plain `Table` would not perform.
         let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
         let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
@@ -1102,7 +1156,7 @@ mod tests {
 
         assert!(
             tables_border(&buffer).contains('█'),
-            "the thumb says how far through twelve keyspaces six rows are"
+            "the thumb says how far through twelve keyspaces five rows are"
         );
     }
 
@@ -1218,8 +1272,8 @@ mod tests {
 
     #[test]
     fn the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn() {
-        // Twelve keyspaces in a panel that holds six rows forces the tree to
-        // scroll, so `ListState::offset()` is not zero and the row under the
+        // Twelve keyspaces in a panel that holds five rows forces the tree to
+        // scroll, so the stored offset is not zero and the row under the
         // pointer is not the row of the same index.
         let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
