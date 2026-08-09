@@ -9,11 +9,13 @@
 
 mod contents;
 mod details;
+pub(crate) mod hints;
 mod tables;
 mod title;
 
 pub use contents::{GridCell, GridColumn};
 pub use details::{DetailRow, Details, Section};
+pub use hints::{Binding, Hint, HintBar, HintGroup};
 pub use tables::{Marker, TreeRow};
 pub use title::PanelTitle;
 
@@ -29,6 +31,8 @@ pub struct ViewModel {
     pub focus: Panel,
     /// Drawn over the panels when something needs saying.
     pub overlay: Option<Overlay>,
+    /// What the focused panel responds to, along the bottom of the frame.
+    pub hints: HintBar,
 }
 
 /// One panel, described without reference to how it is drawn.
@@ -88,6 +92,7 @@ pub fn view_model(state: &State) -> ViewModel {
             body: body(state, panel),
         }),
         focus: state.focus,
+        hints: hints::bar(state.focus),
         overlay: state.overlay.clone(),
     }
 }

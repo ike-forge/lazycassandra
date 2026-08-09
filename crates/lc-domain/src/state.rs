@@ -7,10 +7,11 @@
 use std::collections::BTreeMap;
 
 use crate::contents::ContentsPanel;
-use crate::model::{ConnId, DbError, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::style::Severity;
 use crate::tree::TablesPanel;
+use crate::view::hints::Binding;
 
 #[derive(Debug, Clone, Default)]
 pub struct State {
@@ -107,6 +108,54 @@ pub enum Panel {
     Queries,
 }
 
+const TABLES_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Key::Char('j'), Key::Char('k')],
+        action: "move",
+    },
+    Binding {
+        keys: &[Key::Char('l'), Key::Char('h')],
+        action: "fold",
+    },
+    // `⏎` on a keyspace folds it and on a table reads it. The bar names the
+    // focused panel and nothing finer (design §1), so one label has to cover
+    // both — "open" is true of either row, "read" of half of them.
+    Binding {
+        keys: &[Key::Enter],
+        action: "open",
+    },
+];
+
+const DDL_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Key::Char('j'), Key::Char('k')],
+        action: "scroll",
+    },
+    Binding {
+        keys: &[Key::PageDown, Key::PageUp],
+        action: "page",
+    },
+    Binding {
+        keys: &[Key::Home, Key::End],
+        action: "ends",
+    },
+];
+
+const CONTENTS_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Key::Char('j'), Key::Char('k')],
+        action: "move",
+    },
+    Binding {
+        keys: &[Key::PageDown, Key::PageUp],
+        action: "page",
+    },
+    Binding {
+        keys: &[Key::Home, Key::End],
+        action: "ends",
+    },
+];
+
 impl Panel {
     /// Every panel, in reading order.
     pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
@@ -153,6 +202,21 @@ impl Panel {
     #[must_use]
     pub fn from_shortcut(key: char) -> Option<Self> {
         Self::ALL.into_iter().find(|panel| panel.shortcut() == key)
+    }
+
+    /// What this panel responds to.
+    ///
+    /// Exhaustive, so a fifth panel cannot compile without declaring its
+    /// bindings — the same guarantee `ALL` and `shortcut` give. Queries has
+    /// none yet and says so.
+    #[must_use]
+    pub const fn hints(self) -> &'static [Binding] {
+        match self {
+            Self::Tables => TABLES_HINTS,
+            Self::Ddl => DDL_HINTS,
+            Self::Contents => CONTENTS_HINTS,
+            Self::Queries => &[],
+        }
     }
 }
 
@@ -744,5 +808,29 @@ mod tests {
         assert!(!ConnectionState::Connecting(conn).is_current(other));
         assert!(!ConnectionState::Disconnected.is_current(conn));
         assert!(!ConnectionState::Failed(DbError::Timeout).is_current(conn));
+    }
+
+    #[test]
+    fn only_the_queries_panel_has_nothing_to_offer() {
+        for panel in Panel::ALL {
+            let empty = panel.hints().is_empty();
+
+            assert_eq!(
+                empty,
+                panel == Panel::Queries,
+                "{panel:?} claiming {} bindings is a deliberate change",
+                panel.hints().len()
+            );
+        }
+    }
+
+    #[test]
+    fn no_binding_claims_a_key_with_no_action_to_go_with_it() {
+        for panel in Panel::ALL {
+            for binding in panel.hints() {
+                assert!(!binding.keys.is_empty(), "{panel:?} has a keyless hint");
+                assert!(!binding.action.is_empty(), "{panel:?} has a nameless hint");
+            }
+        }
     }
 }
