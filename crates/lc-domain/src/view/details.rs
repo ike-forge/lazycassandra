@@ -29,11 +29,28 @@ pub struct Details {
 /// empty rather than by a projection remembering to skip it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
-    /// `PARTITION`, `CLUSTERING`, `OPTIONS`, `REPLICATION`.
+    /// `Partition Key`, `Clustering Key`, `Options`, `Replication`.
     pub heading: String,
+    /// What the group is, which decides both the blank line above it and
+    /// whether its rows read as key structure.
+    pub group: Group,
     /// Styles the heading and every row beneath it.
     pub token: Option<Token>,
     pub rows: Vec<DetailRow>,
+}
+
+/// Which half of the panel a section belongs to.
+///
+/// The panel reads as two groups — what the table *is*, then what it is
+/// configured to do — and the blank line between them follows from this rather
+/// than from a projection remembering to emit one in the right place
+/// (doc/specs/2026-08-09-visual-polish-design.md §5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Group {
+    /// The physical shape: which columns decide placement and ordering.
+    Shape,
+    /// What the schema reports about it: table options, replication.
+    Settings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +87,8 @@ fn scrolled(state: &State, details: Details) -> PanelBody {
 
 fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     let partition = Section {
-        heading: "PARTITION".to_owned(),
+        heading: "Partition Key".to_owned(),
+        group: Group::Shape,
         token: Some(Token::PartitionKey),
         rows: table
             .primary_key
@@ -85,7 +103,8 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     };
 
     let clustering = Section {
-        heading: "CLUSTERING".to_owned(),
+        heading: "Clustering Key".to_owned(),
+        group: Group::Shape,
         token: Some(Token::ClusteringKey),
         rows: table
             .primary_key
@@ -100,7 +119,8 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     };
 
     let options = Section {
-        heading: "OPTIONS".to_owned(),
+        heading: "Options".to_owned(),
+        group: Group::Settings,
         token: None,
         rows: table
             .options
@@ -120,7 +140,8 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
 
 fn of_keyspace(keyspace: &Keyspace) -> Details {
     let replication = Section {
-        heading: "REPLICATION".to_owned(),
+        heading: "Replication".to_owned(),
+        group: Group::Settings,
         token: None,
         rows: replication_rows(&keyspace.replication),
     };
@@ -270,7 +291,7 @@ mod tests {
 
         assert_eq!(
             headings(&details),
-            ["PARTITION", "CLUSTERING", "OPTIONS"],
+            ["Partition Key", "Clustering Key", "Options"],
             "vision.md §2: the shape is what the panel exists to keep visible"
         );
     }
@@ -280,7 +301,7 @@ mod tests {
         let details = details(&browsing(orders()));
 
         assert_eq!(
-            section(&details, "PARTITION").rows,
+            section(&details, "Partition Key").rows,
             [DetailRow::Column {
                 name: "customer_id".to_owned(),
                 order: None,
@@ -288,7 +309,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            section(&details, "CLUSTERING").rows,
+            section(&details, "Clustering Key").rows,
             [
                 DetailRow::Column {
                     name: "order_date".to_owned(),
@@ -305,19 +326,32 @@ mod tests {
     }
 
     #[test]
+    fn a_tables_shape_and_its_settings_are_marked_as_separate_groups() {
+        let table = details(&browsing(orders()));
+        let groups: Vec<Group> = table.sections.iter().map(|section| section.group).collect();
+
+        assert_eq!(groups, [Group::Shape, Group::Shape, Group::Settings]);
+        assert_eq!(
+            section(&details(&tabled(&[("shop", &["orders"])])), "Replication").group,
+            Group::Settings,
+            "a keyspace has settings and no shape of its own"
+        );
+    }
+
+    #[test]
     fn the_key_sections_are_the_ones_that_spend_the_key_tokens() {
         let details = details(&browsing(orders()));
 
         assert_eq!(
-            section(&details, "PARTITION").token,
+            section(&details, "Partition Key").token,
             Some(Token::PartitionKey)
         );
         assert_eq!(
-            section(&details, "CLUSTERING").token,
+            section(&details, "Clustering Key").token,
             Some(Token::ClusteringKey)
         );
         assert_eq!(
-            section(&details, "OPTIONS").token,
+            section(&details, "Options").token,
             None,
             "an option is not part of the key structure and must not read as one"
         );
@@ -328,7 +362,7 @@ mod tests {
         let details = details(&browsing(orders()));
 
         assert_eq!(
-            section(&details, "OPTIONS").rows,
+            section(&details, "Options").rows,
             [
                 DetailRow::Property {
                     name: "comment".to_owned(),
@@ -353,7 +387,7 @@ mod tests {
 
         assert_eq!(
             headings(&details(&browsing(table))),
-            ["PARTITION", "OPTIONS"],
+            ["Partition Key", "Options"],
             "an empty group is worse than none: it claims there is something to see"
         );
     }
@@ -365,7 +399,7 @@ mod tests {
 
         assert_eq!(
             headings(&details(&browsing(table))),
-            ["PARTITION", "CLUSTERING"],
+            ["Partition Key", "Clustering Key"],
             "options carry no invariant, so their absence costs the panel nothing else"
         );
     }
@@ -397,7 +431,7 @@ mod tests {
 
         assert_eq!(details.heading, "shop");
         assert_eq!(
-            section(&details, "REPLICATION").rows,
+            section(&details, "Replication").rows,
             [
                 DetailRow::Property {
                     name: "class".to_owned(),
@@ -420,7 +454,7 @@ mod tests {
         let details = details(&tabled(&[("shop", &["orders"])]));
 
         assert_eq!(
-            section(&details, "REPLICATION").rows,
+            section(&details, "Replication").rows,
             [
                 DetailRow::Property {
                     name: "class".to_owned(),

@@ -13,6 +13,7 @@ mod hints;
 pub mod hit;
 pub mod input;
 pub mod layout;
+mod loader;
 mod overlay;
 pub mod render;
 pub mod theme;

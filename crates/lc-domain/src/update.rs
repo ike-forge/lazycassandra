@@ -149,7 +149,13 @@ fn described(state: &State) -> Option<Described> {
 
 fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
-        Msg::Tick => Vec::new(),
+        Msg::Tick => {
+            let working = state.is_working();
+            if state.loader.advance(working) {
+                state.mark_dirty();
+            }
+            Vec::new()
+        }
 
         Msg::Input(press) => handle_key(state, press),
 
@@ -705,6 +711,78 @@ mod tests {
             }),
             ..State::default()
         }
+    }
+
+    #[test]
+    fn a_tick_costs_a_repaint_only_while_something_is_outstanding() {
+        let mut idle = State {
+            dirty: false,
+            ..State::default()
+        };
+
+        assert!(!idle.is_working());
+        update(&mut idle, Msg::Tick);
+        assert!(
+            !idle.dirty,
+            "an idle tick changes nothing, and repainting on it would burn the terminal 25 times a second"
+        );
+
+        let mut working = connected(Posture::ReadOnly);
+        working.dirty = false;
+
+        assert!(working.is_working(), "the schema is still loading");
+        update(&mut working, Msg::Tick);
+        assert!(working.dirty);
+    }
+
+    #[test]
+    fn the_loader_falls_back_to_rest_when_the_work_finishes() {
+        let mut state = connected(Posture::ReadOnly);
+        for _ in 0..5 {
+            update(&mut state, Msg::Tick);
+        }
+        assert_ne!(state.loader.frame(), 0);
+
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema_of(&["shop"])),
+            },
+        );
+        state.dirty = false;
+        update(&mut state, Msg::Tick);
+
+        assert_eq!(
+            state.loader.frame(),
+            0,
+            "an idle frame is always the same frame, not wherever the animation stopped"
+        );
+        assert!(state.dirty, "the fall back to rest is itself a repaint");
+    }
+
+    #[test]
+    fn a_query_in_flight_is_work_the_loader_animates_for() {
+        let mut state = connected(Posture::ReadOnly);
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema_of(&["shop"])),
+            },
+        );
+        assert!(
+            !state.is_working(),
+            "the schema arrived and nothing else is out"
+        );
+
+        state
+            .in_flight
+            .insert(QueryId::next(), statement(StatementKind::Read));
+
+        assert!(state.is_working());
     }
 
     fn current_conn(state: &State) -> ConnId {

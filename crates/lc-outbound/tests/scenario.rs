@@ -431,7 +431,7 @@ async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
             .iter()
             .map(|section| section.heading.as_str())
             .collect::<Vec<_>>(),
-        ["REPLICATION"]
+        ["Replication"]
     );
 
     update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
@@ -449,7 +449,7 @@ async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
             .iter()
             .map(|section| section.heading.as_str())
             .collect::<Vec<_>>(),
-        ["PARTITION", "OPTIONS"],
+        ["Partition Key", "Options"],
         "these fixtures have no clustering columns, so that section is absent"
     );
     assert_eq!(

@@ -20,6 +20,29 @@ use lc_inbound::{FrameMap, Rendered, Theme};
 use lc_outbound::cassandra::CassandraCluster;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
+use tokio::time::{Duration, interval};
+
+/// The interval `ratatui_opentui_loader` is built around. Real time enters the
+/// program here and nowhere else — the domain sees only `Msg::Tick`, and
+/// discards one that changes nothing (design §4.2).
+const TICK: Duration = Duration::from_millis(40);
+
+/// Feeds the loader's phase. Sends unconditionally; `update` is what decides
+/// whether a tick is worth a repaint, because it is what knows whether
+/// anything is outstanding.
+fn spawn_ticker(tx: mpsc::UnboundedSender<Incoming>) {
+    tokio::spawn(async move {
+        let mut ticks = interval(TICK);
+
+        loop {
+            ticks.tick().await;
+            if tx.send(Msg::Tick.into()).is_err() {
+                // The main loop has ended.
+                return;
+            }
+        }
+    });
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -90,6 +113,7 @@ fn resolve(incoming: Incoming, map: &FrameMap) -> Option<Msg> {
 async fn run(mut terminal: DefaultTerminal) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     input::spawn_reader(tx.clone());
+    spawn_ticker(tx.clone());
 
     let conn = ConnId::next();
     let cluster: Arc<dyn Cluster> = Arc::new(CassandraCluster::new(

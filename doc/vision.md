@@ -4,7 +4,7 @@
 > Fast for experts. Legible for everyone else.
 
 **Status:** pre-implementation. This document is the north star, not a spec.
-**Last updated:** 2026-08-07
+**Last updated:** 2026-08-09
 
 ---
 
@@ -132,12 +132,17 @@ You build muscle memory for *where things are*, not just what keys do. Layout
 does not rearrange itself under you.
 
 **5. Wear the terminal's clothes.**
-The default theme is *your terminal's* theme. LazyCassandra draws with the
-sixteen ANSI colors and inherits whatever palette you already configured, so it
-sits inside your setup instead of shouting over it — no hardcoded background, no
-imported color scheme, nothing that clashes with the split next to it. Colour
-carries meaning (write posture, severity, key structure) and nothing else;
-decoration is not a reason to spend a colour.
+The background is yours and LazyCassandra never overrides it; body text keeps
+your terminal's own foreground. The tool sits inside your setup instead of
+repainting over it — no imported colour scheme, nothing that clashes with the
+split next to it.
+
+Highlights are ours. Where something has to be *marked* — an accent, an icon,
+a property name — we pick the colour, truecolor included. What that buys is
+bounded on purpose: meaning still belongs to the sixteen ANSI colours, because
+those are the ones that survive a terminal whose palette is unusable. Write
+posture, severity and key structure are drawn in them and always will be. An
+accent marks where to look; it never carries the meaning.
 
 Themes are supported for people who want them, and one may ship for terminals
 with poor palettes. But the out-of-the-box experience is deliberately the least

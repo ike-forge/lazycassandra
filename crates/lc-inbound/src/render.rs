@@ -5,13 +5,19 @@ use lc_domain::state::{Geometry, Panel};
 use lc_domain::style::Token;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
+use ratatui::style::Style;
+use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::body::Extent;
 use crate::hit::{FrameMap, PanelHit};
 use crate::layout::{Shell, layout};
 use crate::theme::Theme;
+
+/// Half a cell, flush with the panel's outer edge: the thumb marks a position
+/// without reading as a bar of its own beside the border it sits on.
+const THUMB: &str = "▐";
 
 /// What the frame just drawn turned out to be.
 ///
@@ -54,10 +60,15 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             Span::raw(after),
         ]);
 
-        let mut block = Block::bordered().title(title);
-        if panel.panel == view.focus {
-            block = block.border_style(theme.style(Token::Focused));
-        }
+        let mut block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title(title);
+        let border = if panel.panel == view.focus {
+            theme.style(Token::Focused)
+        } else {
+            Style::new()
+        };
+        block = block.border_style(border);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -71,7 +82,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                     ddl_lines = drawn.extent.total;
                 }
                 if drawn.extent.overflows() {
-                    scrollbar(frame, area, &drawn.extent, theme);
+                    scrollbar(frame, area, &drawn.extent, border, theme);
                 }
             }
             // `Blank` and `Notice` do not scroll, so what such a panel can
@@ -83,7 +94,12 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 
     let bar = rects.bar();
-    frame.render_widget(crate::hints::line(&view.hints, bar.width, theme), bar);
+    let (loader, hint_bar) = bar_split(bar);
+    frame.render_widget(crate::loader::line(view.activity), loader);
+    frame.render_widget(
+        crate::hints::line(&view.hints, hint_bar.width, theme),
+        hint_bar,
+    );
 
     if let Some(overlay) = &view.overlay {
         crate::overlay::render(frame, overlay, theme);
@@ -95,8 +111,36 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 }
 
+/// The bottom row, split into the loader's cells and what the hint bar is
+/// left with.
+///
+/// The loader takes its width at every frame size rather than hiding on a
+/// narrow one: the bar already knows how to give up hints in value order, and
+/// trading a hint the user can read for one they cannot see is not a trade
+/// (design §4.4).
+fn bar_split(bar: Rect) -> (Rect, Rect) {
+    let taken = crate::loader::WIDTH + crate::loader::GAP;
+
+    (
+        Rect {
+            width: crate::loader::WIDTH,
+            ..bar
+        },
+        Rect {
+            x: bar.x + taken,
+            width: bar.width.saturating_sub(taken),
+            ..bar
+        },
+    )
+}
+
 /// Over the block's right border, so it spends no content width — and only
 /// when something is hidden, so its absence says nothing is.
+///
+/// The track is the border glyph in the border's own style, so it repaints
+/// what it covers and only the thumb is left visible. `Scrollbar`'s default
+/// set is `DOUBLE_VERTICAL`, whose `║` is what makes an unstyled scrollbar
+/// read as a second border beside the first (design §3).
 ///
 /// `ScrollbarState` normalises the thumb against `content_length - 1 +
 /// viewport_length`, a model whose `position` is a selection index running over
@@ -107,7 +151,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 /// thumb short of the bottom when the last row is already on screen.
 ///
 /// Only called when the extent overflows, so the length below is at least one.
-fn scrollbar(frame: &mut Frame, area: Rect, extent: &Extent, theme: Theme) {
+fn scrollbar(frame: &mut Frame, area: Rect, extent: &Extent, border: Style, theme: Theme) {
     let mut state =
         ScrollbarState::new(extent.total.saturating_sub(extent.visible)).position(extent.position);
 
@@ -116,7 +160,10 @@ fn scrollbar(frame: &mut Frame, area: Rect, extent: &Extent, theme: Theme) {
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(None)
             .end_symbol(None)
-            .style(theme.style(Token::Muted)),
+            .track_symbol(Some(symbols::line::VERTICAL))
+            .track_style(border)
+            .thumb_symbol(THUMB)
+            .thumb_style(theme.style(Token::Muted)),
         area.inner(Margin {
             horizontal: 0,
             vertical: 1,
@@ -180,12 +227,12 @@ mod tests {
         // rows to Ddl's 4, and Queries sits on its 3-row floor.
         let buffer = draw(40, 12);
 
-        assert_eq!(row(&buffer, 0), "┌Tables────────┐┌Table contents────────┐");
+        assert_eq!(row(&buffer, 0), "╭Tables────────╮╭Table contents────────╮");
         assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
-        assert_eq!(row(&buffer, 6), "└──────────────┘│                      │");
-        assert_eq!(row(&buffer, 7), "┌Table DDL─────┐└──────────────────────┘");
-        assert_eq!(row(&buffer, 8), "│              │┌Queries───────────────┐");
-        assert_eq!(row(&buffer, 10), "└──────────────┘└──────────────────────┘");
+        assert_eq!(row(&buffer, 6), "╰──────────────╯│                      │");
+        assert_eq!(row(&buffer, 7), "╭Table DDL─────╮╰──────────────────────╯");
+        assert_eq!(row(&buffer, 8), "│              │╭Queries───────────────╮");
+        assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
     #[test]
@@ -194,11 +241,31 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            " j/k move  l/h fold  ⏎ open │ tab panel  q quit"
+            "■⬝⬝⬝⬝⬝⬝⬝  j/k move  l/h fold  ⏎ open │ tab panel  q quit",
+            "the loader takes the leading cells and the hints follow it"
         );
         assert!(
             !row(&buffer, 22).contains("q quit"),
             "the bar owns one row and no more"
+        );
+    }
+
+    #[test]
+    fn the_loader_rests_until_something_is_outstanding() {
+        // `State::default` is disconnected with nothing in flight.
+        let resting = draw(80, 24);
+        let mut state = State {
+            connection: ConnectionState::Connecting(ConnId::next()),
+            ..State::default()
+        };
+        state.loader.advance(true);
+
+        let working = draw_state(80, 24, &state);
+
+        assert_ne!(
+            row(&resting, 23),
+            row(&working, 23),
+            "a tick during a connection attempt has to show on the bar"
         );
     }
 
@@ -229,7 +296,8 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 11).trim_end(),
-            " j/k move  l/h fold │ tab panel  q quit"
+            "■⬝⬝⬝⬝⬝⬝⬝  j/k move │ tab panel  q quit",
+            "the cells the loader took come out of the hints, lowest value first"
         );
     }
 
@@ -280,8 +348,8 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        // "┌Tables" and "┌Table contents" on row 0, "┌Table DDL" on row 7,
-        // "┌Queries" on row 8 — the border occupies the first column of each.
+        // "╭Tables" and "╭Table contents" on row 0, "╭Table DDL" on row 7,
+        // "╭Queries" on row 8 — the border occupies the first column of each.
         assert!(underlined(1, 0), "Tables underlines its T");
         assert!(underlined(23, 0), "Table contents underlines its c");
         assert!(underlined(2, 7), "Table DDL underlines its a");
@@ -316,7 +384,7 @@ mod tests {
                 "{width}x{height} must say what it needs, got {text:?}"
             );
             assert!(
-                !text.contains('┌'),
+                !text.contains('╭'),
                 "{width}x{height} must draw no panel, got {text:?}"
             );
         }
@@ -734,7 +802,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 0),
-            "┌Tables────────┐┌Table contents — shop.orders (2 rows)─────┐"
+            "╭Tables────────╮╭Table contents — shop.orders (2 rows)─────╮"
         );
         assert_eq!(
             row(&buffer, 1),
@@ -966,18 +1034,24 @@ mod tests {
             [
                 "shop.orders_by_customer",
                 "",
-                "PARTITION",
+                "Partition Key",
                 "  customer_id      uuid",
-                "CLUSTERING",
+                "Clustering Key",
                 "  order_date ↓     date",
                 "  order_id ↑   timeuuid",
-                "OPTIONS",
-                "comment",
-                "  Order history.",
-                "gc_grace_seconds",
-                "  864000",
+                // The one blank row, splitting what the table is from what it
+                // is configured to do.
+                "",
+                "Options",
+                // Short enough for one line each; `bloom_filter_fp_chance` and
+                // its value need 26 of the panel's 23, so it keeps the
+                // wrapped shape.
+                "comment  Order history.",
+                "gc_grace_seconds 864000",
                 "bloom_filter_fp_chance",
                 "  0.01",
+                // The row the shorter body leaves unfilled.
+                "",
             ]
         );
     }
@@ -987,14 +1061,23 @@ mod tests {
         let buffer = draw_state(100, 40, &describing(orders()));
         let colour = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
 
-        assert_eq!(colour(27), Color::Yellow, "PARTITION");
+        assert_eq!(colour(27), Color::Yellow, "Partition Key");
         assert_eq!(colour(28), Color::Yellow, "its column");
-        assert_eq!(colour(29), Color::Cyan, "CLUSTERING");
+        assert_eq!(colour(29), Color::Cyan, "Clustering Key");
         assert_eq!(colour(30), Color::Cyan, "its column");
+        // 32 is the blank row the settings group opens with.
         assert_eq!(
-            colour(32),
+            colour(33),
             Color::Reset,
             "an option is not part of the key structure and must not read as one"
+        );
+        assert_eq!(
+            colour(34),
+            Theme::TerminalDefault
+                .style(Token::PropertyName)
+                .fg
+                .expect("a property name is highlighted"),
+            "the property name carries the accent its heading does not"
         );
     }
 
@@ -1007,8 +1090,9 @@ mod tests {
         let buffer = draw_state(100, 40, &state);
 
         assert_eq!(
-            ddl_rows(&buffer)[..5],
-            ["shop", "", "REPLICATION", "class", "  SimpleStrategy",]
+            ddl_rows(&buffer)[..4],
+            ["shop", "", "Replication", "class    SimpleStrategy"],
+            "the only section opens the panel, so it takes no blank row of its own"
         );
     }
 
@@ -1155,7 +1239,7 @@ mod tests {
         let buffer = draw_state(40, 12, &browsing(&refs, 0));
 
         assert!(
-            tables_border(&buffer).contains('█'),
+            tables_border(&buffer).contains(THUMB),
             "the thumb says how far through twelve keyspaces five rows are"
         );
     }
@@ -1166,12 +1250,30 @@ mod tests {
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
 
         assert!(
-            tables_border(&draw_state(40, 12, &browsing(&refs, 0))).starts_with('█'),
+            tables_border(&draw_state(40, 12, &browsing(&refs, 0))).starts_with(THUMB),
             "the first keyspace is on screen, so the thumb belongs at the top"
         );
         assert!(
-            tables_border(&draw_state(40, 12, &browsing(&refs, 11))).ends_with('█'),
+            tables_border(&draw_state(40, 12, &browsing(&refs, 11))).ends_with(THUMB),
             "the last keyspace is on screen, so the thumb belongs at the bottom"
+        );
+    }
+
+    #[test]
+    fn the_track_is_the_border_itself_rather_than_a_second_bar_beside_it() {
+        let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+        // Scrolled to the top, so the thumb is at the top and the rest of the
+        // column is track. `Scrollbar`'s default set would draw `║` here.
+        let border = tables_border(&draw_state(40, 12, &browsing(&refs, 0)));
+        let track: String = border.chars().skip_while(|c| *c == '▐').collect();
+
+        assert!(!track.is_empty(), "twelve keyspaces do not fit five rows");
+        assert!(
+            track.chars().all(|c| c == '│'),
+            "the track has to be the border glyph, or the panel grows a second \
+             border beside the first: {track:?}"
         );
     }
 
@@ -1184,7 +1286,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│  ks00        █│Press Enter on a table│",
+            "│  ks00        ▐│Press Enter on a table│",
             "the row is as wide as it is without a bar; the bar replaced the border"
         );
     }

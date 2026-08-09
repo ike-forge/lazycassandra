@@ -21,6 +21,10 @@ pub enum Token {
     Shortcut,
     /// A key the focused panel responds to, in the hint bar.
     HintKey,
+    /// The name of a table option or replication setting, in the Table DDL
+    /// panel. Named for what it marks rather than for the colour it gets: the
+    /// domain still names no colour (architecture.md §6).
+    PropertyName,
     /// What that key does.
     HintAction,
     /// The row the cursor is on.
