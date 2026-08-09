@@ -380,3 +380,21 @@ Changed in the same commit as the code:
   `HintGroup::Idle` removal (§6), so the design is not left describing a
   variant that no longer exists.
 - **`TODO.md`** — the deferrals in §9.
+
+---
+
+## Amendment — 2026-08-09, merge with list-viewport work
+
+§5's opening quote of `body.rs`'s module doc — "Scrolling lives here rather
+than in the domain… so no scroll state is stored anywhere" — no longer
+appears there. The list-viewport design gave Tables, Contents and Ddl a
+domain-held scroll offset, and the merge that brought both slices together
+rewrote the module doc to state both regimes instead of the one this slice
+wrote alone.
+
+The rule §5 rests on is unchanged: the editor still derives both its offsets
+from the cursor and the area every frame and stores neither. `body.rs` now
+carries two scroll regimes side by side, one per producer, and §5's account
+of the editor's own regime still holds.
+
+See [list viewport design](2026-08-09-list-viewport-design.md) §2.

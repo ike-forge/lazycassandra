@@ -109,7 +109,7 @@ impl PanelHit {
 
 impl RowStrip {
     /// `None` when the body drew nothing a press can land on: a blank panel, a
-    /// notice, or wrapped lines.
+    /// notice, the Ddl body's wrapped lines, or the Queries editor.
     fn of(inner: Rect, body: Option<&Body>) -> Option<Self> {
         let body = body?;
         let Unit::Rows { header } = body.unit else {

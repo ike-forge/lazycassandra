@@ -309,6 +309,11 @@ Bound, and spending nothing from §3's budget. See the
 | Left click | The hint bar | Nothing |
 | Wheel | The panel under the pointer | Scrolls three rows or lines, moving neither focus nor the selection |
 
+**Queries is the exception: the wheel over it does nothing.** `panel_scroll`
+has no arm for `Panel::Queries` — the editor derives both offsets from the
+cursor and the area every frame and stores none for a notch to move. Whether
+it should get a stored viewport of its own is an open question (TODO.md).
+
 Chrome is a border, a title, a grid's header, a notice, the Ddl body, the
 Queries panel, and the blank space past the last row. Every other gesture —
 right and middle buttons, drags, releases, horizontal wheels, and anything with

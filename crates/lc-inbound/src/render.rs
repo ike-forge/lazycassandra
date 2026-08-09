@@ -1544,7 +1544,9 @@ mod tests {
 
     /// The Queries panel at 80x24 is `Rect { x: 20, y: 20, w: 60, h: 3 }`:
     /// borders on rows 20 and 22, its one content row on 21, and its inner
-    /// left edge at column 21. The hint bar owns row 23.
+    /// left edge at column 21. Row 23 is split between the loader and the
+    /// hint bar (`bar_split`), which does not matter here: the loader sits at
+    /// the left and Queries starts at column 20.
     const CONTENT_ROW: u16 = 21;
     const INNER_LEFT: u16 = 21;
 

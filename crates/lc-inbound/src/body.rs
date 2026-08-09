@@ -1,9 +1,13 @@
 //! Drawing what a panel contains.
 //!
-//! Scroll offsets are domain state and arrive in the [`PanelBody`]. What lives
-//! here is the arithmetic that needs a width or a height — which columns fit,
-//! and whether the selection falls inside the rows drawn
-//! (doc/specs/2026-08-09-list-viewport-design.md §2).
+//! Two scroll regimes meet here. Tables, Contents and Ddl carry a scroll
+//! offset as domain state that arrives in the [`PanelBody`]; what lives here
+//! is the arithmetic that needs a width or a height — which columns fit, and
+//! whether the selection falls inside the rows drawn
+//! (doc/specs/2026-08-09-list-viewport-design.md §2). Queries stores no
+//! offset at all: both its vertical and horizontal offsets are derived from
+//! the cursor and the area every frame
+//! (doc/specs/2026-08-09-queries-editor-design.md §5).
 
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
@@ -69,7 +73,7 @@ pub(crate) enum Unit {
     /// Rows a press can land on, `header` of which the panel spends on its own
     /// chrome above the first one drawn.
     Rows { header: u16 },
-    /// Wrapped lines: scrolled, but nothing a press can address.
+    /// Lines: scrolled, but nothing a press can address.
     Lines,
 }
 
@@ -369,9 +373,10 @@ fn editor(
 /// The smallest offset that brings `index` into a window of `span` rows or
 /// columns, starting from the top.
 ///
-/// The same arithmetic `ListState` does for a selection, and stateless for the
-/// same reason (module doc): rebuilt from the cursor every frame, so nothing
-/// has to be stored or invalidated.
+/// `editor` calls this for both axes — `cursor.line` against the height, and,
+/// through [`left_edge`], `cursor.column` against the width — so the same
+/// arithmetic serves the vertical and horizontal offset alike, recomputed
+/// every frame rather than stored (queries-editor design §5).
 const fn window(index: usize, span: usize) -> usize {
     index.saturating_sub(span.saturating_sub(1))
 }
