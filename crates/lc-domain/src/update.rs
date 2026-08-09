@@ -95,6 +95,43 @@ pub fn init(conn: ConnId) -> (State, Vec<Effect>) {
 
 /// Applies a message and returns the effects it implies.
 pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
+    let subject = described(state);
+    let effects = apply(state, msg);
+
+    // The Ddl offset belongs to the node being described, so a new subject
+    // opens at its top rather than halfway down the last one. Stated once here
+    // rather than at each of the four paths that can move the tree selection.
+    if described(state) != subject {
+        state.ddl.to_start();
+    }
+
+    effects
+}
+
+/// What the Ddl panel is describing, in a form that survives the mutation it
+/// is compared across — [`Node`] borrows the schema.
+///
+/// Unfolding is deliberately not part of the identity: it leaves the keyspace
+/// selected and the panel on the same subject, so it must not scroll it.
+#[derive(PartialEq, Eq)]
+enum Described {
+    Keyspace(String),
+    Table { keyspace: String, table: String },
+}
+
+fn described(state: &State) -> Option<Described> {
+    let schema = state.schema()?;
+
+    Some(match state.tables.selected(schema)? {
+        Node::Keyspace { keyspace, .. } => Described::Keyspace(keyspace.name.clone()),
+        Node::Table { keyspace, table } => Described::Table {
+            keyspace: keyspace.name.clone(),
+            table: table.name.clone(),
+        },
+    })
+}
+
+fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::Tick => Vec::new(),
 
@@ -1455,6 +1492,47 @@ mod tests {
             !state.dirty,
             "a measurement of the frame already drawn must not ask for another"
         );
+    }
+
+    /// A table scrolled to line 34 and then left must not hand the next table
+    /// its offset: the reader would open mid-document with nothing saying so.
+    #[test]
+    fn moving_the_tree_selection_returns_the_ddl_panel_to_the_top() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('l'));
+        state.focus = Panel::Ddl;
+        measured(&mut state, [3, 6, 0, 0], 40);
+        press(&mut state, Key::End);
+        assert_eq!(state.ddl.offset(), 34);
+
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.ddl.offset(), 0, "users is a document of its own");
+    }
+
+    #[test]
+    fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        state.focus = Panel::Ddl;
+        measured(&mut state, [3, 6, 0, 0], 40);
+        press(&mut state, Key::End);
+        assert_eq!(state.ddl.offset(), 34);
+        state.focus = Panel::Tables;
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(
+            state.ddl.offset(),
+            34,
+            "shop is still the selected node, so the panel is still on its description"
+        );
+
+        // A second `l` steps onto shop's first table, which is a new subject.
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(state.ddl.offset(), 0);
     }
 
     #[test]
