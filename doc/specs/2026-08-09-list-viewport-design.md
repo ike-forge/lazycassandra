@@ -113,11 +113,14 @@ silently reinstates the old behaviour and every other test still passes.
 
 ### What this does to the hit map
 
-Nothing, and that is the point. `Extent::position` stops being a value read back
-out of the widget and becomes the value handed to it, so
-[mouse input](2026-08-09-mouse-input-design.md) §4's rule — the map is assembled
-from what did the drawing — holds more directly than before. A click while
-scrolled resolves against the same offset the frame drew with.
+The read-back stays. `tree` and `grid` in `body.rs` still call `state.offset()`
+after `render_stateful_widget` runs, rather than reporting the offset they
+handed in, because the widget is free to move it — the same walk described
+above. That read-back is what keeps
+[mouse input](2026-08-09-mouse-input-design.md) §4's rule true: the map is
+assembled from what did the drawing, not from what was asked for, so a click
+while scrolled resolves against the offset the widget actually drew from
+rather than the one it was asked to use.
 
 ## 5. Three edges
 
