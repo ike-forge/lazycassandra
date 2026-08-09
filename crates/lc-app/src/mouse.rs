@@ -29,13 +29,17 @@ impl MouseCapture {
     /// If the escape sequence cannot be written, in which case capture is not
     /// on and there is nothing to release.
     pub(crate) fn enable() -> Result<Self> {
-        execute!(stdout(), EnableMouseCapture)?;
-
+        // Installed before capture goes on, so a failed `execute!` below never
+        // leaves a hook writing "capture off" to a terminal that was never
+        // capturing — harmless, since the sequence is idempotent, but there is
+        // no reason to open the window at all.
         let restore = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             disable();
             restore(info);
         }));
+
+        execute!(stdout(), EnableMouseCapture)?;
 
         Ok(Self(()))
     }

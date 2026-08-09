@@ -24,8 +24,10 @@ use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Installs a panic hook that restores the terminal before unwinding, so a
-    // panic does not leave the user in raw mode. It does not cover panics on
-    // tokio workers — architecture.md §11 has that still open.
+    // panic does not leave the user in raw mode. A panic on a tokio worker
+    // fires the hook without ending the process, so the terminal is restored
+    // under a program that is still drawing — architecture.md §11 has that
+    // still open.
     let terminal = ratatui::init();
     let result = captured(terminal).await;
     ratatui::restore();

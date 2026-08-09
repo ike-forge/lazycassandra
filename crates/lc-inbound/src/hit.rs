@@ -54,8 +54,12 @@ impl FrameMap {
     /// What a press at `column`, `row` resolves to, or `None` when it landed
     /// outside every panel — the hint bar, or a frame too small to draw panels
     /// in.
+    ///
+    /// `pub(crate)`: `to_pointer` is the only caller outside this module's own
+    /// tests, and keeping resolution behind it is what makes "`lc-inbound`
+    /// resolves" (design §3) a single route rather than a convention.
     #[must_use]
-    pub fn hit(&self, column: u16, row: u16) -> Option<Click> {
+    pub(crate) fn hit(&self, column: u16, row: u16) -> Option<Click> {
         let position = Position::new(column, row);
 
         self.panels
