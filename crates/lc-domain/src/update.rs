@@ -308,12 +308,17 @@ enum Transition {
     Close,
 }
 
-/// Applies `motion` to whatever the focused panel moves: a selection in
-/// Tables and Contents, a viewport in Ddl.
+/// Applies `motion` to whatever the focused panel moves.
 fn scroll(state: &mut State, motion: Motion) {
-    let height = state.geometry.height(state.focus);
+    scroll_panel(state, state.focus, motion);
+}
 
-    if state.focus == Panel::Ddl {
+/// Applies `motion` to `panel`, which need not be the focused one: a wheel
+/// scrolls what the pointer is over (design §6).
+fn scroll_panel(state: &mut State, panel: Panel, motion: Motion) {
+    let height = state.geometry.height(panel);
+
+    if panel == Panel::Ddl {
         let len = state.geometry.ddl_lines();
 
         match motion {
@@ -327,9 +332,9 @@ fn scroll(state: &mut State, motion: Motion) {
         return;
     }
 
-    let len = focused_row_count(state);
+    let len = row_count(state, panel);
 
-    let Some(cursor) = focused_cursor(state) else {
+    let Some(cursor) = panel_cursor(state, panel) else {
         return;
     };
 
@@ -343,20 +348,20 @@ fn scroll(state: &mut State, motion: Motion) {
     }
 }
 
-/// How many rows the focused panel's *cursor* moves over. Ddl scrolls a
-/// viewport rather than a selection and never reaches here; Queries has
-/// nothing, so a motion there is inert rather than moving another panel's
-/// selection from a distance.
-fn focused_row_count(state: &State) -> usize {
-    match state.focus {
+/// How many rows `panel`'s *cursor* moves over. Ddl scrolls a viewport rather
+/// than a selection and never reaches here; Queries has nothing, so a motion
+/// there is inert rather than moving another panel's selection from a
+/// distance.
+fn row_count(state: &State, panel: Panel) -> usize {
+    match panel {
         Panel::Tables => tree_rows(state),
         Panel::Contents => state.contents.row_count(),
         Panel::Ddl | Panel::Queries => 0,
     }
 }
 
-fn focused_cursor(state: &mut State) -> Option<&mut Cursor> {
-    match state.focus {
+fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
+    match panel {
         Panel::Tables => Some(&mut state.tables.cursor),
         Panel::Contents => Some(&mut state.contents.cursor),
         Panel::Ddl | Panel::Queries => None,
