@@ -1922,6 +1922,39 @@ mod tests {
     }
 
     #[test]
+    fn a_wheel_over_tables_moves_the_selection_and_restarts_the_ddl_scroll() {
+        // Four keyspaces, so three rows a notch lands on the last one rather
+        // than clamping on the second. `described()` compares the selection
+        // before and after `update`, so moving off "a" onto "d" is a subject
+        // change and resets `state.ddl` — the same rule a `j` held three times
+        // would trigger.
+        let mut state = browsing(&["a", "b", "c", "d"]);
+        state.focus = Panel::Queries;
+        state.ddl.down(100, 2);
+        assert_ne!(state.ddl.offset(), 0, "the fixture must start scrolled");
+
+        let effects = point(
+            &mut state,
+            Pointer::Wheel {
+                panel: Panel::Tables,
+                direction: Wheel::Down,
+            },
+        );
+
+        assert!(
+            effects.is_empty(),
+            "a selection change alone asks for nothing"
+        );
+        assert_eq!(state.tables.cursor.index(), 3, "three rows a notch");
+        assert_eq!(state.focus, Panel::Queries, "the wheel does not move focus");
+        assert_eq!(
+            state.ddl.offset(),
+            0,
+            "the new subject's Ddl view starts at its top"
+        );
+    }
+
+    #[test]
     fn a_wheel_does_not_dismiss_the_overlay() {
         let mut state = showing_rows(20);
         state.geometry = Geometry::new([8, 8, 8, 1], 0);

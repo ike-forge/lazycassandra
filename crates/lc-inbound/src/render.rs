@@ -1159,6 +1159,39 @@ mod tests {
     }
 
     #[test]
+    fn the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn() {
+        // Twelve keyspaces in a panel that holds six rows forces the tree to
+        // scroll, so `ListState::offset()` is not zero and the row under the
+        // pointer is not the row of the same index.
+        let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+        let (buffer, map) = draw_mapped(40, 12, &browsing(&refs, 11));
+        let mut resolved = 0;
+
+        for (index, name) in names.iter().enumerate() {
+            let Some(y) = (1..7).find(|&y| row(&buffer, y).contains(name.as_str())) else {
+                continue;
+            };
+
+            assert_eq!(
+                map.hit(2, y),
+                Some(Click::Row {
+                    panel: Panel::Tables,
+                    row: index
+                }),
+                "{name} was drawn on screen row {y}"
+            );
+            resolved += 1;
+        }
+
+        assert!(
+            resolved >= 2,
+            "the test proves nothing unless rows were on screen, got {resolved}"
+        );
+    }
+
+    #[test]
     fn the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn() {
         // Twenty rows in a panel that holds five forces the grid to scroll, so
         // the row under the pointer is not the row of the same index.
@@ -1205,7 +1238,16 @@ mod tests {
             ],
         ));
 
-        let (_buffer, map) = draw_mapped(60, 12, &state);
+        let (buffer, map) = draw_mapped(60, 12, &state);
+
+        assert!(
+            row(&buffer, 1).contains("id") && row(&buffer, 1).contains("email"),
+            "row 1 must be the header row this test is about"
+        );
+        assert!(
+            row(&buffer, 2).contains("ada@example.com"),
+            "row 2 must carry the first row's value, or `row: 0` below proves nothing"
+        );
 
         assert_eq!(
             map.hit(20, 1),
