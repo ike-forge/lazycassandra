@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::body::Extent;
-use crate::layout::layout;
+use crate::layout::{Shell, layout};
 use crate::theme::Theme;
 
 /// Draw one titled block per panel, skipping any the terminal is too small to
@@ -19,7 +19,9 @@ use crate::theme::Theme;
 /// how many lines the Ddl body wrapped to
 /// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
 pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
-    let rects = layout(frame.area());
+    let Shell::Panels(rects) = layout(frame.area()) else {
+        return Geometry::default();
+    };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
 

@@ -17,6 +17,23 @@ const SIDEBAR_MIN_W: u16 = 16;
 /// be able to keep before the sidebar is allowed to exist at all.
 const MAIN_RESERVE_W: u16 = 24;
 
+/// The smallest frame the shell is drawn into: both columns on their width
+/// floors, and one panel above another on its height floor in each.
+pub(crate) const MIN_W: u16 = SIDEBAR_MIN_W + MAIN_RESERVE_W;
+pub(crate) const MIN_H: u16 = 2 * PANEL_MIN_H;
+
+/// What a frame is big enough to be.
+///
+/// An enum rather than a `PanelRects` plus a separate `fits` predicate, so
+/// there is no path on which a caller draws a panel into a frame too small to
+/// hold one (conventions.md §1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shell {
+    Panels(PanelRects),
+    /// The frame, which fell short of `MIN_W` × `MIN_H`.
+    TooSmall(Rect),
+}
+
 /// Where each panel is drawn this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanelRects {
@@ -40,21 +57,25 @@ impl PanelRects {
     }
 }
 
-/// Divide `area` into the four panels of doc/ui-draft.png.
+/// Divide `area` into the four panels of doc/ui-draft.png, or refuse it.
 #[must_use]
-pub fn layout(area: Rect) -> PanelRects {
+pub fn layout(area: Rect) -> Shell {
+    if area.width < MIN_W || area.height < MIN_H {
+        return Shell::TooSmall(area);
+    }
+
     let (main_w, side_w) = split(area.width, SIDEBAR_PERCENT, MAIN_RESERVE_W, SIDEBAR_MIN_W);
     let (tables_h, ddl_h) = split(area.height, DDL_PERCENT, PANEL_MIN_H, PANEL_MIN_H);
     let (contents_h, queries_h) = split(area.height, QUERIES_PERCENT, PANEL_MIN_H, PANEL_MIN_H);
 
     let main_x = area.x + side_w;
 
-    PanelRects {
+    Shell::Panels(PanelRects {
         tables: Rect::new(area.x, area.y, side_w, tables_h),
         ddl: Rect::new(area.x, area.y + tables_h, side_w, ddl_h),
         contents: Rect::new(main_x, area.y, main_w, contents_h),
         queries: Rect::new(main_x, area.y + contents_h, main_w, queries_h),
-    }
+    })
 }
 
 /// Split `total` into a major and a minor part, in that order.
@@ -85,7 +106,14 @@ mod tests {
     use super::*;
 
     fn rects(width: u16, height: u16) -> PanelRects {
-        layout(Rect::new(0, 0, width, height))
+        panels(Rect::new(0, 0, width, height))
+    }
+
+    fn panels(area: Rect) -> PanelRects {
+        match layout(area) {
+            Shell::Panels(rects) => rects,
+            Shell::TooSmall(area) => panic!("{area:?} is below {MIN_W}x{MIN_H}"),
+        }
     }
 
     #[test]
@@ -100,7 +128,7 @@ mod tests {
 
     #[test]
     fn the_layout_is_offset_by_the_area_origin() {
-        let r = layout(Rect::new(7, 3, 100, 100));
+        let r = panels(Rect::new(7, 3, 100, 100));
 
         assert_eq!(r.get(Panel::Tables), Rect::new(7, 3, 25, 60));
         assert_eq!(r.get(Panel::Queries), Rect::new(32, 93, 75, 10));
@@ -133,34 +161,36 @@ mod tests {
     }
 
     #[test]
-    fn the_minor_panel_collapses_rather_than_shrink_below_its_floor() {
-        let r = rects(80, 5);
-
-        assert_eq!(r.get(Panel::Contents).height, 5);
+    fn split_collapses_the_minor_part_rather_than_shrink_it_below_its_floor() {
+        // Unreachable through `layout`, which now refuses these sizes. `split`
+        // stays total over them, so it is tested where it is total
+        // (minimum terminal size design §5).
         assert_eq!(
-            r.get(Panel::Queries).height,
-            0,
+            split(5, QUERIES_PERCENT, PANEL_MIN_H, PANEL_MIN_H),
+            (5, 0),
             "a one-row bordered panel looks present and shows nothing"
         );
-        assert_eq!(r.get(Panel::Ddl).height, 0);
+        assert_eq!(
+            split(20, SIDEBAR_PERCENT, MAIN_RESERVE_W, SIDEBAR_MIN_W),
+            (20, 0),
+            "the sidebar goes before the main column does"
+        );
     }
 
     #[test]
-    fn the_sidebar_disappears_before_the_main_column_does() {
-        let r = rects(20, 24);
-
-        assert_eq!(r.get(Panel::Tables).width, 0);
-        assert_eq!(r.get(Panel::Contents).width, 20);
+    fn split_lifts_the_minor_part_to_its_floor() {
+        assert_eq!(
+            split(24, QUERIES_PERCENT, PANEL_MIN_H, PANEL_MIN_H),
+            (21, 3)
+        );
     }
 
     #[test]
     fn the_panels_tile_the_area_exactly() {
         let sizes = [
-            (0, 0),
-            (1, 1),
-            (20, 24),
+            (MIN_W, MIN_H),
             (40, 12),
-            (80, 5),
+            (40, 24),
             (80, 24),
             (100, 100),
             (u16::MAX, u16::MAX),
@@ -168,7 +198,7 @@ mod tests {
 
         for (width, height) in sizes {
             let area = Rect::new(0, 0, width, height);
-            let r = layout(area);
+            let r = panels(area);
 
             let covered: u32 = Panel::ALL.iter().map(|&panel| r.get(panel).area()).sum();
             assert_eq!(
@@ -187,5 +217,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_frame_below_the_minimum_gets_no_panels() {
+        for (width, height) in [(39, 6), (40, 5), (39, 5), (1, 1), (0, 0)] {
+            let area = Rect::new(0, 0, width, height);
+
+            assert_eq!(
+                layout(area),
+                Shell::TooSmall(area),
+                "{width}x{height} is below {MIN_W}x{MIN_H}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_minimum_is_the_size_at_which_every_panel_still_fits() {
+        let r = rects(MIN_W, MIN_H);
+
+        for panel in Panel::ALL {
+            assert!(
+                !r.get(panel).is_empty(),
+                "{panel:?} is empty at the minimum, so the minimum is wrong"
+            );
+        }
+    }
+
+    #[test]
+    fn the_minimum_is_derived_from_the_floors_rather_than_chosen() {
+        assert_eq!((MIN_W, MIN_H), (40, 6));
     }
 }
