@@ -20,8 +20,10 @@ nothing from.
 **Every gesture decomposes into bindings that already exist.**
 
 A click on a tree row is `Cursor::go_to` followed by the `Enter` arm. A click on
-a grid row is `Cursor::go_to`. A wheel notch is three `Motion::Down`s. Nothing
-the mouse does is reachable only by mouse.
+a grid row is `Cursor::go_to`. A wheel notch is three `Motion::Down`s in the
+panel under the pointer — the same three a held `j` sends the focused panel,
+once the keyboard has reached that panel by focusing it first. Nothing the
+mouse does is reachable only by mouse.
 
 This is not tidiness. doc/shortcuts.md §2 requires a binding to be visible, and
 the hint bar names keys — a gesture cannot appear in it. A mouse-only capability
@@ -53,6 +55,18 @@ gesture.
 "Chrome" is a border, a title, a grid's header row, a `Notice`, the Ddl body,
 the Queries panel, and the blank space past the last row — everything inside a
 panel that is not a row a cursor can sit on.
+
+**The hint bar wins over the overlay.** The two rows above collide: a press on
+the bar, with an overlay up, is both "anywhere, overlay up" and "the hint bar".
+`FrameMap::hit` returns `None` for the bar row before `handle_pointer` ever
+sees the overlay, so the bar row keeps its "Nothing" and does not dismiss what
+is showing — `Esc` is the gesture that always reaches it. Resolving this inside
+`to_pointer` would mean reading `state.overlay` there, which contradicts
+"`lc-inbound` decides nothing" (§3); the small inconsistency is the cheaper
+trade. A long message pushes the same case further than it looks: when
+`overlay::centred` clamps the box to `area.height`, the overlay covers the bar
+row too, and a press on what reads as the overlay's own bottom edge is
+actually a press on the bar underneath it — dropped for the same reason.
 
 **A click acts even when the panel it lands in is not focused.** One click
 focuses Tables *and* reads the table. The pointer carries a position, so it
@@ -262,10 +276,12 @@ struct MouseCapture(());
 ```
 
 Constructed after `ratatui::init()`, so ratatui's hook is already in place to
-chain onto. It enables capture, takes the current hook and sets one that
-disables capture before delegating; `Drop` disables. On an unwind both fire,
-which is harmless — the sequence is idempotent. There is no way to hold capture
-without holding the thing that releases it (conventions.md §1).
+chain onto. It takes the current hook and sets one that disables capture
+before delegating, then enables capture — hook first, so a capture that fails
+to enable never leaves a window with nothing installed to release it; `Drop`
+disables. On an unwind both fire, which is harmless — the sequence is
+idempotent. There is no way to hold capture without holding the thing that
+releases it (conventions.md §1).
 
 ## 9. Testing
 

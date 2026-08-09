@@ -192,10 +192,11 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A click focuses what it lands in | `a_click_focuses_the_panel_it_landed_in`, `a_click_on_chrome_focuses_and_does_nothing_else` |
 | A stale row is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped` |
 | A click spends itself on the overlay | `a_click_dismisses_the_overlay_and_does_nothing_else`, `a_wheel_does_not_dismiss_the_overlay` |
-| The wheel scrolls without focusing | `a_wheel_scrolls_the_panel_under_it_without_focusing_it`, `a_wheel_over_the_ddl_panel_scrolls_its_lines`, `a_wheel_over_a_panel_with_nothing_to_scroll_is_inert` |
+| The wheel scrolls without focusing | `a_wheel_scrolls_the_panel_under_it_without_focusing_it`, `a_wheel_over_the_ddl_panel_scrolls_its_lines`, `a_wheel_over_a_panel_with_nothing_to_scroll_is_inert`, `a_wheel_over_tables_moves_the_selection_and_restarts_the_ddl_scroll` |
 | Only the left button and the vertical wheel are bound | `only_the_left_button_is_bound`, `a_release_a_drag_and_a_move_are_dropped`, `a_horizontal_wheel_is_dropped` (`inbound/input.rs`) |
 | A modified gesture is not a binding | `a_modified_press_is_not_a_gesture` (`inbound/input.rs`) |
-| The map resolves to the row that was drawn | `the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it`, `the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn` (`inbound/render.rs`) |
+| The reader thread's filter agrees with `to_pointer`'s | `is_bound_accepts_everything_to_pointer_would` (`inbound/input.rs`) |
+| The map resolves to the row that was drawn | `the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it`, `the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn`, `the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn` (`inbound/render.rs`) |
 | Chrome is not a row | `a_grids_header_is_chrome_rather_than_its_first_row`, `a_press_on_the_chrome_of_a_panel_names_that_panel`, `the_hint_bar_and_a_frame_below_the_minimum_are_not_clickable` (`inbound/render.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_other_panel` is what makes the
@@ -231,6 +232,7 @@ Bound, and spending nothing from §3's budget. See the
 | Left click | A Contents row | Focus Contents, select it |
 | Left click | Chrome | Focus that panel |
 | Left click | Anywhere, overlay up | Dismiss the overlay |
+| Left click | The hint bar | Nothing |
 | Wheel | The panel under the pointer | Three rows or lines, without moving focus |
 
 Chrome is a border, a title, a grid's header, a notice, the Ddl body, the
@@ -238,8 +240,15 @@ Queries panel, and the blank space past the last row. Every other gesture —
 right and middle buttons, drags, releases, horizontal wheels, and anything with
 a modifier held — is dropped at the edge.
 
+**The hint bar wins over the overlay.** A press on the bar is dropped before
+anything else sees it, including a dismissible overlay, so it never dismisses
+one — `Esc` always does. A long message can push the overlay's box down far
+enough to cover the bar row too; a press on what looks like the overlay's own
+bottom edge is this same case, not a bug.
+
 **Every gesture decomposes into a binding that already exists.** A click on a
-tree row is a selection followed by `Enter`; a wheel notch is three `j`s. This
+tree row is a selection followed by `Enter`; a wheel notch is three `j`s in the
+panel under the pointer, which the keyboard reaches by focusing it first. This
 is what keeps §2's "a binding must be visible" true: the hint bar names keys, so
 a mouse-only capability would have nowhere to announce itself. A gesture that
 does not decompose is a binding that needs a key first.
