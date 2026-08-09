@@ -277,11 +277,17 @@ struct MouseCapture(());
 
 Constructed after `ratatui::init()`, so ratatui's hook is already in place to
 chain onto. It takes the current hook and sets one that disables capture
-before delegating, then enables capture — hook first, so a capture that fails
-to enable never leaves a window with nothing installed to release it; `Drop`
-disables. On an unwind both fire, which is harmless — the sequence is
-idempotent. There is no way to hold capture without holding the thing that
-releases it (conventions.md §1).
+before delegating, then enables capture — hook first, so there is no window in
+which capture is on with nothing yet able to release it; `Drop` disables. On an
+unwind both fire, which is harmless — the sequence is idempotent. There is no
+way to hold capture without holding the thing that releases it
+(conventions.md §1).
+
+That order costs one thing, and it is the cheaper side of the trade: an
+`execute!` that fails leaves the hook installed, so a later panic writes
+"capture off" to a terminal that was never capturing. A no-op, against a
+window in which a panic would have left capture on with nothing to turn it
+off.
 
 ## 9. Testing
 
