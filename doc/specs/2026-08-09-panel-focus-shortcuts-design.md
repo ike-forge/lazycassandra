@@ -155,3 +155,30 @@ text does not change, only the styling of one cell.
 - **A keybinding hint bar.** vision.md §7 Phase 0 promises one; it is its own
   piece of work and this design does not anticipate its shape.
 - **User-defined keybindings.** vision.md §7 Phase 5.
+
+---
+
+## Amendment — 2026-08-09, queries editor
+
+§5's "every from/to pair over `Panel::ALL`" is narrower than stated once the
+Queries panel takes text (queries-editor-design.md §3). From Queries,
+`t`/`a`/`c`/`u` are text, not bindings, so a from/to pair starting there no
+longer lands and would fail the assertion as originally written.
+
+The test was renamed to
+`a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` and its
+`from` side narrowed to panels that don't take text — three of the four, not
+all four.
+
+**The disjointness proof this section rests on survives intact**, and that is
+the point worth stating: the inner loop still spans all four `to` panels from
+each of the three non-text `from` panels, so a panel claiming a key an
+earlier `handle_key` arm already takes still has its arm swallowed and still
+fails the assertion. Nothing about *why* the test catches a shadowed arm has
+changed; only which starting panels it can honestly claim to cover.
+
+`a_shortcut_is_text_in_a_panel_that_takes_text` pins the half the narrowing
+gave up: from Queries, a focus letter is text and no focus change happens at
+all.
+
+See [queries editor design](2026-08-09-queries-editor-design.md) §3.
