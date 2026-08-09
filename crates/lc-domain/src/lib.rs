@@ -5,6 +5,7 @@
 
 pub mod cell;
 pub mod contents;
+pub mod editor;
 pub mod model;
 pub mod ports;
 pub mod posture;
