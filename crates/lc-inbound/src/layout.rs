@@ -16,11 +16,14 @@ const SIDEBAR_MIN_W: u16 = 16;
 /// `split`'s `major_floor` for the root split: how much the main column must
 /// be able to keep before the sidebar is allowed to exist at all.
 const MAIN_RESERVE_W: u16 = 24;
+/// The hint bar's row, off the bottom of the frame.
+const BAR_H: u16 = 1;
 
 /// The smallest frame the shell is drawn into: both columns on their width
-/// floors, and one panel above another on its height floor in each.
+/// floors, one panel above another on its height floor in each, and the hint
+/// bar's row.
 pub(crate) const MIN_W: u16 = SIDEBAR_MIN_W + MAIN_RESERVE_W;
-pub(crate) const MIN_H: u16 = 2 * PANEL_MIN_H;
+pub(crate) const MIN_H: u16 = 2 * PANEL_MIN_H + BAR_H;
 
 /// What a frame is big enough to be.
 ///
@@ -41,6 +44,7 @@ pub struct PanelRects {
     ddl: Rect,
     contents: Rect,
     queries: Rect,
+    bar: Rect,
 }
 
 impl PanelRects {
@@ -54,6 +58,16 @@ impl PanelRects {
             Panel::Queries => self.queries,
         }
     }
+
+    /// The bottom row, which belongs to the hint bar.
+    ///
+    /// Produced with the panels rather than derived by the caller, so no
+    /// caller can lay the panels out against the whole frame and then draw
+    /// the bar over one of their rows.
+    #[must_use]
+    pub const fn bar(&self) -> Rect {
+        self.bar
+    }
 }
 
 /// Divide `area` into the four panels of doc/ui-draft.png, or refuse it.
@@ -63,9 +77,10 @@ pub fn layout(area: Rect) -> Shell {
         return Shell::TooSmall(area);
     }
 
+    let panels_h = area.height - BAR_H;
     let (main_w, side_w) = split(area.width, SIDEBAR_PERCENT, MAIN_RESERVE_W, SIDEBAR_MIN_W);
-    let (tables_h, ddl_h) = split(area.height, DDL_PERCENT, PANEL_MIN_H, PANEL_MIN_H);
-    let (contents_h, queries_h) = split(area.height, QUERIES_PERCENT, PANEL_MIN_H, PANEL_MIN_H);
+    let (tables_h, ddl_h) = split(panels_h, DDL_PERCENT, PANEL_MIN_H, PANEL_MIN_H);
+    let (contents_h, queries_h) = split(panels_h, QUERIES_PERCENT, PANEL_MIN_H, PANEL_MIN_H);
 
     let main_x = area.x + side_w;
 
@@ -74,6 +89,7 @@ pub fn layout(area: Rect) -> Shell {
         ddl: Rect::new(area.x, area.y + tables_h, side_w, ddl_h),
         contents: Rect::new(main_x, area.y, main_w, contents_h),
         queries: Rect::new(main_x, area.y + contents_h, main_w, queries_h),
+        bar: Rect::new(area.x, area.y + panels_h, area.width, BAR_H),
     })
 }
 
@@ -120,9 +136,9 @@ mod tests {
         let r = rects(100, 100);
 
         assert_eq!(r.get(Panel::Tables), Rect::new(0, 0, 25, 60));
-        assert_eq!(r.get(Panel::Ddl), Rect::new(0, 60, 25, 40));
+        assert_eq!(r.get(Panel::Ddl), Rect::new(0, 60, 25, 39));
         assert_eq!(r.get(Panel::Contents), Rect::new(25, 0, 75, 90));
-        assert_eq!(r.get(Panel::Queries), Rect::new(25, 90, 75, 10));
+        assert_eq!(r.get(Panel::Queries), Rect::new(25, 90, 75, 9));
     }
 
     #[test]
@@ -130,16 +146,37 @@ mod tests {
         let r = panels(Rect::new(7, 3, 100, 100));
 
         assert_eq!(r.get(Panel::Tables), Rect::new(7, 3, 25, 60));
-        assert_eq!(r.get(Panel::Queries), Rect::new(32, 93, 75, 10));
+        assert_eq!(r.get(Panel::Queries), Rect::new(32, 93, 75, 9));
     }
 
     #[test]
     fn queries_is_lifted_to_its_floor_on_a_short_terminal() {
-        // 10% of 24 rows is 2: two borders and no content.
+        // 10% of the 23 rows left after the bar is 2: two borders and no
+        // content.
         let r = rects(80, 24);
 
-        assert_eq!(r.get(Panel::Contents), Rect::new(20, 0, 60, 21));
-        assert_eq!(r.get(Panel::Queries), Rect::new(20, 21, 60, 3));
+        assert_eq!(r.get(Panel::Contents), Rect::new(20, 0, 60, 20));
+        assert_eq!(r.get(Panel::Queries), Rect::new(20, 20, 60, 3));
+    }
+
+    #[test]
+    fn the_bar_takes_the_bottom_row_and_the_panels_stop_above_it() {
+        let r = rects(80, 24);
+
+        assert_eq!(r.bar(), Rect::new(0, 23, 80, 1));
+        for panel in Panel::ALL {
+            assert!(
+                !r.get(panel).intersects(r.bar()),
+                "{panel:?} overlaps the bar"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bar_is_offset_by_the_area_origin_like_everything_else() {
+        let r = panels(Rect::new(7, 3, 100, 100));
+
+        assert_eq!(r.bar(), Rect::new(7, 102, 100, 1));
     }
 
     #[test]
@@ -152,8 +189,8 @@ mod tests {
     }
 
     #[test]
-    fn both_floors_still_fit_at_six_rows() {
-        let r = rects(80, 6);
+    fn both_floors_still_fit_at_seven_rows() {
+        let r = rects(80, 7);
 
         assert_eq!(r.get(Panel::Contents).height, 3);
         assert_eq!(r.get(Panel::Queries).height, 3);
@@ -199,19 +236,24 @@ mod tests {
             let area = Rect::new(0, 0, width, height);
             let r = panels(area);
 
-            let covered: u32 = Panel::ALL.iter().map(|&panel| r.get(panel).area()).sum();
+            let regions: Vec<Rect> = Panel::ALL
+                .iter()
+                .map(|&panel| r.get(panel))
+                .chain(std::iter::once(r.bar()))
+                .collect();
+
+            let covered: u32 = regions.iter().copied().map(Rect::area).sum();
             assert_eq!(
                 covered,
                 area.area(),
-                "panels must cover {width}x{height} with no gap"
+                "the panels and the bar must cover {width}x{height} with no gap"
             );
 
-            for (index, &first) in Panel::ALL.iter().enumerate() {
-                for &second in &Panel::ALL[index + 1..] {
-                    let (a, b) = (r.get(first), r.get(second));
+            for (index, &first) in regions.iter().enumerate() {
+                for &second in &regions[index + 1..] {
                     assert!(
-                        a.is_empty() || b.is_empty() || !a.intersects(b),
-                        "{first:?} and {second:?} overlap at {width}x{height}"
+                        first.is_empty() || second.is_empty() || !first.intersects(second),
+                        "two regions overlap at {width}x{height}"
                     );
                 }
             }
@@ -220,7 +262,7 @@ mod tests {
 
     #[test]
     fn a_frame_below_the_minimum_gets_no_panels() {
-        for (width, height) in [(39, 6), (40, 5), (39, 5), (1, 1), (0, 0)] {
+        for (width, height) in [(39, 6), (40, 6), (40, 5), (39, 5), (1, 1), (0, 0)] {
             let area = Rect::new(0, 0, width, height);
 
             assert_eq!(
@@ -232,19 +274,16 @@ mod tests {
     }
 
     #[test]
-    fn the_minimum_is_the_size_at_which_every_panel_still_fits() {
-        let r = rects(MIN_W, MIN_H);
+    fn the_minimum_grew_by_the_bar_it_now_has_to_hold() {
+        assert_eq!((MIN_W, MIN_H), (40, 7));
 
+        let r = rects(MIN_W, MIN_H);
         for panel in Panel::ALL {
             assert!(
                 !r.get(panel).is_empty(),
-                "{panel:?} is empty at the minimum, so the minimum is wrong"
+                "{panel:?} is empty at the minimum"
             );
         }
-    }
-
-    #[test]
-    fn the_minimum_is_derived_from_the_floors_rather_than_chosen() {
-        assert_eq!((MIN_W, MIN_H), (40, 6));
+        assert_eq!(r.bar().height, 1);
     }
 }

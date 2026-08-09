@@ -150,16 +150,16 @@ mod tests {
 
     #[test]
     fn the_four_panels_are_drawn_where_the_draft_puts_them() {
-        // At 40x12 the sidebar sits on its 16-column floor, Tables takes 8
+        // At 40x12 the sidebar sits on its 16-column floor, Tables takes 7
         // rows to Ddl's 4, and Queries sits on its 3-row floor.
         let buffer = draw(40, 12);
 
         assert_eq!(row(&buffer, 0), "┌Tables────────┐┌Table contents────────┐");
         assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
-        assert_eq!(row(&buffer, 7), "└──────────────┘│                      │");
-        assert_eq!(row(&buffer, 8), "┌Table DDL─────┐└──────────────────────┘");
-        assert_eq!(row(&buffer, 9), "│              │┌Queries───────────────┐");
-        assert_eq!(row(&buffer, 11), "└──────────────┘└──────────────────────┘");
+        assert_eq!(row(&buffer, 6), "└──────────────┘│                      │");
+        assert_eq!(row(&buffer, 7), "┌Table DDL─────┐└──────────────────────┘");
+        assert_eq!(row(&buffer, 8), "│              │┌Queries───────────────┐");
+        assert_eq!(row(&buffer, 10), "└──────────────┘└──────────────────────┘");
     }
 
     #[test]
@@ -176,8 +176,8 @@ mod tests {
         // Top-left corner of each panel; Tables is focused by default.
         assert!(bold(0, 0), "Tables is focused");
         assert!(!bold(16, 0), "Contents is not");
-        assert!(!bold(0, 8), "Ddl is not");
-        assert!(!bold(16, 9), "Queries is not");
+        assert!(!bold(0, 7), "Ddl is not");
+        assert!(!bold(16, 8), "Queries is not");
     }
 
     #[test]
@@ -194,8 +194,8 @@ mod tests {
 
         assert!(bold(16, 0), "Contents is focused");
         assert!(!bold(0, 0), "Tables is not");
-        assert!(!bold(0, 8), "Ddl is not");
-        assert!(!bold(16, 9), "Queries is not");
+        assert!(!bold(0, 7), "Ddl is not");
+        assert!(!bold(16, 8), "Queries is not");
     }
 
     #[test]
@@ -209,12 +209,12 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        // "┌Tables" and "┌Table contents" on row 0, "┌Table DDL" on row 8,
-        // "┌Queries" on row 9 — the border occupies the first column of each.
+        // "┌Tables" and "┌Table contents" on row 0, "┌Table DDL" on row 7,
+        // "┌Queries" on row 8 — the border occupies the first column of each.
         assert!(underlined(1, 0), "Tables underlines its T");
         assert!(underlined(23, 0), "Table contents underlines its c");
-        assert!(underlined(2, 8), "Table DDL underlines its a");
-        assert!(underlined(18, 9), "Queries underlines its u");
+        assert!(underlined(2, 7), "Table DDL underlines its a");
+        assert!(underlined(18, 8), "Queries underlines its u");
     }
 
     #[test]
@@ -231,17 +231,17 @@ mod tests {
         for x in [0, 2, 3, 6] {
             assert!(!underlined(x, 0), "column {x} of row 0 is not the mark");
         }
-        assert!(!underlined(1, 8), "the T of Table DDL is not its mark");
+        assert!(!underlined(1, 7), "the T of Table DDL is not its mark");
     }
 
     #[test]
     fn a_frame_below_the_minimum_draws_the_notice_and_nothing_else() {
-        for (width, height) in [(39, 6), (40, 5), (39, 5)] {
+        for (width, height) in [(39, 6), (40, 6), (40, 5), (39, 5)] {
             let buffer = draw(width, height);
             let text: String = (0..height).map(|y| row(&buffer, y)).collect();
 
             assert!(
-                text.contains("need 40×6"),
+                text.contains("need 40×7"),
                 "{width}x{height} must say what it needs, got {text:?}"
             );
             assert!(
@@ -269,9 +269,9 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        assert_eq!(lines(3), ["Too small", "need 40×6", "have 30×3"]);
-        assert_eq!(lines(2), ["need 40×6", "have 30×2"]);
-        assert_eq!(lines(1), ["need 40×6"]);
+        assert_eq!(lines(3), ["Too small", "need 40×7", "have 30×3"]);
+        assert_eq!(lines(2), ["need 40×7", "have 30×2"]);
+        assert_eq!(lines(1), ["need 40×7"]);
     }
 
     #[test]
@@ -762,7 +762,7 @@ mod tests {
 
     /// Inside the Ddl panel's border at 100x40: fourteen rows of 23 columns.
     fn ddl_rows(buffer: &Buffer) -> Vec<String> {
-        (25..39)
+        (25..38)
             .map(|y| {
                 (1..24)
                     .filter_map(|x| buffer.cell((x, y)))
@@ -794,7 +794,6 @@ mod tests {
                 "gc_grace_seconds",
                 "  864000",
                 "bloom_filter_fp_chance",
-                "  0.01",
             ]
         );
     }
@@ -861,12 +860,12 @@ mod tests {
 
     #[test]
     fn the_frame_reports_what_each_panel_can_show() {
-        // At 40x20: a 16-column sidebar, Tables 12 rows tall and Ddl 8, so
-        // ten and six rows of content inside their borders.
+        // At 40x20: a 16-column sidebar, Tables 12 rows tall and Ddl 7, so
+        // ten and five rows of content inside their borders.
         let geometry = geometry_of(40, 20, &describing(orders()));
 
         assert_eq!(geometry.height(Panel::Tables), 10);
-        assert_eq!(geometry.height(Panel::Ddl), 6);
+        assert_eq!(geometry.height(Panel::Ddl), 5);
         assert_eq!(
             geometry.ddl_lines(),
             crate::details::lines(
@@ -884,11 +883,11 @@ mod tests {
 
         let geometry = geometry_of(60, 12, &state);
 
-        // The Contents panel is 9 rows tall at this size: 7 inside its
+        // The Contents panel is 8 rows tall at this size: 6 inside its
         // border, one of which the header takes.
         assert_eq!(
             geometry.height(Panel::Contents),
-            6,
+            5,
             "a page motion must not count the header as a row it can land on"
         );
     }
@@ -903,11 +902,11 @@ mod tests {
 
     #[test]
     fn the_ddl_panel_scrolls_to_the_lines_below_its_fold() {
-        // At 40x20 the sidebar is 16 columns and the Ddl panel is 8 rows, so
-        // its body is fourteen columns of six rows — and `orders()` wraps to
-        // more than six lines in that.
+        // At 40x20 the sidebar is 16 columns and the Ddl panel is 7 rows, so
+        // its body is fourteen columns of five rows — and `orders()` wraps to
+        // more than five lines in that.
         const WIDTH: usize = 14;
-        const HEIGHT: usize = 6;
+        const HEIGHT: usize = 5;
 
         let state = describing(orders());
         let all = crate::details::lines(&ddl_details(&state), WIDTH, Theme::TerminalDefault);
@@ -926,10 +925,10 @@ mod tests {
 
         let before = draw_state(40, 20, &state);
         let after = draw_state(40, 20, &scrolled);
-        // Inside the Ddl panel only: rows 13..18, columns 1..14. A full-width
+        // Inside the Ddl panel only: rows 13..17, columns 1..14. A full-width
         // row would also carry whatever the Contents panel is saying.
         let visible = |buffer: &Buffer| -> Vec<String> {
-            (13..19)
+            (13..18)
                 .map(|y| {
                     (1..15)
                         .filter_map(|x| buffer.cell((x, y)))
@@ -954,9 +953,9 @@ mod tests {
     }
 
     /// The Tables panel's right border at 40x12: column 15, between the
-    /// corners at rows 0 and 7.
+    /// corners at rows 0 and 6.
     fn tables_border(buffer: &Buffer) -> String {
-        (1..7)
+        (1..6)
             .filter_map(|y| buffer.cell((15, y)))
             .map(Cell::symbol)
             .collect()
@@ -1024,7 +1023,7 @@ mod tests {
 
         assert_eq!(
             tables_border(&buffer),
-            "││││││",
+            "│││││",
             "nothing is hidden, so nothing says otherwise"
         );
     }
