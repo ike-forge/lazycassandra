@@ -65,6 +65,25 @@ Accepted anywhere, but a no-op unless Tables has focus.
 
 Reading a table cancels whatever read Contents was waiting on.
 
+### Queries panel
+
+The panel takes text, so while it has focus every printable key is a
+character and not a binding. What it does not claim keeps its global meaning.
+
+| Key | Action |
+|---|---|
+| any printable key | Insert it. `q`, `t`, `j` and the rest are text here. |
+| `Enter` | Split the line at the cursor. |
+| `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
+| `←` `→` `↑` `↓` | Move the cursor. `←`/`→` wrap between lines. |
+| `Home` / `End` | To the start / end of the **line**. |
+| `PageUp` / `PageDown` | Up / down one panel height. |
+| `Esc` | Leave the editor for Tables. |
+
+`Tab` and `Shift-Tab` still move focus. Nothing else global survives inside
+the editor — including `q`, which types a `q`.
+See [queries editor design](specs/2026-08-09-queries-editor-design.md).
+
 ---
 
 ## 2. The rules
@@ -83,6 +102,11 @@ Every key is dispatched unconditionally and a panel-specific action checks
 `state.focus` and returns. This keeps one flat, greppable list of everything the
 program responds to, at the cost of a guard per action — the trade is deliberate
 and is revisited when the CQL editor lands (§4).
+
+This now has one exception, and only one: a panel that takes text claims the
+printable and editing keys before the table is consulted. Everything it does
+not claim is still dispatched globally and still refused by panels that have
+nothing to do with it.
 
 **Match order is precedence.** The panel-focus arm is last, so it can only claim
 letters no earlier arm took. Adding an arm above it can silently steal a focus
@@ -108,6 +132,15 @@ same key at every level of skill).
 or is inert; it never means something else somewhere. A panel that cannot honour
 a motion swallows it rather than passing it on.
 
+`Home` and `End` are the exception. Everywhere else they reach the ends of
+the document; in the editor they reach the ends of the line, because that is
+what they do in every text editor a user has met. The document's ends stay
+reachable with `PageUp` and `PageDown`.
+
+A focus letter (`t`/`a`/`c`/`u`) is the other exception: it moves focus in
+every panel that does not take text, and is text in the one panel that does.
+The rule's own enforcement test was renamed for this — §5.
+
 **A binding must be visible.** vision.md §4, principle 1: discoverability is
 ambient. The focus letters are underlined in their titles; the hint bar along
 the bottom row names each focused panel's principal bindings, not its full
@@ -120,9 +153,13 @@ already names as `j/k move` — neither teaches something the bar's existing
 hints don't. A binding that is none of those and shows up in neither a title
 nor the bar is a binding only this file knows about.
 
-**No modes.** There is no state in which a letter means something other than its
-binding. This holds only until the Queries panel takes text input, and that is
-the design that has to break it (§4).
+**Focus is the mode.** A panel either takes text or it does not, and
+`Panel::takes_text` is the one exhaustive answer. In a panel that takes text
+every printable key is a character; everywhere else every printable key is a
+binding. There is no state within a panel that changes what a key means, so
+the regime is always the focused border — which is on screen and already
+means something. This replaces the older "no modes" rule, which held only
+until the Queries panel took text.
 
 **No key without a test.** Every binding above is pinned by name in §5.
 
@@ -146,6 +183,9 @@ domain.
 Claim from the free set first. Re-using a taken key means retiring a binding,
 which is a spec-level change.
 
+> Every printable key is also text in a panel that takes text. That does not
+> spend it: `d` is still free to be bound for the other three panels.
+
 ---
 
 ## 4. Deliberately unbound
@@ -157,7 +197,6 @@ which is a spec-level change.
 | `T` `A` `C` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. |
 | `ctrl-d` / `ctrl-u` | Wants the ctrl layer designed first; see §2. |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
-| Text entry | The Queries panel is blank. When it takes CQL, every letter becomes contended, and the mechanism that resolves it — a panel that swallows keys, or a mode — gets designed against the real editor rather than guessed at now. |
 | Horizontal motion | The grid caps at 24 columns and draws nothing past the right edge. Column navigation is unbuilt (vision.md §8). |
 | User-defined bindings | vision.md §7 Phase 5. |
 | Mouse | No `EnableMouseCapture`, no handler. Not a gap to be filled by accident. |
@@ -185,14 +224,27 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Ctrl/alt are not synonyms | `a_modified_key_is_not_a_binding` |
 | Shifted letters stay free | `a_shifted_shortcut_stays_unbound` |
 | Focus letters are distinct and total | `every_panel_has_a_distinct_shortcut`, `a_shortcut_leads_back_to_the_panel_that_claims_it`, `the_shortcuts_are_the_ones_the_design_names` — all in `state.rs` |
-| No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_other_panel` |
+| No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` |
+| A focus letter is text in a panel that takes text | `a_shortcut_is_text_in_a_panel_that_takes_text` |
 | Focus letters have no side effects | `a_shortcut_moves_focus_and_does_nothing_else` |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
 | The marked cell, and only it, is underlined | `each_panel_underlines_the_key_that_focuses_it`, `nothing_but_the_shortcut_is_underlined` (`inbound/render.rs`), `a_shortcut_is_underlined_without_spending_a_colour` (`inbound/theme.rs`) |
+| Letters are text in the editor | `a_letter_typed_in_queries_is_text_not_a_shortcut` |
+| Quitting is not reachable from the editor | `q_does_not_quit_while_the_editor_has_focus` |
+| `Esc` prefers the overlay, then leaves | `escape_dismisses_the_overlay_before_it_leaves_the_editor`, `escape_leaves_the_editor_for_tables` |
+| `Tab` still leaves | `tab_still_leaves_the_editor` |
+| Ctrl is still not text | `a_modified_key_is_still_not_text` |
+| The editing keys reach the buffer | `the_editing_keys_reach_the_buffer` |
+| `Home`/`End` take the line's ends | `home_and_end_reach_the_ends_of_the_line_in_the_editor` |
+| Other panels keep their letters | `typing_outside_queries_still_focuses_a_panel` |
+| The buffer's own behaviour | the `editor.rs` tests |
 
-`a_shortcut_focuses_its_panel_from_any_other_panel` is what makes the
-match-order rule in §2 enforceable: a panel claiming a letter an earlier arm
-already takes has its arm swallowed, focus does not land, and the test fails.
+`a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
+makes the match-order rule in §2 enforceable: a panel claiming a letter an
+earlier arm already takes has its arm swallowed, focus does not land, and the
+test fails. Its companion, `a_shortcut_is_text_in_a_panel_that_takes_text`,
+pins the half the rename gave up: from Queries, a focus letter is text and no
+focus change happens at all.
 
 ---
 

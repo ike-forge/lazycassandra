@@ -1,7 +1,7 @@
 # Queries editor — design
 
 **Date:** 2026-08-09
-**Status:** designed
+**Status:** implemented
 
 The Queries panel is blank. It is the one panel with no content at all, and
 vision.md §5.1 names what belongs there: "a first-class CQL editor with

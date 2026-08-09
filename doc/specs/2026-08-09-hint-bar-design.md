@@ -310,3 +310,19 @@ doc/shortcuts.md §2's "a binding must be visible" stops being aspirational and
 names the bar. §6's checklist gains the step that a new binding declares itself
 in `Panel::hints()` or `GLOBAL`, or says in the commit why it stays hidden. §4
 is unchanged: the bar was never in its table of deliberately-unbound keys.
+
+---
+
+## Amendment — 2026-08-09, queries editor
+
+§3's "Queries says *nothing here yet*" and the `HintGroup::Idle` variant of §4
+are both retired. The Queries panel takes text and names its own bindings, so
+no panel has an empty hint list and nothing can construct `Idle`.
+`HintBar.panel` is a `Vec<Hint>`.
+
+`GLOBAL` also stopped being unconditional. `q quit` is dropped for a panel that
+takes text, where `q` types a `q` — §2's rule that a bar which lies is worse
+than no bar, applied to the bar's own tail. `tab panel` is unaffected and is
+still the way out.
+
+See [queries editor design](2026-08-09-queries-editor-design.md) §6.

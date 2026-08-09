@@ -54,3 +54,29 @@ From the panel scrolling slice (doc/specs/2026-08-09-panel-scrolling-design.md):
   layer is designed, not in passing (design §5).
 - A long `Notice` still cannot scroll. One sentence is the assumption; a
   `DbError` carrying a paragraph would break it.
+
+From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9):
+
+- Size the Queries panel by what is in it. It gets one content row at 80x24
+  and 120x40 — the 3-row floor beats `QUERIES_PERCENT` until the terminal is
+  about forty rows tall — so multi-line CQL is legible only by scrolling.
+  The panel is meant to grow with its content and its focus, which is a
+  layout change with its own spec, not a tweak to the percentage.
+- Execute the buffer. Nothing turns it into a `Statement` or an
+  `Effect::Execute` yet, and doing so has to answer where the result lands:
+  `ContentsPanel` models exactly one outstanding read keyed to a `TableRef`,
+  which a typed query has no business claiming.
+- The session log. architecture.md §4 calls this panel "statement entry and
+  session log"; only the first half exists. When it lands, `State.queries`
+  becomes a `QueriesPanel` holding both.
+- Undo and redo, selection, clipboard, and word motions. The buffer has none.
+- Schema-aware completion and syntax highlighting (vision.md §5.1). The
+  `Token` path of architecture.md §6 is already the right shape for the
+  second.
+- The hint bar's `esc leave` is momentarily false. While an overlay is up
+  over a focused Queries, `Esc` spends the press dismissing the overlay
+  (design §3), so the bar promises something the next keystroke will not do.
+  It is the first binding where a modal can pre-empt what the bar claims —
+  every other hint stays true under an overlay. Closing it honestly means
+  making the bar overlay-aware, `bar(focus)` becoming `bar(focus, has_overlay)`,
+  which is a design change rather than a fix.
