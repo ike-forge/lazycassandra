@@ -1,7 +1,7 @@
 //! What the focused panel responds to, as the bar will say it.
 
 use crate::model::Key;
-use crate::state::Panel;
+use crate::state::{Overlay, State};
 
 /// A binding, keyed by the values `handle_key` actually matches on.
 ///
@@ -40,7 +40,15 @@ pub struct HintBar {
 /// Bindings every panel answers to. Repeated in each panel's bar rather than
 /// learned once: a user who never presses `tab` has no way to find the other
 /// three panels (design §3).
+///
+/// `?` leads because the bar drops global hints from the left: `q quit` is last
+/// to go because a user who can read one hint needs the way out, and `?` is
+/// next because it is the way to every binding the bar had no room for.
 pub(crate) const GLOBAL: &[Binding] = &[
+    Binding {
+        keys: &[Key::Char('?')],
+        action: "commands",
+    },
     Binding {
         keys: &[Key::Tab],
         action: "panel",
@@ -51,9 +59,46 @@ pub(crate) const GLOBAL: &[Binding] = &[
     },
 ];
 
-pub(crate) fn bar(focus: Panel) -> HintBar {
+const PALETTE: &[Binding] = &[
+    Binding {
+        keys: &[Key::Char('j'), Key::Char('k')],
+        action: "scroll",
+    },
+    Binding {
+        keys: &[Key::PageDown, Key::PageUp],
+        action: "page",
+    },
+    Binding {
+        keys: &[Key::Home, Key::End],
+        action: "ends",
+    },
+];
+
+/// `esc` is named only here. The bar leaves it out everywhere else because it
+/// does something only when an overlay is up, and naming it always would be a
+/// lie in most frames (hint bar design §3). With the palette open it is never
+/// a lie, and it is half of what the user is owed for `q` still quitting.
+const PALETTE_GLOBAL: &[Binding] = &[
+    Binding {
+        keys: &[Key::Escape],
+        action: "close",
+    },
+    Binding {
+        keys: &[Key::Char('q')],
+        action: "quit",
+    },
+];
+
+pub(crate) fn bar(state: &State) -> HintBar {
+    if matches!(state.overlay, Some(Overlay::Commands(_))) {
+        return HintBar {
+            panel: HintGroup::Keys(PALETTE.iter().map(rendered).collect()),
+            global: PALETTE_GLOBAL.iter().map(rendered).collect(),
+        };
+    }
+
     HintBar {
-        panel: match focus.hints() {
+        panel: match state.focus.hints() {
             [] => HintGroup::Idle("nothing here yet"),
             bindings => HintGroup::Keys(bindings.iter().map(rendered).collect()),
         },
@@ -101,6 +146,8 @@ fn name(key: Key) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::CommandsPanel;
+    use crate::state::{Overlay, Panel, State};
 
     #[test]
     fn several_keys_for_one_action_join_with_a_slash() {
@@ -117,7 +164,12 @@ mod tests {
 
     #[test]
     fn the_bar_carries_the_focused_panels_bindings_and_the_global_ones() {
-        let bar = bar(Panel::Tables);
+        let state = State {
+            focus: Panel::Tables,
+            ..State::default()
+        };
+
+        let bar = bar(&state);
 
         let HintGroup::Keys(hints) = &bar.panel else {
             panic!("Tables has bindings, so its group is not idle");
@@ -129,9 +181,38 @@ mod tests {
 
     #[test]
     fn a_panel_with_no_bindings_says_so_rather_than_showing_an_empty_group() {
+        let state = State {
+            focus: Panel::Queries,
+            ..State::default()
+        };
+
+        assert_eq!(bar(&state).panel, HintGroup::Idle("nothing here yet"));
+    }
+
+    #[test]
+    fn the_bar_names_the_palette_that_reaches_the_rest() {
         assert_eq!(
-            bar(Panel::Queries).panel,
-            HintGroup::Idle("nothing here yet")
+            bar(&State::default()).global[0].keys,
+            "?",
+            "the way to every other binding survives longest but one"
         );
+    }
+
+    #[test]
+    fn the_bar_names_what_the_palette_responds_to() {
+        let state = State {
+            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
+            ..State::default()
+        };
+
+        let bar = bar(&state);
+
+        let HintGroup::Keys(hints) = &bar.panel else {
+            panic!("an open palette has bindings");
+        };
+        assert_eq!(hints[0].action, "scroll");
+        assert_eq!(bar.global[0].keys, "esc");
+        assert_eq!(bar.global[0].action, "close");
+        assert_eq!(bar.global.last().expect("q is last").action, "quit");
     }
 }

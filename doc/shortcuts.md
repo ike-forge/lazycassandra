@@ -19,6 +19,7 @@ Reachable from every panel, in every connection state.
 | Key | Action |
 |---|---|
 | `q` | Quit. Cancels every in-flight query. |
+| `?` | Open the command palette: every binding, in one scrollable block. |
 | `Esc` | Dismiss the overlay. |
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
@@ -117,12 +118,18 @@ because it only does something when an overlay is up, and naming it always
 would be a lie in most frames (design §3); `Shift-Tab` is `Tab`'s inverse, and
 Tables' `PageDown`/`PageUp`/`Home`/`End` are increments on a move the bar
 already names as `j/k move` — neither teaches something the bar's existing
-hints don't. A binding that is none of those and shows up in neither a title
-nor the bar is a binding only this file knows about.
+hints don't. A binding that is in none of a title, the bar, or the palette is a
+binding only this file knows about.
 
-**No modes.** There is no state in which a letter means something other than its
-binding. This holds only until the Queries panel takes text input, and that is
-the design that has to break it (§4).
+**One mode, opened deliberately.** No letter changes meaning. The one state
+that captures keys is the command palette, which the user opened with `?` and
+closes with either `?` or `esc`, both named on the bar while it is up
+([design](specs/2026-08-09-command-palette-design.md) §7). Motion scrolls the
+palette rather than the panel underneath, `q` still quits, and every other key
+is inert rather than dismissing — a key that means "close" in one frame and
+something else in the next is the ambiguity this rule exists to prevent. Text
+entry in the Queries panel is still the design that has to break the rest of
+it (§4).
 
 **No key without a test.** Every binding above is pinned by name in §5.
 
@@ -130,7 +137,7 @@ the design that has to break it (§4).
 
 ## 3. The key budget
 
-Taken, lowercase: `a` `c` `h` `j` `k` `l` `q` `t` `u`, plus `Space`.
+Taken, lowercase: `a` `c` `h` `j` `k` `l` `q` `t` `u`, plus `Space` and `?`.
 
 Free, lowercase: `b` `d` `e` `f` `g` `i` `m` `n` `o` `p` `r` `s` `v` `w` `x`
 `y` `z`, every digit, and every uppercase letter.
@@ -152,7 +159,6 @@ which is a spec-level change.
 
 | Not bound | Why |
 |---|---|
-| `?` help | vision.md §7 Phase 0 promises a contextual map. It is its own slice and this set does not anticipate its shape. |
 | `1`–`4` focus | Superseded by `t`/`a`/`c`/`u`, which the panel can show in its own title; a digit cannot. |
 | `T` `A` `C` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. |
 | `ctrl-d` / `ctrl-u` | Wants the ctrl layer designed first; see §2. |
@@ -189,6 +195,14 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Focus letters have no side effects | `a_shortcut_moves_focus_and_does_nothing_else` |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
 | The marked cell, and only it, is underlined | `each_panel_underlines_the_key_that_focuses_it`, `nothing_but_the_shortcut_is_underlined` (`inbound/render.rs`), `a_shortcut_is_underlined_without_spending_a_colour` (`inbound/theme.rs`) |
+| `?` opens and closes the palette | `question_mark_opens_the_palette_and_closes_it`, `escape_closes_the_palette` |
+| It replaces a message rather than stacking | `opening_the_palette_replaces_the_message_it_covers` |
+| It does not open where it cannot be drawn | `the_palette_does_not_open_where_it_cannot_be_drawn` |
+| An open palette takes motion and swallows the rest | `an_open_palette_takes_the_motion_the_panel_would_have`, `an_open_palette_swallows_the_keys_it_does_not_use`, `q_quits_from_inside_the_palette` |
+| The cursor never lands on a heading | `the_palette_cursor_steps_over_a_heading`, `paging_settles_on_a_command_rather_than_a_heading` (`commands.rs`) |
+| No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` (`commands.rs`) |
+| The bar names `?`, and the palette's own keys | `the_bar_names_the_palette_that_reaches_the_rest`, `the_bar_names_what_the_palette_responds_to` (`view/hints.rs`) |
+| The palette is drawn, centred, capped and scrollable | `the_palette_lists_the_catalogue`, `the_palette_is_centred`, `a_wide_frame_does_not_get_a_wide_palette`, `a_tall_frame_does_not_get_a_palette_full_of_blank_rows`, `a_frame_too_small_for_a_palette_does_not_get_one` (`inbound/render.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_other_panel` is what makes the
 match-order rule in §2 enforceable: a panel claiming a letter an earlier arm

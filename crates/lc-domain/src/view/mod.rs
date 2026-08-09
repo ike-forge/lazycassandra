@@ -117,7 +117,7 @@ pub fn view_model(state: &State) -> ViewModel {
             body: body(state, panel),
         }),
         focus: state.focus,
-        hints: hints::bar(state.focus),
+        hints: hints::bar(state),
         overlay: overlay(state),
     }
 }

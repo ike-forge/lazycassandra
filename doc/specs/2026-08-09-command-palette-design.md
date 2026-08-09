@@ -1,7 +1,7 @@
 # Command palette — design
 
 **Date:** 2026-08-09
-**Status:** designed
+**Status:** implemented
 
 A scrollable block, centred over the panels, listing every binding the program
 has. `?` opens it.

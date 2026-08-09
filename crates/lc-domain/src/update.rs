@@ -4,6 +4,7 @@
 //! what should happen next; it cannot open a socket because it has nothing to
 //! open one with (architecture.md §3).
 
+use crate::commands::CommandsPanel;
 use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::posture::Posture;
@@ -278,8 +279,16 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return Vec::new();
     }
 
+    // An open palette takes the keys it uses. The one mode in the program, and
+    // the reason doc/shortcuts.md §2's "no modes" rule now carries a carve-out
+    // (doc/specs/2026-08-09-command-palette-design.md §7).
+    if matches!(state.overlay, Some(Overlay::Commands(_))) {
+        return palette_key(state, press.key);
+    }
+
     match press.key {
         Key::Char('q') => return quit(state),
+        Key::Char('?') => open_palette(state),
         Key::Escape => state.overlay = None,
         Key::Tab => state.focus = state.focus.next(),
         Key::BackTab => state.focus = state.focus.previous(),
@@ -298,6 +307,54 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
                 state.focus = panel;
             }
         }
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+/// `?` opens the palette, replacing whatever overlay was up.
+///
+/// Refused where the frame cannot draw one: opening a palette nothing draws
+/// leaves the user in a mode with nothing on screen saying so, wondering why
+/// `j` stopped moving the tree (design §5.1).
+fn open_palette(state: &mut State) {
+    if state.geometry.command_rows() == 0 {
+        return;
+    }
+
+    state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
+}
+
+/// What an open palette responds to.
+///
+/// `q` still quits, because a key that means "quit" everywhere except in one
+/// overlay is not a key anyone can trust without looking. Everything the
+/// palette does not use is inert rather than dismissing, so no letter means
+/// "close" in one frame and something else in the next (design §7).
+fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
+    let height = state.geometry.command_rows();
+
+    match key {
+        Key::Char('q') => return quit(state),
+        Key::Char('?') | Key::Escape => {
+            state.overlay = None;
+            return Vec::new();
+        }
+        _ => {}
+    }
+
+    let Some(Overlay::Commands(panel)) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char('j') | Key::Down => panel.down(),
+        Key::Char('k') | Key::Up => panel.up(),
+        Key::PageDown => panel.page_down(height),
+        Key::PageUp => panel.page_up(height),
+        Key::Home => panel.to_start(),
+        Key::End => panel.to_end(),
         _ => {}
     }
 
@@ -475,6 +532,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::CommandsPanel;
     use crate::model::{Modifiers, StatementKind};
     use crate::state::Connection;
     use crate::tree::tests_support::schema_of as tabled_schema;
@@ -789,6 +847,126 @@ mod tests {
 
     fn press(state: &mut State, key: Key) -> Vec<Effect> {
         update(state, Msg::Input(KeyPress::new(key)))
+    }
+
+    /// A frame big enough for a palette. `browsing` leaves geometry at its
+    /// default, whose `command_rows` is zero — which is itself a binding
+    /// (`the_palette_does_not_open_where_it_cannot_be_drawn`).
+    fn measured(keyspaces: &[&str]) -> State {
+        let mut state = browsing(keyspaces);
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+        state
+    }
+
+    fn palette(state: &State) -> Option<&CommandsPanel> {
+        match state.overlay.as_ref()? {
+            Overlay::Commands(panel) => Some(panel),
+            Overlay::Message(_) => None,
+        }
+    }
+
+    #[test]
+    fn question_mark_opens_the_palette_and_closes_it() {
+        let mut state = measured(&["a"]);
+
+        press(&mut state, Key::Char('?'));
+        assert!(palette(&state).is_some());
+
+        press(&mut state, Key::Char('?'));
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn escape_closes_the_palette() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+
+        press(&mut state, Key::Escape);
+
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn opening_the_palette_replaces_the_message_it_covers() {
+        let mut state = measured(&["a"]);
+        state.overlay = Some(Overlay::Message(Message {
+            title: "Schema unavailable".to_owned(),
+            message: "boom".to_owned(),
+            severity: Severity::Danger,
+        }));
+
+        press(&mut state, Key::Char('?'));
+        assert!(palette(&state).is_some());
+
+        press(&mut state, Key::Escape);
+        assert!(
+            state.overlay.is_none(),
+            "esc leaves nothing rather than peeling back to the message"
+        );
+    }
+
+    #[test]
+    fn the_palette_does_not_open_where_it_cannot_be_drawn() {
+        let mut state = browsing(&["a"]);
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 0);
+
+        press(&mut state, Key::Char('?'));
+
+        assert!(
+            state.overlay.is_none(),
+            "a mode with nothing on screen saying so is worse than an inert key"
+        );
+    }
+
+    #[test]
+    fn an_open_palette_takes_the_motion_the_panel_would_have() {
+        let mut state = measured(&["a", "b", "c"]);
+        press(&mut state, Key::Char('?'));
+
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "the tree did not move behind the palette"
+        );
+        assert_eq!(palette(&state).expect("still open").selected(), 2);
+
+        press(&mut state, Key::Char('k'));
+        assert_eq!(palette(&state).expect("still open").selected(), 1);
+
+        press(&mut state, Key::End);
+        assert_eq!(
+            palette(&state).expect("still open").selected(),
+            crate::commands::row_count() - 1
+        );
+
+        press(&mut state, Key::Home);
+        assert_eq!(palette(&state).expect("still open").selected(), 1);
+    }
+
+    #[test]
+    fn q_quits_from_inside_the_palette() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+
+        press(&mut state, Key::Char('q'));
+
+        assert!(state.should_quit);
+    }
+
+    #[test]
+    fn an_open_palette_swallows_the_keys_it_does_not_use() {
+        for key in [Key::Char('t'), Key::Tab, Key::Enter, Key::Char(' ')] {
+            let mut state = measured(&["a"]);
+            press(&mut state, Key::Char('?'));
+            let before = state.focus;
+
+            press(&mut state, key);
+
+            assert!(palette(&state).is_some(), "{key:?} dismissed the palette");
+            assert_eq!(state.focus, before, "{key:?} reached past the palette");
+        }
     }
 
     #[test]
@@ -1363,14 +1541,14 @@ mod tests {
         );
     }
 
-    fn measured(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
+    fn sized(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
         update(state, Msg::Measured(Geometry::new(heights, ddl_lines, 0)));
     }
 
     #[test]
     fn page_down_moves_the_tree_by_one_panel_height() {
         let mut state = browsing(&["a", "b", "c", "d", "e", "f", "g", "h"]);
-        measured(&mut state, [3, 0, 0, 0], 0);
+        sized(&mut state, [3, 0, 0, 0], 0);
 
         press(&mut state, Key::PageDown);
 
@@ -1384,7 +1562,7 @@ mod tests {
     #[test]
     fn home_and_end_reach_the_ends_of_the_tree_in_one_key() {
         let mut state = browsing(&["a", "b", "c", "d"]);
-        measured(&mut state, [3, 0, 0, 0], 0);
+        sized(&mut state, [3, 0, 0, 0], 0);
 
         press(&mut state, Key::End);
 
@@ -1408,7 +1586,7 @@ mod tests {
             },
         );
         state.focus = Panel::Contents;
-        measured(&mut state, [0, 0, 8, 0], 0);
+        sized(&mut state, [0, 0, 8, 0], 0);
 
         press(&mut state, Key::PageDown);
 
@@ -1419,7 +1597,7 @@ mod tests {
     fn the_ddl_panel_scrolls_a_viewport_rather_than_a_selection() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
-        measured(&mut state, [0, 6, 0, 0], 20);
+        sized(&mut state, [0, 6, 0, 0], 20);
         let tree_row = state.tables.cursor.index();
 
         press(&mut state, Key::Char('j'));
@@ -1444,7 +1622,7 @@ mod tests {
     #[test]
     fn a_motion_in_the_tree_leaves_the_ddl_viewport_alone() {
         let mut state = browsing(&["a", "b", "c"]);
-        measured(&mut state, [3, 6, 0, 0], 20);
+        sized(&mut state, [3, 6, 0, 0], 20);
 
         press(&mut state, Key::PageDown);
         press(&mut state, Key::End);
@@ -1471,7 +1649,7 @@ mod tests {
     fn the_new_motions_emit_no_effects() {
         for key in [Key::PageDown, Key::PageUp, Key::Home, Key::End] {
             let mut state = browsing(&["a", "b", "c"]);
-            measured(&mut state, [3, 6, 6, 1], 20);
+            sized(&mut state, [3, 6, 6, 1], 20);
 
             let effects = press(&mut state, key);
 
@@ -1506,7 +1684,7 @@ mod tests {
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
         state.focus = Panel::Ddl;
-        measured(&mut state, [3, 6, 0, 0], 40);
+        sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
         assert_eq!(state.ddl.offset(), 34);
 
@@ -1520,7 +1698,7 @@ mod tests {
     fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.focus = Panel::Ddl;
-        measured(&mut state, [3, 6, 0, 0], 40);
+        sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
         assert_eq!(state.ddl.offset(), 34);
         state.focus = Panel::Tables;
@@ -1543,13 +1721,13 @@ mod tests {
     fn a_measurement_pulls_a_stale_offset_back_inside_the_panel() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
-        measured(&mut state, [0, 6, 0, 0], 40);
+        sized(&mut state, [0, 6, 0, 0], 40);
         press(&mut state, Key::End);
         assert_eq!(state.ddl.offset(), 34);
         state.dirty = false;
 
         // The tree cursor moved to a table with far fewer options.
-        measured(&mut state, [0, 6, 0, 0], 8);
+        sized(&mut state, [0, 6, 0, 0], 8);
 
         assert_eq!(state.ddl.offset(), 2);
         assert!(
@@ -1587,8 +1765,9 @@ mod tests {
             state.contents.cursor.go_to(5, 20);
         }
 
-        measured(&mut state, [3, 3, 3, 3], 40);
+        sized(&mut state, [3, 3, 3, 3], 40);
         state.ddl.page_down(40, 3);
+        state.geometry = Geometry::new([3, 3, 3, 3], 40, 14);
         state.focus = focus;
         state
     }

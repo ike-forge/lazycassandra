@@ -184,7 +184,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            " j/k move  l/h fold  ⏎ open │ tab panel  q quit"
+            " j/k move  l/h fold  ⏎ open │ ? commands  tab panel  q quit"
         );
         assert!(
             !row(&buffer, 22).contains("q quit"),
@@ -217,10 +217,7 @@ mod tests {
     fn a_narrow_frame_drops_hints_rather_than_the_bar() {
         let buffer = draw(40, 12);
 
-        assert_eq!(
-            row(&buffer, 11).trim_end(),
-            " j/k move  l/h fold │ tab panel  q quit"
-        );
+        assert_eq!(row(&buffer, 11).trim_end(), " j/k move │ tab panel  q quit");
     }
 
     #[test]
