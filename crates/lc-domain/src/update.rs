@@ -1818,14 +1818,14 @@ mod tests {
     #[test]
     fn every_global_hint_does_something_in_every_panel() {
         for panel in Panel::ALL {
-            for binding in crate::view::hints::GLOBAL {
-                // `q` is text in a panel that takes text, so it is not a
-                // global binding there. Task 6 moves it out of GLOBAL for the
-                // same reason, and this loop follows it.
-                if panel.takes_text() && binding.action == "quit" {
-                    continue;
-                }
+            // `q` left GLOBAL because the bar stops naming it in a panel that
+            // takes text. It is still a binding in the other three, and this
+            // is still where that is checked.
+            let claimed = crate::view::hints::GLOBAL
+                .iter()
+                .chain((!panel.takes_text()).then_some(&crate::view::hints::QUIT));
 
+            for binding in claimed {
                 for &key in binding.keys {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);

@@ -160,6 +160,19 @@ const CONTENTS_HINTS: &[Binding] = &[
     },
 ];
 
+const QUERIES_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Key::Enter],
+        action: "newline",
+    },
+    // Named here and nowhere else: `Esc` only leaves a panel that takes text,
+    // so this is the one bar where saying so is true (hint bar design §3).
+    Binding {
+        keys: &[Key::Escape],
+        action: "leave",
+    },
+];
+
 impl Panel {
     /// Every panel, in reading order.
     pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
@@ -223,15 +236,14 @@ impl Panel {
     /// What this panel responds to.
     ///
     /// Exhaustive, so a fifth panel cannot compile without declaring its
-    /// bindings — the same guarantee `ALL` and `shortcut` give. Queries has
-    /// none yet and says so.
+    /// bindings — the same guarantee `ALL` and `shortcut` give.
     #[must_use]
     pub const fn hints(self) -> &'static [Binding] {
         match self {
             Self::Tables => TABLES_HINTS,
             Self::Ddl => DDL_HINTS,
             Self::Contents => CONTENTS_HINTS,
-            Self::Queries => &[],
+            Self::Queries => QUERIES_HINTS,
         }
     }
 }
@@ -827,15 +839,11 @@ mod tests {
     }
 
     #[test]
-    fn only_the_queries_panel_has_nothing_to_offer() {
+    fn every_panel_says_what_it_responds_to() {
         for panel in Panel::ALL {
-            let empty = panel.hints().is_empty();
-
-            assert_eq!(
-                empty,
-                panel == Panel::Queries,
-                "{panel:?} claiming {} bindings is a deliberate change",
-                panel.hints().len()
+            assert!(
+                !panel.hints().is_empty(),
+                "{panel:?} responds to nothing, which no panel does any more"
             );
         }
     }

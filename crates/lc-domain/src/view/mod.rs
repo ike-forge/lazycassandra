@@ -15,7 +15,7 @@ mod title;
 
 pub use contents::{GridCell, GridColumn};
 pub use details::{DetailRow, Details, Section};
-pub use hints::{Binding, Hint, HintBar, HintGroup};
+pub use hints::{Binding, Hint, HintBar};
 pub use tables::{Marker, TreeRow};
 pub use title::PanelTitle;
 

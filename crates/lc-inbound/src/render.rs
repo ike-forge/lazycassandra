@@ -198,8 +198,8 @@ mod tests {
             bars[2]
         );
         assert!(
-            bars[3].contains("nothing here yet"),
-            "Queries has nothing: {:?}",
+            bars[3].contains("⏎ newline"),
+            "Queries takes text: {:?}",
             bars[3]
         );
     }

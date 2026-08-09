@@ -21,43 +21,41 @@ pub struct Hint {
     pub action: &'static str,
 }
 
-/// What the focused panel contributes to the bar.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HintGroup {
-    Keys(Vec<Hint>),
-    /// A panel that responds to nothing yet, saying so rather than drawing
-    /// an empty group the reader has to interpret.
-    Idle(&'static str),
-}
-
 /// What the focused panel does, and what works everywhere.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HintBar {
-    pub panel: HintGroup,
+    pub panel: Vec<Hint>,
     pub global: Vec<Hint>,
 }
 
 /// Bindings every panel answers to. Repeated in each panel's bar rather than
 /// learned once: a user who never presses `tab` has no way to find the other
 /// three panels (design §3).
-pub(crate) const GLOBAL: &[Binding] = &[
-    Binding {
-        keys: &[Key::Tab],
-        action: "panel",
-    },
-    Binding {
-        keys: &[Key::Char('q')],
-        action: "quit",
-    },
-];
+pub(crate) const GLOBAL: &[Binding] = &[Binding {
+    keys: &[Key::Tab],
+    action: "panel",
+}];
+
+/// Global everywhere a letter is a binding — which is every panel but one.
+/// In a panel that takes text `q` types a `q`, and naming it would be a lie
+/// (queries editor design §6).
+///
+/// `pub(crate)` so `update`'s "every global hint does something" test can
+/// still reach it now that it has left [`GLOBAL`].
+pub(crate) const QUIT: Binding = Binding {
+    keys: &[Key::Char('q')],
+    action: "quit",
+};
 
 pub(crate) fn bar(focus: Panel) -> HintBar {
+    let mut global: Vec<Hint> = GLOBAL.iter().map(rendered).collect();
+    if !focus.takes_text() {
+        global.push(rendered(&QUIT));
+    }
+
     HintBar {
-        panel: match focus.hints() {
-            [] => HintGroup::Idle("nothing here yet"),
-            bindings => HintGroup::Keys(bindings.iter().map(rendered).collect()),
-        },
-        global: GLOBAL.iter().map(rendered).collect(),
+        panel: focus.hints().iter().map(rendered).collect(),
+        global,
     }
 }
 
@@ -119,19 +117,24 @@ mod tests {
     fn the_bar_carries_the_focused_panels_bindings_and_the_global_ones() {
         let bar = bar(Panel::Tables);
 
-        let HintGroup::Keys(hints) = &bar.panel else {
-            panic!("Tables has bindings, so its group is not idle");
-        };
-        assert_eq!(hints[0].keys, "j/k");
-        assert_eq!(hints[0].action, "move");
+        assert_eq!(bar.panel[0].keys, "j/k");
+        assert_eq!(bar.panel[0].action, "move");
         assert_eq!(bar.global.last().expect("q quit is last").action, "quit");
     }
 
     #[test]
-    fn a_panel_with_no_bindings_says_so_rather_than_showing_an_empty_group() {
+    fn a_panel_that_takes_text_does_not_claim_q_quits() {
+        let bar = bar(Panel::Queries);
+
+        assert_eq!(bar.panel[0].action, "newline");
+        assert!(
+            bar.global.iter().all(|hint| hint.action != "quit"),
+            "q types a q in the editor, and a bar that lies is worse than no bar"
+        );
         assert_eq!(
-            bar(Panel::Queries).panel,
-            HintGroup::Idle("nothing here yet")
+            bar.global.last().expect("tab panel survives").action,
+            "panel",
+            "tab is still the way out"
         );
     }
 }

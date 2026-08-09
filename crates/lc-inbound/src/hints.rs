@@ -1,7 +1,7 @@
 //! The hint bar: what the focused panel responds to, along the bottom row.
 
 use lc_domain::style::Token;
-use lc_domain::view::{Hint, HintBar, HintGroup};
+use lc_domain::view::{Hint, HintBar};
 use ratatui::text::{Line, Span};
 
 use crate::theme::Theme;
@@ -17,7 +17,7 @@ const SEPARATOR: &str = " │ ";
 /// separator. `q quit` goes last, because a user who can read one hint needs
 /// the way out (design §6).
 pub(crate) fn line(bar: &HintBar, width: u16, theme: Theme) -> Line<'static> {
-    let panel = panel_segments(&bar.panel);
+    let panel: Vec<Segment> = bar.panel.iter().map(Segment::hint).collect();
     let global: Vec<Segment> = bar.global.iter().map(Segment::hint).collect();
     let (kept, from) = fit(&panel, &global, usize::from(width));
 
@@ -25,12 +25,7 @@ pub(crate) fn line(bar: &HintBar, width: u16, theme: Theme) -> Line<'static> {
 }
 
 enum Segment {
-    Hint {
-        keys: String,
-        action: String,
-    },
-    /// A panel with no bindings, saying so. Carries no key to draw.
-    Sentence(String),
+    Hint { keys: String, action: String },
 }
 
 impl Segment {
@@ -47,7 +42,6 @@ impl Segment {
     fn width(&self) -> usize {
         match self {
             Self::Hint { keys, action } => keys.chars().count() + 1 + action.chars().count(),
-            Self::Sentence(text) => text.chars().count(),
         }
     }
 
@@ -57,17 +51,7 @@ impl Segment {
                 Span::styled(keys.clone(), theme.style(Token::HintKey)),
                 Span::styled(format!(" {action}"), theme.style(Token::HintAction)),
             ],
-            Self::Sentence(text) => {
-                vec![Span::styled(text.clone(), theme.style(Token::HintAction))]
-            }
         }
-    }
-}
-
-fn panel_segments(group: &HintGroup) -> Vec<Segment> {
-    match group {
-        HintGroup::Keys(hints) => hints.iter().map(Segment::hint).collect(),
-        HintGroup::Idle(text) => vec![Segment::Sentence((*text).to_owned())],
     }
 }
 
@@ -184,17 +168,17 @@ mod tests {
     }
 
     #[test]
-    fn a_panel_with_no_bindings_shows_its_sentence_and_the_global_tail() {
+    fn the_editor_names_its_own_keys_and_drops_the_quit_it_no_longer_has() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " nothing here yet │ tab panel  q quit"
+            " ⏎ newline  esc leave │ tab panel"
         );
     }
 
     #[test]
     fn a_global_tail_longer_than_two_entries_still_drops_down_to_the_last_one() {
         let bar = HintBar {
-            panel: HintGroup::Keys(vec![]),
+            panel: vec![],
             global: vec![
                 Hint {
                     keys: "j/k".to_owned(),
