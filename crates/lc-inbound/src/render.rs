@@ -193,6 +193,18 @@ mod tests {
     }
 
     #[test]
+    fn the_bar_describes_the_open_palette_rather_than_the_panel_under_it() {
+        // The sample design §7 shows, checked against what the renderer
+        // actually draws rather than being correct by construction.
+        let buffer = with_palette(80, 24);
+
+        assert_eq!(
+            row(&buffer, 23).trim_end(),
+            " j/k scroll  pgdn/pgup page  home/end ends │ ?/esc close  q quit"
+        );
+    }
+
+    #[test]
     fn the_bar_says_what_the_focused_panel_does() {
         let bars: Vec<String> = Panel::ALL
             .iter()
@@ -1200,23 +1212,41 @@ mod tests {
         assert!(!styled(selected + 1), "and only the cursor's row is");
     }
 
-    #[test]
-    fn a_palette_that_overflows_says_so() {
-        // 70% of 24 rows leaves 14 for a catalogue in the low twenties.
-        let buffer = with_palette(100, 24);
-        let (x, y) = top_border(&buffer, "Commands");
-        let width = block_width(&buffer, "Commands");
+    /// Whether the block titled `title` has a scrollbar drawn over its right
+    /// border. The track scan stops above the bottom border row: that row's
+    /// corner is `┘`, which is `!= "│"` whether or not a scrollbar was drawn,
+    /// and including it would make the scan true unconditionally.
+    fn has_scrollbar(buffer: &Buffer, title: &str) -> bool {
+        let (x, y) = top_border(buffer, title);
+        let width = block_width(buffer, title);
+        let bottom = (y + 1..buffer.area.height)
+            .find(|at| {
+                buffer
+                    .cell((x, *at))
+                    .is_some_and(|cell| cell.symbol() == "└")
+            })
+            .expect("a bordered block has a bottom edge");
 
-        let track = (y + 1..buffer.area.height).any(|at| {
+        (y + 1..bottom).any(|at| {
             buffer
                 .cell((x + width - 1, at))
                 .is_some_and(|cell| cell.symbol() != "│")
-        });
+        })
+    }
 
-        assert!(track, "a catalogue taller than the box gets a scrollbar");
+    #[test]
+    fn a_palette_that_overflows_says_so() {
+        // 70% of 24 rows leaves 14 for a catalogue in the low twenties.
         assert!(
-            !buffer_text(&with_palette(100, 80)).is_empty(),
-            "and a frame tall enough to hold it all still draws"
+            has_scrollbar(&with_palette(100, 24), "Commands"),
+            "a catalogue taller than the box gets a scrollbar"
+        );
+
+        // At 100x80 the whole catalogue fits (design §10), so there is no
+        // scrollbar — and its absence is what says nothing is hidden.
+        assert!(
+            !has_scrollbar(&with_palette(100, 80), "Commands"),
+            "a frame tall enough to hold the whole catalogue must draw no scrollbar"
         );
     }
 

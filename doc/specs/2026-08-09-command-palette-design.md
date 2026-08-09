@@ -432,10 +432,18 @@ whose `dirty` flag `handle_key` sets unconditionally — and the view model is t
 better question anyway: a key that changes nothing visible and emits no effect
 is not a binding, whatever it touched internally.
 
-Several fixtures rather than one, because no single state exercises everything:
-`esc` needs an overlay to dismiss, `t` needs focus somewhere other than Tables,
-`⏎` needs a loaded schema. Three cover it — Tables focused with a schema and a
-message overlay up, Table DDL focused with neither, Contents focused with rows.
+Several fixtures rather than one, because no single state exercises everything.
+Four cover it: `covered` — Tables focused, a keyspace unfolded, with a message
+overlay up, so `esc` has an overlay to dismiss and `l`/`→` have an unfolded
+keyspace with something in it to act on (a folded keyspace or a childless one
+makes those two keys no-ops, which is why neither of the other three fixtures
+can stand in for it); `elsewhere` — Table DDL focused, so the focus letters
+have somewhere other than the default panel to move from; `moved` — Tables
+focused with the cursor stepped down twice, so `k`, `pgup` and `home` have
+somewhere to go back to; and `palette_open` — the palette open over the same
+state as `moved`, the one fixture that captures keys rather than passing them
+to a panel, without which the sweep could never see what the palette itself
+responds to.
 
 The key enumeration must fail to compile when a `Key` variant is added, or the
 sweep quietly stops sweeping. A `match` over a representative value, returning
@@ -454,6 +462,8 @@ Beyond the sweep, in `lc-domain`:
 | `q` quits with it open | `q_quits_from_inside_the_palette` |
 | Other keys are inert | `an_open_palette_swallows_the_keys_it_does_not_use` |
 | A frame too small leaves `?` inert | `the_palette_does_not_open_where_it_cannot_be_drawn` |
+| A resize that leaves it undrawable closes it too | `a_frame_that_shrinks_below_the_palette_closes_it` |
+| A resize that makes room for it repaints the bar | `a_frame_that_makes_room_for_the_palette_repaints_the_bar` |
 | The bar names the palette's own keys | `the_bar_names_what_the_palette_responds_to` |
 | No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` |
 
@@ -466,8 +476,9 @@ In `lc-inbound`, against `TestBackend`:
 | Height stops at the content | `a_tall_frame_does_not_get_a_palette_full_of_blank_rows` |
 | Headings and rows are drawn | `the_palette_lists_the_catalogue` |
 | The cursor row is marked | `the_selected_command_is_highlighted` |
-| A catalogue taller than the box gets a scrollbar | `a_palette_that_overflows_says_so` |
+| A catalogue taller than the box gets a scrollbar, and its absence at a size that fits says nothing is hidden | `a_palette_that_overflows_says_so` |
 | Too small draws nothing | `a_frame_too_small_for_a_palette_does_not_get_one` |
+| The bar's open-palette sample matches what is actually drawn | `the_bar_describes_the_open_palette_rather_than_the_panel_under_it` |
 
 ## 10. Knowingly left out
 

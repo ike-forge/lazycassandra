@@ -61,6 +61,11 @@ pub(crate) const GLOBAL: &[Binding] = &[
     },
 ];
 
+/// What the bar names in place of the focused panel's group while the
+/// palette is open (design §7). Three, because that is all of it: `esc`/`q`
+/// are `PALETTE_GLOBAL`'s below, and `⏎`/`space` are inert until the palette
+/// can run a command (design §10), so scrolling by a row, a screen, or to an
+/// end is everything left for the bar to say.
 const PALETTE: &[Binding] = &[
     Binding {
         keys: &[Key::Char('j'), Key::Char('k')],

@@ -149,6 +149,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         // that produced it, so redrawing on every one of them would
         // re-measure and redraw forever (design §3).
         Msg::Measured(geometry) => {
+            let previous = state.geometry;
             state.geometry = geometry;
 
             let before = state.ddl;
@@ -157,6 +158,14 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                 .clamp_to(geometry.ddl_lines(), geometry.height(Panel::Ddl));
 
             if state.ddl != before {
+                state.mark_dirty();
+            }
+
+            // The bar's `? commands` hint is a function of `command_rows`
+            // (view/hints.rs): a resize that flips it between zero and
+            // non-zero changes the view model just as surely as the ddl
+            // clamp above does, and owes it the same repaint.
+            if geometry.command_rows() != previous.command_rows() {
                 state.mark_dirty();
             }
 
@@ -1020,6 +1029,27 @@ mod tests {
         assert!(
             state.overlay.is_none(),
             "a palette nothing can draw must not still capture keys"
+        );
+    }
+
+    #[test]
+    fn a_frame_that_makes_room_for_the_palette_repaints_the_bar() {
+        let mut state = State::default();
+        assert_eq!(
+            state.geometry.command_rows(),
+            0,
+            "the default geometry is where `?` starts out inert"
+        );
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 14)),
+        );
+
+        assert!(
+            state.dirty,
+            "command_rows went from zero to non-zero, so the bar's `? commands` \
+             hint just appeared and nothing scheduled the repaint that shows it"
         );
     }
 
