@@ -2337,6 +2337,20 @@ mod tests {
     #[test]
     fn a_wheel_over_a_panel_with_nothing_to_scroll_is_inert() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Queries;
+        for character in "one\ntwo\nthree\nfour\nfive\n".chars() {
+            press(
+                &mut state,
+                if character == '\n' {
+                    Key::Enter
+                } else {
+                    Key::Char(character)
+                },
+            );
+        }
+        state.focus = Panel::Tables;
+        let cursor_before = state.queries.cursor();
+        let text_before = state.queries.text();
 
         let effects = point(
             &mut state,
@@ -2349,6 +2363,16 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(state.tables.cursor.index(), 0, "no other panel moved");
         assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(
+            state.queries.cursor(),
+            cursor_before,
+            "the wheel did not move the editor's cursor"
+        );
+        assert_eq!(
+            state.queries.text(),
+            text_before,
+            "the wheel did not touch the buffer"
+        );
     }
 
     #[test]
