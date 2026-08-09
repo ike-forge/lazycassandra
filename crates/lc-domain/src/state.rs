@@ -18,6 +18,12 @@ pub struct State {
     pub focus: Panel,
     pub tables: TablesPanel,
     pub contents: ContentsPanel,
+    /// The Table DDL panel scrolls a viewport rather than a selection: it has
+    /// no row to act on, so there is nothing for a cursor to mean.
+    pub ddl: Scroll,
+    /// What the last frame turned out to be, so a motion knows how far a page
+    /// is and where the end is.
+    pub geometry: Geometry,
     /// A message drawn over the panels until it is dismissed.
     pub overlay: Option<Overlay>,
     /// Queries issued and not yet resolved. A result whose id is absent here
@@ -194,6 +200,123 @@ impl Cursor {
     pub const fn go_to(&mut self, index: usize, len: usize) {
         self.index = index;
         self.clamp_to(len);
+    }
+
+    /// Moves a screen down, stopping on the last row.
+    pub const fn page_down(&mut self, len: usize, height: usize) {
+        self.go_to(self.index.saturating_add(height), len);
+    }
+
+    /// Moves a screen up, stopping on the first row.
+    pub const fn page_up(&mut self, height: usize) {
+        self.index = self.index.saturating_sub(height);
+    }
+
+    pub const fn to_start(&mut self) {
+        self.index = 0;
+    }
+
+    pub const fn to_end(&mut self, len: usize) {
+        self.go_to(len.saturating_sub(1), len);
+    }
+}
+
+/// A viewport offset over a document of known length.
+///
+/// The offset is private for the reason [`Cursor`]'s index is: every motion
+/// re-establishes `offset <= len - height` here, so a renderer is never
+/// handed one that points past the end.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Scroll {
+    offset: usize,
+}
+
+impl Scroll {
+    /// The first line drawn.
+    #[must_use]
+    pub const fn offset(self) -> usize {
+        self.offset
+    }
+
+    /// Moves down a line, stopping with the last line at the bottom of the
+    /// panel rather than dragging it to the top.
+    pub const fn down(&mut self, len: usize, height: usize) {
+        self.go_to(self.offset.saturating_add(1), len, height);
+    }
+
+    /// Moves up a line, stopping at the top.
+    pub const fn up(&mut self) {
+        self.offset = self.offset.saturating_sub(1);
+    }
+
+    pub const fn page_down(&mut self, len: usize, height: usize) {
+        self.go_to(self.offset.saturating_add(height), len, height);
+    }
+
+    pub const fn page_up(&mut self, height: usize) {
+        self.offset = self.offset.saturating_sub(height);
+    }
+
+    pub const fn to_start(&mut self) {
+        self.offset = 0;
+    }
+
+    pub const fn to_end(&mut self, len: usize, height: usize) {
+        self.offset = len.saturating_sub(height);
+    }
+
+    /// Pulls a stale offset back over a document that shrank or a panel that
+    /// grew.
+    pub const fn clamp_to(&mut self, len: usize, height: usize) {
+        self.go_to(self.offset, len, height);
+    }
+
+    const fn go_to(&mut self, offset: usize, len: usize, height: usize) {
+        let last = len.saturating_sub(height);
+        // `Ord::min` is not const.
+        self.offset = if offset > last { last } else { offset };
+    }
+}
+
+/// What the last frame turned out to be.
+///
+/// The renderer's one report back into the domain
+/// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Geometry {
+    heights: [usize; 4],
+    ddl_lines: usize,
+}
+
+impl Geometry {
+    /// `heights` in [`Panel::ALL`] order, each counted in the unit that panel
+    /// scrolls in — tree rows, grid rows, or wrapped lines — and net of what
+    /// the panel spends on chrome, such as the grid's header row.
+    #[must_use]
+    pub const fn new(heights: [usize; 4], ddl_lines: usize) -> Self {
+        Self { heights, ddl_lines }
+    }
+
+    /// Rows of content `panel` can show.
+    #[must_use]
+    pub const fn height(self, panel: Panel) -> usize {
+        self.heights[match panel {
+            Panel::Tables => 0,
+            Panel::Ddl => 1,
+            Panel::Contents => 2,
+            Panel::Queries => 3,
+        }]
+    }
+
+    /// Lines the Ddl body wrapped to.
+    ///
+    /// The one length the domain cannot count for itself: wrapping needs a
+    /// width, and width-dependent layout is the renderer's business. Tree and
+    /// grid rows it counts, and must keep counting — two sources of truth for
+    /// a row count is the drift `tree.rs`'s single flattening prevents.
+    #[must_use]
+    pub const fn ddl_lines(self) -> usize {
+        self.ddl_lines
     }
 }
 
@@ -396,6 +519,168 @@ mod tests {
         cursor.clamp_to(10);
 
         assert_eq!(cursor.index(), 1);
+    }
+
+    #[test]
+    fn a_scroll_starts_at_the_top() {
+        assert_eq!(Scroll::default().offset(), 0);
+    }
+
+    #[test]
+    fn scrolling_down_stops_with_the_last_line_at_the_bottom() {
+        let mut scroll = Scroll::default();
+
+        for _ in 0..50 {
+            scroll.down(20, 6);
+        }
+
+        assert_eq!(
+            scroll.offset(),
+            14,
+            "the last line belongs at the bottom of the panel, not dragged to the top"
+        );
+    }
+
+    #[test]
+    fn scrolling_up_stops_at_the_top() {
+        let mut scroll = Scroll::default();
+        scroll.down(20, 6);
+
+        scroll.up();
+        scroll.up();
+
+        assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn a_document_that_fits_never_scrolls() {
+        let mut scroll = Scroll::default();
+
+        scroll.down(6, 20);
+        scroll.page_down(6, 20);
+        scroll.to_end(6, 20);
+
+        assert_eq!(scroll.offset(), 0, "there is nothing below the fold");
+    }
+
+    #[test]
+    fn a_page_moves_exactly_one_panel_height() {
+        let mut scroll = Scroll::default();
+
+        scroll.page_down(100, 12);
+
+        assert_eq!(scroll.offset(), 12);
+
+        scroll.page_up(12);
+
+        assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn the_last_page_is_short_and_lands_on_the_end() {
+        let mut scroll = Scroll::default();
+        scroll.page_down(20, 6);
+        scroll.page_down(20, 6);
+        assert_eq!(scroll.offset(), 12);
+
+        scroll.page_down(20, 6);
+
+        assert_eq!(scroll.offset(), 14);
+    }
+
+    #[test]
+    fn a_scroll_reaches_both_ends_in_one_key() {
+        let mut scroll = Scroll::default();
+
+        scroll.to_end(20, 6);
+        assert_eq!(scroll.offset(), 14);
+
+        scroll.to_start();
+        assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn clamping_pulls_a_stale_offset_over_a_document_that_shrank() {
+        let mut scroll = Scroll::default();
+        scroll.to_end(60, 6);
+        assert_eq!(scroll.offset(), 54);
+
+        scroll.clamp_to(10, 6);
+
+        assert_eq!(scroll.offset(), 4);
+    }
+
+    #[test]
+    fn clamping_pulls_a_stale_offset_back_when_the_panel_grows() {
+        let mut scroll = Scroll::default();
+        scroll.to_end(20, 6);
+
+        scroll.clamp_to(20, 30);
+
+        assert_eq!(
+            scroll.offset(),
+            0,
+            "a panel taller than its document shows all of it"
+        );
+    }
+
+    #[test]
+    fn paging_the_cursor_moves_a_screen_and_stops_on_the_last_row() {
+        let mut cursor = Cursor::default();
+
+        cursor.page_down(20, 6);
+        assert_eq!(cursor.index(), 6);
+
+        for _ in 0..5 {
+            cursor.page_down(20, 6);
+        }
+        assert_eq!(cursor.index(), 19, "the cursor stops on the last row");
+
+        cursor.page_up(6);
+        assert_eq!(cursor.index(), 13);
+    }
+
+    #[test]
+    fn the_cursor_reaches_both_ends_in_one_key() {
+        let mut cursor = Cursor::default();
+
+        cursor.to_end(20);
+        assert_eq!(cursor.index(), 19);
+
+        cursor.to_start();
+        assert_eq!(cursor.index(), 0);
+    }
+
+    #[test]
+    fn an_empty_list_has_no_end_to_jump_to() {
+        let mut cursor = Cursor::default();
+
+        cursor.to_end(0);
+
+        assert_eq!(cursor.index(), 0);
+    }
+
+    #[test]
+    fn geometry_reports_each_panels_own_height() {
+        let geometry = Geometry::new([8, 14, 20, 1], 37);
+
+        assert_eq!(geometry.height(Panel::Tables), 8);
+        assert_eq!(geometry.height(Panel::Ddl), 14);
+        assert_eq!(geometry.height(Panel::Contents), 20);
+        assert_eq!(geometry.height(Panel::Queries), 1);
+        assert_eq!(geometry.ddl_lines(), 37);
+    }
+
+    #[test]
+    fn a_state_that_has_never_been_drawn_reports_no_room() {
+        // The first frame is drawn before any measurement exists, so every
+        // motion against this must be inert rather than wrong.
+        let geometry = Geometry::default();
+
+        for panel in Panel::ALL {
+            assert_eq!(geometry.height(panel), 0);
+        }
+        assert_eq!(geometry.ddl_lines(), 0);
     }
 
     fn connected(schema: SchemaState) -> State {
