@@ -541,7 +541,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::CommandsPanel;
+    use crate::commands::{CATALOGUE, CommandsPanel};
     use crate::model::{Modifiers, StatementKind};
     use crate::state::Connection;
     use crate::tree::tests_support::schema_of as tabled_schema;
@@ -1878,9 +1878,6 @@ mod tests {
         }
     }
 
-    use crate::commands::CATALOGUE;
-    use crate::view_model;
-
     /// Every `Key` the domain understands.
     ///
     /// The `match` is dead weight at runtime and load-bearing at compile time:
@@ -1942,11 +1939,17 @@ mod tests {
     /// States that between them exercise every binding: one with an overlay to
     /// dismiss, an unfolded keyspace to fold, and the tree at its first row;
     /// one focused somewhere other than Tables so the focus letters differ;
-    /// and one with the tree folded and moved off its first row, so `k`,
-    /// `pgup`, `home` and `l` all have somewhere to go.
+    /// one with the tree folded and moved off its first row, so `k`, `pgup`
+    /// and `home` all have somewhere to go; and one with the palette open,
+    /// the one state that captures keys rather than passing them to a panel
+    /// — a sweep that never opens it cannot see what it captures.
     ///
-    /// The unfold matters: with every keyspace already folded, `h` and `←`
-    /// would be a no-op in all three and the sweep would call them unbound.
+    /// The unfold in `covered` matters: with every keyspace already folded,
+    /// `h` and `←` would be a no-op in all four and the sweep would call them
+    /// unbound. `moved`'s keyspaces are childless, so `l` and `→` never
+    /// register there either — `covered` is the only fixture that opens a
+    /// keyspace with something in it, and so the only one where those two
+    /// keys do anything.
     fn sweep_fixtures() -> Vec<State> {
         let geometry = Geometry::new([8, 14, 20, 1], 37, 14);
 
@@ -1967,7 +1970,10 @@ mod tests {
         press(&mut moved, Key::Char('j'));
         press(&mut moved, Key::Char('j'));
 
-        vec![covered, elsewhere, moved]
+        let mut palette_open = measured(&["a", "b", "c"]);
+        press(&mut palette_open, Key::Char('?'));
+
+        vec![covered, elsewhere, moved, palette_open]
     }
 
     /// Whether pressing `key` changes anything a user could observe.
@@ -1982,7 +1988,7 @@ mod tests {
 
         !effects.is_empty()
             || after.should_quit != state.should_quit
-            || view_model(&after) != view_model(state)
+            || crate::view::view_model(&after) != crate::view::view_model(state)
     }
 
     #[test]
