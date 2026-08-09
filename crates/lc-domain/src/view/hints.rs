@@ -100,18 +100,21 @@ pub(crate) fn bar(state: &State) -> HintBar {
 
     // `?` promises a palette that draws; below `command_rows()` it would
     // not, so the bar drops the promise rather than make it (design §5.1).
-    let global = if state.geometry.command_rows() == 0 {
-        &GLOBAL[1..]
-    } else {
-        GLOBAL
-    };
+    // Matched by key rather than sliced off the front, so a reorder of
+    // `GLOBAL` cannot silently drop the wrong hint instead.
+    let fits = state.geometry.command_rows() > 0;
+    let global = GLOBAL
+        .iter()
+        .filter(|binding| fits || !binding.keys.contains(&Key::Char('?')))
+        .map(rendered)
+        .collect();
 
     HintBar {
         panel: match state.focus.hints() {
             [] => HintGroup::Idle("nothing here yet"),
             bindings => HintGroup::Keys(bindings.iter().map(rendered).collect()),
         },
-        global: global.iter().map(rendered).collect(),
+        global,
     }
 }
 

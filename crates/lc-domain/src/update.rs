@@ -976,12 +976,21 @@ mod tests {
 
     #[test]
     fn an_open_palette_swallows_the_keys_it_does_not_use() {
-        // A keyspace with a table, folded and selected: `Enter`/`Space`
-        // leaking to `activate` would unfold it, which is a leak `focus`
-        // alone would not catch, unlike a childless keyspace.
-        for key in [Key::Char('t'), Key::Tab, Key::Enter, Key::Char(' ')] {
+        // Each starting focus is chosen so a leaked key would be observable:
+        // `t`/`Tab` need a focus their leak would actually move away from,
+        // `Enter`/`Space` need `Tables` on a keyspace with a table, since
+        // folding a childless one leaves no visible trace at all.
+        let cases = [
+            (Key::Char('t'), Panel::Contents),
+            (Key::Tab, Panel::Contents),
+            (Key::Enter, Panel::Tables),
+            (Key::Char(' '), Panel::Tables),
+        ];
+
+        for (key, focus) in cases {
             let mut state = browsing_tables(&[("a", &["t1"])]);
             state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+            state.focus = focus;
             press(&mut state, Key::Char('?'));
             let before = crate::view::view_model(&state);
 
