@@ -37,7 +37,7 @@ impl PanelTitle {
     /// and what follows it. The middle piece is empty for an unmarked title.
     #[must_use]
     pub fn split(&self) -> (&str, &str, &str) {
-        let Some(mark) = self.mark.clone() else {
+        let Some(mark) = &self.mark else {
             return (&self.text, "", "");
         };
 

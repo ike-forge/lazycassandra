@@ -47,12 +47,12 @@ impl Theme {
             // whose palette is unusable, and it must not compete with the
             // colours that carry meaning.
             Token::Focused => Style::new().add_modifier(Modifier::BOLD),
-            // Reversed video needs no explicit colour, so a selection reads
-            // the same way Focused does on an impoverished palette.
-            Token::Selected => Style::new().add_modifier(Modifier::REVERSED),
             // Underlined rather than coloured: it labels a key, and it has to
             // stay readable beside a title that is bold when focused.
             Token::Shortcut => Style::new().add_modifier(Modifier::UNDERLINED),
+            // Reversed video needs no explicit colour, so a selection reads
+            // the same way Focused does on an impoverished palette.
+            Token::Selected => Style::new().add_modifier(Modifier::REVERSED),
         }
     }
 }
