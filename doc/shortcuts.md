@@ -139,9 +139,9 @@ Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`.
 
 Named keys the domain understands but nothing binds: `Backspace` `Delete`
-`Insert` `F1`–`F12`. Anything crossterm reports outside that vocabulary —
-including every mouse event — is dropped at the edge and never reaches the
-domain.
+`Insert` `F1`–`F12`. Anything crossterm reports outside that vocabulary is
+dropped at the edge and never reaches the domain. The pointer is not in this
+budget at all — see §7.
 
 Claim from the free set first. Re-using a taken key means retiring a binding,
 which is a spec-level change.
@@ -160,7 +160,6 @@ which is a spec-level change.
 | Text entry | The Queries panel is blank. When it takes CQL, every letter becomes contended, and the mechanism that resolves it — a panel that swallows keys, or a mode — gets designed against the real editor rather than guessed at now. |
 | Horizontal motion | The grid caps at 24 columns and draws nothing past the right edge. Column navigation is unbuilt (vision.md §8). |
 | User-defined bindings | vision.md §7 Phase 5. |
-| Mouse | No `EnableMouseCapture`, no handler. Not a gap to be filled by accident. |
 
 ---
 
@@ -189,6 +188,15 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Focus letters have no side effects | `a_shortcut_moves_focus_and_does_nothing_else` |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
 | The marked cell, and only it, is underlined | `each_panel_underlines_the_key_that_focuses_it`, `nothing_but_the_shortcut_is_underlined` (`inbound/render.rs`), `a_shortcut_is_underlined_without_spending_a_colour` (`inbound/theme.rs`) |
+| A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |
+| A click focuses what it lands in | `a_click_focuses_the_panel_it_landed_in`, `a_click_on_chrome_focuses_and_does_nothing_else` |
+| A stale row is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped` |
+| A click spends itself on the overlay | `a_click_dismisses_the_overlay_and_does_nothing_else`, `a_wheel_does_not_dismiss_the_overlay` |
+| The wheel scrolls without focusing | `a_wheel_scrolls_the_panel_under_it_without_focusing_it`, `a_wheel_over_the_ddl_panel_scrolls_its_lines`, `a_wheel_over_a_panel_with_nothing_to_scroll_is_inert` |
+| Only the left button and the vertical wheel are bound | `only_the_left_button_is_bound`, `a_release_a_drag_and_a_move_are_dropped`, `a_horizontal_wheel_is_dropped` (`inbound/input.rs`) |
+| A modified gesture is not a binding | `a_modified_press_is_not_a_gesture` (`inbound/input.rs`) |
+| The map resolves to the row that was drawn | `the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it`, `the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn` (`inbound/render.rs`) |
+| Chrome is not a row | `a_grids_header_is_chrome_rather_than_its_first_row`, `a_press_on_the_chrome_of_a_panel_names_that_panel`, `the_hint_bar_and_a_frame_below_the_minimum_are_not_clickable` (`inbound/render.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_other_panel` is what makes the
 match-order rule in §2 enforceable: a panel claiming a letter an earlier arm
@@ -208,3 +216,40 @@ already takes has its arm swallowed, focus does not land, and the test fails.
    global one goes in `GLOBAL`. If it belongs in neither, say in the commit
    why it should stay hidden.
 6. Update §1 and §3 here in the same commit.
+
+---
+
+## 7. The pointer
+
+Bound, and spending nothing from §3's budget. See the
+[mouse input design](specs/2026-08-09-mouse-input-design.md).
+
+| Gesture | Lands on | Action |
+|---|---|---|
+| Left click | A keyspace | Focus Tables, select it, fold/unfold |
+| Left click | A table | Focus Tables, select it, read it into Contents |
+| Left click | A Contents row | Focus Contents, select it |
+| Left click | Chrome | Focus that panel |
+| Left click | Anywhere, overlay up | Dismiss the overlay |
+| Wheel | The panel under the pointer | Three rows or lines, without moving focus |
+
+Chrome is a border, a title, a grid's header, a notice, the Ddl body, the
+Queries panel, and the blank space past the last row. Every other gesture —
+right and middle buttons, drags, releases, horizontal wheels, and anything with
+a modifier held — is dropped at the edge.
+
+**Every gesture decomposes into a binding that already exists.** A click on a
+tree row is a selection followed by `Enter`; a wheel notch is three `j`s. This
+is what keeps §2's "a binding must be visible" true: the hint bar names keys, so
+a mouse-only capability would have nowhere to announce itself. A gesture that
+does not decompose is a binding that needs a key first.
+
+**One dispatch point, again.** `handle_pointer` in
+[`update.rs`](../crates/lc-domain/src/update.rs) is to a gesture what
+`handle_key` is to a key. `lc-inbound` resolves the coordinate against the frame
+it happened in and decides nothing.
+
+**Capture is on from startup**, which costs click-drag text selection; shift-drag
+is the bypass on terminals that offer one, and a shifted press is refused for
+exactly that reason. There is no toggle and no flag until there is a config
+system to hold the preference.

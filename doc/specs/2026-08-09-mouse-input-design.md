@@ -1,7 +1,7 @@
 # Mouse input — design
 
 **Date:** 2026-08-09
-**Status:** designed, not implemented
+**Status:** implemented
 
 Click a keyspace to fold it, a table to read it, a row to select it, and roll
 the wheel over a panel to scroll it.

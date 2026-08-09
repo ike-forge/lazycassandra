@@ -103,6 +103,12 @@ measurement. Both rest on one invariant: **`Geometry` is a function of the
 terminal size and the view model alone, never of the offsets it bounds.**
 Measuring anything that varies with an offset closes the loop.
 
+The renderer now reports a second thing, and it is worth not confusing the two:
+a hit map, which resolves a pointer position to a panel and a row
+(specs/2026-08-09-mouse-input-design.md §4). It stops at `lc-app` and re-enters
+the domain never, so it needs no guard and is free to depend on the offsets
+`Geometry` may not. Only what crosses back into `update` can close a loop.
+
 `async-trait` is in the domain's list because the port traits in §5 are defined
 here and must stay `dyn`-compatible. It is a proc macro over boxed futures, not
 a runtime — it pulls in no executor, so the rule above still holds.
