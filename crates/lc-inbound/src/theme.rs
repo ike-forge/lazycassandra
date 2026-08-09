@@ -42,11 +42,14 @@ impl Theme {
             Token::Severity(Severity::Danger) => {
                 Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
             }
-            Token::Muted => Style::new().add_modifier(Modifier::DIM),
+            // The hint bar's action reads the same as anything muted: quiet,
+            // and spending no colour of its own.
+            Token::Muted | Token::HintAction => Style::new().add_modifier(Modifier::DIM),
             // Bold rather than a colour: focus has to read on a terminal
             // whose palette is unusable, and it must not compete with the
-            // colours that carry meaning.
-            Token::Focused => Style::new().add_modifier(Modifier::BOLD),
+            // colours that carry meaning. The hint bar's key carries the same
+            // weight for the same reason.
+            Token::Focused | Token::HintKey => Style::new().add_modifier(Modifier::BOLD),
             // Underlined rather than coloured: it labels a key, and it has to
             // stay readable beside a title that is bold when focused.
             Token::Shortcut => Style::new().add_modifier(Modifier::UNDERLINED),
@@ -88,6 +91,8 @@ mod tests {
             Token::Focused,
             Token::Selected,
             Token::Shortcut,
+            Token::HintKey,
+            Token::HintAction,
         ];
 
         for token in tokens {

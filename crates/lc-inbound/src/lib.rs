@@ -9,6 +9,10 @@
 
 mod body;
 mod details;
+// Task 4 wires `hints::line` into render.rs; until then it's reachable only
+// from this module's own tests.
+#[allow(dead_code)]
+mod hints;
 pub mod input;
 pub mod layout;
 mod overlay;
