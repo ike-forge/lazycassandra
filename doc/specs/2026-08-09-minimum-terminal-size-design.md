@@ -144,11 +144,19 @@ actually got, so `Shell::TooSmall` reports `heights` of all zeros and
 reaches today whenever a panel collapses.
 
 `Cursor::page_down(len, 0)` is a no-op and `Cursor::up`/`down` still move, so a
-selection stays usable and bounded. A `Scroll` offset can drift past the end
-while its panel has no height, because `Scroll::go_to` clamps to `len - height`;
-the `clamp_to` that `Msg::Measured` performs pulls it back on the first frame
-that is drawn again. That is existing behaviour at any collapsed panel, not
-something the gate introduces, and the gate reduces how often it is reachable.
+selection stays usable and bounded. A `Scroll` offset does not survive the gate
+at all: below the floor `render` returns `Geometry::default()`, so
+`Msg::Measured` calls `Scroll::clamp_to(0, 0)` (`update.rs:154`), and
+`go_to`'s `last = len.saturating_sub(height)` is `0` regardless of what the
+offset was — the Ddl scroll is zeroed, not merely clamped. Scroll the Table
+DDL panel to line 200, shrink the terminal below the floor, restore it: the
+DDL is back at the top, not where it was left.
+
+That is NOT a regression. At every size the gate now catches, the Ddl panel
+had already collapsed to zero height and its offset was already being zeroed
+on every `Msg::Measured`; the gate only changes how often that path runs, not
+whether it can. Cursors are unaffected either way — they are bounded by row
+counts, not panel geometry.
 
 ## 7. Testing
 

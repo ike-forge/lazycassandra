@@ -174,6 +174,10 @@ impl PanelRects {
 pub fn layout(area: Rect) -> PanelRects;
 ```
 
+Superseded: `layout` now returns `Shell`, which is `Panels(PanelRects)` above
+a minimum size and `TooSmall(Rect)` below it
+(doc/specs/2026-08-09-minimum-terminal-size-design.md §3).
+
 `layout` is pure — `Rect` in, `Rect`s out, no frame, no state — which is what
 makes §5's geometry tests possible without a terminal.
 
