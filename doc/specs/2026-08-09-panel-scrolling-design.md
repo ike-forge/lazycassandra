@@ -1,7 +1,7 @@
 # Panel scrolling — design
 
 **Date:** 2026-08-09
-**Status:** designed
+**Status:** implemented
 
 Every panel reaches its content. Three of the four already scroll after a
 fashion — Tables and Contents because a moving selection drags the viewport

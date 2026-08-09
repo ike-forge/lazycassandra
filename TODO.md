@@ -41,14 +41,18 @@ From the table metadata slice (doc/specs/2026-08-09-table-metadata-design.md):
 - Display `system_schema.columns`: the regular and static column list in the
   DDL panel. The data has been in `Table` since the table-list slice; only the
   projection and the rendering are missing.
-- Scroll the DDL panel. It holds seven rows at 80x24 and about 38 at 100x100,
-  and a table's options run past both — a map-valued property alone wraps to
-  four or five lines, so everything below the fold is unreachable. `Tab`
-  already focuses the panel, so this is now a scroll offset and two bindings
-  rather than the focus model the metadata design §7 assumed was missing.
 - Revisit the option importance order once it has been used for a few weeks.
   It is a first guess, and `BY_IMPORTANCE` in `model/schema.rs` is the one
   place to change.
 - `describe` now makes three reads, so the window for a DDL change to race it
   is wider than the table-list spec's §3 measured. Same failure, same recovery
   — the refresh binding above.
+
+From the panel scrolling slice (doc/specs/2026-08-09-panel-scrolling-design.md):
+
+- `ctrl-d` and `ctrl-u`. `handle_key` refuses every ctrl and alt press, so
+  vim's half-page motions need that guard reworked and the test that pins
+  "a modified key is not a binding" rewritten — worth doing when the ctrl
+  layer is designed, not in passing (design §5).
+- A long `Notice` still cannot scroll. One sentence is the assumption; a
+  `DbError` carrying a paragraph would break it.
