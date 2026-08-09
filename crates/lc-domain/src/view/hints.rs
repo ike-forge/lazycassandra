@@ -68,7 +68,7 @@ fn rendered(binding: &Binding) -> Hint {
     }
 }
 
-fn label(keys: &[Key]) -> String {
+pub(crate) fn label(keys: &[Key]) -> String {
     keys.iter().copied().map(name).collect::<Vec<_>>().join("/")
 }
 

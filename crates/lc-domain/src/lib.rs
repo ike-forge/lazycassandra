@@ -4,6 +4,7 @@
 //! anything else. No I/O, no runtime, no terminal — see architecture.md §2.
 
 pub mod cell;
+pub mod commands;
 pub mod contents;
 pub mod model;
 pub mod ports;
