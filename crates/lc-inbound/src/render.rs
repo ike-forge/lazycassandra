@@ -38,7 +38,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
 mod tests {
     use lc_domain::contents::TableRef;
     use lc_domain::model::{
-        ConnId, CqlValue, DbError, Keyspace, Page, QueryId, Replication, Schema,
+        ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
+        PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
     };
     use lc_domain::posture::Posture;
     use lc_domain::state::{Connection, ConnectionState, Panel, SchemaState};
@@ -139,18 +140,23 @@ mod tests {
         assert!(!contains("Queries"), "Queries collapsed to zero rows");
     }
 
-    fn table(name: &str) -> lc_domain::model::Table {
-        lc_domain::model::Table {
+    fn table(name: &str) -> Table {
+        Table {
             name: name.to_owned(),
-            primary_key: lc_domain::model::PrimaryKey {
-                partition: vec![lc_domain::model::Column {
-                    name: "id".to_owned(),
-                    cql_type: "uuid".to_owned(),
-                }],
+            primary_key: PrimaryKey {
+                partition: vec![column("id", "uuid")],
                 clustering: Vec::new(),
             },
             static_columns: Vec::new(),
             regular_columns: Vec::new(),
+            options: TableOptions::default(),
+        }
+    }
+
+    fn column(name: &str, cql_type: &str) -> Column {
+        Column {
+            name: name.to_owned(),
+            cql_type: cql_type.to_owned(),
         }
     }
 
@@ -507,6 +513,142 @@ mod tests {
         assert_eq!(
             row(&buffer, 1),
             "│▸ shop        ││No rows                                   │"
+        );
+    }
+
+    /// `shop.orders_by_customer` as the fixture declares it.
+    fn orders() -> Table {
+        Table {
+            name: "orders_by_customer".to_owned(),
+            primary_key: PrimaryKey {
+                partition: vec![column("customer_id", "uuid")],
+                clustering: vec![
+                    ClusteringColumn {
+                        column: column("order_date", "date"),
+                        order: ClusteringOrder::Descending,
+                    },
+                    ClusteringColumn {
+                        column: column("order_id", "timeuuid"),
+                        order: ClusteringOrder::Ascending,
+                    },
+                ],
+            },
+            static_columns: Vec::new(),
+            regular_columns: Vec::new(),
+            options: TableOptions::new(
+                [
+                    ("comment", "Order history."),
+                    ("gc_grace_seconds", "864000"),
+                    ("bloom_filter_fp_chance", "0.01"),
+                ]
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+            ),
+        }
+    }
+
+    /// A state with `shop` unfolded and the cursor on its one table.
+    fn describing(table: Table) -> State {
+        let schema = Schema {
+            keyspaces: BTreeMap::from([(
+                "shop".to_owned(),
+                Keyspace {
+                    name: "shop".to_owned(),
+                    replication: Replication::SimpleStrategy { factor: 1 },
+                    tables: BTreeMap::from([(table.name.clone(), table)]),
+                },
+            )]),
+        };
+        let mut state = State {
+            connection: ConnectionState::Connected(Connection {
+                id: ConnId::next(),
+                posture: Posture::ReadOnly,
+                schema: SchemaState::Loaded(schema.clone()),
+            }),
+            ..State::default()
+        };
+        state.tables.open(&schema);
+        state.tables.open(&schema);
+        state
+    }
+
+    /// Inside the Ddl panel's border at 100x40: fourteen rows of 23 columns.
+    fn ddl_rows(buffer: &Buffer) -> Vec<String> {
+        (25..39)
+            .map(|y| {
+                (1..24)
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(Cell::symbol)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_selected_tables_shape_is_drawn_above_its_options() {
+        let buffer = draw_state(100, 40, &describing(orders()));
+
+        assert_eq!(
+            ddl_rows(&buffer),
+            [
+                "shop.orders_by_customer",
+                "",
+                "PARTITION",
+                "  customer_id      uuid",
+                "CLUSTERING",
+                "  order_date ↓     date",
+                "  order_id ↑   timeuuid",
+                "OPTIONS",
+                "comment",
+                "  Order history.",
+                "gc_grace_seconds",
+                "  864000",
+                "bloom_filter_fp_chance",
+                "  0.01",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_key_columns_are_drawn_in_the_tokens_that_mark_them_as_the_key() {
+        let buffer = draw_state(100, 40, &describing(orders()));
+        let colour = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
+
+        assert_eq!(colour(27), Color::Yellow, "PARTITION");
+        assert_eq!(colour(28), Color::Yellow, "its column");
+        assert_eq!(colour(29), Color::Cyan, "CLUSTERING");
+        assert_eq!(colour(30), Color::Cyan, "its column");
+        assert_eq!(
+            colour(32),
+            Color::Reset,
+            "an option is not part of the key structure and must not read as one"
+        );
+    }
+
+    #[test]
+    fn a_selected_keyspace_is_described_by_its_replication() {
+        let mut state = describing(orders());
+        let schema = state.schema().cloned().expect("loaded");
+        state.tables.close(&schema);
+
+        let buffer = draw_state(100, 40, &state);
+
+        assert_eq!(
+            ddl_rows(&buffer)[..5],
+            ["shop", "", "REPLICATION", "class", "  SimpleStrategy",]
+        );
+    }
+
+    #[test]
+    fn the_ddl_panel_is_empty_until_something_is_selected() {
+        let buffer = draw_state(100, 40, &State::default());
+
+        assert!(
+            ddl_rows(&buffer).iter().all(String::is_empty),
+            "the Tables panel already says why there is nothing; twice is noise"
         );
     }
 

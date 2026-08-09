@@ -7,13 +7,13 @@ use std::collections::{BTreeMap, VecDeque};
 
 use lc_domain::model::{
     Column, ConnId, CqlValue, DbError, Key, KeyPress, Keyspace, Page, PrimaryKey, Replication, Row,
-    Schema, Statement, Table,
+    Schema, Statement, Table, TableOptions,
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
 use lc_domain::style::Token;
 use lc_domain::update::ROW_LIMIT;
-use lc_domain::view::{Marker, PanelBody};
+use lc_domain::view::{DetailRow, Details, Marker, PanelBody};
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
 
@@ -33,6 +33,10 @@ fn table(name: &str) -> Table {
         },
         static_columns: Vec::new(),
         regular_columns: Vec::new(),
+        options: TableOptions::new(BTreeMap::from([
+            ("comment".to_owned(), format!("The {name} table.")),
+            ("gc_grace_seconds".to_owned(), "864000".to_owned()),
+        ])),
     }
 }
 
@@ -398,5 +402,67 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
         view_model(&state).panels[2].title,
         "Table contents — shop.users (2 rows)",
         "a late page for a read the user left must not resurrect it"
+    );
+}
+
+fn ddl_details(state: &State) -> Details {
+    let PanelBody::Details(details) = &view_model(state).panels[1].body else {
+        panic!("a selected row has something to describe");
+    };
+    details.clone()
+}
+
+#[tokio::test]
+async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders", "users"])]),
+        Posture::ReadOnly,
+    );
+    let conn = ConnId::next();
+    let (mut state, effects) = init(conn);
+    run(&cluster, &mut state, effects).await;
+
+    let keyspace = ddl_details(&state);
+    assert_eq!(keyspace.heading, "shop");
+    assert_eq!(
+        keyspace
+            .sections
+            .iter()
+            .map(|section| section.heading.as_str())
+            .collect::<Vec<_>>(),
+        ["REPLICATION"]
+    );
+
+    update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
+    let effects = update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
+    assert!(
+        effects.is_empty(),
+        "the whole schema arrived with describe, so describing a table is not I/O"
+    );
+
+    let table = ddl_details(&state);
+    assert_eq!(table.heading, "shop.orders");
+    assert_eq!(
+        table
+            .sections
+            .iter()
+            .map(|section| section.heading.as_str())
+            .collect::<Vec<_>>(),
+        ["PARTITION", "OPTIONS"],
+        "these fixtures have no clustering columns, so that section is absent"
+    );
+    assert_eq!(
+        table.sections[1].rows,
+        [
+            DetailRow::Property {
+                name: "comment".to_owned(),
+                value: "The orders table.".to_owned(),
+            },
+            DetailRow::Property {
+                name: "gc_grace_seconds".to_owned(),
+                value: "864000".to_owned(),
+            },
+        ],
+        "importance order, not the alphabetical order the map stores"
     );
 }

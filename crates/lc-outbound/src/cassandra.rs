@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Keyspace, Page, PagingState,
-    PrimaryKey, Replication, Row, Schema, Statement, Table,
+    PrimaryKey, Replication, Row, Schema, Statement, Table, TableOptions,
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
@@ -17,8 +17,10 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::metadata::{Keyspace as DriverKeyspace, Strategy};
-use scylla::value::Row as DriverRow;
+use scylla::value::{CqlValue as DriverValue, Row as DriverRow};
 use tokio::sync::RwLock;
+
+use lc_domain::cell;
 
 use crate::value::to_value;
 
@@ -95,8 +97,9 @@ impl Cluster for CassandraCluster {
             .map_err(|error| DbError::Other(error.to_string()))?;
 
         let columns = column_rows(&session).await?;
+        let options = option_rows(&session).await?;
 
-        schema(&session.get_cluster_state(), &columns)
+        schema(&session.get_cluster_state(), &columns, &options)
     }
 
     /// Unpaged because the statement carries its own `LIMIT`
@@ -192,6 +195,94 @@ async fn column_rows(
     Ok(grouped)
 }
 
+/// Every table's own settings.
+///
+/// `SELECT *` rather than named columns: the column set of
+/// `system_schema.tables` moves between Cassandra majors — 3.11 has
+/// `read_repair_chance`, 4.0 replaces it with `read_repair`, 5.0 adds
+/// `memtable` — so naming them would make this a hard error on any cluster
+/// missing one, while a wildcard reports whatever that cluster knows
+/// (doc/specs/2026-08-09-table-metadata-design.md §2).
+const OPTIONS_QUERY: &str = "SELECT * FROM system_schema.tables";
+
+/// The two columns that identify a row rather than describe it. They are the
+/// panel's heading, so listing them again would be noise.
+const KEYSPACE_NAME: &str = "keyspace_name";
+const TABLE_NAME: &str = "table_name";
+
+async fn option_rows(
+    session: &Session,
+) -> Result<BTreeMap<(String, String), TableOptions>, DbError> {
+    let result = session
+        .query_unpaged(OPTIONS_QUERY, &[])
+        .await
+        .map_err(|error| DbError::Other(error.to_string()))?
+        .into_rows_result()
+        .map_err(|error| DbError::Other(error.to_string()))?;
+
+    let names: Vec<String> = result
+        .column_specs()
+        .iter()
+        .map(|spec| spec.name().to_owned())
+        .collect();
+
+    let rows = result
+        .rows::<DriverRow>()
+        .map_err(|error| DbError::Other(error.to_string()))?;
+
+    let mut grouped = BTreeMap::new();
+    for row in rows {
+        let row = row.map_err(|error| DbError::Other(error.to_string()))?;
+        if let Some((key, options)) = to_options(&names, row) {
+            grouped.insert(key, options);
+        }
+    }
+
+    Ok(grouped)
+}
+
+/// `None` when the row carries no keyspace or table name, which no real
+/// `system_schema.tables` row does — the wildcard select is what makes it
+/// expressible at all.
+fn to_options(names: &[String], row: DriverRow) -> Option<((String, String), TableOptions)> {
+    let mut keyspace = None;
+    let mut table = None;
+    let mut by_name = BTreeMap::new();
+
+    for (name, value) in names.iter().zip(row.columns) {
+        match name.as_str() {
+            KEYSPACE_NAME => keyspace = value.as_ref().and_then(DriverValue::as_text).cloned(),
+            TABLE_NAME => table = value.as_ref().and_then(DriverValue::as_text).cloned(),
+            _ => {
+                by_name.insert(name.clone(), option_text(value.as_ref()));
+            }
+        }
+    }
+
+    Some(((keyspace?, table?), TableOptions::new(by_name)))
+}
+
+/// One option as the panel shows it.
+///
+/// Values go through the same `to_value` + [`cell::text`] pair the Contents
+/// grid uses, rather than a second formatter: `cell::text` is documented as
+/// the reason every renderer agrees on what a blob or a collection looks
+/// like, and a private opinion here would be exactly the drift it exists to
+/// prevent.
+///
+/// The one thing on top is the empty string. `comment` defaults to `''` on
+/// every table, and a property drawn with a blank line under it reads as
+/// broken rather than as unset.
+fn option_text(value: Option<&DriverValue>) -> String {
+    let text = cell::text(&to_value(value));
+
+    if text.is_empty() {
+        "''".to_owned()
+    } else {
+        text
+    }
+}
+
 /// Builds a table from the driver's key ordering and `system_schema`'s column
 /// detail.
 ///
@@ -206,6 +297,7 @@ fn to_table(
     partition_key: &[String],
     clustering_key: &[String],
     rows: &[ColumnRow],
+    options: TableOptions,
 ) -> Option<Table> {
     let by_name: BTreeMap<&str, &ColumnRow> = rows
         .iter()
@@ -239,6 +331,7 @@ fn to_table(
         },
         static_columns: of_kind(rows, "static"),
         regular_columns: of_kind(rows, "regular"),
+        options,
     })
 }
 
@@ -276,10 +369,16 @@ fn clustering_order(order: &str) -> ClusteringOrder {
 fn schema(
     state: &ClusterState,
     columns: &BTreeMap<(String, String), Vec<ColumnRow>>,
+    options: &BTreeMap<(String, String), TableOptions>,
 ) -> Result<Schema, DbError> {
     let keyspaces = state
         .keyspaces_iter()
-        .map(|(name, keyspace)| Ok((name.to_owned(), to_keyspace(name, keyspace, columns)?)))
+        .map(|(name, keyspace)| {
+            Ok((
+                name.to_owned(),
+                to_keyspace(name, keyspace, columns, options)?,
+            ))
+        })
         .collect::<Result<BTreeMap<_, _>, DbError>>()?;
 
     Ok(Schema { keyspaces })
@@ -289,19 +388,25 @@ fn to_keyspace(
     name: &str,
     keyspace: &DriverKeyspace,
     columns: &BTreeMap<(String, String), Vec<ColumnRow>>,
+    options: &BTreeMap<(String, String), TableOptions>,
 ) -> Result<Keyspace, DbError> {
     let mut tables = BTreeMap::new();
 
     for (table_name, table) in &keyspace.tables {
-        let rows = columns
-            .get(&(name.to_owned(), table_name.clone()))
-            .map_or(&[][..], Vec::as_slice);
+        let key = (name.to_owned(), table_name.clone());
+        let rows = columns.get(&key).map_or(&[][..], Vec::as_slice);
+
+        // An absent options row is not a failure the way an absent column row
+        // is: `PrimaryKey::partition` documents itself as never empty, while
+        // options carry no invariant at all (design §2).
+        let settings = options.get(&key).cloned().unwrap_or_default();
 
         let mapped = to_table(
             table_name,
             &table.partition_key,
             &table.clustering_key,
             rows,
+            settings,
         )
         .ok_or_else(|| {
             DbError::Other(format!("schema changed while reading {name}.{table_name}"))
@@ -450,6 +555,7 @@ mod tests {
             &["device_id".to_owned()],
             &["reading_at".to_owned(), "seq".to_owned()],
             &readings_rows(),
+            TableOptions::default(),
         )
         .expect("every key column has a row")
     }
@@ -482,6 +588,7 @@ mod tests {
                 column_row("a", "partition_key", "int", "none"),
                 column_row("b", "partition_key", "int", "none"),
             ],
+            TableOptions::default(),
         )
         .expect("every key column has a row");
 
@@ -530,6 +637,7 @@ mod tests {
                 column_row("id", "partition_key", "int", "none"),
                 column_row("frozen_list", "regular", "frozen<list<text>>", "none"),
             ],
+            TableOptions::default(),
         )
         .expect("every key column has a row");
 
@@ -543,6 +651,7 @@ mod tests {
             &["device_id".to_owned()],
             &[],
             &[column_row("temperature_c", "regular", "float", "none")],
+            TableOptions::default(),
         );
 
         assert!(
@@ -564,6 +673,7 @@ mod tests {
             &[],
             &[],
             &[column_row("device_id", "partition_key", "text", "none")],
+            TableOptions::default(),
         );
 
         assert!(
@@ -578,6 +688,120 @@ mod tests {
         assert_eq!(clustering_order("DESC"), ClusteringOrder::Descending);
         assert_eq!(clustering_order("asc"), ClusteringOrder::Ascending);
         assert_eq!(clustering_order("none"), ClusteringOrder::Ascending);
+    }
+
+    fn driver_text(text: &str) -> DriverValue {
+        DriverValue::Text(text.to_owned())
+    }
+
+    #[test]
+    fn an_option_is_rendered_the_way_the_contents_grid_renders_a_cell() {
+        // The point of the assertion is the shared renderer, not these
+        // values: `cell::text` is where the form is decided and tested.
+        assert_eq!(
+            option_text(Some(&driver_text("Order history."))),
+            "Order history."
+        );
+        assert_eq!(option_text(Some(&DriverValue::Int(864_000))), "864000");
+        assert_eq!(option_text(Some(&DriverValue::Boolean(false))), "false");
+        assert_eq!(
+            option_text(Some(&DriverValue::Blob(vec![0x00, 0x0f, 0xff]))),
+            "0x000fff"
+        );
+    }
+
+    #[test]
+    fn a_map_option_keeps_every_entry_and_a_stable_order() {
+        let compaction = DriverValue::Map(vec![
+            (driver_text("min_threshold"), driver_text("4")),
+            (
+                driver_text("class"),
+                driver_text("org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy"),
+            ),
+            (driver_text("max_threshold"), driver_text("32")),
+        ]);
+
+        assert_eq!(
+            option_text(Some(&compaction)),
+            "{class: org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy, \
+             max_threshold: 32, min_threshold: 4}",
+            "a coordinator's serialisation order must not reach the screen"
+        );
+    }
+
+    #[test]
+    fn an_empty_string_is_shown_as_the_empty_literal_rather_than_as_nothing() {
+        assert_eq!(
+            option_text(Some(&driver_text(""))),
+            "''",
+            "a property with a blank line under it reads as broken, not as unset"
+        );
+    }
+
+    #[test]
+    fn a_column_this_table_left_unset_is_null_rather_than_absent() {
+        assert_eq!(option_text(None), "null");
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_row_is_keyed_by_its_keyspace_and_table_and_describes_itself_with_the_rest() {
+        let row = DriverRow {
+            columns: vec![
+                Some(driver_text("shop")),
+                Some(driver_text("orders_by_customer")),
+                Some(DriverValue::Int(864_000)),
+            ],
+        };
+
+        let (key, options) = to_options(
+            &names(&["keyspace_name", "table_name", "gc_grace_seconds"]),
+            row,
+        )
+        .expect("a row with both names is keyed");
+
+        assert_eq!(key, ("shop".to_owned(), "orders_by_customer".to_owned()));
+        assert_eq!(
+            options.in_display_order().collect::<Vec<_>>(),
+            [("gc_grace_seconds", "864000")],
+            "the two identifying columns are the panel's heading, not properties"
+        );
+    }
+
+    #[test]
+    fn a_cluster_older_than_the_ranking_reports_fewer_properties_rather_than_failing() {
+        // 3.11's shape: no `read_repair`, and two columns 4.0 removed.
+        let row = DriverRow {
+            columns: vec![
+                Some(driver_text("shop")),
+                Some(driver_text("orders_by_customer")),
+                Some(DriverValue::Double(0.0)),
+                Some(DriverValue::Double(0.1)),
+            ],
+        };
+
+        let (_, options) = to_options(
+            &names(&[
+                "keyspace_name",
+                "table_name",
+                "read_repair_chance",
+                "dclocal_read_repair_chance",
+            ]),
+            row,
+        )
+        .expect("a row with both names is keyed");
+
+        assert_eq!(
+            options.in_display_order().collect::<Vec<_>>(),
+            [
+                ("dclocal_read_repair_chance", "0.1"),
+                ("read_repair_chance", "0")
+            ],
+            "a name the ranking has never heard of is still the cluster's own vocabulary"
+        );
     }
 
     // Not gated behind `integration`: `check` refuses before the adapter ever

@@ -8,6 +8,7 @@
 //! concrete `ratatui` style.
 
 mod body;
+mod details;
 pub mod input;
 pub mod layout;
 mod overlay;

@@ -404,3 +404,102 @@ async fn a_statement_the_cluster_rejects_comes_back_as_an_error_not_a_panic() {
 
     assert!(matches!(result, Err(DbError::Invalid(_))));
 }
+
+#[tokio::test]
+async fn a_table_reports_the_options_the_seed_set_and_the_ones_cassandra_defaulted() {
+    let schema = fixture_schema().await;
+
+    let orders = schema
+        .keyspaces
+        .get("shop")
+        .expect("shop exists")
+        .tables
+        .get("orders_by_customer")
+        .expect("orders_by_customer exists");
+
+    assert_eq!(
+        orders.options.get("comment"),
+        Some("Order history for one customer, newest day first."),
+        "10-shop-schema.cql sets this one"
+    );
+    assert_eq!(orders.options.get("gc_grace_seconds"), Some("864000"));
+
+    let compaction = orders
+        .options
+        .get("compaction")
+        .expect("every table has a compaction strategy");
+    assert!(
+        compaction.contains("SizeTieredCompactionStrategy"),
+        "a map option keeps its entries rather than collapsing to a class name: {compaction}"
+    );
+    assert!(
+        compaction.starts_with("{class: "),
+        "map entries are sorted, so class leads: {compaction}"
+    );
+}
+
+#[tokio::test]
+async fn every_table_in_the_fixture_describes_itself() {
+    let schema = fixture_schema().await;
+
+    for keyspace in schema.keyspaces.values() {
+        for table in keyspace.tables.values() {
+            assert!(
+                !table.options.is_empty(),
+                "{}.{} reported no options at all",
+                keyspace.name,
+                table.name
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_option_set_covers_what_the_importance_ranking_expects_of_cassandra_5() {
+    let schema = fixture_schema().await;
+
+    let table = schema
+        .keyspaces
+        .get("shop")
+        .expect("shop exists")
+        .tables
+        .get("customers_by_id")
+        .expect("customers_by_id exists");
+
+    // Not the whole ranking: it deliberately also names properties older and
+    // newer majors carry, which this cluster does not have.
+    for name in [
+        "additional_write_policy",
+        "allow_auto_snapshot",
+        "bloom_filter_fp_chance",
+        "caching",
+        "cdc",
+        "comment",
+        "compaction",
+        "compression",
+        "crc_check_chance",
+        "default_time_to_live",
+        "extensions",
+        "flags",
+        "gc_grace_seconds",
+        "id",
+        "incremental_backups",
+        "max_index_interval",
+        "memtable_flush_period_in_ms",
+        "min_index_interval",
+        "read_repair",
+        "speculative_retry",
+    ] {
+        assert!(
+            table.options.get(name).is_some(),
+            "cassandra:5.0.8 reports {name} and the wildcard select must carry it through"
+        );
+    }
+
+    assert_eq!(
+        table.options.get("keyspace_name"),
+        None,
+        "the identifying columns are the panel's heading, not properties"
+    );
+    assert_eq!(table.options.get("table_name"), None);
+}
