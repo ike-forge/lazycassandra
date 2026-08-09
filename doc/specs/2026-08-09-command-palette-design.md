@@ -179,20 +179,34 @@ actually needs.
 // lc-inbound/src/palette.rs
 const WIDTH_PERCENT: u16 = 50;
 const HEIGHT_PERCENT: u16 = 70;
-/// Below this the two columns cannot both be read, and the panels underneath
-/// are more use than a truncated table. Same rule the message overlay follows.
+/// The widest row the catalogue can produce, plus both borders and the pad:
+/// a `shift-tab` gutter (9), two columns of gap, the longest action (20).
+/// Below this a row would be clipped, and the panels underneath are more use
+/// than a truncated table. Same rule the message overlay follows.
 const MIN_W: u16 = 34;
-/// Past this a two-column table is mostly whitespace: the widest row is around
-/// twenty columns, and the rest is gutter.
-const MAX_W: u16 = 64;
+/// Past this a two-column table is mostly whitespace — every row is at most
+/// 31 columns and the rest is trailing space.
+const MAX_W: u16 = 60;
 /// Two borders, a heading, and enough commands to be worth opening.
 const MIN_H: u16 = 8;
 ```
 
+`MIN_W` is **derived from the catalogue, not chosen**, and that makes it a
+constraint running the other way: no action may exceed 20 characters and no
+keys label 9, or the narrowest palette clips a row. §9 pins it with a test
+rather than leaving it as arithmetic in this document. It is what §6's wordings
+are cut to, and it is why `⏎`'s row says "fold/unfold, or read" rather than
+spelling out both halves.
+
+The consequence worth stating: at `MIN_W` = 34 and a width of half the frame,
+**no palette is drawn below 68 columns.** Nothing between 40 (the shell's own
+floor) and 68 gets one, and `?` is inert there.
+
 The width cap is a deliberate departure from "50%". On a 200-column terminal
 half the frame is a hundred columns holding a `shift-tab` and two words; the
 table stops being a table and becomes two distant columns the eye has to track
-between. 64 is where that stops paying.
+between. 60 is where that stops paying, and it is the cap the message overlay
+already uses.
 
 The height cap is the same argument vertically, and it is why the palette
 usually does not scroll: `min(70% of the frame, rows + 2)` means a terminal
@@ -257,13 +271,18 @@ Three groups. Everything doc/shortcuts.md §1 lists, plus `?`.
 | | `pgup` | up one screen |
 | | `home` | to the start |
 | | `end` | to the end |
-| Tables | `⏎`/`space` | fold or unfold a keyspace, or read a table |
+| Tables | `⏎`/`space` | fold/unfold, or read |
 | | `l`/`→` | unfold the keyspace |
-| | `h`/`←` | fold it, or step out of a table |
+| | `h`/`←` | fold, or step out |
 
-`⏎`'s action carries the same honest-about-both wording the bar's "open" was
-chosen to avoid needing (hint bar design §1); with a column to spend rather than
-a shared row, saying both is affordable here and was not there.
+Every action is at most 20 characters, because §5 derives `MIN_W` from the
+longest one and a longer action would either clip or push the palette out of
+reach of a 68-column terminal.
+
+`⏎`'s action still names both meanings, which the bar's "open" could not afford
+to (hint bar design §1) — a column buys enough room for "fold/unfold, or read"
+even though it does not buy enough for a sentence. The group heading supplies
+the noun the action drops: under `Tables`, "read" can only mean a table.
 
 **There is no fourth group for the palette's own bindings.** `esc`, `j`, `k` and
 the paging keys are already in the table above, doing the same thing they do
@@ -424,6 +443,7 @@ Beyond the sweep, in `lc-domain`:
 | Other keys are inert | `an_open_palette_swallows_the_keys_it_does_not_use` |
 | A frame too small leaves `?` inert | `the_palette_does_not_open_where_it_cannot_be_drawn` |
 | The bar names the palette's own keys | `the_bar_names_what_the_palette_responds_to` |
+| No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` |
 
 In `lc-inbound`, against `TestBackend`:
 
