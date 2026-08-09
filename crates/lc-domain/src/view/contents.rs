@@ -134,7 +134,7 @@ mod tests {
     }
 
     fn contents_title(state: &State) -> String {
-        view_model(state).panels[2].title.clone()
+        view_model(state).panels[2].title.text().to_owned()
     }
 
     fn page_of(columns: &[&str], rows: &[&[CqlValue]]) -> Page {

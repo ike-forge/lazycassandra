@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
             continue;
         }
 
-        let mut block = Block::bordered().title(panel.title.as_str());
+        let mut block = Block::bordered().title(panel.title.text());
         if panel.panel == view.focus {
             block = block.border_style(theme.style(Token::Focused));
         }

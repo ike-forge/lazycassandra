@@ -10,10 +10,12 @@
 mod contents;
 mod details;
 mod tables;
+mod title;
 
 pub use contents::{GridCell, GridColumn};
 pub use details::{DetailRow, Details, Section};
 pub use tables::{Marker, TreeRow};
+pub use title::PanelTitle;
 
 use crate::model::DbError;
 use crate::state::{Overlay, Panel, State};
@@ -33,7 +35,7 @@ pub struct ViewModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanelView {
     pub panel: Panel,
-    pub title: String,
+    pub title: PanelTitle,
     pub body: PanelBody,
 }
 
@@ -75,7 +77,7 @@ pub fn view_model(state: &State) -> ViewModel {
     ViewModel {
         panels: Panel::ALL.map(|panel| PanelView {
             panel,
-            title: title(state, panel),
+            title: PanelTitle::marking(title(state, panel), panel.shortcut()),
             body: body(state, panel),
         }),
         focus: state.focus,
@@ -158,8 +160,10 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
-    use super::tests_support::loaded;
+    use super::tests_support::{loaded, tabled};
     use super::*;
+    use crate::contents::TableRef;
+    use crate::model::{DbError, Page, QueryId};
 
     #[test]
     fn every_panel_is_projected_in_reading_order() {
@@ -173,7 +177,7 @@ mod tests {
         let view = view_model(&State::default());
 
         assert_eq!(
-            view.panels.map(|panel| panel.title),
+            view.panels.map(|panel| panel.title.text().to_owned()),
             ["Tables", "Table DDL", "Table contents", "Queries"].map(str::to_owned)
         );
     }
@@ -218,5 +222,40 @@ mod tests {
         };
 
         assert_eq!(view_model(&state).overlay, state.overlay);
+    }
+
+    /// Every `ContentsState`, because that panel's title is built per frame
+    /// and is the one that could drift out of the invariant below.
+    fn every_contents_state() -> Vec<State> {
+        let query = QueryId::next();
+        let mut loading = tabled(&[("shop", &["orders"])]);
+        loading
+            .contents
+            .requested(query, TableRef::new("shop", "orders"));
+
+        let mut loaded = loading.clone();
+        loaded.contents.page_ready(query, Page::default());
+
+        let mut failed = loading.clone();
+        failed.contents.failed(query, DbError::Timeout);
+
+        vec![State::default(), loading, loaded, failed]
+    }
+
+    #[test]
+    fn every_panel_title_marks_the_key_that_focuses_it() {
+        for state in every_contents_state() {
+            for panel in view_model(&state).panels {
+                let (_, mark, _) = panel.title.split();
+
+                assert!(
+                    mark.eq_ignore_ascii_case(&panel.panel.shortcut().to_string()),
+                    "{:?} titled {:?} does not mark '{}'",
+                    panel.panel,
+                    panel.title.text(),
+                    panel.panel.shortcut()
+                );
+            }
+        }
     }
 }

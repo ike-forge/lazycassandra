@@ -275,7 +275,7 @@ async fn pressing_enter_on_a_table_fills_the_contents_panel() {
 
     let view = view_model(&state);
     assert_eq!(
-        view.panels[2].title,
+        view.panels[2].title.text(),
         "Table contents — shop.orders (2 rows)"
     );
 
@@ -399,7 +399,7 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
         ]
     );
     assert_eq!(
-        view_model(&state).panels[2].title,
+        view_model(&state).panels[2].title.text(),
         "Table contents — shop.users (2 rows)",
         "a late page for a read the user left must not resurrect it"
     );
