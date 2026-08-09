@@ -335,6 +335,19 @@ impl Scroll {
         self.go_to(self.offset, len, height);
     }
 
+    /// Pulls the viewport the shortest distance that puts `index` inside it.
+    ///
+    /// What makes a selection stay visible now that the renderer no longer
+    /// arranges it — `update` applies this to whichever cursor moved
+    /// (doc/specs/2026-08-09-list-viewport-design.md §3).
+    pub const fn follow(&mut self, index: usize, height: usize) {
+        if index < self.offset {
+            self.offset = index;
+        } else if height > 0 && index >= self.offset + height {
+            self.offset = index + 1 - height;
+        }
+    }
+
     const fn go_to(&mut self, offset: usize, len: usize, height: usize) {
         let last = len.saturating_sub(height);
         // `Ord::min` is not const.
@@ -832,5 +845,44 @@ mod tests {
                 assert!(!binding.action.is_empty(), "{panel:?} has a nameless hint");
             }
         }
+    }
+
+    #[test]
+    fn following_a_selection_below_the_viewport_puts_it_on_the_last_row() {
+        let mut scroll = Scroll::default();
+
+        scroll.follow(9, 5);
+
+        assert_eq!(scroll.offset(), 5, "rows 5..=9 are drawn");
+    }
+
+    #[test]
+    fn following_a_selection_above_the_viewport_puts_it_on_the_first_row() {
+        let mut scroll = Scroll::default();
+        scroll.follow(9, 5);
+
+        scroll.follow(2, 5);
+
+        assert_eq!(scroll.offset(), 2);
+    }
+
+    #[test]
+    fn following_a_selection_already_on_screen_moves_nothing() {
+        let mut scroll = Scroll::default();
+        scroll.follow(9, 5);
+
+        for index in 5..=9 {
+            scroll.follow(index, 5);
+            assert_eq!(scroll.offset(), 5, "row {index} was already drawn");
+        }
+    }
+
+    #[test]
+    fn following_into_a_panel_with_no_room_does_not_underflow() {
+        let mut scroll = Scroll::default();
+
+        scroll.follow(9, 0);
+
+        assert_eq!(scroll.offset(), 0);
     }
 }

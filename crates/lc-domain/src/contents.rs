@@ -6,12 +6,14 @@
 //! (architecture.md §11).
 
 use crate::model::{DbError, Page, QueryId};
-use crate::state::Cursor;
+use crate::state::{Cursor, Scroll};
 
 /// The Contents panel's own state.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ContentsPanel {
     pub cursor: Cursor,
+    /// The first row drawn (doc/specs/2026-08-09-list-viewport-design.md §1).
+    pub scroll: Scroll,
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
     state: ContentsState,
@@ -85,6 +87,7 @@ impl ContentsPanel {
     pub fn requested(&mut self, query: QueryId, table: TableRef) {
         self.state = ContentsState::Loading { query, table };
         self.cursor = Cursor::default();
+        self.scroll = Scroll::default();
     }
 
     /// Applies a page, if it is the one being waited on.
@@ -101,6 +104,7 @@ impl ContentsPanel {
     pub fn refused(&mut self, table: TableRef, error: DbError) {
         self.state = ContentsState::Failed { table, error };
         self.cursor = Cursor::default();
+        self.scroll = Scroll::default();
     }
 
     /// Records a failure, if it belongs to the query being waited on.
@@ -279,5 +283,29 @@ mod tests {
     #[test]
     fn a_qualified_name_reads_the_way_cql_writes_it() {
         assert_eq!(TableRef::new("shop", "orders").qualified(), "shop.orders");
+    }
+
+    #[test]
+    fn a_new_request_opens_at_the_top_of_the_grid() {
+        let mut panel = ContentsPanel::default();
+        panel.scroll.follow(40, 5);
+        panel.cursor.go_to(40, 60);
+
+        panel.requested(QueryId::next(), TableRef::new("shop", "orders"));
+
+        assert_eq!(panel.scroll.offset(), 0, "a second table opens at its top");
+        assert_eq!(panel.cursor.index(), 0);
+    }
+
+    #[test]
+    fn a_refused_request_opens_at_the_top_too() {
+        let mut panel = ContentsPanel::default();
+        panel.scroll.follow(40, 5);
+        panel.cursor.go_to(40, 60);
+
+        panel.refused(TableRef::new("shop", "orders"), DbError::ReadOnly);
+
+        assert_eq!(panel.scroll.offset(), 0);
+        assert_eq!(panel.cursor.index(), 0);
     }
 }

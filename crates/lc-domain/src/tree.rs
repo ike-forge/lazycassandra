@@ -7,12 +7,15 @@
 use std::collections::BTreeSet;
 
 use crate::model::{Keyspace, Schema, Table};
-use crate::state::Cursor;
+use crate::state::{Cursor, Scroll};
 
 /// The Tables panel's own state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TablesPanel {
     pub cursor: Cursor,
+    /// The first row drawn. Moved by a wheel on its own, and pulled after a
+    /// cursor motion (doc/specs/2026-08-09-list-viewport-design.md §1).
+    pub scroll: Scroll,
     /// Keyspaces showing their tables.
     ///
     /// Private for the reason [`Cursor`]'s index is: the only ways in are the
