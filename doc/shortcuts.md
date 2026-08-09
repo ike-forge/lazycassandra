@@ -1,7 +1,7 @@
 # Shortcuts
 
-**Status:** current as of `eb18da3`. This documents what is bound today and the
-rules a new binding has to satisfy — not a wishlist.
+**Status:** current. This documents what is bound today and the rules a new
+binding has to satisfy — not a wishlist.
 
 Every keystroke in LazyCassandra passes through one function: `handle_key` in
 [`crates/lc-domain/src/update.rs`](../crates/lc-domain/src/update.rs). There is

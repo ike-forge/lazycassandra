@@ -41,7 +41,7 @@ content, so six rows is the point at which every panel still shows a line.
 
 Deriving rather than declaring means a change to any floor moves the gate with
 it, and there is no second place to remember. It also keeps the gate honest:
-40×6 is exactly the smallest frame the existing layout draws correctly, not a
+40×7 is exactly the smallest frame the existing layout draws correctly, not a
 guess at the smallest one worth supporting.
 
 A readability floor — 80×24, or 80×12 — was considered and rejected. It would
@@ -167,11 +167,11 @@ counts, not panel geometry.
 
 - `layout` returns `TooSmall` below the floor on each axis independently and at
   the corner: 39×6, 40×5, 39×5, 0×0.
-- `layout` returns `Panels` at exactly 40×6, and every panel is non-empty there
+- `layout` returns `Panels` at exactly 40×7, and every panel is non-empty there
   — the claim §1 derives the constants from.
-- The existing size list gains 40×6, and the sizes below the floor move to the
-  `TooSmall` assertions. `the_panels_tile_the_area_exactly` keeps its meaning
-  for every size that yields `Panels`.
+- The existing size list gains 40×7, and 40×6 — now below the floor — moves to
+  the `TooSmall` assertions alongside the rest. `the_panels_tile_the_area_exactly`
+  keeps its meaning for every size that yields `Panels`.
 - `split` collapses and lifts its minor part, tested directly at the sizes
   `layout` no longer passes it (§5).
 
