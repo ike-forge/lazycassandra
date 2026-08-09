@@ -277,7 +277,7 @@ Three groups. Everything doc/shortcuts.md §1 lists, plus `?`.
 
 Every action is at most 20 characters, because §5 derives `MIN_W` from the
 longest one and a longer action would either clip or push the palette out of
-reach of a 68-column terminal.
+reach of a 70-column terminal.
 
 `⏎`'s action still names both meanings, which the bar's "open" could not afford
 to (hint bar design §1) — a column buys enough room for "fold/unfold, or read"
