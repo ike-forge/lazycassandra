@@ -2,8 +2,8 @@
 - Test performance (for display and querying) when datasets are huge
 - Add readonly mode (make obvious visually)
 - Write actions must all be obvisous (special color/ui)
-- Write up formal shortcut document
-- Display shortcuts on the UI (dynamic/contextualized)
+- Display shortcuts on the UI (dynamic/contextualized) — the hint bar
+  vision.md §7 Phase 0 promises; doc/shortcuts.md §4 is what it replaces
 
 From the table-list review (doc/specs/2026-08-08-table-list-design.md):
 
@@ -31,8 +31,6 @@ From the table-contents slice (doc/specs/2026-08-09-table-contents-design.md §9
 - `Effect::Cancel` is still inert: the `Cluster` port has no cancel, so a
   superseded read runs to completion on the cluster. Only the `in_flight` drop
   protects the state.
-- Focus has no direct jumps (`1`–`4`); `Tab`/`Shift-Tab` cycling is all there
-  is, and one of the four panels it reaches is still blank.
 - Grid columns are capped at 24 and anything past the right edge is not drawn.
   Horizontal navigation and column priority are unbuilt (vision.md §8).
 

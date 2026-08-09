@@ -10,6 +10,7 @@ yet — this repo currently holds the design docs and the workspace skeleton.
 - [doc/vision.md](doc/vision.md) — why this exists, who it's for, scope, roadmap
 - [doc/architecture.md](doc/architecture.md) — crate layout, state model, open decisions
 - [doc/conventions.md](doc/conventions.md) — how the code should read
+- [doc/shortcuts.md](doc/shortcuts.md) — every binding, and the rules a new one must satisfy
 - [doc/specs/2026-08-08-cassandra-test-fixture-design.md](doc/specs/2026-08-08-cassandra-test-fixture-design.md)
   — the local Cassandra the TUI is developed against
 
