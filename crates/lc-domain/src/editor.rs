@@ -121,7 +121,7 @@ impl Editor {
         self.settle();
     }
 
-    /// Steps on one character, onto the start of the line below at end-of-line.
+    /// Steps forward one character, onto the start of the line below at end-of-line.
     pub fn right(&mut self) {
         if self.cursor.column < self.line_len() {
             self.cursor.column += 1;
@@ -135,22 +135,22 @@ impl Editor {
 
     /// Moves the cursor up one line, preserving the desired column.
     pub fn up(&mut self) {
-        self.to_line(self.cursor.line.saturating_sub(1));
+        self.go_to_line(self.cursor.line.saturating_sub(1));
     }
 
     /// Moves the cursor down one line, preserving the desired column.
     pub fn down(&mut self) {
-        self.to_line(self.cursor.line.saturating_add(1));
+        self.go_to_line(self.cursor.line.saturating_add(1));
     }
 
     /// Moves the cursor up by the given height, preserving the desired column.
     pub fn page_up(&mut self, height: usize) {
-        self.to_line(self.cursor.line.saturating_sub(height));
+        self.go_to_line(self.cursor.line.saturating_sub(height));
     }
 
     /// Moves the cursor down by the given height, preserving the desired column.
     pub fn page_down(&mut self, height: usize) {
-        self.to_line(self.cursor.line.saturating_add(height));
+        self.go_to_line(self.cursor.line.saturating_add(height));
     }
 
     /// Moves the cursor to the start of the current line.
@@ -169,8 +169,7 @@ impl Editor {
 
     /// Every vertical motion. `desired_column` is read and left alone, so a
     /// pass over a short line does not cost the column for good.
-    #[allow(clippy::wrong_self_convention)] // to_line mutates cursor position on vertical motion
-    fn to_line(&mut self, line: usize) {
+    fn go_to_line(&mut self, line: usize) {
         // `lines` is never empty, so this cannot underflow.
         self.cursor.line = line.min(self.lines.len() - 1);
         self.cursor.column = self.desired_column.min(self.line_len());
@@ -276,6 +275,17 @@ mod tests {
         let editor = typed("SELECT\n");
 
         assert_eq!(editor.lines(), ["SELECT".to_owned(), String::new()]);
+        assert_eq!(editor.cursor(), Position { line: 1, column: 0 });
+    }
+
+    #[test]
+    fn enter_at_the_start_of_a_line_pushes_an_empty_one_above() {
+        let mut editor = typed("SELECT");
+        at(&mut editor, 0, 0);
+
+        editor.insert_newline();
+
+        assert_eq!(editor.lines(), [String::new(), "SELECT".to_owned()]);
         assert_eq!(editor.cursor(), Position { line: 1, column: 0 });
     }
 

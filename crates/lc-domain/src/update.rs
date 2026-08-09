@@ -392,9 +392,9 @@ fn scroll(state: &mut State, motion: Motion) {
 }
 
 /// How many rows the focused panel's *cursor* moves over. Ddl scrolls a
-/// viewport rather than a selection and never reaches here; Queries has
-/// nothing, so a motion there is inert rather than moving another panel's
-/// selection from a distance.
+/// viewport rather than a selection and never reaches here; Queries never
+/// arrives here either — the editor claims the motion keys first (design
+/// §3), so this arm is unreachable in practice and kept for exhaustiveness.
 fn focused_row_count(state: &State) -> usize {
     match state.focus {
         Panel::Tables => tree_rows(state),
@@ -403,6 +403,9 @@ fn focused_row_count(state: &State) -> usize {
     }
 }
 
+/// Queries never arrives here — the editor claims the motion keys before
+/// this match is reached (design §3) — so its arm is unreachable in
+/// practice and kept for exhaustiveness.
 fn focused_cursor(state: &mut State) -> Option<&mut Cursor> {
     match state.focus {
         Panel::Tables => Some(&mut state.tables.cursor),

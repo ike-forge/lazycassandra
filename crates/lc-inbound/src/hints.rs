@@ -15,7 +15,8 @@ const SEPARATOR: &str = " │ ";
 /// Hints are dropped whole rather than clipped, lowest value first: panel
 /// hints right to left, then `tab panel`, then the first panel hint with the
 /// separator. `q quit` goes last, because a user who can read one hint needs
-/// the way out (design §6).
+/// the way out (design §6) — except in Queries, whose global tail has no
+/// `q quit` to keep, `q` being text there rather than a binding.
 pub(crate) fn line(bar: &HintBar, width: u16, theme: Theme) -> Line<'static> {
     let panel: Vec<Segment> = bar.panel.iter().map(Segment::new).collect();
     let global: Vec<Segment> = bar.global.iter().map(Segment::new).collect();
