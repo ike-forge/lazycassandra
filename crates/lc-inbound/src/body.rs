@@ -36,23 +36,47 @@ const COLUMN_SPACING: u16 = 1;
 
 const ELLIPSIS: char = '…';
 
-pub(crate) fn render(frame: &mut Frame, area: Rect, body: &PanelBody, theme: Theme) {
+/// Rows of a grid spent on its header rather than on a row.
+const HEADER_ROWS: usize = 1;
+
+/// What a scrollbar needs, in whatever unit the panel scrolls in.
+pub(crate) struct Extent {
+    pub(crate) position: usize,
+    pub(crate) total: usize,
+    pub(crate) visible: usize,
+}
+
+impl Extent {
+    pub(crate) const fn overflows(&self) -> bool {
+        self.total > self.visible
+    }
+}
+
+pub(crate) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    body: &PanelBody,
+    theme: Theme,
+) -> Option<Extent> {
     if area.is_empty() {
-        return;
+        return None;
     }
 
     match body {
-        PanelBody::Blank => {}
-        PanelBody::Notice { text, token } => notice(frame, area, text, *token, theme),
-        PanelBody::Tree { rows, selected } => tree(frame, area, rows, *selected, theme),
+        PanelBody::Blank => None,
+        PanelBody::Notice { text, token } => {
+            notice(frame, area, text, *token, theme);
+            None
+        }
+        PanelBody::Tree { rows, selected } => Some(tree(frame, area, rows, *selected, theme)),
         PanelBody::Details { details, offset } => {
-            crate::details::render(frame, area, details, *offset, theme);
+            Some(crate::details::render(frame, area, details, *offset, theme))
         }
         PanelBody::Grid {
             columns,
             rows,
             selected,
-        } => grid(frame, area, columns, rows, *selected, theme),
+        } => Some(grid(frame, area, columns, rows, *selected, theme)),
     }
 }
 
@@ -64,13 +88,22 @@ fn notice(frame: &mut Frame, area: Rect, text: &str, token: Option<Token>, theme
     frame.render_widget(paragraph, area);
 }
 
-fn tree(frame: &mut Frame, area: Rect, rows: &[TreeRow], selected: usize, theme: Theme) {
+fn tree(frame: &mut Frame, area: Rect, rows: &[TreeRow], selected: usize, theme: Theme) -> Extent {
     let items: Vec<ListItem> = rows.iter().map(|row| item(row, theme)).collect();
 
     let list = List::new(items).highlight_style(theme.style(Token::Selected));
     let mut state = ListState::default().with_selected(Some(selected));
 
     frame.render_stateful_widget(list, area, &mut state);
+
+    // Read back rather than recomputed: the widget owns the arithmetic that
+    // keeps the selection on screen, and a second copy of it here would be a
+    // second thing to keep right.
+    Extent {
+        position: state.offset(),
+        total: rows.len(),
+        visible: usize::from(area.height),
+    }
 }
 
 /// Column widths are computed here rather than in the domain, for the reason
@@ -84,7 +117,7 @@ fn grid(
     rows: &[Vec<GridCell>],
     selected: usize,
     theme: Theme,
-) {
+) -> Extent {
     // Only the columns that fit are handed to the widget. `Constraint::Length`
     // is a request, not a floor: given more of them than the area can hold,
     // ratatui shrinks every column to fit rather than letting the last one run
@@ -116,6 +149,12 @@ fn grid(
     let mut state = TableState::default().with_selected(Some(selected));
 
     frame.render_stateful_widget(table, area, &mut state);
+
+    Extent {
+        position: state.offset(),
+        total: rows.len(),
+        visible: usize::from(area.height).saturating_sub(HEADER_ROWS),
+    }
 }
 
 /// How many of `widths` fit before the right edge.

@@ -35,11 +35,18 @@ pub(crate) fn render(
     details: &Details,
     offset: usize,
     theme: Theme,
-) {
+) -> crate::body::Extent {
     let lines = lines(details, usize::from(area.width), theme);
+    let total = lines.len();
     let offset = u16::try_from(offset).unwrap_or(u16::MAX);
 
     frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), area);
+
+    crate::body::Extent {
+        position: usize::from(offset),
+        total,
+        visible: usize::from(area.height),
+    }
 }
 
 /// Every line the body occupies at `width`.

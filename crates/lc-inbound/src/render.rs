@@ -3,9 +3,11 @@
 use lc_domain::ViewModel;
 use lc_domain::style::Token;
 use ratatui::Frame;
+use ratatui::layout::{Margin, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Block;
+use ratatui::widgets::{Block, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
+use crate::body::Extent;
 use crate::layout::layout;
 use crate::theme::Theme;
 
@@ -34,12 +36,38 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        crate::body::render(frame, inner, &panel.body, theme);
+
+        if let Some(extent) = crate::body::render(frame, inner, &panel.body, theme)
+            && extent.overflows()
+        {
+            scrollbar(frame, area, &extent, theme);
+        }
     }
 
     if let Some(overlay) = &view.overlay {
         crate::overlay::render(frame, overlay, theme);
     }
+}
+
+/// Over the block's right border, so it spends no content width — and only
+/// when something is hidden, so its absence says nothing is.
+fn scrollbar(frame: &mut Frame, area: Rect, extent: &Extent, theme: Theme) {
+    let mut state = ScrollbarState::new(extent.total)
+        .position(extent.position)
+        .viewport_content_length(extent.visible);
+
+    frame.render_stateful_widget(
+        // No arrows: they would land on the block's corners.
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .style(theme.style(Token::Muted)),
+        area.inner(Margin {
+            horizontal: 0,
+            vertical: 1,
+        }),
+        &mut state,
+    );
 }
 
 #[cfg(test)]
@@ -754,6 +782,39 @@ mod tests {
                 .iter()
                 .any(|line| line.contains(tail.trim())),
             "scrolling to the end must bring it into view"
+        );
+    }
+
+    /// The Tables panel's right border at 40x12: column 15, between the
+    /// corners at rows 0 and 7.
+    fn tables_border(buffer: &Buffer) -> String {
+        (1..7)
+            .filter_map(|y| buffer.cell((15, y)))
+            .map(Cell::symbol)
+            .collect()
+    }
+
+    #[test]
+    fn a_panel_whose_content_overflows_grows_a_bar_on_its_border() {
+        let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+        let buffer = draw_state(40, 12, &browsing(&refs, 0));
+
+        assert!(
+            tables_border(&buffer).contains('█'),
+            "the thumb says how far through twelve keyspaces six rows are"
+        );
+    }
+
+    #[test]
+    fn a_panel_whose_content_fits_keeps_its_border_intact() {
+        let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo"], 0));
+
+        assert_eq!(
+            tables_border(&buffer),
+            "││││││",
+            "nothing is hidden, so nothing says otherwise"
         );
     }
 
