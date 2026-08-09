@@ -10,8 +10,9 @@ what you can do to the thing you are looking at. doc/shortcuts.md §2 states
 "a binding must be visible" and then admits the only binding that satisfies it
 is the focus letter underlined in a title. This closes that.
 
-It also settles a question the shell has left open since the four-panel layout:
-how small a terminal LazyCassandra will draw into at all.
+It builds on the minimum size gate
+([design](2026-08-09-minimum-terminal-size-design.md)), which must land first:
+the bar needs a row it can count on, and a floor is what guarantees one.
 
 ---
 
@@ -154,47 +155,38 @@ the static source of truth keyed by `Key`; `Hint` is what crosses the boundary,
 already text. Two types rather than one because only the first can be checked
 against `handle_key` and only the second can be drawn.
 
-## 5. Geometry: the row, and the gate
+## 5. The row
+
+**Depends on the minimum size gate**
+([design](2026-08-09-minimum-terminal-size-design.md)), which must land first.
+That slice establishes `Shell::Panels | Shell::TooSmall` and a floor of 40×6
+derived from the panel floors. This one raises the floor by the bar's height and
+takes the row:
 
 ```rust
 // lc-inbound/src/layout.rs
 const BAR_H: u16 = 1;
-const MIN_W: u16 = SIDEBAR_MIN_W + MAIN_RESERVE_W;   // 40
-const MIN_H: u16 = 2 * PANEL_MIN_H + BAR_H;          // 7
+const MIN_H: u16 = 2 * PANEL_MIN_H + BAR_H;   // 6 -> 7
 ```
 
-Both are derived from the floors already in the file rather than typed in
-fresh, so a change to a floor moves the gate with it.
+`MIN_W` is unchanged; the bar spends no width. `Shell::Panels` gains the bar's
+rect, so the two are produced together and `render` cannot lay out the panels
+against the full frame and then draw the bar over one of their rows.
 
-**Below the gate**, `render` draws one centred notice naming what is needed and
-what it got, and nothing else — no panels, no bar. `q` still quits; `handle_key`
-never consulted geometry and does not start now.
+Above the floor the panels receive `area` minus the bottom row. At exactly 40×7
+they get 40×6 — `SIDEBAR_MIN_W + MAIN_RESERVE_W` across, two `PANEL_MIN_H` down
+— so every panel clears its floor, and every larger frame is at least as roomy.
+**The bar therefore never has to be dropped and no drop rule exists.** Below the
+floor there is no bar and no panel, only the other slice's notice, whose text
+picks up the raised `MIN_H` automatically because it formats from the constant.
 
-**At or above it**, `layout()` receives `area` minus the bottom row and the bar
-takes that row, full width. At exactly 40×7 the panels get 40×6, which is
-`SIDEBAR_MIN_W + MAIN_RESERVE_W` across and two `PANEL_MIN_H` down: every panel
-clears its floor. Every larger frame is at least as roomy, so **the bar never
-has to be dropped and no drop rule exists**. This is the whole reason the gate
-is worth having.
-
-A consequence worth naming: `split`'s collapse-to-zero branch becomes
-unreachable for any size the application draws. It stays. `layout()` is public,
-total, and tested at every size including `0x0` and `u16::MAX`, and the branch
-is what makes it total.
-
-**The gate lives in `lc-inbound`, not the domain.** It is a decision about the
-frame's size, and size-dependent layout is already the renderer's business for
-the same reason column widths and wrapping are (panel-scrolling design §2). The
-domain could not make it in any case: it learns geometry only from the
-`Msg::Measured` of the frame just drawn, so it is always one frame behind, and
-laying out from a stale size would flicker on resize.
+That the gate makes a drop rule unnecessary is a benefit of ordering these two
+slices this way, not a reason the gate exists; it stands on its own.
 
 **`Geometry` is unchanged.** Panel heights are read off the rects the panels
-actually got, so reserving a row needs no arithmetic anywhere else. Below the
-gate no panel is drawn, `heights` is all zeros, and the domain handles that
-already: `Cursor::page_down(len, 0)` is a no-op, and a `Scroll` offset that
-drifts while its panel has no height is pulled back by the `clamp_to` that
-`Msg::Measured` performs on the next drawn frame.
+actually got, so reserving a row needs no arithmetic anywhere else — a panel one
+row shorter reports itself one row shorter. The zero-height case is the other
+slice's (minimum size design §6) and the bar does not widen it.
 
 ## 6. Truncation
 
@@ -254,9 +246,9 @@ terminal with an unusable palette and never competes with the colours that carry
 meaning. The separator draws as `HintAction`.
 
 `lc-inbound/src/hints.rs` owns composition, width arithmetic, and §6's drop
-order, and is the only new file in the crate. Truncation is width arithmetic
-over rendered labels, which is the renderer's business for the same reason the
-gate is.
+order, and is the only new file in the crate. Truncation measures rendered
+labels, which is the renderer's business for the same reason column widths and
+wrapping are (panel-scrolling design §2).
 
 ## 8. Testing
 
@@ -282,14 +274,18 @@ gate is.
 **Render.**
 
 - The bar occupies exactly the bottom row of the frame, and the panels occupy
-  everything above it.
+  every row above it and none of that one.
 - Each width in §6's table yields exactly that bar.
-- Below the gate, on both axes and at the corners: no panel is drawn and the
-  notice is.
-- At exactly 40×7, every panel is drawn and the bar is drawn.
+- The bar reflects focus: the same state, drawn once per `Panel::ALL`, gives
+  four different bars, and the Queries one carries §3's sentence.
 
-**Layout.** `the_panels_tile_the_area_exactly` keeps its meaning against the
-reduced area rather than the frame; the existing size list gains 40×7.
+**Layout.** `the_panels_tile_the_area_exactly` tiles the frame minus the bar's
+row rather than the frame; the size list gains 40×7, where every panel is
+non-empty and the bar has its row. The floor moving from 6 to 7 rows updates the
+minimum-size slice's `TooSmall` assertions — 40×6 changes side.
+
+Nothing below the floor is retested here. That behaviour, and its notice, belong
+to the minimum size slice and are unchanged by this one beyond the constant.
 
 **Theme.** Neither new token sets a background — `no_token_sets_a_background`
 grows by two entries.
