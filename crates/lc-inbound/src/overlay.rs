@@ -4,7 +4,7 @@ use lc_domain::state::Overlay;
 use lc_domain::style::Token;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 
 use crate::theme::Theme;
 
@@ -25,6 +25,7 @@ pub(crate) fn render(frame: &mut Frame, overlay: &Overlay, theme: Theme) {
     };
 
     let block = Block::bordered()
+        .border_type(BorderType::Rounded)
         .title(overlay.title.as_str())
         .border_style(theme.style(Token::Severity(overlay.severity)));
     let inner = block.inner(rect);
@@ -179,10 +180,10 @@ mod tests {
         let buffer = draw(60, 20, Some(failure()));
         let symbol = |x, y| buffer.cell((x, y)).expect("in bounds").symbol().to_owned();
 
-        assert_eq!(symbol(2, 7), "┌");
-        assert_eq!(symbol(57, 7), "┐");
-        assert_eq!(symbol(2, 11), "└");
-        assert_eq!(symbol(57, 11), "┘");
+        assert_eq!(symbol(2, 7), "╭");
+        assert_eq!(symbol(57, 7), "╮");
+        assert_eq!(symbol(2, 11), "╰");
+        assert_eq!(symbol(57, 11), "╯");
     }
 
     #[test]
