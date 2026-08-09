@@ -109,10 +109,16 @@ or is inert; it never means something else somewhere. A panel that cannot honour
 a motion swallows it rather than passing it on.
 
 **A binding must be visible.** vision.md §4, principle 1: discoverability is
-ambient. The focus letters are underlined in their titles; everything else is
-named in the hint bar along the bottom row, contextual to the focused panel
-([design](specs/2026-08-09-hint-bar-design.md)). A binding in neither place is
-a binding only this file knows about.
+ambient. The focus letters are underlined in their titles; the hint bar along
+the bottom row names each focused panel's principal bindings, not its full
+surface — the bar has never claimed to be the complete list
+([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` stays out of it
+because it only does something when an overlay is up, and naming it always
+would be a lie in most frames (design §3); `Shift-Tab` is `Tab`'s inverse, and
+Tables' `PageDown`/`PageUp`/`Home`/`End` are increments on a move the bar
+already names as `j/k move` — neither teaches something the bar's existing
+hints don't. A binding that is none of those and shows up in neither a title
+nor the bar is a binding only this file knows about.
 
 **No modes.** There is no state in which a letter means something other than its
 binding. This holds only until the Queries panel takes text input, and that is
