@@ -76,6 +76,45 @@ impl Editor {
         self.settle();
     }
 
+    /// Deletes the character before the cursor. At the start of a line that is
+    /// the line break, so the line joins the one above; at the start of the
+    /// buffer there is nothing to delete.
+    pub fn backspace(&mut self) {
+        if self.cursor.column > 0 {
+            self.cursor.column -= 1;
+            let at = self.byte_offset();
+            self.line_mut().remove(at);
+        } else if self.cursor.line > 0 {
+            let line = self.lines.remove(self.cursor.line);
+            self.cursor.line -= 1;
+            self.cursor.column = self.line_len();
+            self.line_mut().push_str(&line);
+        }
+
+        self.settle();
+    }
+
+    /// Deletes the character at the cursor. At the end of a line that is the
+    /// line break, so the next line comes up; at the end of the buffer there
+    /// is nothing to delete.
+    pub fn delete(&mut self) {
+        if self.cursor.column < self.line_len() {
+            let at = self.byte_offset();
+            self.line_mut().remove(at);
+        } else if self.cursor.line + 1 < self.lines.len() {
+            let next = self.lines.remove(self.cursor.line + 1);
+            self.line_mut().push_str(&next);
+        }
+
+        self.settle();
+    }
+
+    /// Characters on the cursor's line, which is also the largest column the
+    /// cursor may hold on it.
+    fn line_len(&self) -> usize {
+        self.lines[self.cursor.line].chars().count()
+    }
+
     /// The cursor's column as a byte index into its own line.
     ///
     /// Past the last character it is the line's length: `char_indices` has no
@@ -185,5 +224,83 @@ mod tests {
             "columns count chars, not bytes or terminal cells"
         );
         assert_eq!(editor.text(), "é日");
+    }
+
+    #[test]
+    fn backspace_removes_the_character_before_the_cursor() {
+        let mut editor = typed("SELECTX");
+
+        editor.backspace();
+
+        assert_eq!(editor.text(), "SELECT");
+        assert_eq!(editor.cursor().column, 6);
+    }
+
+    #[test]
+    fn backspace_at_the_start_of_a_line_joins_it_to_the_one_above() {
+        let mut editor = typed("SELECT *\nFROM t");
+        at(&mut editor, 1, 0);
+
+        editor.backspace();
+
+        assert_eq!(editor.text(), "SELECT *FROM t");
+        assert_eq!(
+            editor.cursor(),
+            Position { line: 0, column: 8 },
+            "the cursor lands on the seam"
+        );
+    }
+
+    #[test]
+    fn backspace_at_the_start_of_the_buffer_does_nothing() {
+        let mut editor = typed("SELECT");
+        at(&mut editor, 0, 0);
+
+        editor.backspace();
+
+        assert_eq!(editor.text(), "SELECT");
+        assert_eq!(editor.cursor(), Position { line: 0, column: 0 });
+    }
+
+    #[test]
+    fn delete_removes_the_character_at_the_cursor() {
+        let mut editor = typed("SXELECT");
+        at(&mut editor, 0, 1);
+
+        editor.delete();
+
+        assert_eq!(editor.text(), "SELECT");
+        assert_eq!(editor.cursor().column, 1, "the cursor does not move");
+    }
+
+    #[test]
+    fn delete_at_the_end_of_a_line_pulls_the_next_one_up() {
+        let mut editor = typed("SELECT *\nFROM t");
+        at(&mut editor, 0, 8);
+
+        editor.delete();
+
+        assert_eq!(editor.text(), "SELECT *FROM t");
+        assert_eq!(editor.lines().len(), 1);
+    }
+
+    #[test]
+    fn delete_at_the_end_of_the_buffer_does_nothing() {
+        let mut editor = typed("SELECT");
+
+        editor.delete();
+
+        assert_eq!(editor.text(), "SELECT");
+        assert_eq!(editor.cursor().column, 6);
+    }
+
+    #[test]
+    fn a_multibyte_character_deletes_whole() {
+        let mut editor = typed("aé日");
+
+        editor.backspace();
+
+        assert_eq!(editor.text(), "aé", "a char is removed, not a byte");
+        assert_eq!(editor.cursor().column, 2);
     }
 }
