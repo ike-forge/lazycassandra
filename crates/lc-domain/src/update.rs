@@ -878,9 +878,8 @@ mod tests {
     #[test]
     fn motion_belongs_to_the_focused_panel_only() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Queries;
+        state.focus = Panel::Ddl;
 
-        // Queries now takes the key as text; either way the tree must not move.
         press(&mut state, Key::Char('j'));
 
         assert_eq!(state.tables.cursor.index(), 0);
@@ -1214,9 +1213,8 @@ mod tests {
     #[test]
     fn a_tree_transition_belongs_to_the_focused_panel_only() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus = Panel::Ddl;
 
-        // Queries now takes the key as text; either way the tree must not move.
         press(&mut state, Key::Char('l'));
 
         assert_eq!(row_count(&state), 1);
