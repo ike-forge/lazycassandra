@@ -5,12 +5,12 @@
 //! index computes the offset, so no scroll state is stored anywhere.
 
 use lc_domain::style::Token;
-use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, TreeRow};
+use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::text::Text;
+use ratatui::text::{Line, Text};
 use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap};
-use unicode_width::UnicodeWidthStr as _;
+use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
 use crate::theme::Theme;
 
@@ -56,6 +56,7 @@ pub(crate) fn render(
     frame: &mut Frame,
     area: Rect,
     body: &PanelBody,
+    focused: bool,
     theme: Theme,
 ) -> Option<Extent> {
     if area.is_empty() {
@@ -72,6 +73,7 @@ pub(crate) fn render(
         PanelBody::Details { details, offset } => {
             Some(crate::details::render(frame, area, details, *offset, theme))
         }
+        PanelBody::Editor { lines, cursor } => Some(editor(frame, area, lines, *cursor, focused)),
         PanelBody::Grid {
             columns,
             rows,
@@ -248,4 +250,88 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
         Some(token) => item.style(theme.style(token)),
         None => item,
     }
+}
+
+/// One buffer line is one screen row: long lines scroll sideways rather than
+/// wrap, so the domain keeps counting its own lines and the cursor's own row
+/// is always on screen (design §5).
+fn editor(
+    frame: &mut Frame,
+    area: Rect,
+    lines: &[String],
+    cursor: Position,
+    focused: bool,
+) -> Extent {
+    let height = usize::from(area.height);
+    let width = usize::from(area.width);
+
+    let current = lines.get(cursor.line).map_or("", String::as_str);
+    let column = width_of(current, cursor.column);
+
+    let top = window(cursor.line, height);
+    let left = window(column, width);
+
+    let text = Text::from(
+        lines
+            .iter()
+            .skip(top)
+            .take(height)
+            .map(|line| Line::raw(shifted(line, left)))
+            .collect::<Vec<_>>(),
+    );
+
+    frame.render_widget(Paragraph::new(text), area);
+
+    if focused {
+        frame.set_cursor_position((
+            area.x + narrowed(column - left),
+            area.y + narrowed(cursor.line - top),
+        ));
+    }
+
+    Extent {
+        position: top,
+        total: lines.len(),
+        visible: height,
+    }
+}
+
+/// The smallest offset that brings `index` into a window of `span` rows or
+/// columns, starting from the top.
+///
+/// The same arithmetic `ListState` does for a selection, and stateless for the
+/// same reason (module doc): rebuilt from the cursor every frame, so nothing
+/// has to be stored or invalidated.
+const fn window(index: usize, span: usize) -> usize {
+    index.saturating_sub(span.saturating_sub(1))
+}
+
+/// Terminal columns the first `chars` characters of `line` occupy.
+fn width_of(line: &str, chars: usize) -> usize {
+    line.chars()
+        .take(chars)
+        .map(|character| character.width().unwrap_or(0))
+        .sum()
+}
+
+/// `line` with its first `columns` terminal columns scrolled off to the left.
+fn shifted(line: &str, columns: usize) -> String {
+    let mut used = 0;
+    let mut out = String::new();
+
+    for character in line.chars() {
+        if used >= columns {
+            out.push(character);
+        } else {
+            used += character.width().unwrap_or(0);
+        }
+    }
+
+    out
+}
+
+/// Both callers pass a value already bounded by an area dimension, so the
+/// fallback is unreachable rather than a silent clamp.
+fn narrowed(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(0)
 }

@@ -47,7 +47,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        match crate::body::render(frame, inner, &panel.body, theme) {
+        match crate::body::render(frame, inner, &panel.body, panel.panel == view.focus, theme) {
             Some(extent) => {
                 heights[index] = extent.visible;
                 if panel.panel == Panel::Ddl {
@@ -1095,6 +1095,132 @@ mod tests {
         assert!(
             !rows.iter().any(|line| line.contains("ks00")),
             "a row scrolled out of view must not still be drawn"
+        );
+    }
+
+    /// A state focused on `focus`, with `text` in the Queries buffer.
+    fn with_query(text: &str, focus: Panel) -> State {
+        let mut state = State {
+            focus,
+            ..State::default()
+        };
+        for character in text.chars() {
+            if character == '\n' {
+                state.queries.insert_newline();
+            } else {
+                state.queries.insert(character);
+            }
+        }
+        state
+    }
+
+    /// The drawn frame and where the terminal cursor ended up, if it is shown.
+    fn drawn_with_cursor(
+        width: u16,
+        height: u16,
+        state: &State,
+    ) -> (Buffer, Option<ratatui::layout::Position>) {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(state), Theme::TerminalDefault);
+            })
+            .expect("TestBackend always draws");
+
+        let backend = terminal.backend();
+        let cursor = backend.cursor_visible().then(|| backend.cursor_position());
+
+        (backend.buffer().clone(), cursor)
+    }
+
+    /// The Queries panel at 80x24 is `Rect { x: 20, y: 20, w: 60, h: 3 }`:
+    /// borders on rows 20 and 22, its one content row on 21, and its inner
+    /// left edge at column 21. The hint bar owns row 23.
+    const CONTENT_ROW: u16 = 21;
+    const INNER_LEFT: u16 = 21;
+
+    #[test]
+    fn the_editor_draws_what_has_been_typed() {
+        let (buffer, _) = drawn_with_cursor(80, 24, &with_query("SELECT * FROM t", Panel::Queries));
+
+        assert!(
+            row(&buffer, CONTENT_ROW).contains("SELECT * FROM t"),
+            "the buffer is on the panel's one content row: {:?}",
+            row(&buffer, CONTENT_ROW)
+        );
+    }
+
+    #[test]
+    fn the_cursor_sits_where_the_domain_says_it_is() {
+        let state = with_query("SELECT", Panel::Queries);
+        let expected = state.queries.cursor();
+
+        let (_, cursor) = drawn_with_cursor(80, 24, &state);
+
+        let cursor = cursor.expect("a focused editor shows a cursor");
+        assert_eq!(
+            cursor.x,
+            INNER_LEFT + u16::try_from(expected.column).expect("a test column fits"),
+            "one column past the six typed"
+        );
+        assert_eq!(cursor.y, CONTENT_ROW);
+    }
+
+    #[test]
+    fn an_unfocused_editor_sets_no_cursor() {
+        let (_, cursor) = drawn_with_cursor(80, 24, &with_query("SELECT", Panel::Tables));
+
+        assert_eq!(
+            cursor, None,
+            "a cursor in an unfocused panel would say it takes the keys"
+        );
+    }
+
+    #[test]
+    fn a_long_line_scrolls_sideways_and_keeps_the_cursor_on_screen() {
+        let long = "SELECT * FROM keyspace_with_a_long_name.table_with_a_long_name WHERE id = 7";
+        let state = with_query(long, Panel::Queries);
+
+        let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
+        let drawn = row(&buffer, CONTENT_ROW);
+
+        assert!(
+            drawn.contains("WHERE id = 7"),
+            "the cursor's end of the line is what is shown: {drawn:?}"
+        );
+        assert!(
+            !drawn.contains("SELECT *"),
+            "the start has scrolled off to the left: {drawn:?}"
+        );
+        let cursor = cursor.expect("a focused editor shows a cursor");
+        assert!(
+            cursor.x < 80,
+            "the cursor stays inside the frame at {}",
+            cursor.x
+        );
+    }
+
+    #[test]
+    fn a_tall_buffer_scrolls_and_says_so() {
+        let state = with_query("one\ntwo\nthree\nfour", Panel::Queries);
+
+        let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
+        let drawn = row(&buffer, CONTENT_ROW);
+
+        assert!(
+            drawn.contains("four"),
+            "the cursor's line is the one drawn: {drawn:?}"
+        );
+        assert_eq!(
+            cursor.expect("a focused editor shows a cursor").y,
+            CONTENT_ROW,
+            "the cursor's own row is on screen"
+        );
+        assert!(
+            drawn.ends_with('█'),
+            "four lines in a one-row panel grows the scrollbar: {drawn:?}"
         );
     }
 }
