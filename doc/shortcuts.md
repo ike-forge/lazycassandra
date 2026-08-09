@@ -113,7 +113,7 @@ is a bug.
 Every key is dispatched unconditionally and a panel-specific action checks
 `state.focus` and returns. This keeps one flat, greppable list of everything the
 program responds to, at the cost of a guard per action — the trade is deliberate
-and is revisited when the CQL editor lands (§4).
+and is revisited when the CQL editor lands.
 
 This now has one exception, and only one: a panel that takes text claims the
 printable and editing keys before the table is consulted. Everything it does
@@ -165,13 +165,15 @@ The rule's own enforcement test was renamed for this — §5.
 ambient. The focus letters are underlined in their titles; the hint bar along
 the bottom row names each focused panel's principal bindings, not its full
 surface — the bar has never claimed to be the complete list
-([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` stays out of it
-because it only does something when an overlay is up, and naming it always
-would be a lie in most frames (design §3); `Shift-Tab` is `Tab`'s inverse, and
-Tables' `PageDown`/`PageUp`/`Home`/`End` are increments on a move the bar
-already names as `j/k move` — neither teaches something the bar's existing
-hints don't. A binding that is none of those and shows up in neither a title
-nor the bar is a binding only this file knows about.
+([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` is named in the one
+bar where it is unconditionally true that pressing it does something —
+Queries, where it leaves the editor for Tables — and stays out of the other
+three, where it still only does something when an overlay is up, and naming
+it there would still be a lie in most frames (design §3); `Shift-Tab` is
+`Tab`'s inverse, and Tables' `PageDown`/`PageUp`/`Home`/`End` are increments on
+a move the bar already names as `j/k move` — neither teaches something the
+bar's existing hints don't. A binding that is none of those and shows up in
+neither a title nor the bar is a binding only this file knows about.
 
 **Focus is the mode.** A panel either takes text or it does not, and
 `Panel::takes_text` is the one exhaustive answer. In a panel that takes text

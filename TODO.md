@@ -73,10 +73,33 @@ From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9
 - Schema-aware completion and syntax highlighting (vision.md §5.1). The
   `Token` path of architecture.md §6 is already the right shape for the
   second.
-- The hint bar's `esc leave` is momentarily false. While an overlay is up
-  over a focused Queries, `Esc` spends the press dismissing the overlay
-  (design §3), so the bar promises something the next keystroke will not do.
-  It is the first binding where a modal can pre-empt what the bar claims —
-  every other hint stays true under an overlay. Closing it honestly means
-  making the bar overlay-aware, `bar(focus)` becoming `bar(focus, has_overlay)`,
-  which is a design change rather than a fix.
+- An overlay up over a focused Queries breaks two promises, both because
+  "focus is the mode" (design §3) does not yet weigh `state.overlay`. First,
+  the hint bar's `esc leave` is momentarily false: `escape` prioritises the
+  overlay, so `Esc` spends the press dismissing it instead of leaving, and the
+  bar promises something the next keystroke will not do — the first binding
+  where a modal can pre-empt what the bar claims, every other hint staying
+  true under an overlay. Second, every other key the editor claims still
+  reaches the buffer regardless of the overlay: typing is not lost, but
+  `render.rs` deliberately draws no cursor while an overlay is up, so the
+  text lands invisibly until the overlay is dismissed (nothing is corrupted
+  and `Backspace` recovers it, but nothing on screen says the keystroke
+  landed). The obvious guard — `state.overlay.is_none() && state.focus.takes_text()`
+  before offering a key to the editor — would fix the second symptom but
+  break the first kind of promise instead: `q` would quit and `t`/`a`/`c`/`u`
+  would move focus while a modal is up, which is "focus is the mode" failing
+  in the other direction. Closing either honestly means making the bar and
+  the key route both overlay-aware together — `bar(focus)` becoming
+  `bar(focus, has_overlay)`, and `handle_key` answering what an overlay does
+  to every claimed key, not just `Esc` — which is a design change rather than
+  a fix, and one decision closes both.
+- `crates/lc-inbound/src/body.rs`'s `shifted`, the editor's horizontal
+  scroll, snaps the offset `left` to a character boundary of the *cursor's*
+  line and then applies that same offset to every drawn line. A line whose
+  character boundaries fall elsewhere loses one cell more than `left` claims
+  and draws one column left of where it belongs. Only visible with two or
+  more content rows on screen, lines of mixed character width, and the view
+  scrolled sideways — not reachable at the terminal sizes the panel gets
+  today (§9's one-content-row table above), but it will matter once the
+  dynamic-height slice lands. The fix is per-line boundary snapping, worth
+  doing only once the panel can show more than one line.
