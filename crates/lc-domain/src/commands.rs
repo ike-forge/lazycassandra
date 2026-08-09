@@ -209,26 +209,36 @@ impl CommandsPanel {
         self.cursor.index()
     }
 
+    /// Moves to the next command, skipping a heading, and stopping on the
+    /// last one.
     pub fn down(&mut self) {
         self.seat(self.selected().saturating_add(1), Direction::Down);
     }
 
+    /// Moves to the previous command, skipping a heading, and stopping on
+    /// the first one.
     pub fn up(&mut self) {
         self.seat(self.selected().saturating_sub(1), Direction::Up);
     }
 
+    /// Moves a screen of commands down, skipping a heading, and stopping on
+    /// the last one.
     pub fn page_down(&mut self, height: usize) {
         self.seat(self.selected().saturating_add(height), Direction::Down);
     }
 
+    /// Moves a screen of commands up, skipping a heading, and stopping on
+    /// the first one.
     pub fn page_up(&mut self, height: usize) {
         self.seat(self.selected().saturating_sub(height), Direction::Up);
     }
 
+    /// Moves to the first command, the row after the first heading.
     pub fn to_start(&mut self) {
         self.seat(0, Direction::Down);
     }
 
+    /// Moves to the last command.
     pub fn to_end(&mut self) {
         self.seat(row_count().saturating_sub(1), Direction::Up);
     }
