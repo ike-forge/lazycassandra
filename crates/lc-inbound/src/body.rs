@@ -37,7 +37,7 @@ const COLUMN_SPACING: u16 = 1;
 const ELLIPSIS: char = '…';
 
 /// Rows of a grid spent on its header rather than on a row.
-const HEADER_ROWS: usize = 1;
+const HEADER_ROWS: u16 = 1;
 
 /// What a scrollbar needs, in whatever unit the panel scrolls in.
 pub(crate) struct Extent {
@@ -52,12 +52,32 @@ impl Extent {
     }
 }
 
+/// What a panel's body turned out to be: how far it scrolled, and in what.
+pub(crate) struct Body {
+    pub(crate) extent: Extent,
+    pub(crate) unit: Unit,
+}
+
+/// What a body's [`Extent`] counts in.
+///
+/// An enum rather than a flag beside a header count, so "these are rows" and
+/// "this many are spent above the first" cannot be said apart
+/// (conventions.md §1).
+#[derive(Clone, Copy)]
+pub(crate) enum Unit {
+    /// Rows a press can land on, `header` of which the panel spends on its own
+    /// chrome above the first one drawn.
+    Rows { header: u16 },
+    /// Wrapped lines: scrolled, but nothing a press can address.
+    Lines,
+}
+
 pub(crate) fn render(
     frame: &mut Frame,
     area: Rect,
     body: &PanelBody,
     theme: Theme,
-) -> Option<Extent> {
+) -> Option<Body> {
     if area.is_empty() {
         return None;
     }
@@ -68,15 +88,24 @@ pub(crate) fn render(
             notice(frame, area, text, *token, theme);
             None
         }
-        PanelBody::Tree { rows, selected } => Some(tree(frame, area, rows, *selected, theme)),
-        PanelBody::Details { details, offset } => {
-            Some(crate::details::render(frame, area, details, *offset, theme))
-        }
+        PanelBody::Tree { rows, selected } => Some(Body {
+            extent: tree(frame, area, rows, *selected, theme),
+            unit: Unit::Rows { header: 0 },
+        }),
+        PanelBody::Details { details, offset } => Some(Body {
+            extent: crate::details::render(frame, area, details, *offset, theme),
+            unit: Unit::Lines,
+        }),
         PanelBody::Grid {
             columns,
             rows,
             selected,
-        } => Some(grid(frame, area, columns, rows, *selected, theme)),
+        } => Some(Body {
+            extent: grid(frame, area, columns, rows, *selected, theme),
+            unit: Unit::Rows {
+                header: HEADER_ROWS,
+            },
+        }),
     }
 }
 
@@ -153,7 +182,7 @@ fn grid(
     Extent {
         position: state.offset(),
         total: rows.len(),
-        visible: usize::from(area.height).saturating_sub(HEADER_ROWS),
+        visible: usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS)),
     }
 }
 

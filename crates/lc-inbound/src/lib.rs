@@ -10,6 +10,7 @@
 mod body;
 mod details;
 mod hints;
+pub mod hit;
 pub mod input;
 pub mod layout;
 mod overlay;
@@ -17,5 +18,6 @@ pub mod render;
 pub mod theme;
 mod too_small;
 
-pub use render::render;
+pub use hit::FrameMap;
+pub use render::{Rendered, render};
 pub use theme::Theme;

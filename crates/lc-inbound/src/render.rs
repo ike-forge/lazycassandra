@@ -9,8 +9,22 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::body::Extent;
+use crate::hit::{FrameMap, PanelHit};
 use crate::layout::{Shell, layout};
 use crate::theme::Theme;
+
+/// What the frame just drawn turned out to be.
+///
+/// `geometry` travels into the domain as `Msg::Measured`, so it is guarded
+/// against closing a redraw–measure–redraw loop (architecture.md §3). `map`
+/// re-enters nothing — nobody reads it until a human moves a mouse — so it is
+/// free to depend on the offsets `Geometry` may not
+/// (doc/specs/2026-08-09-mouse-input-design.md §4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Rendered {
+    pub geometry: Geometry,
+    pub map: FrameMap,
+}
 
 /// Draw one titled block per panel, and report what the frame turned out to
 /// be.
@@ -18,16 +32,17 @@ use crate::theme::Theme;
 /// The return value is the domain's only way to learn how tall a panel is and
 /// how many lines the Ddl body wrapped to
 /// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
-pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
+pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let rects = match layout(frame.area()) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
             crate::too_small::render(frame, area);
-            return Geometry::default();
+            return Rendered::default();
         }
     };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
+    let mut hits = [PanelHit::default(); 4];
 
     for (index, panel) in view.panels.iter().enumerate() {
         let area = rects.get(panel.panel);
@@ -47,20 +62,24 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        match crate::body::render(frame, inner, &panel.body, theme) {
-            Some(extent) => {
-                heights[index] = extent.visible;
+        let body = crate::body::render(frame, inner, &panel.body, theme);
+
+        match &body {
+            Some(drawn) => {
+                heights[index] = drawn.extent.visible;
                 if panel.panel == Panel::Ddl {
-                    ddl_lines = extent.total;
+                    ddl_lines = drawn.extent.total;
                 }
-                if extent.overflows() {
-                    scrollbar(frame, area, &extent, theme);
+                if drawn.extent.overflows() {
+                    scrollbar(frame, area, &drawn.extent, theme);
                 }
             }
             // `Blank` and `Notice` do not scroll, so what such a panel can
             // show is simply the room it was given.
             None => heights[index] = usize::from(inner.height),
         }
+
+        hits[index] = PanelHit::new(panel.panel, area, inner, body.as_ref());
     }
 
     let bar = rects.bar();
@@ -70,7 +89,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
         crate::overlay::render(frame, overlay, theme);
     }
 
-    Geometry::new(heights, ddl_lines)
+    Rendered {
+        geometry: Geometry::new(heights, ddl_lines),
+        map: FrameMap::new(hits),
+    }
 }
 
 /// Over the block's right border, so it spends no content width — and only
@@ -110,6 +132,7 @@ mod tests {
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
     };
+    use lc_domain::pointer::Click;
     use lc_domain::posture::Posture;
     use lc_domain::state::{Connection, ConnectionState, Geometry, Overlay, Panel, SchemaState};
     use lc_domain::style::Severity;
@@ -366,7 +389,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                geometry = render(frame, &view_model(&state), Theme::TerminalDefault);
+                geometry = render(frame, &view_model(&state), Theme::TerminalDefault).geometry;
             })
             .expect("TestBackend always draws");
 
@@ -901,7 +924,9 @@ mod tests {
         let mut geometry = Geometry::default();
 
         terminal
-            .draw(|frame| geometry = render(frame, &view_model(state), Theme::TerminalDefault))
+            .draw(|frame| {
+                geometry = render(frame, &view_model(state), Theme::TerminalDefault).geometry;
+            })
             .expect("TestBackend always draws");
 
         geometry
@@ -1096,5 +1121,129 @@ mod tests {
             !rows.iter().any(|line| line.contains("ks00")),
             "a row scrolled out of view must not still be drawn"
         );
+    }
+
+    fn draw_mapped(width: u16, height: u16, state: &State) -> (Buffer, FrameMap) {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
+        let mut map = FrameMap::default();
+
+        terminal
+            .draw(|frame| {
+                map = render(frame, &view_model(state), Theme::TerminalDefault).map;
+            })
+            .expect("TestBackend always draws");
+
+        (terminal.backend().buffer().clone(), map)
+    }
+
+    #[test]
+    fn the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it() {
+        let names = ["shop", "typezoo", "system"];
+        let (buffer, map) = draw_mapped(40, 12, &browsing(&names, 0));
+
+        for (index, name) in names.iter().enumerate() {
+            let y = (1..7)
+                .find(|&y| row(&buffer, y).contains(name))
+                .unwrap_or_else(|| panic!("{name} was not drawn"));
+
+            assert_eq!(
+                map.hit(2, y),
+                Some(Click::Row {
+                    panel: Panel::Tables,
+                    row: index
+                }),
+                "{name} was drawn on screen row {y}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn() {
+        // Twenty rows in a panel that holds five forces the grid to scroll, so
+        // the row under the pointer is not the row of the same index.
+        let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
+        let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
+        let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
+        let mut state = showing(page_of(&["id"], &rows));
+        for _ in 0..19 {
+            state.contents.cursor.down(20);
+        }
+
+        let (buffer, map) = draw_mapped(60, 12, &state);
+        let mut resolved = 0;
+
+        for (index, label) in labels.iter().enumerate() {
+            let Some(y) = (1..8).find(|&y| row(&buffer, y).contains(label.as_str())) else {
+                continue;
+            };
+
+            assert_eq!(
+                map.hit(20, y),
+                Some(Click::Row {
+                    panel: Panel::Contents,
+                    row: index
+                }),
+                "{label} was drawn on screen row {y}"
+            );
+            resolved += 1;
+        }
+
+        assert!(
+            resolved >= 2,
+            "the test proves nothing unless rows were on screen, got {resolved}"
+        );
+    }
+
+    #[test]
+    fn a_grids_header_is_chrome_rather_than_its_first_row() {
+        let state = showing(page_of(
+            &["id", "email"],
+            &[
+                &[CqlValue::Int(1), text("ada@example.com")],
+                &[CqlValue::Int(2), text("bob@example.com")],
+            ],
+        ));
+
+        let (_buffer, map) = draw_mapped(60, 12, &state);
+
+        assert_eq!(
+            map.hit(20, 1),
+            Some(Click::Panel(Panel::Contents)),
+            "the header names columns; clicking one sorts nothing"
+        );
+        assert_eq!(
+            map.hit(20, 2),
+            Some(Click::Row {
+                panel: Panel::Contents,
+                row: 0
+            })
+        );
+        assert_eq!(
+            map.hit(20, 4),
+            Some(Click::Panel(Panel::Contents)),
+            "below the last row is blank space, not a row"
+        );
+    }
+
+    #[test]
+    fn a_press_on_the_chrome_of_a_panel_names_that_panel() {
+        let (_buffer, map) = draw_mapped(40, 12, &browsing(&["shop"], 0));
+
+        assert_eq!(map.hit(0, 0), Some(Click::Panel(Panel::Tables)), "corner");
+        assert_eq!(map.hit(3, 0), Some(Click::Panel(Panel::Tables)), "title");
+        assert_eq!(map.hit(20, 0), Some(Click::Panel(Panel::Contents)));
+        assert_eq!(map.hit(2, 8), Some(Click::Panel(Panel::Ddl)));
+        assert_eq!(map.hit(20, 9), Some(Click::Panel(Panel::Queries)));
+    }
+
+    #[test]
+    fn the_hint_bar_and_a_frame_below_the_minimum_are_not_clickable() {
+        let (_buffer, map) = draw_mapped(40, 12, &browsing(&["shop"], 0));
+        assert_eq!(map.hit(5, 11), None, "the bar owns the bottom row");
+
+        let (_buffer, tiny) = draw_mapped(39, 6, &State::default());
+        assert_eq!(tiny.hit(0, 0), None, "nothing is drawn, so nothing is hit");
+        assert_eq!(tiny.hit(20, 3), None);
     }
 }
