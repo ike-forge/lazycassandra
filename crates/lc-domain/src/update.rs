@@ -1553,4 +1553,79 @@ mod tests {
             "the offset moved, so the frame must be repainted"
         );
     }
+
+    /// A state where every motion has somewhere to go in both directions:
+    /// two keyspaces with the second unfolded, a page of rows under the
+    /// Contents cursor, and a DDL document longer than its panel. A cursor
+    /// resting on 0 would make `k` and `home` inert and fail a correct hint.
+    fn populated(focus: Panel) -> State {
+        let mut state = browsing_tables(&[("alpha", &["a1"]), ("shop", &["orders", "users"])]);
+        state.tables.cursor.go_to(1, 2);
+        press(&mut state, Key::Char('l'));
+
+        // Tables keeps its cursor on the keyspace, where `l` steps in and `h`
+        // folds. The other panels need a table selected: Ddl draws its
+        // details from one, and Contents shows what reading it returned.
+        if focus != Panel::Tables {
+            press(&mut state, Key::Char('l'));
+            press(&mut state, Key::Enter);
+            let query = state
+                .contents
+                .outstanding()
+                .expect("pressing enter on a table issues a read");
+            update(
+                &mut state,
+                Msg::PageReady {
+                    query,
+                    page: Box::new(page_of(20)),
+                },
+            );
+            state.contents.cursor.go_to(5, 20);
+        }
+
+        measured(&mut state, [3, 3, 3, 3], 40);
+        state.ddl.page_down(40, 3);
+        state.focus = focus;
+        state
+    }
+
+    #[test]
+    fn every_hint_the_bar_shows_does_something() {
+        for panel in Panel::ALL {
+            for binding in panel.hints() {
+                for &key in binding.keys {
+                    let mut state = populated(panel);
+                    let before = crate::view::view_model(&state);
+
+                    let effects = press(&mut state, key);
+
+                    assert!(
+                        crate::view::view_model(&state) != before || !effects.is_empty(),
+                        "{panel:?} offers '{key:?} {}' and pressing it changes nothing",
+                        binding.action
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_global_hint_does_something_in_every_panel() {
+        for panel in Panel::ALL {
+            for binding in crate::view::hints::GLOBAL {
+                for &key in binding.keys {
+                    let mut state = populated(panel);
+                    let before = crate::view::view_model(&state);
+
+                    let effects = press(&mut state, key);
+
+                    assert!(
+                        crate::view::view_model(&state) != before || !effects.is_empty(),
+                        "'{key:?} {}' does nothing with {panel:?} focused",
+                        binding.action
+                    );
+                }
+            }
+        }
+    }
 }
