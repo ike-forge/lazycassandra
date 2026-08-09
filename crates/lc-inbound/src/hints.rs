@@ -17,20 +17,21 @@ const SEPARATOR: &str = " │ ";
 /// separator. `q quit` goes last, because a user who can read one hint needs
 /// the way out (design §6).
 pub(crate) fn line(bar: &HintBar, width: u16, theme: Theme) -> Line<'static> {
-    let panel: Vec<Segment> = bar.panel.iter().map(Segment::hint).collect();
-    let global: Vec<Segment> = bar.global.iter().map(Segment::hint).collect();
+    let panel: Vec<Segment> = bar.panel.iter().map(Segment::new).collect();
+    let global: Vec<Segment> = bar.global.iter().map(Segment::new).collect();
     let (kept, from) = fit(&panel, &global, usize::from(width));
 
     Line::from(spans(&panel[..kept], &global[from..], theme))
 }
 
-enum Segment {
-    Hint { keys: String, action: String },
+struct Segment {
+    keys: String,
+    action: String,
 }
 
 impl Segment {
-    fn hint(hint: &Hint) -> Self {
-        Self::Hint {
+    fn new(hint: &Hint) -> Self {
+        Self {
             keys: hint.keys.clone(),
             action: hint.action.to_owned(),
         }
@@ -40,18 +41,14 @@ impl Segment {
     /// ASCII names and of the single-codepoint glyphs `name` produces (`⏎`,
     /// `↑`, `↓`, `←`, `→`), each one column wide.
     fn width(&self) -> usize {
-        match self {
-            Self::Hint { keys, action } => keys.chars().count() + 1 + action.chars().count(),
-        }
+        self.keys.chars().count() + 1 + self.action.chars().count()
     }
 
     fn spans(&self, theme: Theme) -> Vec<Span<'static>> {
-        match self {
-            Self::Hint { keys, action } => vec![
-                Span::styled(keys.clone(), theme.style(Token::HintKey)),
-                Span::styled(format!(" {action}"), theme.style(Token::HintAction)),
-            ],
-        }
+        vec![
+            Span::styled(self.keys.clone(), theme.style(Token::HintKey)),
+            Span::styled(format!(" {}", self.action), theme.style(Token::HintAction)),
+        ]
     }
 }
 
