@@ -1264,6 +1264,18 @@ mod tests {
     }
 
     #[test]
+    fn the_narrowest_palette_still_fits_its_widest_row() {
+        // 50% of 70 columns lands exactly on MIN_W, the floor a wider action
+        // would clip against if the margin were counted on one side only.
+        let drawn = buffer_text(&with_palette(70, 40));
+
+        assert!(
+            drawn.contains("focus Table contents"),
+            "the widest action must appear whole, not clipped to 19 characters"
+        );
+    }
+
+    #[test]
     fn the_frame_reports_how_many_rows_a_palette_would_show() {
         let state = State::default();
         let mut terminal =

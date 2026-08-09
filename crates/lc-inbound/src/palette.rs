@@ -12,11 +12,12 @@ use crate::theme::Theme;
 
 const WIDTH_PERCENT: u16 = 50;
 const HEIGHT_PERCENT: u16 = 70;
-/// The widest row the catalogue can produce, plus both borders and the pad.
-/// Derived from the catalogue rather than chosen — `commands::tests` is what
-/// stops a longer action being written
+/// The widest row the catalogue can produce, plus both borders and both pad
+/// columns — `Margin { horizontal: PAD }` spends one on each side. Derived
+/// from the catalogue rather than chosen — `commands::tests` is what stops a
+/// longer action being written
 /// (doc/specs/2026-08-09-command-palette-design.md §5).
-const MIN_W: u16 = 34;
+const MIN_W: u16 = 35;
 /// Past this every row is trailing space.
 const MAX_W: u16 = 60;
 /// Two borders, a heading, and enough commands to be worth opening.

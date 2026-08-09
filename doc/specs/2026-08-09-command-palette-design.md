@@ -179,11 +179,11 @@ actually needs.
 // lc-inbound/src/palette.rs
 const WIDTH_PERCENT: u16 = 50;
 const HEIGHT_PERCENT: u16 = 70;
-/// The widest row the catalogue can produce, plus both borders and the pad:
-/// a `shift-tab` gutter (9), two columns of gap, the longest action (20).
-/// Below this a row would be clipped, and the panels underneath are more use
-/// than a truncated table. Same rule the message overlay follows.
-const MIN_W: u16 = 34;
+/// The widest row the catalogue can produce, plus both borders and both pad
+/// columns: a `shift-tab` gutter (9), two columns of gap, the longest action
+/// (20). Below this a row would be clipped, and the panels underneath are
+/// more use than a truncated table. Same rule the message overlay follows.
+const MIN_W: u16 = 35;
 /// Past this a two-column table is mostly whitespace — every row is at most
 /// 31 columns and the rest is trailing space.
 const MAX_W: u16 = 60;
@@ -198,9 +198,9 @@ rather than leaving it as arithmetic in this document. It is what §6's wordings
 are cut to, and it is why `⏎`'s row says "fold/unfold, or read" rather than
 spelling out both halves.
 
-The consequence worth stating: at `MIN_W` = 34 and a width of half the frame,
-**no palette is drawn below 68 columns.** Nothing between 40 (the shell's own
-floor) and 68 gets one, and `?` is inert there.
+The consequence worth stating: at `MIN_W` = 35 and a width of half the frame,
+**no palette is drawn below 70 columns.** Nothing between 40 (the shell's own
+floor) and 70 gets one, and `?` is inert there.
 
 The width cap is a deliberate departure from "50%". On a 200-column terminal
 half the frame is a hundred columns holding a `shift-tab` and two words; the
