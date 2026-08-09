@@ -38,12 +38,14 @@ pub(crate) fn render(
 ) -> crate::body::Extent {
     let lines = lines(details, usize::from(area.width), theme);
     let total = lines.len();
-    let offset = u16::try_from(offset).unwrap_or(u16::MAX);
+    // `Paragraph::scroll` is u16, and a body past 65535 lines is unreachable;
+    // the extent keeps the offset itself, so the thumb stays right regardless.
+    let scroll = u16::try_from(offset).unwrap_or(u16::MAX);
 
-    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), area);
+    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), area);
 
     crate::body::Extent {
-        position: usize::from(offset),
+        position: offset,
         total,
         visible: usize::from(area.height),
     }

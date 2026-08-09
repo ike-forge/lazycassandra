@@ -69,10 +69,19 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
 
 /// Over the block's right border, so it spends no content width — and only
 /// when something is hidden, so its absence says nothing is.
+///
+/// `ScrollbarState` normalises the thumb against `content_length - 1 +
+/// viewport_length`, a model whose `position` is a selection index running over
+/// `0..content_length`. Ours is a top-of-viewport offset, which stops at
+/// `total - visible` — so that is the content length it is given, and
+/// `viewport_content_length` is left alone: it is for a viewport item spanning
+/// several track rows, not for this. Handing it `total` instead leaves the
+/// thumb short of the bottom when the last row is already on screen.
+///
+/// Only called when the extent overflows, so the length below is at least one.
 fn scrollbar(frame: &mut Frame, area: Rect, extent: &Extent, theme: Theme) {
-    let mut state = ScrollbarState::new(extent.total)
-        .position(extent.position)
-        .viewport_content_length(extent.visible);
+    let mut state =
+        ScrollbarState::new(extent.total.saturating_sub(extent.visible)).position(extent.position);
 
     frame.render_stateful_widget(
         // No arrows: they would land on the block's corners.
@@ -881,6 +890,49 @@ mod tests {
             tables_border(&buffer).contains('█'),
             "the thumb says how far through twelve keyspaces six rows are"
         );
+    }
+
+    #[test]
+    fn the_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on() {
+        let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+        assert!(
+            tables_border(&draw_state(40, 12, &browsing(&refs, 0))).starts_with('█'),
+            "the first keyspace is on screen, so the thumb belongs at the top"
+        );
+        assert!(
+            tables_border(&draw_state(40, 12, &browsing(&refs, 11))).ends_with('█'),
+            "the last keyspace is on screen, so the thumb belongs at the bottom"
+        );
+    }
+
+    #[test]
+    fn the_bar_takes_the_border_column_rather_than_a_column_of_content() {
+        let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+        let buffer = draw_state(40, 12, &browsing(&refs, 0));
+
+        assert_eq!(
+            row(&buffer, 1),
+            "│  ks00        █│Press Enter on a table│",
+            "the row is as wide as it is without a bar; the bar replaced the border"
+        );
+    }
+
+    #[test]
+    fn what_the_frame_measures_does_not_depend_on_where_it_is_scrolled() {
+        // Both termination guards on the render→domain edge rest on this:
+        // `lc-app` sends only when the geometry changed, and `update` marks
+        // dirty only when the clamp moved the offset. A `Geometry` that varied
+        // with the offset it bounds would close the loop
+        // (doc/specs/2026-08-09-panel-scrolling-design.md §3).
+        let state = describing(orders());
+        let mut scrolled = describing(orders());
+        scrolled.ddl.to_end(100, 6);
+
+        assert_eq!(geometry_of(40, 20, &state), geometry_of(40, 20, &scrolled));
     }
 
     #[test]
