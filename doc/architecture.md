@@ -86,11 +86,22 @@ with.
 
 ```
 crossterm events ──┐
-                   ├──▶ mpsc<Msg> ──▶ update() ──▶ Vec<Effect> ──▶ effect runtime
-effect results  ───┘         ▲                                            │
+effect results  ───┼──▶ mpsc<Msg> ──▶ update() ──▶ Vec<Effect> ──▶ effect runtime
+frame geometry  ───┘         ▲                                            │
                              └────────────────────────────────────────────┘
                                        (spawns tokio tasks, sends Msg back)
 ```
+
+**Frame geometry is the one edge that runs backwards**, from the renderer into
+the domain as `Msg::Measured`: only the renderer knows how tall a panel is or
+how many lines a body wrapped to, and a scroll offset has to be bounded by both
+(specs/2026-08-09-panel-scrolling-design.md §3). Two guards keep it from
+looping: `lc-app` sends only when the geometry differs from the last one sent,
+and `update` marks dirty only when the clamp actually moved the offset — so a
+measurement that changes nothing draws no frame and produces no further
+measurement. Both rest on one invariant: **`Geometry` is a function of the
+terminal size and the view model alone, never of the offsets it bounds.**
+Measuring anything that varies with an offset closes the loop.
 
 `async-trait` is in the domain's list because the port traits in §5 are defined
 here and must stay `dyn`-compatible. It is a proc macro over boxed futures, not

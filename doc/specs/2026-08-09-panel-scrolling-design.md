@@ -69,14 +69,10 @@ Measured(Geometry),
 pub struct Geometry {
     /// Content rows each panel can show, in `Panel::ALL` order.
     ///
-    /// Not the panel's inner height: the Contents grid spends a row on its
-    /// header, and `lc-inbound` subtracts it here so the header stays a
-    /// rendering fact rather than something `update` has to know about.
-    ///
     /// A row is whatever that panel scrolls in — a tree row, a grid row, a
     /// wrapped line of the Ddl body — which is what lets one array serve all
     /// four.
-    heights: [u16; 4],
+    heights: [usize; 4],
     /// Lines the Ddl body wrapped to.
     ///
     /// The one length the domain cannot count for itself (§2). Tree rows and
@@ -87,9 +83,27 @@ pub struct Geometry {
 }
 
 impl Geometry {
-    pub fn height(self, panel: Panel) -> usize;
+    /// `heights` counted in the unit each panel scrolls in, and net of what
+    /// the panel spends on chrome: not the panel's inner height, because the
+    /// Contents grid spends a row on its header, which `lc-inbound` subtracts
+    /// here so the header stays a rendering fact rather than something
+    /// `update` has to know about.
+    pub const fn new(heights: [usize; 4], ddl_lines: usize) -> Self;
+
+    pub const fn height(self, panel: Panel) -> usize;
+    pub const fn ddl_lines(self) -> usize;
 }
 ```
+
+`heights` counts in `usize` rather than `u16` so `height` stays a `const fn`
+with no cast: `usize::from` is not const.
+
+A panel the terminal has collapsed to zero rows reports `ddl_lines = 0` — the
+body is not drawn, so there is nothing to measure — and the clamp below pulls
+its offset to the top. Shrinking the terminal past the Ddl panel and growing it
+back therefore returns that panel to the top. Accepted: it is the same answer
+`clamp_to` gives for any panel taller than its document, and the alternative is
+remembering an offset for a panel that is not on screen.
 
 `height` takes a `Panel` rather than exposing the array, mirroring
 `layout::Rects::get` on the other side of the boundary, so no caller indexes
@@ -109,15 +123,22 @@ fn draw(terminal: &mut DefaultTerminal, state: &State, theme: Theme) -> Result<G
 ```
 
 `lc-app` holds the last geometry it sent and sends `Msg::Measured` **only when
-the new one differs**:
+the new one differs**, in a helper because both draw sites report:
 
 ```rust
-let geometry = draw(&mut terminal, &state, theme)?;
-if last_sent != Some(geometry) {
-    last_sent = Some(geometry);
-    tx.send(Msg::Measured(geometry))?;
+fn report(tx: &mpsc::UnboundedSender<Msg>, last: &mut Option<Geometry>, geometry: Geometry) {
+    if *last == Some(geometry) {
+        return;
+    }
+
+    *last = Some(geometry);
+    // A closed channel means the main loop has already ended.
+    let _sent = tx.send(Msg::Measured(geometry));
 }
 ```
+
+The send error is swallowed rather than propagated: the only way the channel is
+closed is that the loop this measurement feeds has already stopped.
 
 This is a feedback edge into a loop that has not had one, so it has to
 terminate visibly rather than by argument:
@@ -183,6 +204,16 @@ pub ddl: Scroll,
 pub geometry: Geometry,
 ```
 
+**The offset belongs to the node being described, not to the panel.** `update`
+compares what the Tables selection is on before and after applying a message —
+keyspace name, or keyspace and table name — and returns the offset to the top
+when it differs, so a table opens at its heading rather than at line 34 of the
+last one. Unfolding is not part of that identity: it leaves the keyspace
+selected and the panel on the same subject. Stating it once around `update`
+rather than at each of the four paths that can move the selection (`scroll`,
+`transition`, `activate`, the `SchemaLoaded` clamp) is what keeps a fifth path
+from being added without one.
+
 `Scroll` and `Geometry` live in `state.rs` beside `Cursor`. The Ddl panel gets
 no module of its own — it holds one offset and no transitions, so there is
 nothing for a module to keep together. Architecture.md §11's question about
@@ -199,10 +230,11 @@ nothing for a module to keep together. Architecture.md §11's question about
 | `PageDown` / `PageUp` | cursor ± `height` rows | offset ± `height` lines |
 | `Home` / `End` | first / last row | top / last line at the bottom |
 
-Motion belongs to the focused panel, as it already does.
-`focused_row_count`/`focused_cursor` stop returning `0`/`None` for `Ddl` and
-dispatch to `state.ddl` instead; `Queries` keeps returning nothing, so its
-measured height is carried and unused until it has content.
+Motion belongs to the focused panel, as it already does. `scroll` answers `Ddl`
+before it reaches `focused_row_count`/`focused_cursor`, which keep returning
+`0`/`None` for it — a viewport is not a cursor, so there is nothing for those
+two to hand back. `Queries` returns nothing either, so its measured height is
+carried and unused until it has content.
 
 `ctrl-d` and `ctrl-u` are **not** in this slice. `handle_key` refuses every
 ctrl and alt press as a stated decision, and defining vim's half-page motions
@@ -222,6 +254,10 @@ pub(crate) struct Extent {
     total: usize,
     visible: usize,
 }
+
+impl Extent {
+    pub(crate) const fn overflows(&self) -> bool;
+}
 ```
 
 Tables and Contents read the offset back out of the `ListState`/`TableState`
@@ -233,6 +269,12 @@ what the overlay is for.
 `render.rs` draws a `Scrollbar` with `ScrollbarOrientation::VerticalRight`
 when `total > visible`, over the block's right border column — so it spends no
 content width, and its absence is itself information: nothing is hidden.
+
+`ScrollbarState` is given `total - visible` as its content length, not `total`.
+Its `position` is modelled as a selection index over `0..content_length`, and
+ours is a top-of-viewport offset whose maximum is `total - visible`; handed
+`total`, the thumb never reaches the bottom of the track even with the last
+line on screen.
 
 It draws in `Token::Muted`. The bar is chrome, not meaning, and
 architecture.md §6 forbids spending a token on decoration; `Muted` is the
@@ -261,6 +303,9 @@ Details { details: Details, offset: usize },
   does clamp the offset marks dirty.
 - Every motion emits no effects, in the shape
   `a_shortcut_moves_focus_and_does_nothing_else` already uses.
+- A motion that lands the tree on a different node returns the Ddl offset to
+  the top; unfolding a keyspace, which changes what is on screen but not what
+  is being described, leaves it alone.
 
 **Render.**
 
@@ -269,9 +314,14 @@ Details { details: Details, offset: usize },
   `the_selection_stays_visible_when_the_list_outgrows_the_panel`.
 - The scrollbar column is drawn when the content overflows, and the border is
   intact when it fits.
-- The scrollbar costs no content width: the existing row-string assertions in
-  `render.rs` for the DDL panel hold unchanged at a size where nothing
-  overflows.
+- The thumb sits at whichever end of the track the viewport is on, so the two
+  ends of the bar mean what they look like.
+- The scrollbar costs no content width: one exact row-string assertion at a
+  size where the panel *does* overflow, pinning content and bar together, on
+  top of the existing ones at a size where nothing does.
+- **What a frame measures does not depend on where it is scrolled.** This is
+  the invariant both of §3's termination guards rest on, and nothing else in
+  the suite would notice it breaking.
 
 **Determinism.** `Measured` is a message like any other — no clock, no
 randomness, no dependence on real terminal size in the fast tiers. The render
