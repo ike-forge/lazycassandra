@@ -42,7 +42,8 @@ impl Segment {
     }
 
     /// Columns, on the assumption every label is single-width — true of the
-    /// ASCII names and of `⏎`, which is the only glyph `label` produces.
+    /// ASCII names and of the single-codepoint glyphs `name` produces (`⏎`,
+    /// `↑`, `↓`, `←`, `→`), each one column wide.
     fn width(&self) -> usize {
         match self {
             Self::Hint { keys, action } => keys.chars().count() + 1 + action.chars().count(),
@@ -77,7 +78,7 @@ fn fit(panel: &[Segment], global: &[Segment], width: usize) -> (usize, usize) {
     while kept > 1 && composed(panel, kept, global, from) > width {
         kept -= 1;
     }
-    if composed(panel, kept, global, from) > width && from + 1 < global.len() {
+    while composed(panel, kept, global, from) > width && from + 1 < global.len() {
         from += 1;
     }
     if composed(panel, kept, global, from) > width {
@@ -187,6 +188,36 @@ mod tests {
         assert_eq!(
             drawn(Panel::Queries, 80),
             " nothing here yet │ tab panel  q quit"
+        );
+    }
+
+    #[test]
+    fn a_global_tail_longer_than_two_entries_still_drops_down_to_the_last_one() {
+        let bar = HintBar {
+            panel: HintGroup::Keys(vec![]),
+            global: vec![
+                Hint {
+                    keys: "j/k".to_owned(),
+                    action: "scroll",
+                },
+                Hint {
+                    keys: "tab".to_owned(),
+                    action: "panel",
+                },
+                Hint {
+                    keys: "q".to_owned(),
+                    action: "cancel",
+                },
+            ],
+        };
+
+        assert_eq!(
+            line(&bar, 15, Theme::TerminalDefault)
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            " q cancel"
         );
     }
 
