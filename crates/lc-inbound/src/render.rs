@@ -47,7 +47,11 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        match crate::body::render(frame, inner, &panel.body, panel.panel == view.focus, theme) {
+        // An overlay owns the frame: nothing beneath it shows a cursor, or it
+        // blinks over the modal at a position that means nothing there.
+        let focused = panel.panel == view.focus && view.overlay.is_none();
+
+        match crate::body::render(frame, inner, &panel.body, focused, theme) {
             Some(extent) => {
                 heights[index] = extent.visible;
                 if panel.panel == Panel::Ddl {
@@ -1221,6 +1225,55 @@ mod tests {
         assert!(
             drawn.ends_with('█'),
             "four lines in a one-row panel grows the scrollbar: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn a_double_width_character_does_not_desync_the_cursor_from_the_scroll() {
+        // Thirty two-column characters force a horizontal scroll whose
+        // arithmetic offset lands inside one of them, not on a boundary
+        // between characters.
+        let long = format!("{}SELECT", "永".repeat(30));
+        let state = with_query(&long, Panel::Queries);
+
+        let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
+        let drawn = row(&buffer, CONTENT_ROW);
+
+        assert!(
+            drawn.contains("SELECT"),
+            "the cursor's end of the line is what is shown: {drawn:?}"
+        );
+        assert_eq!(
+            buffer.cell((INNER_LEFT, CONTENT_ROW)).map(Cell::symbol),
+            Some("永"),
+            "the drawn row begins on a whole character the offset names, not a half-dropped one: {drawn:?}"
+        );
+
+        let cursor = cursor.expect("a focused editor shows a cursor");
+        assert_eq!(cursor.y, CONTENT_ROW);
+        assert_eq!(
+            buffer.cell((cursor.x - 1, CONTENT_ROW)).map(Cell::symbol),
+            Some("T"),
+            "the cursor sits one cell past the last character typed, not inside or short of it"
+        );
+    }
+
+    #[test]
+    fn an_overlay_hides_the_cursor_even_when_the_editor_is_focused() {
+        let state = State {
+            overlay: Some(Overlay {
+                title: "Query failed".to_owned(),
+                message: "boom".to_owned(),
+                severity: Severity::Danger,
+            }),
+            ..with_query("SELECT", Panel::Queries)
+        };
+
+        let (_, cursor) = drawn_with_cursor(80, 24, &state);
+
+        assert_eq!(
+            cursor, None,
+            "an overlay owns the frame; a cursor beneath it would blink over the modal at a position that means nothing there"
         );
     }
 }

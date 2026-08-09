@@ -269,7 +269,7 @@ fn editor(
     let column = width_of(current, cursor.column);
 
     let top = window(cursor.line, height);
-    let left = window(column, width);
+    let left = left_edge(current, column, width);
 
     let text = Text::from(
         lines
@@ -304,6 +304,25 @@ fn editor(
 /// has to be stored or invalidated.
 const fn window(index: usize, span: usize) -> usize {
     index.saturating_sub(span.saturating_sub(1))
+}
+
+/// The horizontal offset, snapped up to a character boundary.
+///
+/// A double-width character straddling the offset would otherwise be dropped
+/// whole by [`shifted`], putting the drawn text further right than the offset
+/// claims and the cursor a cell or more off it.
+fn left_edge(line: &str, column: usize, width: usize) -> usize {
+    let target = window(column, width);
+    let mut at = 0;
+
+    for character in line.chars() {
+        if at >= target {
+            break;
+        }
+        at += character.width().unwrap_or(0);
+    }
+
+    at
 }
 
 /// Terminal columns the first `chars` characters of `line` occupy.
