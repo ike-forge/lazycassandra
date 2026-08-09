@@ -12,8 +12,8 @@ use crate::body::Extent;
 use crate::layout::{Shell, layout};
 use crate::theme::Theme;
 
-/// Draw one titled block per panel, skipping any the terminal is too small to
-/// hold, and report what the frame turned out to be.
+/// Draw one titled block per panel, and report what the frame turned out to
+/// be.
 ///
 /// The return value is the domain's only way to learn how tall a panel is and
 /// how many lines the Ddl body wrapped to
@@ -31,9 +31,6 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
 
     for (index, panel) in view.panels.iter().enumerate() {
         let area = rects.get(panel.panel);
-        if area.is_empty() {
-            continue;
-        }
 
         let (before, shortcut, after) = panel.title.split();
         let title = Line::from(vec![
@@ -303,6 +300,13 @@ mod tests {
             !text.contains("Cannot connect"),
             "an overlay has nothing to sit over, got {text:?}"
         );
+    }
+
+    #[test]
+    fn a_zero_row_frame_draws_nothing_and_does_not_panic() {
+        let buffer = draw(30, 0);
+
+        assert_eq!(buffer.area.height, 0);
     }
 
     #[test]

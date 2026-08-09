@@ -44,8 +44,7 @@ pub struct PanelRects {
 }
 
 impl PanelRects {
-    /// The area assigned to `panel`, which may be empty when the terminal is
-    /// too small to hold it.
+    /// The area assigned to `panel`, which always clears that panel's floor.
     #[must_use]
     pub const fn get(&self, panel: Panel) -> Rect {
         match panel {

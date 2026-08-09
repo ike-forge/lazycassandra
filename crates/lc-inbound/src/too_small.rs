@@ -7,16 +7,18 @@ use ratatui::widgets::Paragraph;
 
 use crate::layout::{MIN_H, MIN_W};
 
-/// The most lines the notice draws, and so the most rows it needs.
-const LINES: u16 = 3;
-
 pub(crate) fn render(frame: &mut Frame, area: Rect) {
     let lines = lines(area);
     if lines.is_empty() {
         return;
     }
 
-    let height = area.height.min(LINES);
+    // The rect never needs more rows than `lines` produced; `unwrap_or`
+    // covers only line counts that could never fit `area.height` in the
+    // first place.
+    let height = u16::try_from(lines.len())
+        .unwrap_or(area.height)
+        .min(area.height);
     let y = area.y + (area.height - height) / 2;
     frame.render_widget(
         Paragraph::new(lines).alignment(Alignment::Center),
