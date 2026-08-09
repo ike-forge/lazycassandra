@@ -6,6 +6,7 @@
 pub mod cell;
 pub mod contents;
 pub mod model;
+pub mod pointer;
 pub mod ports;
 pub mod posture;
 pub mod state;

@@ -6,6 +6,7 @@
 
 use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
+use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
 use crate::state::{ConnectionState, Cursor, Geometry, Overlay, Panel, SchemaState, State};
 use crate::style::Severity;
@@ -22,6 +23,9 @@ pub const ROW_LIMIT: usize = 200;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Msg {
     Input(KeyPress),
+    /// A pointer gesture, resolved by `lc-inbound` against the frame it
+    /// happened in (doc/specs/2026-08-09-mouse-input-design.md §5).
+    Pointer(Pointer),
     /// The terminal was resized. Carries no geometry — the renderer reads the
     /// real size from `frame.area()` — it exists only to trigger a repaint.
     Resized,
@@ -136,6 +140,8 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         Msg::Tick => Vec::new(),
 
         Msg::Input(press) => handle_key(state, press),
+
+        Msg::Pointer(pointer) => handle_pointer(state, pointer),
 
         Msg::Resized => {
             state.mark_dirty();
@@ -300,6 +306,77 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     }
 
     Vec::new()
+}
+
+/// Rows a wheel notch moves, in whatever unit the panel scrolls in. One is
+/// sluggish enough that the pointer feels broken; three is what terminals
+/// settled on (design §6).
+const WHEEL_ROWS: usize = 3;
+
+/// The one place a pointer gesture becomes behaviour, as `handle_key` is for
+/// keys (doc/shortcuts.md §2).
+///
+/// Every gesture decomposes into a binding that already exists (design §1): a
+/// click on a tree row is a selection followed by the `Enter` arm, and a wheel
+/// notch is repeated motions.
+fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect> {
+    state.mark_dirty();
+
+    // The overlay is modal: it spends the click that dismisses it rather than
+    // letting it act on a row it was covering (design §2).
+    if state.overlay.is_some() {
+        if matches!(pointer, Pointer::Click(_)) {
+            state.overlay = None;
+        }
+        return Vec::new();
+    }
+
+    match pointer {
+        Pointer::Click(click) => click_at(state, click),
+        Pointer::Wheel { panel, direction } => {
+            let motion = match direction {
+                Wheel::Up => Motion::Up,
+                Wheel::Down => Motion::Down,
+            };
+
+            for _ in 0..WHEEL_ROWS {
+                scroll_panel(state, panel, motion);
+            }
+
+            Vec::new()
+        }
+    }
+}
+
+fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
+    state.focus = click.panel();
+
+    let Click::Row { panel, row } = click else {
+        return Vec::new();
+    };
+
+    let len = row_count(state, panel);
+
+    // The map a press was resolved against describes the *previous* frame. A
+    // row that has gone since is dropped rather than clamped onto whatever
+    // took its place: in Tables, clamping would read a table nobody pointed at
+    // (design §6).
+    if row >= len {
+        return Vec::new();
+    }
+
+    match panel {
+        Panel::Tables => {
+            state.tables.cursor.go_to(row, len);
+            activate(state)
+        }
+        Panel::Contents => {
+            state.contents.cursor.go_to(row, len);
+            Vec::new()
+        }
+        // Neither has rows, so no press in one resolves to a row (design §4).
+        Panel::Ddl | Panel::Queries => Vec::new(),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -478,7 +555,8 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Modifiers, StatementKind};
+    use crate::model::{CqlValue, Modifiers, Row, StatementKind};
+    use crate::pointer::{Click, Pointer, Wheel};
     use crate::state::Connection;
     use crate::tree::tests_support::schema_of as tabled_schema;
 
@@ -1632,5 +1710,232 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn point(state: &mut State, pointer: Pointer) -> Vec<Effect> {
+        update(state, Msg::Pointer(pointer))
+    }
+
+    fn click_row(state: &mut State, panel: Panel, row: usize) -> Vec<Effect> {
+        point(state, Pointer::Click(Click::Row { panel, row }))
+    }
+
+    /// `shop.orders` loaded with `count` single-column rows.
+    fn showing_rows(count: usize) -> State {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, TableRef::new("shop", "orders"));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["id".to_owned()],
+                rows: (0..count)
+                    .map(|i| Row {
+                        values: vec![CqlValue::Int(
+                            i64::try_from(i).expect("the fixture is small"),
+                        )],
+                    })
+                    .collect(),
+                next: None,
+            },
+        );
+        state
+    }
+
+    fn failure() -> Overlay {
+        Overlay {
+            title: "Cannot connect".to_owned(),
+            message: "no route to host".to_owned(),
+            severity: Severity::Danger,
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_keyspace_folds_and_unfolds_it() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+
+        click_row(&mut state, Panel::Tables, 0);
+        assert_eq!(row_count(&state), 3, "the keyspace unfolded");
+
+        click_row(&mut state, Panel::Tables, 0);
+        assert_eq!(row_count(&state), 1, "and folded again");
+    }
+
+    #[test]
+    fn a_click_on_a_table_reads_it() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        click_row(&mut state, Panel::Tables, 0);
+
+        let effects = click_row(&mut state, Panel::Tables, 1);
+
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Execute { .. }, Effect::RecordHistory(_)]
+            ),
+            "got {effects:?}"
+        );
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "on the row that was clicked"
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing() {
+        let mut state = showing_rows(5);
+
+        let effects = click_row(&mut state, Panel::Contents, 3);
+
+        assert!(effects.is_empty(), "a selection runs no query");
+        assert_eq!(state.contents.cursor.index(), 3);
+    }
+
+    #[test]
+    fn a_click_focuses_the_panel_it_landed_in() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Queries;
+
+        click_row(&mut state, Panel::Tables, 0);
+
+        assert_eq!(state.focus, Panel::Tables, "one click focuses and acts");
+        assert_eq!(row_count(&state), 2, "the keyspace unfolded on that click");
+    }
+
+    #[test]
+    fn a_click_on_chrome_focuses_and_does_nothing_else() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let before = state.tables.clone();
+
+        let effects = point(&mut state, Pointer::Click(Click::Panel(Panel::Tables)));
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.tables, before,
+            "chrome moves no selection and folds nothing"
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        click_row(&mut state, Panel::Tables, 0);
+        click_row(&mut state, Panel::Tables, 0);
+
+        // Row 2 was `users` a frame ago; the tree is one row long now.
+        let effects = click_row(&mut state, Panel::Tables, 2);
+
+        assert!(effects.is_empty(), "a stale row reads nothing");
+        assert_eq!(state.tables.cursor.index(), 0, "and moves nothing");
+    }
+
+    #[test]
+    fn a_click_dismisses_the_overlay_and_does_nothing_else() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.overlay = Some(failure());
+
+        let effects = click_row(&mut state, Panel::Tables, 0);
+
+        assert!(state.overlay.is_none());
+        assert!(effects.is_empty());
+        assert_eq!(
+            row_count(&state),
+            1,
+            "the keyspace the overlay covered did not unfold"
+        );
+    }
+
+    #[test]
+    fn a_wheel_scrolls_the_panel_under_it_without_focusing_it() {
+        let mut state = showing_rows(20);
+        state.geometry = Geometry::new([8, 8, 8, 1], 0);
+        state.focus = Panel::Tables;
+
+        point(
+            &mut state,
+            Pointer::Wheel {
+                panel: Panel::Contents,
+                direction: Wheel::Down,
+            },
+        );
+
+        assert_eq!(state.contents.cursor.index(), 3, "three rows a notch");
+        assert_eq!(state.focus, Panel::Tables, "focus stays where it was");
+    }
+
+    #[test]
+    fn a_wheel_up_walks_back_the_way_it_came() {
+        let mut state = showing_rows(20);
+        state.geometry = Geometry::new([8, 8, 8, 1], 0);
+        let down = Pointer::Wheel {
+            panel: Panel::Contents,
+            direction: Wheel::Down,
+        };
+        point(&mut state, down);
+        point(&mut state, down);
+
+        point(
+            &mut state,
+            Pointer::Wheel {
+                panel: Panel::Contents,
+                direction: Wheel::Up,
+            },
+        );
+
+        assert_eq!(state.contents.cursor.index(), 3);
+    }
+
+    #[test]
+    fn a_wheel_over_the_ddl_panel_scrolls_its_lines() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.geometry = Geometry::new([8, 8, 8, 1], 40);
+
+        point(
+            &mut state,
+            Pointer::Wheel {
+                panel: Panel::Ddl,
+                direction: Wheel::Down,
+            },
+        );
+
+        assert_eq!(state.ddl.offset(), 3);
+    }
+
+    #[test]
+    fn a_wheel_over_a_panel_with_nothing_to_scroll_is_inert() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+
+        let effects = point(
+            &mut state,
+            Pointer::Wheel {
+                panel: Panel::Queries,
+                direction: Wheel::Down,
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(state.tables.cursor.index(), 0, "no other panel moved");
+        assert_eq!(state.focus, Panel::Tables);
+    }
+
+    #[test]
+    fn a_wheel_does_not_dismiss_the_overlay() {
+        let mut state = showing_rows(20);
+        state.geometry = Geometry::new([8, 8, 8, 1], 0);
+        state.overlay = Some(failure());
+
+        point(
+            &mut state,
+            Pointer::Wheel {
+                panel: Panel::Contents,
+                direction: Wheel::Down,
+            },
+        );
+
+        assert!(state.overlay.is_some(), "only a click dismisses");
+        assert_eq!(state.contents.cursor.index(), 0, "and nothing scrolled");
     }
 }
