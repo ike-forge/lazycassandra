@@ -13,6 +13,7 @@ mod hints;
 pub mod input;
 pub mod layout;
 mod overlay;
+mod palette;
 pub mod render;
 pub mod theme;
 mod too_small;

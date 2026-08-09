@@ -104,7 +104,7 @@ fn wrapped_line_count(message: &str, width: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::{ConnectionState, Message};
+    use lc_domain::state::{ConnectionState, Message, Overlay};
     use lc_domain::style::Severity;
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
@@ -120,7 +120,7 @@ mod tests {
     fn draw(width: u16, height: u16, overlay: Option<Message>) -> Buffer {
         let state = State {
             connection: ConnectionState::Disconnected,
-            overlay,
+            overlay: overlay.map(Overlay::Message),
             ..State::default()
         };
         let mut terminal =

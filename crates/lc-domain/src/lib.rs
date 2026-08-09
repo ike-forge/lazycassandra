@@ -18,4 +18,4 @@ pub mod view;
 pub use posture::Posture;
 pub use state::State;
 pub use update::{Effect, Msg, init, update};
-pub use view::{PanelView, ViewModel, view_model};
+pub use view::{OverlayView, PanelView, ViewModel, view_model};

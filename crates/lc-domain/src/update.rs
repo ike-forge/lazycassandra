@@ -7,7 +7,9 @@
 use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::state::{ConnectionState, Cursor, Geometry, Message, Panel, SchemaState, State};
+use crate::state::{
+    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, SchemaState, State,
+};
 use crate::style::Severity;
 use crate::tree::Node;
 
@@ -176,11 +178,11 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             if !state.connection.is_current(conn) {
                 return Vec::new();
             }
-            state.overlay = Some(Message {
+            state.overlay = Some(Overlay::Message(Message {
                 title: "Connection failed".to_owned(),
                 message: error.to_string(),
                 severity: Severity::Danger,
-            });
+            }));
             state.connection = ConnectionState::Failed(error);
             state.mark_dirty();
             Vec::new()
@@ -195,11 +197,11 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                 _ => false,
             };
             if applied {
-                state.overlay = Some(Message {
+                state.overlay = Some(Overlay::Message(Message {
                     title: "Schema unavailable".to_owned(),
                     message: error.to_string(),
                     severity: Severity::Danger,
-                });
+                }));
                 state.mark_dirty();
             }
             Vec::new()
@@ -707,7 +709,9 @@ mod tests {
 
         assert!(effects.is_empty());
         assert!(matches!(state.connection, ConnectionState::Failed(_)));
-        let overlay = state.overlay.expect("a failure is shown");
+        let Some(Overlay::Message(overlay)) = state.overlay else {
+            panic!("a failure is shown");
+        };
         assert_eq!(overlay.severity, Severity::Danger);
         assert!(overlay.message.contains("no route"));
     }
@@ -840,11 +844,11 @@ mod tests {
     #[test]
     fn escape_dismisses_the_overlay() {
         let mut state = browsing(&["a"]);
-        state.overlay = Some(Message {
+        state.overlay = Some(Overlay::Message(Message {
             title: "Schema unavailable".to_owned(),
             message: "boom".to_owned(),
             severity: Severity::Danger,
-        });
+        }));
 
         press(&mut state, Key::Escape);
 
@@ -1360,7 +1364,7 @@ mod tests {
     }
 
     fn measured(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
-        update(state, Msg::Measured(Geometry::new(heights, ddl_lines)));
+        update(state, Msg::Measured(Geometry::new(heights, ddl_lines, 0)));
     }
 
     #[test]
@@ -1481,7 +1485,7 @@ mod tests {
     #[test]
     fn a_measurement_that_changes_nothing_leaves_the_state_clean() {
         let mut state = browsing(&["a", "b", "c"]);
-        let geometry = Geometry::new([3, 6, 6, 1], 20);
+        let geometry = Geometry::new([3, 6, 6, 1], 20, 0);
         update(&mut state, Msg::Measured(geometry));
         state.dirty = false;
 

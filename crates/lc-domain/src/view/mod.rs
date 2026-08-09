@@ -19,8 +19,9 @@ pub use hints::{Binding, Hint, HintBar, HintGroup};
 pub use tables::{Marker, TreeRow};
 pub use title::PanelTitle;
 
+use crate::commands::{self, CommandRow};
 use crate::model::DbError;
-use crate::state::{Message, Panel, State};
+use crate::state::{Message, Overlay, Panel, State};
 use crate::style::{Severity, Token};
 
 /// Everything a renderer needs for one frame.
@@ -30,9 +31,33 @@ pub struct ViewModel {
     pub panels: [PanelView; 4],
     pub focus: Panel,
     /// Drawn over the panels when something needs saying.
-    pub overlay: Option<Message>,
+    pub overlay: Option<OverlayView>,
     /// What the focused panel responds to, along the bottom of the frame.
     pub hints: HintBar,
+}
+
+/// An overlay as a renderer needs it.
+///
+/// Splits from [`Overlay`] because the palette's state is a cursor and its
+/// projection is rows — the same reason `TablesPanel` and [`PanelBody::Tree`]
+/// are not one type. `Message` is shared rather than restated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverlayView {
+    Message(Message),
+    Commands {
+        rows: Vec<CommandRow>,
+        selected: usize,
+    },
+}
+
+fn overlay(state: &State) -> Option<OverlayView> {
+    Some(match state.overlay.as_ref()? {
+        Overlay::Message(message) => OverlayView::Message(message.clone()),
+        Overlay::Commands(panel) => OverlayView::Commands {
+            rows: commands::rows(),
+            selected: panel.selected(),
+        },
+    })
 }
 
 /// One panel, described without reference to how it is drawn.
@@ -93,7 +118,7 @@ pub fn view_model(state: &State) -> ViewModel {
         }),
         focus: state.focus,
         hints: hints::bar(state.focus),
-        overlay: state.overlay.clone(),
+        overlay: overlay(state),
     }
 }
 
@@ -174,8 +199,10 @@ pub(crate) mod tests_support {
 mod tests {
     use super::tests_support::{loaded, tabled};
     use super::*;
+    use crate::commands::CommandsPanel;
     use crate::contents::TableRef;
     use crate::model::{DbError, Page, QueryId};
+    use crate::state::{Message, Overlay};
 
     #[test]
     fn every_panel_is_projected_in_reading_order() {
@@ -224,16 +251,36 @@ mod tests {
 
     #[test]
     fn the_overlay_is_carried_to_the_renderer() {
+        let message = Message {
+            title: "Connection failed".to_owned(),
+            message: "no route".to_owned(),
+            severity: Severity::Danger,
+        };
         let state = State {
-            overlay: Some(Message {
-                title: "Connection failed".to_owned(),
-                message: "no route".to_owned(),
-                severity: Severity::Danger,
-            }),
+            overlay: Some(Overlay::Message(message.clone())),
             ..State::default()
         };
 
-        assert_eq!(view_model(&state).overlay, state.overlay);
+        assert_eq!(
+            view_model(&state).overlay,
+            Some(OverlayView::Message(message))
+        );
+    }
+
+    #[test]
+    fn an_open_palette_is_projected_as_rows_and_a_selection() {
+        let state = State {
+            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
+            ..State::default()
+        };
+
+        assert_eq!(
+            view_model(&state).overlay,
+            Some(OverlayView::Commands {
+                rows: crate::commands::rows(),
+                selected: 1,
+            })
+        );
     }
 
     /// Every `ContentsState`, because that panel's title is built per frame

@@ -13,7 +13,7 @@ use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
 use lc_domain::style::Token;
 use lc_domain::update::ROW_LIMIT;
-use lc_domain::view::{DetailRow, Details, Marker, PanelBody};
+use lc_domain::view::{DetailRow, Details, Marker, OverlayView, PanelBody};
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
 
@@ -130,7 +130,9 @@ async fn a_cluster_that_cannot_be_reached_raises_an_overlay() {
 
     run(&cluster, &mut state, effects).await;
 
-    let overlay = view_model(&state).overlay.expect("the failure is shown");
+    let Some(OverlayView::Message(overlay)) = view_model(&state).overlay else {
+        panic!("the failure is shown");
+    };
     assert!(overlay.message.contains("no route to host"));
     assert!(
         matches!(&view_model(&state).panels[0].body, PanelBody::Notice { text, .. } if text.contains("no route to host")),
@@ -146,7 +148,9 @@ async fn a_cluster_that_connects_but_cannot_be_described_raises_an_overlay() {
 
     run(&cluster, &mut state, effects).await;
 
-    let overlay = view_model(&state).overlay.expect("the failure is shown");
+    let Some(OverlayView::Message(overlay)) = view_model(&state).overlay else {
+        panic!("the failure is shown");
+    };
     assert_eq!(overlay.title, "Schema unavailable");
 }
 

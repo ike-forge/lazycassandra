@@ -3,6 +3,7 @@
 use lc_domain::ViewModel;
 use lc_domain::state::{Geometry, Panel};
 use lc_domain::style::Token;
+use lc_domain::view::OverlayView;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::text::{Line, Span};
@@ -19,6 +20,8 @@ use crate::theme::Theme;
 /// how many lines the Ddl body wrapped to
 /// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
 pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
+    let command_rows = crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count());
+
     let rects = match layout(frame.area()) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
@@ -66,11 +69,15 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
     let bar = rects.bar();
     frame.render_widget(crate::hints::line(&view.hints, bar.width, theme), bar);
 
-    if let Some(overlay) = &view.overlay {
-        crate::overlay::render(frame, overlay, theme);
+    match &view.overlay {
+        Some(OverlayView::Message(message)) => crate::overlay::render(frame, message, theme),
+        Some(OverlayView::Commands { rows, selected }) => {
+            crate::palette::render(frame, rows, *selected, theme);
+        }
+        None => {}
     }
 
-    Geometry::new(heights, ddl_lines)
+    Geometry::new(heights, ddl_lines, command_rows)
 }
 
 /// Over the block's right border, so it spends no content width — and only
@@ -85,7 +92,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
 /// thumb short of the bottom when the last row is already on screen.
 ///
 /// Only called when the extent overflows, so the length below is at least one.
-fn scrollbar(frame: &mut Frame, area: Rect, extent: &Extent, theme: Theme) {
+///
+/// `pub(crate)` for the palette, which scrolls the same way and must not grow
+/// a second copy of the arithmetic above.
+pub(crate) fn scrollbar(frame: &mut Frame, area: Rect, extent: &Extent, theme: Theme) {
     let mut state =
         ScrollbarState::new(extent.total.saturating_sub(extent.visible)).position(extent.position);
 
@@ -105,13 +115,16 @@ fn scrollbar(frame: &mut Frame, area: Rect, extent: &Extent, theme: Theme) {
 
 #[cfg(test)]
 mod tests {
+    use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::TableRef;
     use lc_domain::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
     };
     use lc_domain::posture::Posture;
-    use lc_domain::state::{Connection, ConnectionState, Geometry, Message, Panel, SchemaState};
+    use lc_domain::state::{
+        Connection, ConnectionState, Geometry, Message, Overlay, Panel, SchemaState,
+    };
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
     use lc_domain::{State, view_model};
@@ -325,11 +338,11 @@ mod tests {
     #[test]
     fn nothing_is_drawn_over_the_notice() {
         let state = State {
-            overlay: Some(Message {
+            overlay: Some(Overlay::Message(Message {
                 title: "Cannot connect".to_owned(),
                 message: "no route to host".to_owned(),
                 severity: Severity::Danger,
-            }),
+            })),
             ..State::default()
         };
         let mut terminal =
@@ -1096,5 +1109,191 @@ mod tests {
             !rows.iter().any(|line| line.contains("ks00")),
             "a row scrolled out of view must not still be drawn"
         );
+    }
+
+    /// `text` above already names the `CqlValue` constructor the grid tests
+    /// use; this is the same buffer-flattening helper `overlay::tests` keeps
+    /// under that name, renamed to fit beside it.
+    fn buffer_text(buffer: &Buffer) -> String {
+        buffer.content().iter().map(Cell::symbol).collect()
+    }
+
+    fn with_palette(width: u16, height: u16) -> Buffer {
+        let state = State {
+            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
+            ..State::default()
+        };
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::TerminalDefault);
+            })
+            .expect("TestBackend always draws");
+
+        terminal.backend().buffer().clone()
+    }
+
+    /// The row a bordered block's top edge sits on, found by its left corner.
+    fn top_border(buffer: &Buffer, expect: &str) -> (u16, u16) {
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                if buffer.cell((x, y)).is_some_and(|cell| cell.symbol() == "┌") {
+                    let row: String = (x..buffer.area.width)
+                        .filter_map(|at| buffer.cell((at, y)))
+                        .map(Cell::symbol)
+                        .collect();
+                    if row.contains(expect) {
+                        return (x, y);
+                    }
+                }
+            }
+        }
+        panic!("no block titled {expect:?} was drawn");
+    }
+
+    fn block_width(buffer: &Buffer, expect: &str) -> u16 {
+        let (x, y) = top_border(buffer, expect);
+        (x + 1..buffer.area.width)
+            .find(|at| {
+                buffer
+                    .cell((*at, y))
+                    .is_some_and(|cell| cell.symbol() == "┐")
+            })
+            .expect("a bordered block has a right corner")
+            - x
+            + 1
+    }
+
+    #[test]
+    fn the_palette_lists_the_catalogue() {
+        let drawn = buffer_text(&with_palette(100, 40));
+
+        assert!(drawn.contains("Commands"), "the block is titled");
+        // Strings only the palette can produce: the hint bar already draws
+        // "q quit" along the bottom row, so asserting on "quit" would pass
+        // with no palette at all.
+        assert!(drawn.contains("Global"));
+        assert!(drawn.contains("dismiss the overlay"));
+        assert!(drawn.contains("focus Table contents"));
+        assert!(drawn.contains("unfold the keyspace"));
+    }
+
+    #[test]
+    fn the_selected_command_is_highlighted() {
+        let buffer = with_palette(100, 40);
+        let (x, y) = top_border(&buffer, "Commands");
+
+        // Row 0 of the list is the `Global` heading, so the opened cursor sits
+        // on row 1: one down for the border, one for the heading.
+        let selected = y + 2;
+        let styled = |at: u16| {
+            buffer
+                .cell((x + 2, at))
+                .expect("inside the block")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        assert!(styled(selected), "the cursor's row is marked");
+        assert!(!styled(selected + 1), "and only the cursor's row is");
+    }
+
+    #[test]
+    fn a_palette_that_overflows_says_so() {
+        // 70% of 24 rows leaves 14 for a catalogue in the low twenties.
+        let buffer = with_palette(100, 24);
+        let (x, y) = top_border(&buffer, "Commands");
+        let width = block_width(&buffer, "Commands");
+
+        let track = (y + 1..buffer.area.height).any(|at| {
+            buffer
+                .cell((x + width - 1, at))
+                .is_some_and(|cell| cell.symbol() != "│")
+        });
+
+        assert!(track, "a catalogue taller than the box gets a scrollbar");
+        assert!(
+            !buffer_text(&with_palette(100, 80)).is_empty(),
+            "and a frame tall enough to hold it all still draws"
+        );
+    }
+
+    #[test]
+    fn the_palette_is_centred() {
+        let buffer = with_palette(100, 40);
+        let (x, _) = top_border(&buffer, "Commands");
+        let width = block_width(&buffer, "Commands");
+
+        assert_eq!(x, (100 - width) / 2, "left margin equals right margin");
+    }
+
+    #[test]
+    fn a_wide_frame_does_not_get_a_wide_palette() {
+        assert_eq!(block_width(&with_palette(200, 40), "Commands"), 60);
+        assert_eq!(block_width(&with_palette(100, 40), "Commands"), 50);
+    }
+
+    #[test]
+    fn a_tall_frame_does_not_get_a_palette_full_of_blank_rows() {
+        let buffer = with_palette(100, 80);
+        let (x, y) = top_border(&buffer, "Commands");
+
+        let bottom = (y + 1..buffer.area.height)
+            .find(|at| {
+                buffer
+                    .cell((x, *at))
+                    .is_some_and(|cell| cell.symbol() == "└")
+            })
+            .expect("a bordered block has a bottom edge");
+
+        assert_eq!(
+            usize::from(bottom - y) + 1,
+            lc_domain::commands::row_count() + 2,
+            "the block ends where the catalogue does, not at 70% of 80 rows"
+        );
+    }
+
+    #[test]
+    fn a_frame_too_small_for_a_palette_does_not_get_one() {
+        assert!(
+            !buffer_text(&with_palette(60, 40)).contains("Commands"),
+            "half of 60 columns is under the palette's floor"
+        );
+    }
+
+    #[test]
+    fn the_frame_reports_how_many_rows_a_palette_would_show() {
+        let state = State::default();
+        let mut terminal =
+            Terminal::new(TestBackend::new(100, 24)).expect("TestBackend always initialises");
+        let mut geometry = Geometry::default();
+
+        terminal
+            .draw(|frame| {
+                geometry = render(frame, &view_model(&state), Theme::TerminalDefault);
+            })
+            .expect("TestBackend always draws");
+
+        // 70% of 24 rows is 16, less two borders — reported with no palette
+        // open, because it is what gates `?` (design §5.1).
+        assert_eq!(geometry.command_rows(), 14);
+    }
+
+    #[test]
+    fn a_frame_too_small_for_a_palette_reports_no_rows() {
+        let state = State::default();
+        let mut terminal =
+            Terminal::new(TestBackend::new(60, 24)).expect("TestBackend always initialises");
+        let mut geometry = Geometry::default();
+
+        terminal
+            .draw(|frame| {
+                geometry = render(frame, &view_model(&state), Theme::TerminalDefault);
+            })
+            .expect("TestBackend always draws");
+
+        assert_eq!(geometry.command_rows(), 0);
     }
 }
