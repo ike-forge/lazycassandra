@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::contents::ContentsPanel;
+use crate::editor::Editor;
 use crate::model::{ConnId, DbError, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::style::Severity;
@@ -22,6 +23,9 @@ pub struct State {
     /// The Table DDL panel scrolls a viewport rather than a selection: it has
     /// no row to act on, so there is nothing for a cursor to mean.
     pub ddl: Scroll,
+    /// The Queries panel's buffer. Not a `QueriesPanel`: the panel is the
+    /// editor until the session log arrives.
+    pub queries: Editor,
     /// What the last frame turned out to be, so a motion knows how far a page
     /// is and where the end is.
     pub geometry: Geometry,
@@ -202,6 +206,18 @@ impl Panel {
     #[must_use]
     pub fn from_shortcut(key: char) -> Option<Self> {
         Self::ALL.into_iter().find(|panel| panel.shortcut() == key)
+    }
+
+    /// Whether letters typed at this panel are text rather than bindings.
+    ///
+    /// Focus is the mode (design §3). Exhaustive for the reason [`Panel::hints`]
+    /// is: a fifth panel cannot compile without saying which it is.
+    #[must_use]
+    pub const fn takes_text(self) -> bool {
+        match self {
+            Self::Tables | Self::Ddl | Self::Contents => false,
+            Self::Queries => true,
+        }
     }
 
     /// What this panel responds to.

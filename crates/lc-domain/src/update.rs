@@ -276,9 +276,17 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return Vec::new();
     }
 
+    // Focus is the mode. A panel that takes text claims every printable key
+    // and the editing keys; what it does not claim keeps the global meaning
+    // it has everywhere else (design §3). This is the rule shortcuts.md §2
+    // said the CQL editor would have to break.
+    if state.focus.takes_text() && edit(state, press.key) {
+        return Vec::new();
+    }
+
     match press.key {
         Key::Char('q') => return quit(state),
-        Key::Escape => state.overlay = None,
+        Key::Escape => escape(state),
         Key::Tab => state.focus = state.focus.next(),
         Key::BackTab => state.focus = state.focus.previous(),
         Key::Char('j') | Key::Down => scroll(state, Motion::Down),
@@ -300,6 +308,46 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     }
 
     Vec::new()
+}
+
+/// Offers `key` to the focused panel's buffer, answering whether it was text.
+///
+/// Exhaustive over [`Key`], so a new key has to decide whether an editor
+/// claims it rather than defaulting into one side.
+fn edit(state: &mut State, key: Key) -> bool {
+    let height = state.geometry.height(Panel::Queries);
+    let editor = &mut state.queries;
+
+    match key {
+        Key::Char(character) => editor.insert(character),
+        Key::Enter => editor.insert_newline(),
+        Key::Backspace => editor.backspace(),
+        Key::Delete => editor.delete(),
+        Key::Left => editor.left(),
+        Key::Right => editor.right(),
+        Key::Up => editor.up(),
+        Key::Down => editor.down(),
+        Key::Home => editor.line_start(),
+        Key::End => editor.line_end(),
+        Key::PageUp => editor.page_up(height),
+        Key::PageDown => editor.page_down(height),
+        Key::Escape | Key::Tab | Key::BackTab | Key::Insert | Key::F(_) => return false,
+    }
+
+    true
+}
+
+/// `Esc` dismisses the overlay when there is one, and otherwise leaves a panel
+/// that takes text — the one key that restores every letter binding at once
+/// (design §3). One press does one of the two, never both.
+fn escape(state: &mut State) {
+    if state.overlay.take().is_some() {
+        return;
+    }
+
+    if state.focus.takes_text() {
+        state.focus = Panel::default();
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -832,6 +880,7 @@ mod tests {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Queries;
 
+        // Queries now takes the key as text; either way the tree must not move.
         press(&mut state, Key::Char('j'));
 
         assert_eq!(state.tables.cursor.index(), 0);
@@ -880,6 +929,147 @@ mod tests {
             state.tables.cursor.index(),
             0,
             "ctrl-j is a different binding, not a slower j"
+        );
+    }
+
+    /// A state focused on Queries with `text` typed into it, `\n` meaning
+    /// Enter — the same convention `editor.rs`'s own helper uses.
+    fn editing(text: &str) -> State {
+        let mut state = browsing(&["a"]);
+        state.focus = Panel::Queries;
+        for character in text.chars() {
+            press(
+                &mut state,
+                if character == '\n' {
+                    Key::Enter
+                } else {
+                    Key::Char(character)
+                },
+            );
+        }
+        state
+    }
+
+    #[test]
+    fn a_letter_typed_in_queries_is_text_not_a_shortcut() {
+        // Every letter here is bound somewhere: t/a/c/u focus a panel, j/k/h/l
+        // move, q quits. In the editor they are all just text.
+        let state = editing("tacujkhlq");
+
+        assert_eq!(state.focus, Panel::Queries, "no letter moved focus");
+        assert_eq!(state.queries.text(), "tacujkhlq");
+    }
+
+    #[test]
+    fn q_does_not_quit_while_the_editor_has_focus() {
+        let mut state = browsing(&["a"]);
+        state.focus = Panel::Queries;
+
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(!state.should_quit);
+        assert_eq!(effects, Vec::new());
+        assert_eq!(state.queries.text(), "q");
+    }
+
+    #[test]
+    fn escape_leaves_the_editor_for_tables() {
+        let mut state = editing("SELECT");
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.queries.text(), "SELECT", "leaving keeps the buffer");
+    }
+
+    #[test]
+    fn escape_dismisses_the_overlay_before_it_leaves_the_editor() {
+        let mut state = editing("SELECT");
+        state.overlay = Some(Overlay {
+            title: "Schema unavailable".to_owned(),
+            message: "boom".to_owned(),
+            severity: Severity::Danger,
+        });
+
+        press(&mut state, Key::Escape);
+
+        assert!(state.overlay.is_none());
+        assert_eq!(state.focus, Panel::Queries, "one esc does one thing");
+    }
+
+    #[test]
+    fn tab_still_leaves_the_editor() {
+        let mut state = editing("SELECT");
+
+        press(&mut state, Key::Tab);
+
+        assert_eq!(state.focus, Panel::Tables, "Queries wraps to Tables");
+        assert_eq!(state.queries.text(), "SELECT");
+    }
+
+    #[test]
+    fn a_modified_key_is_still_not_text() {
+        let mut state = browsing(&["a"]);
+        state.focus = Panel::Queries;
+
+        update(
+            &mut state,
+            Msg::Input(KeyPress {
+                key: Key::Char('a'),
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                },
+            }),
+        );
+
+        assert_eq!(
+            state.queries.text(),
+            "",
+            "ctrl-a is a binding that does not exist yet, not a slower a"
+        );
+    }
+
+    #[test]
+    fn typing_outside_queries_still_focuses_a_panel() {
+        let mut state = browsing(&["a"]);
+
+        press(&mut state, Key::Char('c'));
+
+        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.queries.text(), "", "nothing leaked into the buffer");
+    }
+
+    #[test]
+    fn the_editing_keys_reach_the_buffer() {
+        let mut state = editing("SELECT *");
+
+        press(&mut state, Key::Backspace);
+        assert_eq!(state.queries.text(), "SELECT ");
+
+        press(&mut state, Key::Enter);
+        assert_eq!(state.queries.text(), "SELECT \n");
+
+        press(&mut state, Key::Left);
+        press(&mut state, Key::Delete);
+        assert_eq!(state.queries.text(), "SELECT ", "delete ate the newline");
+    }
+
+    #[test]
+    fn home_and_end_reach_the_ends_of_the_line_in_the_editor() {
+        let mut state = editing("SELECT *\nFROM t");
+
+        press(&mut state, Key::Home);
+        assert_eq!(
+            state.queries.cursor(),
+            crate::editor::Position { line: 1, column: 0 }
+        );
+
+        press(&mut state, Key::End);
+        assert_eq!(
+            state.queries.cursor(),
+            crate::editor::Position { line: 1, column: 6 },
+            "the line's end, not the buffer's"
         );
     }
 
@@ -1026,6 +1216,7 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         state.focus = Panel::Queries;
 
+        // Queries now takes the key as text; either way the tree must not move.
         press(&mut state, Key::Char('l'));
 
         assert_eq!(row_count(&state), 1);
@@ -1059,8 +1250,8 @@ mod tests {
     }
 
     #[test]
-    fn a_shortcut_focuses_its_panel_from_any_other_panel() {
-        for from in Panel::ALL {
+    fn a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text() {
+        for from in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
             for to in Panel::ALL {
                 let mut state = State {
                     focus: from,
@@ -1076,6 +1267,21 @@ mod tests {
                     to.shortcut()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_shortcut_is_text_in_a_panel_that_takes_text() {
+        for to in Panel::ALL {
+            let mut state = State {
+                focus: Panel::Queries,
+                ..State::default()
+            };
+
+            press(&mut state, Key::Char(to.shortcut()));
+
+            assert_eq!(state.focus, Panel::Queries, "focus is the mode");
+            assert_eq!(state.queries.text(), to.shortcut().to_string());
         }
     }
 
@@ -1613,6 +1819,13 @@ mod tests {
     fn every_global_hint_does_something_in_every_panel() {
         for panel in Panel::ALL {
             for binding in crate::view::hints::GLOBAL {
+                // `q` is text in a panel that takes text, so it is not a
+                // global binding there. Task 6 moves it out of GLOBAL for the
+                // same reason, and this loop follows it.
+                if panel.takes_text() && binding.action == "quit" {
+                    continue;
+                }
+
                 for &key in binding.keys {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);
