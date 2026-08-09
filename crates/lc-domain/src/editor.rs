@@ -264,7 +264,10 @@ mod tests {
 
         editor.insert_newline();
 
-        assert_eq!(editor.lines(), ["SELECT * ".to_owned(), "FROM t".to_owned()]);
+        assert_eq!(
+            editor.lines(),
+            ["SELECT * ".to_owned(), "FROM t".to_owned()]
+        );
         assert_eq!(editor.cursor(), Position { line: 1, column: 0 });
     }
 
@@ -460,7 +463,10 @@ mod tests {
         editor.line_end();
         assert_eq!(
             editor.cursor(),
-            Position { line: 1, column: 12 },
+            Position {
+                line: 1,
+                column: 12
+            },
             "the line's end, not the buffer's"
         );
     }
