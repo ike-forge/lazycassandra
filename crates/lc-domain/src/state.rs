@@ -26,7 +26,7 @@ pub struct State {
     /// is and where the end is.
     pub geometry: Geometry,
     /// A message drawn over the panels until it is dismissed.
-    pub overlay: Option<Overlay>,
+    pub overlay: Option<Message>,
     /// Queries issued and not yet resolved. A result whose id is absent here
     /// was cancelled, and is dropped rather than applied.
     pub in_flight: BTreeMap<QueryId, Statement>,
@@ -69,7 +69,7 @@ pub enum SchemaState {
 
 /// A message drawn over the panels, dismissed with `Esc`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Overlay {
+pub struct Message {
     pub title: String,
     pub message: String,
     pub severity: Severity,

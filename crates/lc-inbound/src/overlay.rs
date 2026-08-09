@@ -1,6 +1,6 @@
 //! The block drawn over the panels when something needs saying.
 
-use lc_domain::state::Overlay;
+use lc_domain::state::Message;
 use lc_domain::style::Token;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -18,7 +18,7 @@ const MIN_H: u16 = 5;
 /// block. The border itself is accounted for separately, by `Block::inner`.
 const MARGIN_W: u16 = 4;
 
-pub(crate) fn render(frame: &mut Frame, overlay: &Overlay, theme: Theme) {
+pub(crate) fn render(frame: &mut Frame, overlay: &Message, theme: Theme) {
     let area = frame.area();
     let Some(rect) = centred(area, overlay) else {
         return;
@@ -37,7 +37,7 @@ pub(crate) fn render(frame: &mut Frame, overlay: &Overlay, theme: Theme) {
     );
 }
 
-fn centred(area: Rect, overlay: &Overlay) -> Option<Rect> {
+fn centred(area: Rect, overlay: &Message) -> Option<Rect> {
     let width = area.width.saturating_sub(MARGIN_W).min(MAX_W);
     if width < MIN_W || area.height < MIN_H {
         return None;
@@ -104,7 +104,7 @@ fn wrapped_line_count(message: &str, width: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::{ConnectionState, Overlay};
+    use lc_domain::state::{ConnectionState, Message};
     use lc_domain::style::Severity;
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
@@ -117,7 +117,7 @@ mod tests {
 
     use super::wrapped_line_count;
 
-    fn draw(width: u16, height: u16, overlay: Option<Overlay>) -> Buffer {
+    fn draw(width: u16, height: u16, overlay: Option<Message>) -> Buffer {
         let state = State {
             connection: ConnectionState::Disconnected,
             overlay,
@@ -135,8 +135,8 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    fn failure() -> Overlay {
-        Overlay {
+    fn failure() -> Message {
+        Message {
             title: "Connection failed".to_owned(),
             message: "could not reach the cluster".to_owned(),
             severity: Severity::Danger,

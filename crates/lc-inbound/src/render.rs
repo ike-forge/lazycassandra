@@ -111,7 +111,7 @@ mod tests {
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
     };
     use lc_domain::posture::Posture;
-    use lc_domain::state::{Connection, ConnectionState, Geometry, Overlay, Panel, SchemaState};
+    use lc_domain::state::{Connection, ConnectionState, Geometry, Message, Panel, SchemaState};
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
     use lc_domain::{State, view_model};
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn nothing_is_drawn_over_the_notice() {
         let state = State {
-            overlay: Some(Overlay {
+            overlay: Some(Message {
                 title: "Cannot connect".to_owned(),
                 message: "no route to host".to_owned(),
                 severity: Severity::Danger,

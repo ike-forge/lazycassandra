@@ -7,7 +7,7 @@
 use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::state::{ConnectionState, Cursor, Geometry, Overlay, Panel, SchemaState, State};
+use crate::state::{ConnectionState, Cursor, Geometry, Message, Panel, SchemaState, State};
 use crate::style::Severity;
 use crate::tree::Node;
 
@@ -176,7 +176,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             if !state.connection.is_current(conn) {
                 return Vec::new();
             }
-            state.overlay = Some(Overlay {
+            state.overlay = Some(Message {
                 title: "Connection failed".to_owned(),
                 message: error.to_string(),
                 severity: Severity::Danger,
@@ -195,7 +195,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                 _ => false,
             };
             if applied {
-                state.overlay = Some(Overlay {
+                state.overlay = Some(Message {
                     title: "Schema unavailable".to_owned(),
                     message: error.to_string(),
                     severity: Severity::Danger,
@@ -840,7 +840,7 @@ mod tests {
     #[test]
     fn escape_dismisses_the_overlay() {
         let mut state = browsing(&["a"]);
-        state.overlay = Some(Overlay {
+        state.overlay = Some(Message {
             title: "Schema unavailable".to_owned(),
             message: "boom".to_owned(),
             severity: Severity::Danger,

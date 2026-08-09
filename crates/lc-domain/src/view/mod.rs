@@ -20,7 +20,7 @@ pub use tables::{Marker, TreeRow};
 pub use title::PanelTitle;
 
 use crate::model::DbError;
-use crate::state::{Overlay, Panel, State};
+use crate::state::{Message, Panel, State};
 use crate::style::{Severity, Token};
 
 /// Everything a renderer needs for one frame.
@@ -30,7 +30,7 @@ pub struct ViewModel {
     pub panels: [PanelView; 4],
     pub focus: Panel,
     /// Drawn over the panels when something needs saying.
-    pub overlay: Option<Overlay>,
+    pub overlay: Option<Message>,
     /// What the focused panel responds to, along the bottom of the frame.
     pub hints: HintBar,
 }
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn the_overlay_is_carried_to_the_renderer() {
         let state = State {
-            overlay: Some(Overlay {
+            overlay: Some(Message {
                 title: "Connection failed".to_owned(),
                 message: "no route".to_owned(),
                 severity: Severity::Danger,
