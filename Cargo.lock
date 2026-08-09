@@ -826,6 +826,7 @@ dependencies = [
  "crossterm",
  "lc-domain",
  "ratatui",
+ "ratatui-opentui-loader",
  "unicode-width",
 ]
 
@@ -1367,6 +1368,15 @@ checksum = "ed7dc68daa7498a43e4d68e0eb078427e10c38fbcfbb1e42d955f1fa2140d814"
 dependencies = [
  "ratatui-core",
  "ratatui-widgets",
+]
+
+[[package]]
+name = "ratatui-opentui-loader"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e2a86d9dfd734b3802f560bd1c9be81e511e5a617910a2413fec87433670bd9"
+dependencies = [
+ "ratatui",
 ]
 
 [[package]]

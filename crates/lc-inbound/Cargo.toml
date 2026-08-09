@@ -9,6 +9,7 @@ publish.workspace = true
 crossterm.workspace = true
 lc-domain.workspace = true
 ratatui.workspace = true
+ratatui-opentui-loader.workspace = true
 unicode-width.workspace = true
 
 [lints]

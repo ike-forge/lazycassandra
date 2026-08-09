@@ -33,6 +33,25 @@ pub struct ViewModel {
     pub overlay: Option<Overlay>,
     /// What the focused panel responds to, along the bottom of the frame.
     pub hints: HintBar,
+    /// Whether the tool is waiting on the cluster, and how far into the
+    /// loader's cycle that wait is.
+    pub activity: Activity,
+}
+
+/// What the loader has to say.
+///
+/// An enum rather than a bare frame number the domain promises to zero: which
+/// of the two states the tool is in is the decision `update` is making, and
+/// the one `lc-app` reads to know whether a tick is worth anything
+/// (doc/specs/2026-08-09-visual-polish-design.md §4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activity {
+    /// Nothing outstanding. Drawn at the start of the cycle, always the same
+    /// frame.
+    Resting,
+    Working {
+        frame: usize,
+    },
 }
 
 /// One panel, described without reference to how it is drawn.
@@ -94,6 +113,13 @@ pub fn view_model(state: &State) -> ViewModel {
         focus: state.focus,
         hints: hints::bar(state.focus),
         overlay: state.overlay.clone(),
+        activity: if state.is_working() {
+            Activity::Working {
+                frame: state.loader.frame(),
+            }
+        } else {
+            Activity::Resting
+        },
     }
 }
 

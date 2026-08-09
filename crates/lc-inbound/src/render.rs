@@ -75,13 +75,38 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
     }
 
     let bar = rects.bar();
-    frame.render_widget(crate::hints::line(&view.hints, bar.width, theme), bar);
+    let (loader, hints) = bar_split(bar);
+    frame.render_widget(crate::loader::line(view.activity), loader);
+    frame.render_widget(crate::hints::line(&view.hints, hints.width, theme), hints);
 
     if let Some(overlay) = &view.overlay {
         crate::overlay::render(frame, overlay, theme);
     }
 
     Geometry::new(heights, ddl_lines)
+}
+
+/// The bottom row, split into the loader's cells and what the hint bar is
+/// left with.
+///
+/// The loader takes its width at every frame size rather than hiding on a
+/// narrow one: the bar already knows how to give up hints in value order, and
+/// trading a hint the user can read for one they cannot see is not a trade
+/// (design §4.4).
+fn bar_split(bar: Rect) -> (Rect, Rect) {
+    let taken = crate::loader::WIDTH + crate::loader::GAP;
+
+    (
+        Rect {
+            width: crate::loader::WIDTH,
+            ..bar
+        },
+        Rect {
+            x: bar.x + taken,
+            width: bar.width.saturating_sub(taken),
+            ..bar
+        },
+    )
 }
 
 /// Over the block's right border, so it spends no content width — and only
@@ -190,11 +215,31 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            " j/k move  l/h fold  ⏎ open │ tab panel  q quit"
+            "■⬝⬝⬝⬝⬝⬝⬝  j/k move  l/h fold  ⏎ open │ tab panel  q quit",
+            "the loader takes the leading cells and the hints follow it"
         );
         assert!(
             !row(&buffer, 22).contains("q quit"),
             "the bar owns one row and no more"
+        );
+    }
+
+    #[test]
+    fn the_loader_rests_until_something_is_outstanding() {
+        // `State::default` is disconnected with nothing in flight.
+        let resting = draw(80, 24);
+        let mut state = State {
+            connection: ConnectionState::Connecting(ConnId::next()),
+            ..State::default()
+        };
+        state.loader.advance(true);
+
+        let working = draw_state(80, 24, &state);
+
+        assert_ne!(
+            row(&resting, 23),
+            row(&working, 23),
+            "a tick during a connection attempt has to show on the bar"
         );
     }
 
@@ -225,7 +270,8 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 11).trim_end(),
-            " j/k move  l/h fold │ tab panel  q quit"
+            "■⬝⬝⬝⬝⬝⬝⬝  j/k move │ tab panel  q quit",
+            "the cells the loader took come out of the hints, lowest value first"
         );
     }
 

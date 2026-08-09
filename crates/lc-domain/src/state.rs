@@ -30,10 +30,47 @@ pub struct State {
     /// Queries issued and not yet resolved. A result whose id is absent here
     /// was cancelled, and is dropped rather than applied.
     pub in_flight: BTreeMap<QueryId, Statement>,
+    /// How far into its cycle the loader is. Elapsed time reaches the domain
+    /// only as [`crate::Msg::Tick`], so this is the whole of what the renderer
+    /// is told about it.
+    pub loader: Loader,
     /// Set when something changed that the next frame must show. Avoids
     /// repainting on every keypress of a held-down `j` (architecture.md §3).
     pub dirty: bool,
     pub should_quit: bool,
+}
+
+/// The loader's phase.
+///
+/// Advances only while something is outstanding and resets when nothing is, so
+/// an idle frame is always the same frame rather than wherever the animation
+/// happened to stop.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Loader {
+    frame: usize,
+}
+
+impl Loader {
+    /// Advance one frame, or fall back to rest. Reports whether the phase
+    /// moved — an idle tick that changes nothing must not cost a repaint
+    /// (doc/specs/2026-08-09-visual-polish-design.md §4.2).
+    pub const fn advance(&mut self, working: bool) -> bool {
+        let next = if working {
+            self.frame.wrapping_add(1)
+        } else {
+            0
+        };
+        let moved = next != self.frame;
+        self.frame = next;
+        moved
+    }
+
+    /// Unbounded: the renderer folds it into the widget's own cycle, whose
+    /// length is the widget's business rather than the domain's.
+    #[must_use]
+    pub const fn frame(self) -> usize {
+        self.frame
+    }
 }
 
 /// How far along the one connection is.
@@ -437,6 +474,22 @@ impl State {
 
     pub const fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+
+    /// Whether the tool is waiting on the cluster for anything.
+    ///
+    /// What the loader animates for, and the only thing that makes a tick
+    /// worth a repaint.
+    #[must_use]
+    pub fn is_working(&self) -> bool {
+        !self.in_flight.is_empty()
+            || match &self.connection {
+                ConnectionState::Connecting(_) => true,
+                ConnectionState::Connected(connection) => {
+                    matches!(connection.schema, SchemaState::Loading)
+                }
+                ConnectionState::Disconnected | ConnectionState::Failed(_) => false,
+            }
     }
 }
 

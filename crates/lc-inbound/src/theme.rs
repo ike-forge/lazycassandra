@@ -8,13 +8,16 @@
 //!
 //! Meaning still comes first. The sixteen ANSI colours carry the things the
 //! user must be able to read on a terminal whose palette is unusable — key
-//! structure, severity, write posture — and an accent is spent only on
-//! something that is marked rather than meant.
+//! structure, severity, write posture — and the two accents below are spent
+//! on things that are marked rather than meant.
 
 use lc_domain::posture::Posture;
 use lc_domain::style::{Severity, Token};
 use ratatui::style::{Color, Modifier, Style};
 
+/// The loader's scanner head, and the one colour spent on decoration rather
+/// than meaning. `ratatui_opentui_loader` derives its whole trail from it.
+pub(crate) const ACCENT: Color = Color::Rgb(0xfa, 0xb2, 0x83);
 /// A property name in the Table DDL panel: light enough to stay legible on a
 /// dark background without washing out on a light one.
 const PROPERTY: Color = Color::Rgb(0x7a, 0xa2, 0xf7);

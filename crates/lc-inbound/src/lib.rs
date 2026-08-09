@@ -12,6 +12,7 @@ mod details;
 mod hints;
 pub mod input;
 pub mod layout;
+mod loader;
 mod overlay;
 pub mod render;
 pub mod theme;

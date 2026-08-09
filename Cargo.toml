@@ -22,6 +22,10 @@ anyhow = "1.0.104"
 async-trait = "0.1.91"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
+# The hint bar's loader. Pure-Rust, no dependency of its own beyond the
+# ratatui already here, and its `tick` is an integer advance rather than a
+# clock read — which is what lets the animation's phase live in the domain.
+ratatui-opentui-loader = "0.2.0"
 # `bigdecimal-04` and `num-bigint-04` buy `From<CqlDecimal>` and
 # `From<CqlVarint>` for types that already render themselves. The alternative
 # is hand-writing two's-complement bignum-to-decimal conversion in the adapter.
