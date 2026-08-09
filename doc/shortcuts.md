@@ -63,9 +63,11 @@ itself, before the match that would call it (queries editor design §3).
 ### Tables panel
 
 Accepted anywhere, but a no-op unless Tables has focus — except in Queries,
-which takes text: there `Enter` inserts a newline and `Space`, `l`/`→`,
-`h`/`←` insert themselves, none of them a no-op. See the Queries subsection
-below.
+which takes text: there `Enter` inserts a newline, `Space`, `l` and `h` type
+themselves, and `→`/`←` move the cursor instead. None of them is a no-op,
+but Queries is where `l`/`→` and `h`/`←` stop being the synonyms this table
+pairs them into — §2's rewritten vim/arrows rule. See the Queries
+subsection below.
 
 | Key | Action |
 |---|---|
