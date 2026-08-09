@@ -1877,4 +1877,141 @@ mod tests {
             }
         }
     }
+
+    use crate::commands::CATALOGUE;
+    use crate::view_model;
+
+    /// Every `Key` the domain understands.
+    ///
+    /// The `match` is dead weight at runtime and load-bearing at compile time:
+    /// a variant added to `Key` without a line here fails to compile, so the
+    /// sweep below cannot quietly stop sweeping.
+    fn every_key() -> Vec<Key> {
+        match Key::Enter {
+            Key::Char(_)
+            | Key::Enter
+            | Key::Escape
+            | Key::Backspace
+            | Key::Tab
+            | Key::BackTab
+            | Key::Delete
+            | Key::Insert
+            | Key::Home
+            | Key::End
+            | Key::PageUp
+            | Key::PageDown
+            | Key::Up
+            | Key::Down
+            | Key::Left
+            | Key::Right
+            | Key::F(_) => {}
+        }
+
+        [
+            Key::Enter,
+            Key::Escape,
+            Key::Backspace,
+            Key::Tab,
+            Key::BackTab,
+            Key::Delete,
+            Key::Insert,
+            Key::Home,
+            Key::End,
+            Key::PageUp,
+            Key::PageDown,
+            Key::Up,
+            Key::Down,
+            Key::Left,
+            Key::Right,
+        ]
+        .into_iter()
+        .chain((1..=12).map(Key::F))
+        .chain((0x20..=0x7e_u8).map(|byte| Key::Char(char::from(byte))))
+        .collect()
+    }
+
+    fn catalogued() -> Vec<Key> {
+        CATALOGUE
+            .iter()
+            .flat_map(|group| group.bindings)
+            .flat_map(|binding| binding.keys)
+            .copied()
+            .collect()
+    }
+
+    /// States that between them exercise every binding: one with an overlay to
+    /// dismiss, an unfolded keyspace to fold, and the tree at its first row;
+    /// one focused somewhere other than Tables so the focus letters differ;
+    /// and one with the tree folded and moved off its first row, so `k`,
+    /// `pgup`, `home` and `l` all have somewhere to go.
+    ///
+    /// The unfold matters: with every keyspace already folded, `h` and `←`
+    /// would be a no-op in all three and the sweep would call them unbound.
+    fn sweep_fixtures() -> Vec<State> {
+        let geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+
+        let mut covered = browsing_tables(&[("shop", &["orders"])]);
+        covered.geometry = geometry;
+        press(&mut covered, Key::Char('l'));
+        covered.overlay = Some(Overlay::Message(Message {
+            title: "Schema unavailable".to_owned(),
+            message: "boom".to_owned(),
+            severity: Severity::Danger,
+        }));
+
+        let mut elsewhere = browsing_tables(&[("shop", &["orders"])]);
+        elsewhere.geometry = geometry;
+        elsewhere.focus = Panel::Ddl;
+
+        let mut moved = measured(&["a", "b", "c"]);
+        press(&mut moved, Key::Char('j'));
+        press(&mut moved, Key::Char('j'));
+
+        vec![covered, elsewhere, moved]
+    }
+
+    /// Whether pressing `key` changes anything a user could observe.
+    ///
+    /// The view model rather than the `State`, which is not `PartialEq` and
+    /// whose `dirty` flag `handle_key` sets on every press. It is also the
+    /// better question: a key that changes nothing visible and emits no effect
+    /// is not a binding, whatever it touched on the way through.
+    fn does_something(state: &State, key: Key) -> bool {
+        let mut after = state.clone();
+        let effects = press(&mut after, key);
+
+        !effects.is_empty()
+            || after.should_quit != state.should_quit
+            || view_model(&after) != view_model(state)
+    }
+
+    #[test]
+    fn no_key_does_anything_the_palette_does_not_list() {
+        let catalogued = catalogued();
+
+        for state in sweep_fixtures() {
+            for key in every_key() {
+                if catalogued.contains(&key) {
+                    continue;
+                }
+
+                assert!(
+                    !does_something(&state, key),
+                    "{key:?} does something and doc/shortcuts.md's palette does not list it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_key_the_palette_lists_does_something() {
+        let fixtures = sweep_fixtures();
+
+        for key in catalogued() {
+            assert!(
+                fixtures.iter().any(|state| does_something(state, key)),
+                "the palette lists {key:?} and no state responds to it"
+            );
+        }
+    }
 }
