@@ -262,7 +262,7 @@ impl Scroll {
     }
 
     pub const fn to_end(&mut self, len: usize, height: usize) {
-        self.offset = len.saturating_sub(height);
+        self.go_to(len, len, height);
     }
 
     /// Pulls a stale offset back over a document that shrank or a panel that
