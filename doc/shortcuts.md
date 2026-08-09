@@ -249,7 +249,7 @@ does not decompose is a binding that needs a key first.
 `handle_key` is to a key. `lc-inbound` resolves the coordinate against the frame
 it happened in and decides nothing.
 
-**Capture is on from startup**, which costs click-drag text selection; shift-drag
-is the bypass on terminals that offer one, and a shifted press is refused for
-exactly that reason. There is no toggle and no flag until there is a config
-system to hold the preference.
+**Capture is on from startup**, which costs click-drag text selection;
+shift-drag is the bypass on terminals that offer one, and a shifted press is
+refused for exactly that reason. There is no toggle and no flag until there is
+a config system to hold the preference.
