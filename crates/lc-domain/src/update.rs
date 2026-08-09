@@ -160,22 +160,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             Vec::new()
         }
 
-        // No unconditional `mark_dirty`: this message describes the frame
-        // that produced it, so redrawing on every one of them would
-        // re-measure and redraw forever (design §3).
-        Msg::Measured(geometry) => {
-            state.geometry = geometry;
-
-            let before = state.ddl;
-            state
-                .ddl
-                .clamp_to(geometry.ddl_lines(), geometry.height(Panel::Ddl));
-
-            if state.ddl != before {
-                state.mark_dirty();
-            }
-            Vec::new()
-        }
+        Msg::Measured(geometry) => measured(state, geometry),
 
         Msg::Connected { conn, posture } => {
             if !state.connection.is_current(conn) {
@@ -408,14 +393,14 @@ enum Transition {
     Close,
 }
 
-/// Applies `motion` to whatever the focused panel moves.
+/// Applies `motion` to whatever the focused panel moves: a viewport in Ddl, a
+/// selection elsewhere.
+///
+/// The focused panel and no other. A wheel names the panel under the pointer
+/// and moves its viewport directly ([`wheel`]), so nothing but a key reaches
+/// here.
 fn scroll(state: &mut State, motion: Motion) {
-    scroll_panel(state, state.focus, motion);
-}
-
-/// Applies `motion` to `panel`, which need not be the focused one: a wheel
-/// scrolls what the pointer is over (design §6).
-fn scroll_panel(state: &mut State, panel: Panel, motion: Motion) {
+    let panel = state.focus;
     let height = state.geometry.height(panel);
 
     if panel == Panel::Ddl {
@@ -468,6 +453,49 @@ fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
     }
 }
 
+/// Records what the last frame turned out to be, and repairs whatever that
+/// invalidates.
+///
+/// No unconditional `mark_dirty`: this message describes the frame that
+/// produced it, so redrawing on every one of them would re-measure and redraw
+/// forever (panel scrolling design §3).
+fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
+    let previous = state.geometry;
+    state.geometry = geometry;
+
+    // A panel that changed height must draw its selection again: the renderer
+    // stopped arranging that, and `update`'s epilogue follows only a cursor
+    // that *moved* — a resize moves none
+    // (doc/specs/2026-08-09-list-viewport-design.md §5).
+    //
+    // Keyed on the height rather than on the message, so a wheel cannot be
+    // undone here: a wheel changes no height, and `lc-app` reports no
+    // measurement for a frame whose geometry did not change.
+    for panel in LISTS {
+        let height = geometry.height(panel);
+
+        if height == previous.height(panel) {
+            continue;
+        }
+
+        let index = cursor_index(state, panel);
+
+        if let Some(scroll) = panel_scroll(state, panel) {
+            scroll.follow(index, height);
+        }
+    }
+
+    let before = state.ddl;
+    state
+        .ddl
+        .clamp_to(geometry.ddl_lines(), geometry.height(Panel::Ddl));
+
+    if state.ddl != before {
+        state.mark_dirty();
+    }
+    Vec::new()
+}
+
 /// The panels whose viewport `update` maintains. Ddl keeps its own, moved
 /// directly by the motions that scroll it.
 const LISTS: [Panel; 2] = [Panel::Tables, Panel::Contents];
@@ -492,9 +520,22 @@ fn scroll_len(state: &State, panel: Panel) -> usize {
     }
 }
 
+/// `panel`'s selected row, or zero for a panel with no selection.
+fn cursor_index(state: &State, panel: Panel) -> usize {
+    match panel {
+        Panel::Tables => state.tables.cursor.index(),
+        Panel::Contents => state.contents.cursor.index(),
+        Panel::Ddl | Panel::Queries => 0,
+    }
+}
+
 /// Each list panel's selected index, for the comparison in [`update`].
+///
+/// Built from `LISTS` rather than written out, so the array this returns and
+/// the one [`follow_moved_cursors`] walks cannot fall out of order — a
+/// mismatch there would follow each panel against the other's index, silently.
 fn cursor_indices(state: &State) -> [usize; 2] {
-    [state.tables.cursor.index(), state.contents.cursor.index()]
+    LISTS.map(|panel| cursor_index(state, panel))
 }
 
 /// Pulls every list offset back inside its document.
@@ -522,11 +563,7 @@ fn clamp_lists(state: &mut State) {
 /// it would undo the scroll it just performed (design §3).
 fn follow_moved_cursors(state: &mut State, before: [usize; 2]) {
     for (panel, before) in LISTS.into_iter().zip(before) {
-        let index = match panel {
-            Panel::Tables => state.tables.cursor.index(),
-            Panel::Contents => state.contents.cursor.index(),
-            Panel::Ddl | Panel::Queries => continue,
-        };
+        let index = cursor_index(state, panel);
 
         if index == before {
             continue;
@@ -2077,7 +2114,9 @@ mod tests {
         state
     }
 
-    fn wheel(state: &mut State, panel: Panel, direction: Wheel) -> Vec<Effect> {
+    /// Named apart from the production `wheel`, which has the same parameter
+    /// list and would otherwise be shadowed by this inside `use super::*`.
+    fn roll(state: &mut State, panel: Panel, direction: Wheel) -> Vec<Effect> {
         point(state, Pointer::Wheel { panel, direction })
     }
 
@@ -2085,7 +2124,7 @@ mod tests {
     fn a_wheel_scrolls_the_view_and_leaves_the_selection_where_it_was() {
         let mut state = scrolling_rows(40);
 
-        wheel(&mut state, Panel::Contents, Wheel::Down);
+        roll(&mut state, Panel::Contents, Wheel::Down);
 
         assert_eq!(state.contents.scroll.offset(), 3, "three rows a notch");
         assert_eq!(
@@ -2098,10 +2137,10 @@ mod tests {
     #[test]
     fn a_wheel_up_walks_the_view_back() {
         let mut state = scrolling_rows(40);
-        wheel(&mut state, Panel::Contents, Wheel::Down);
-        wheel(&mut state, Panel::Contents, Wheel::Down);
+        roll(&mut state, Panel::Contents, Wheel::Down);
+        roll(&mut state, Panel::Contents, Wheel::Down);
 
-        wheel(&mut state, Panel::Contents, Wheel::Up);
+        roll(&mut state, Panel::Contents, Wheel::Up);
 
         assert_eq!(state.contents.scroll.offset(), 3);
     }
@@ -2111,7 +2150,7 @@ mod tests {
         let mut state = scrolling_rows(8);
 
         for _ in 0..10 {
-            wheel(&mut state, Panel::Contents, Wheel::Down);
+            roll(&mut state, Panel::Contents, Wheel::Down);
         }
         assert_eq!(
             state.contents.scroll.offset(),
@@ -2120,7 +2159,7 @@ mod tests {
         );
 
         for _ in 0..10 {
-            wheel(&mut state, Panel::Contents, Wheel::Up);
+            roll(&mut state, Panel::Contents, Wheel::Up);
         }
         assert_eq!(state.contents.scroll.offset(), 0);
     }
@@ -2130,7 +2169,7 @@ mod tests {
         let mut state = scrolling_rows(40);
         state.focus = Panel::Contents;
         for _ in 0..5 {
-            wheel(&mut state, Panel::Contents, Wheel::Down);
+            roll(&mut state, Panel::Contents, Wheel::Down);
         }
         assert_eq!(state.contents.scroll.offset(), 15, "scrolled well past it");
 
@@ -2165,7 +2204,7 @@ mod tests {
     fn a_click_on_a_scrolled_row_needs_no_correction() {
         let mut state = scrolling_rows(40);
         for _ in 0..4 {
-            wheel(&mut state, Panel::Contents, Wheel::Down);
+            roll(&mut state, Panel::Contents, Wheel::Down);
         }
         let offset = state.contents.scroll.offset();
 
@@ -2185,7 +2224,7 @@ mod tests {
         state.geometry = Geometry::new([3, 3, 3, 1], 0);
         click_row(&mut state, Panel::Tables, 0);
         for _ in 0..3 {
-            wheel(&mut state, Panel::Tables, Wheel::Down);
+            roll(&mut state, Panel::Tables, Wheel::Down);
         }
         assert_eq!(state.tables.scroll.offset(), 4, "seven rows, three visible");
 
@@ -2205,11 +2244,69 @@ mod tests {
         let before = state.ddl;
         assert_ne!(before.offset(), 0, "the fixture starts scrolled");
 
-        wheel(&mut state, Panel::Tables, Wheel::Down);
+        roll(&mut state, Panel::Tables, Wheel::Down);
 
         assert_eq!(
             state.ddl, before,
             "the wheel moved no selection, so nothing is newly described"
+        );
+    }
+
+    #[test]
+    fn a_resize_brings_the_selection_back_into_view() {
+        let mut state = scrolling_rows(40);
+        state.focus = Panel::Contents;
+        for _ in 0..6 {
+            press(&mut state, Key::Char('j'));
+        }
+        assert_eq!(state.contents.cursor.index(), 6);
+        assert_eq!(state.contents.scroll.offset(), 2, "on the last drawn row");
+
+        update(&mut state, Msg::Measured(Geometry::new([2, 2, 2, 1], 0)));
+
+        assert_eq!(
+            state.contents.scroll.offset(),
+            5,
+            "a panel that lost rows draws its selection again"
+        );
+    }
+
+    #[test]
+    fn a_measurement_that_changes_no_height_leaves_a_wheel_alone() {
+        let mut state = scrolling_rows(40);
+        for _ in 0..5 {
+            roll(&mut state, Panel::Contents, Wheel::Down);
+        }
+        let scrolled = state.contents.scroll.offset();
+        assert_eq!(scrolled, 15);
+
+        update(&mut state, Msg::Measured(Geometry::new([5, 5, 5, 1], 0)));
+
+        assert_eq!(
+            state.contents.scroll.offset(),
+            scrolled,
+            "the selection is off screen and the resize follow must not fetch it"
+        );
+        assert_eq!(state.contents.cursor.index(), 0);
+    }
+
+    #[test]
+    fn a_resize_that_moves_a_viewport_asks_for_a_repaint() {
+        let mut state = scrolling_rows(8);
+        for _ in 0..5 {
+            roll(&mut state, Panel::Contents, Wheel::Down);
+        }
+        assert_eq!(state.contents.scroll.offset(), 3);
+        state.dirty = false;
+
+        // Eight rows in an eight-row panel leave nothing to scroll.
+        update(&mut state, Msg::Measured(Geometry::new([8, 8, 8, 1], 0)));
+
+        assert_eq!(state.contents.scroll.offset(), 0);
+        assert!(
+            state.dirty,
+            "a measurement marks nothing dirty by itself, so an offset it \
+             moved would otherwise not be drawn until the next keypress"
         );
     }
 }
