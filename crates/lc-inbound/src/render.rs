@@ -850,18 +850,24 @@ mod tests {
             [
                 "shop.orders_by_customer",
                 "",
-                "PARTITION",
+                "Partition Key",
                 "  customer_id      uuid",
-                "CLUSTERING",
+                "Clustering Key",
                 "  order_date ↓     date",
                 "  order_id ↑   timeuuid",
-                "OPTIONS",
-                "comment",
-                "  Order history.",
-                "gc_grace_seconds",
-                "  864000",
+                // The one blank row, splitting what the table is from what it
+                // is configured to do.
+                "",
+                "Options",
+                // Short enough for one line each; `bloom_filter_fp_chance` and
+                // its value need 26 of the panel's 23, so it keeps the
+                // wrapped shape.
+                "comment  Order history.",
+                "gc_grace_seconds 864000",
                 "bloom_filter_fp_chance",
                 "  0.01",
+                // The row the shorter body leaves unfilled.
+                "",
             ]
         );
     }
@@ -871,14 +877,23 @@ mod tests {
         let buffer = draw_state(100, 40, &describing(orders()));
         let colour = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
 
-        assert_eq!(colour(27), Color::Yellow, "PARTITION");
+        assert_eq!(colour(27), Color::Yellow, "Partition Key");
         assert_eq!(colour(28), Color::Yellow, "its column");
-        assert_eq!(colour(29), Color::Cyan, "CLUSTERING");
+        assert_eq!(colour(29), Color::Cyan, "Clustering Key");
         assert_eq!(colour(30), Color::Cyan, "its column");
+        // 32 is the blank row the settings group opens with.
         assert_eq!(
-            colour(32),
+            colour(33),
             Color::Reset,
             "an option is not part of the key structure and must not read as one"
+        );
+        assert_eq!(
+            colour(34),
+            Theme::TerminalDefault
+                .style(Token::PropertyName)
+                .fg
+                .expect("a property name is highlighted"),
+            "the property name carries the accent its heading does not"
         );
     }
 
@@ -891,8 +906,9 @@ mod tests {
         let buffer = draw_state(100, 40, &state);
 
         assert_eq!(
-            ddl_rows(&buffer)[..5],
-            ["shop", "", "REPLICATION", "class", "  SimpleStrategy",]
+            ddl_rows(&buffer)[..4],
+            ["shop", "", "Replication", "class    SimpleStrategy"],
+            "the only section opens the panel, so it takes no blank row of its own"
         );
     }
 

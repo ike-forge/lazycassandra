@@ -1,14 +1,23 @@
 //! Semantic tokens into concrete styles.
 //!
 //! The default wears the terminal's clothes (vision.md §4, principle 5): it
-//! maps only to the sixteen ANSI colours and never sets a background, so it
-//! inherits whatever palette the user already configured and stays legible on
-//! light and dark alike. Themes that hardcode RGB are possible and strictly
-//! opt-in.
+//! never sets a background and leaves body text the terminal's own foreground,
+//! so it sits inside whatever palette the user already configured rather than
+//! repainting over it. Highlights are ours to choose, truecolor included
+//! (doc/specs/2026-08-09-visual-polish-design.md §7).
+//!
+//! Meaning still comes first. The sixteen ANSI colours carry the things the
+//! user must be able to read on a terminal whose palette is unusable — key
+//! structure, severity, write posture — and an accent is spent only on
+//! something that is marked rather than meant.
 
 use lc_domain::posture::Posture;
 use lc_domain::style::{Severity, Token};
 use ratatui::style::{Color, Modifier, Style};
+
+/// A property name in the Table DDL panel: light enough to stay legible on a
+/// dark background without washing out on a light one.
+const PROPERTY: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Theme {
@@ -42,6 +51,11 @@ impl Theme {
             Token::Severity(Severity::Danger) => {
                 Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
             }
+            // Spends an accent rather than an ANSI slot: a property name marks
+            // where to look, it does not mean anything the way a key column or
+            // a severity does. Its value is left unstyled — two treatments on
+            // one line of a twenty-column panel is one too many.
+            Token::PropertyName => Style::new().fg(PROPERTY),
             // The hint bar's action reads the same as anything muted: quiet,
             // and spending no colour of its own.
             Token::Muted | Token::HintAction => Style::new().add_modifier(Modifier::DIM),
@@ -93,6 +107,7 @@ mod tests {
             Token::Shortcut,
             Token::HintKey,
             Token::HintAction,
+            Token::PropertyName,
         ];
 
         for token in tokens {
