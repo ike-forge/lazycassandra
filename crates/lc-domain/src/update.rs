@@ -225,6 +225,12 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Enter | Key::Char(' ') => return activate(state),
         Key::Char('l') | Key::Right => transition(state, Transition::Open),
         Key::Char('h') | Key::Left => transition(state, Transition::Close),
+        // Last, so every binding above keeps precedence over a panel key.
+        Key::Char(key) => {
+            if let Some(panel) = Panel::from_shortcut(key) {
+                state.focus = panel;
+            }
+        }
         _ => {}
     }
 
@@ -962,6 +968,75 @@ mod tests {
         press(&mut state, Key::BackTab);
 
         assert_eq!(state.focus, Panel::Contents);
+    }
+
+    #[test]
+    fn a_shortcut_focuses_its_panel_from_any_other_panel() {
+        for from in Panel::ALL {
+            for to in Panel::ALL {
+                let mut state = State {
+                    focus: from,
+                    ..State::default()
+                };
+
+                press(&mut state, Key::Char(to.shortcut()));
+
+                assert_eq!(
+                    state.focus,
+                    to,
+                    "'{}' should reach {to:?} from {from:?}",
+                    to.shortcut()
+                );
+            }
+        }
+    }
+
+    /// Also the collision test: a shortcut that an earlier arm already answers
+    /// would never reach the focus arm, and the focus assertion would fail.
+    #[test]
+    fn a_shortcut_moves_focus_and_does_nothing_else() {
+        for panel in Panel::ALL {
+            let mut state = browsing(&["a", "b", "c"]);
+            press(&mut state, Key::Char('j'));
+            let cursor = state.tables.cursor;
+
+            let effects = press(&mut state, Key::Char(panel.shortcut()));
+
+            assert_eq!(state.focus, panel);
+            assert!(
+                effects.is_empty(),
+                "'{}' issued {effects:?}",
+                panel.shortcut()
+            );
+            assert!(!state.should_quit, "'{}' quit the app", panel.shortcut());
+            assert_eq!(
+                state.tables.cursor,
+                cursor,
+                "'{}' disturbed the tree",
+                panel.shortcut()
+            );
+        }
+    }
+
+    #[test]
+    fn a_shifted_shortcut_stays_unbound() {
+        for panel in Panel::ALL {
+            // Focus starts elsewhere, so an unmoved focus is evidence rather
+            // than the state it began in.
+            let elsewhere = panel.next();
+            let mut state = State {
+                focus: elsewhere,
+                ..State::default()
+            };
+            let shifted = panel.shortcut().to_ascii_uppercase();
+
+            press(&mut state, Key::Char(shifted));
+
+            assert_eq!(
+                state.focus, elsewhere,
+                "'{shifted}' must stay free for a binding of its own"
+            );
+        }
     }
 
     fn read_shop_orders() -> State {

@@ -126,6 +126,28 @@ impl Panel {
             Self::Queries => Self::Contents,
         }
     }
+
+    /// The key that focuses this panel from anywhere.
+    ///
+    /// Underlined in the panel's title, so the binding is on screen rather
+    /// than in a manual (vision.md §4, principle 1). Two of the four are not
+    /// leading letters — the titles are fixed by the draft, and the keys were
+    /// chosen to be reachable rather than to match a first character.
+    #[must_use]
+    pub const fn shortcut(self) -> char {
+        match self {
+            Self::Tables => 't',
+            Self::Ddl => 'a',
+            Self::Contents => 'c',
+            Self::Queries => 'u',
+        }
+    }
+
+    /// The panel `key` focuses, if any panel claims it.
+    #[must_use]
+    pub fn from_shortcut(key: char) -> Option<Self> {
+        Self::ALL.into_iter().find(|panel| panel.shortcut() == key)
+    }
 }
 
 /// A selection into a list, which cannot be moved past either end.
@@ -284,6 +306,38 @@ mod tests {
             assert_eq!(panel.next().previous(), panel);
             assert_eq!(panel.previous().next(), panel);
         }
+    }
+
+    #[test]
+    fn every_panel_has_a_distinct_shortcut() {
+        let mut claimed: Vec<char> = Vec::new();
+
+        for panel in Panel::ALL {
+            let key = panel.shortcut();
+            assert!(
+                !claimed.contains(&key),
+                "{panel:?} claims '{key}', which another panel already has"
+            );
+            claimed.push(key);
+        }
+    }
+
+    #[test]
+    fn a_shortcut_leads_back_to_the_panel_that_claims_it() {
+        for panel in Panel::ALL {
+            assert_eq!(Panel::from_shortcut(panel.shortcut()), Some(panel));
+        }
+
+        assert_eq!(Panel::from_shortcut('z'), None);
+    }
+
+    #[test]
+    fn the_shortcuts_are_the_ones_the_design_names() {
+        assert_eq!(
+            Panel::ALL.map(Panel::shortcut),
+            ['t', 'a', 'c', 'u'],
+            "the keys are a promise to the user's fingers, not an implementation detail"
+        );
     }
 
     #[test]
