@@ -1276,6 +1276,20 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_that_would_clip_the_widest_row_gets_no_palette() {
+        // 50% of 68 columns is 34 — the old, undercounted MIN_W. A gate that
+        // let this through would draw a palette whose widest row is clipped
+        // by one character rather than refusing it outright.
+        let drawn = buffer_text(&with_palette(68, 40));
+
+        assert!(!drawn.contains("Commands"), "the block must not be titled");
+        assert!(
+            !drawn.contains("Global"),
+            "nor must the catalogue be listed"
+        );
+    }
+
+    #[test]
     fn the_frame_reports_how_many_rows_a_palette_would_show() {
         let state = State::default();
         let mut terminal =
