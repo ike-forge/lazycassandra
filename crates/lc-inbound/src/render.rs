@@ -760,9 +760,9 @@ mod tests {
         state
     }
 
-    /// Inside the Ddl panel's border at 100x40: fourteen rows of 23 columns.
+    /// Inside the Ddl panel's border at 100x41: fourteen rows of 23 columns.
     fn ddl_rows(buffer: &Buffer) -> Vec<String> {
-        (25..38)
+        (25..39)
             .map(|y| {
                 (1..24)
                     .filter_map(|x| buffer.cell((x, y)))
@@ -776,7 +776,7 @@ mod tests {
 
     #[test]
     fn a_selected_tables_shape_is_drawn_above_its_options() {
-        let buffer = draw_state(100, 40, &describing(orders()));
+        let buffer = draw_state(100, 41, &describing(orders()));
 
         assert_eq!(
             ddl_rows(&buffer),
@@ -794,6 +794,7 @@ mod tests {
                 "gc_grace_seconds",
                 "  864000",
                 "bloom_filter_fp_chance",
+                "  0.01",
             ]
         );
     }
@@ -830,7 +831,7 @@ mod tests {
 
     #[test]
     fn the_ddl_panel_is_empty_until_something_is_selected() {
-        let buffer = draw_state(100, 40, &State::default());
+        let buffer = draw_state(100, 41, &State::default());
 
         assert!(
             ddl_rows(&buffer).iter().all(String::is_empty),
