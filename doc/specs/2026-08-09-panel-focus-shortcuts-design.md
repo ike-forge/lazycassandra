@@ -48,7 +48,11 @@ declares a key — the same guarantee `ALL` and `next()` already give.
 precedence by match order:
 
 ```rust
-Key::Char(key) if Panel::from_shortcut(key).is_some() => { /* set focus */ }
+Key::Char(key) => {
+    if let Some(panel) = Panel::from_shortcut(key) {
+        state.focus = panel;
+    }
+}
 ```
 
 Global, unconditional, and independent of connection state — focus is a
