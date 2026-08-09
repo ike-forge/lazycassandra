@@ -159,6 +159,15 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             if state.ddl != before {
                 state.mark_dirty();
             }
+
+            // A palette the frame shrank past cannot stay open: nothing would
+            // draw it, and it would still be capturing every key
+            // (design §5.1).
+            if geometry.command_rows() == 0 && matches!(state.overlay, Some(Overlay::Commands(_))) {
+                state.overlay = None;
+                state.mark_dirty();
+            }
+
             Vec::new()
         }
 
@@ -943,6 +952,16 @@ mod tests {
 
         press(&mut state, Key::Home);
         assert_eq!(palette(&state).expect("still open").selected(), 1);
+
+        press(&mut state, Key::PageDown);
+        assert_eq!(
+            palette(&state).expect("still open").selected(),
+            15,
+            "paging is routed at the handle_key layer, same as j/k"
+        );
+
+        press(&mut state, Key::PageUp);
+        assert_eq!(palette(&state).expect("still open").selected(), 1);
     }
 
     #[test]
@@ -957,16 +976,42 @@ mod tests {
 
     #[test]
     fn an_open_palette_swallows_the_keys_it_does_not_use() {
+        // A keyspace with a table, folded and selected: `Enter`/`Space`
+        // leaking to `activate` would unfold it, which is a leak `focus`
+        // alone would not catch, unlike a childless keyspace.
         for key in [Key::Char('t'), Key::Tab, Key::Enter, Key::Char(' ')] {
-            let mut state = measured(&["a"]);
+            let mut state = browsing_tables(&[("a", &["t1"])]);
+            state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
             press(&mut state, Key::Char('?'));
-            let before = state.focus;
+            let before = crate::view::view_model(&state);
 
-            press(&mut state, key);
+            let effects = press(&mut state, key);
 
             assert!(palette(&state).is_some(), "{key:?} dismissed the palette");
-            assert_eq!(state.focus, before, "{key:?} reached past the palette");
+            assert_eq!(
+                crate::view::view_model(&state),
+                before,
+                "{key:?} reached past the palette"
+            );
+            assert!(effects.is_empty(), "{key:?} issued {effects:?}");
         }
+    }
+
+    #[test]
+    fn a_frame_that_shrinks_below_the_palette_closes_it() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+        assert!(palette(&state).is_some());
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 0)),
+        );
+
+        assert!(
+            state.overlay.is_none(),
+            "a palette nothing can draw must not still capture keys"
+        );
     }
 
     #[test]
@@ -1767,7 +1812,6 @@ mod tests {
 
         sized(&mut state, [3, 3, 3, 3], 40);
         state.ddl.page_down(40, 3);
-        state.geometry = Geometry::new([3, 3, 3, 3], 40, 14);
         state.focus = focus;
         state
     }
@@ -1794,8 +1838,21 @@ mod tests {
 
     #[test]
     fn every_global_hint_does_something_in_every_panel() {
+        // `?` is filtered by `hints::bar` itself once a binding's effect
+        // depends on more than focus (design §5.1) — the sweep is over what
+        // the bar actually shows for this state, which is what it promises.
         for panel in Panel::ALL {
+            let shown: Vec<&str> = crate::view::hints::bar(&populated(panel))
+                .global
+                .iter()
+                .map(|hint| hint.action)
+                .collect();
+
             for binding in crate::view::hints::GLOBAL {
+                if !shown.contains(&binding.action) {
+                    continue;
+                }
+
                 for &key in binding.keys {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);

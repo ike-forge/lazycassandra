@@ -81,9 +81,11 @@ is a bug.
 
 **Bindings are global; panels refuse.** There is no focused-vs-global key table.
 Every key is dispatched unconditionally and a panel-specific action checks
-`state.focus` and returns. This keeps one flat, greppable list of everything the
-program responds to, at the cost of a guard per action — the trade is deliberate
-and is revisited when the CQL editor lands (§4).
+`state.focus` and returns — while the palette is closed; while it is open, every
+key is dispatched to it instead (§2, "One mode, opened deliberately"). This
+keeps one flat, greppable list of everything the program responds to, at the
+cost of a guard per action — the trade is deliberate and is revisited when the
+CQL editor lands (§4).
 
 **Match order is precedence.** The panel-focus arm is last, so it can only claim
 letters no earlier arm took. Adding an arm above it can silently steal a focus
@@ -115,11 +117,12 @@ the bottom row names each focused panel's principal bindings, not its full
 surface — the bar has never claimed to be the complete list
 ([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` stays out of it
 because it only does something when an overlay is up, and naming it always
-would be a lie in most frames (design §3); `Shift-Tab` is `Tab`'s inverse, and
-Tables' `PageDown`/`PageUp`/`Home`/`End` are increments on a move the bar
-already names as `j/k move` — neither teaches something the bar's existing
-hints don't. A binding that is in none of a title, the bar, or the palette is a
-binding only this file knows about.
+would be a lie in most frames (design §3) — except while the palette is open,
+the one frame where it is never a lie, and where it is named (§2); `Shift-Tab`
+is `Tab`'s inverse, and Tables' `PageDown`/`PageUp`/`Home`/`End` are increments
+on a move the bar already names as `j/k move` — neither teaches something the
+bar's existing hints don't. A binding that is in none of a title, the bar, or
+the palette is a binding only this file knows about.
 
 **One mode, opened deliberately.** No letter changes meaning. The one state
 that captures keys is the command palette, which the user opened with `?` and
@@ -198,10 +201,12 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `?` opens and closes the palette | `question_mark_opens_the_palette_and_closes_it`, `escape_closes_the_palette` |
 | It replaces a message rather than stacking | `opening_the_palette_replaces_the_message_it_covers` |
 | It does not open where it cannot be drawn | `the_palette_does_not_open_where_it_cannot_be_drawn` |
+| A resize that leaves it undrawable closes it too | `a_frame_that_shrinks_below_the_palette_closes_it` |
 | An open palette takes motion and swallows the rest | `an_open_palette_takes_the_motion_the_panel_would_have`, `an_open_palette_swallows_the_keys_it_does_not_use`, `q_quits_from_inside_the_palette` |
 | The cursor never lands on a heading | `the_palette_cursor_steps_over_a_heading`, `paging_settles_on_a_command_rather_than_a_heading` (`commands.rs`) |
 | No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` (`commands.rs`) |
 | The bar names `?`, and the palette's own keys | `the_bar_names_the_palette_that_reaches_the_rest`, `the_bar_names_what_the_palette_responds_to` (`view/hints.rs`) |
+| The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update.rs`) |
 | The palette is drawn, centred, capped and scrollable | `the_palette_lists_the_catalogue`, `the_palette_is_centred`, `a_wide_frame_does_not_get_a_wide_palette`, `a_tall_frame_does_not_get_a_palette_full_of_blank_rows`, `a_frame_too_small_for_a_palette_does_not_get_one` (`inbound/render.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_other_panel` is what makes the

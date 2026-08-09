@@ -77,10 +77,11 @@ const PALETTE: &[Binding] = &[
 /// `esc` is named only here. The bar leaves it out everywhere else because it
 /// does something only when an overlay is up, and naming it always would be a
 /// lie in most frames (hint bar design §3). With the palette open it is never
-/// a lie, and it is half of what the user is owed for `q` still quitting.
+/// a lie, and `?`/`esc` together are what the user is owed for `q` still
+/// quitting (design §7) — both close it, so both are named.
 const PALETTE_GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Escape],
+        keys: &[Key::Char('?'), Key::Escape],
         action: "close",
     },
     Binding {
@@ -97,12 +98,20 @@ pub(crate) fn bar(state: &State) -> HintBar {
         };
     }
 
+    // `?` promises a palette that draws; below `command_rows()` it would
+    // not, so the bar drops the promise rather than make it (design §5.1).
+    let global = if state.geometry.command_rows() == 0 {
+        &GLOBAL[1..]
+    } else {
+        GLOBAL
+    };
+
     HintBar {
         panel: match state.focus.hints() {
             [] => HintGroup::Idle("nothing here yet"),
             bindings => HintGroup::Keys(bindings.iter().map(rendered).collect()),
         },
-        global: GLOBAL.iter().map(rendered).collect(),
+        global: global.iter().map(rendered).collect(),
     }
 }
 
@@ -147,7 +156,15 @@ fn name(key: Key) -> String {
 mod tests {
     use super::*;
     use crate::commands::CommandsPanel;
-    use crate::state::{Overlay, Panel, State};
+    use crate::state::{Geometry, Overlay, Panel, State};
+
+    /// A frame big enough for a palette to draw in.
+    fn fits() -> State {
+        State {
+            geometry: Geometry::new([8, 14, 20, 1], 37, 14),
+            ..State::default()
+        }
+    }
 
     #[test]
     fn several_keys_for_one_action_join_with_a_slash() {
@@ -192,9 +209,18 @@ mod tests {
     #[test]
     fn the_bar_names_the_palette_that_reaches_the_rest() {
         assert_eq!(
-            bar(&State::default()).global[0].keys,
+            bar(&fits()).global[0].keys,
             "?",
             "the way to every other binding survives longest but one"
+        );
+    }
+
+    #[test]
+    fn the_bar_drops_the_palette_hint_where_no_palette_would_fit() {
+        assert_eq!(
+            bar(&State::default()).global[0].action,
+            "panel",
+            "a hint for a key that can do nothing here is a bar that lies"
         );
     }
 
@@ -211,7 +237,7 @@ mod tests {
             panic!("an open palette has bindings");
         };
         assert_eq!(hints[0].action, "scroll");
-        assert_eq!(bar.global[0].keys, "esc");
+        assert_eq!(bar.global[0].keys, "?/esc");
         assert_eq!(bar.global[0].action, "close");
         assert_eq!(bar.global.last().expect("q is last").action, "quit");
     }

@@ -160,17 +160,19 @@ mod tests {
     fn a_wide_frame_shows_every_hint() {
         assert_eq!(
             drawn(Panel::Tables, 80),
-            " j/k move  l/h fold  ⏎ open │ ? commands  tab panel  q quit"
+            " j/k move  l/h fold  ⏎ open │ tab panel  q quit"
         );
     }
 
     #[test]
     fn hints_are_dropped_whole_and_lowest_value_first() {
         // The thresholds are the widths at which the previous bar stops
-        // fitting (design §6).
+        // fitting (design §6). `?` never joins this fixture's bar — these
+        // states never carry a geometry a palette would fit (design §5.1) —
+        // so the thresholds are exactly what they were before `?` existed.
         assert_eq!(
             drawn(Panel::Tables, 46),
-            " j/k move │ ? commands  tab panel  q quit"
+            " j/k move  l/h fold │ tab panel  q quit"
         );
         assert_eq!(drawn(Panel::Tables, 38), " j/k move │ tab panel  q quit");
         assert_eq!(drawn(Panel::Tables, 28), " j/k move │ q quit");
@@ -187,7 +189,7 @@ mod tests {
     fn a_panel_with_no_bindings_shows_its_sentence_and_the_global_tail() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " nothing here yet │ ? commands  tab panel  q quit"
+            " nothing here yet │ tab panel  q quit"
         );
     }
 

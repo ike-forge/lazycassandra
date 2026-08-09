@@ -248,7 +248,17 @@ renderer. Without it the palette opens in a frame too small to draw it, and the
 user is in a mode with no pixel on screen saying so, wondering why `j` stopped
 moving the tree. `Shell::TooSmall` already returns `Geometry::default()`, whose
 `command_rows` is zero, so the too-small screen gets the right behaviour for
-free.
+free — at open time.
+
+The gate has to hold a second time, or a resize reopens the hole it closed.
+`Msg::Measured` stores every new `Geometry` regardless of what is on screen, so
+a palette opened at a generous size and left open survives a shrink on its own:
+`command_rows` goes to zero, nothing draws it, and `handle_key` is still routing
+every key to the palette because `state.overlay` never heard about the resize.
+`Msg::Measured` closes an open `Overlay::Commands` the moment `command_rows()`
+reads zero, marking the frame dirty exactly when that closing is itself a
+visible change — the same rule the `ddl` clamp immediately above it already
+follows, and for the same reason: the measure/redraw loop has to terminate.
 
 ## 6. The catalogue
 
@@ -357,7 +367,7 @@ teaches one binding; `?` teaches all of them.
 underneath it:
 
 ```
- j/k scroll  pgdn/pgup page  home/end ends │ esc close  q quit
+ j/k scroll  pgdn/pgup page  home/end ends │ ?/esc close  q quit
 ```
 
 `HintBar` already has the two halves this needs — a panel group and a global
@@ -366,8 +376,9 @@ one — so this is a substitution at the top of `hints::bar`, not a new shape.
 This is the one state in which `Esc` is named on the bar. Hint bar design §3
 kept it off deliberately, because `Esc` does something only when an overlay is
 up and "naming it always would be a lie in most frames". With the palette open
-it is never a lie, and it is half of the mitigation §7 owes the user for `q`
-still quitting.
+it is never a lie, and `?`/`Esc` together — both close it — are the mitigation
+§7 owes the user for `q` still quitting: naming only `Esc` would leave `?`
+looking like a one-way door once the palette is open.
 
 ## 8. Drawing it
 
