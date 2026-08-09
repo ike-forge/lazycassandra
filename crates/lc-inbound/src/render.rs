@@ -1,6 +1,7 @@
 //! Drawing a frame.
 
 use lc_domain::ViewModel;
+use lc_domain::state::{Geometry, Panel};
 use lc_domain::style::Token;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
@@ -12,11 +13,17 @@ use crate::layout::layout;
 use crate::theme::Theme;
 
 /// Draw one titled block per panel, skipping any the terminal is too small to
-/// hold.
-pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
+/// hold, and report what the frame turned out to be.
+///
+/// The return value is the domain's only way to learn how tall a panel is and
+/// how many lines the Ddl body wrapped to
+/// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
+pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
     let rects = layout(frame.area());
+    let mut heights = [0; 4];
+    let mut ddl_lines = 0;
 
-    for panel in &view.panels {
+    for (index, panel) in view.panels.iter().enumerate() {
         let area = rects.get(panel.panel);
         if area.is_empty() {
             continue;
@@ -37,16 +44,27 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        if let Some(extent) = crate::body::render(frame, inner, &panel.body, theme)
-            && extent.overflows()
-        {
-            scrollbar(frame, area, &extent, theme);
+        match crate::body::render(frame, inner, &panel.body, theme) {
+            Some(extent) => {
+                heights[index] = extent.visible;
+                if panel.panel == Panel::Ddl {
+                    ddl_lines = extent.total;
+                }
+                if extent.overflows() {
+                    scrollbar(frame, area, &extent, theme);
+                }
+            }
+            // `Blank` and `Notice` do not scroll, so what such a panel can
+            // show is simply the room it was given.
+            None => heights[index] = usize::from(inner.height),
         }
     }
 
     if let Some(overlay) = &view.overlay {
         crate::overlay::render(frame, overlay, theme);
     }
+
+    Geometry::new(heights, ddl_lines)
 }
 
 /// Over the block's right border, so it spends no content width — and only
@@ -78,7 +96,7 @@ mod tests {
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
     };
     use lc_domain::posture::Posture;
-    use lc_domain::state::{Connection, ConnectionState, Panel, SchemaState};
+    use lc_domain::state::{Connection, ConnectionState, Geometry, Panel, SchemaState};
     use lc_domain::view::PanelBody;
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
@@ -98,7 +116,9 @@ mod tests {
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 
         terminal
-            .draw(|frame| render(frame, &view_model(&state), Theme::TerminalDefault))
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::TerminalDefault);
+            })
             .expect("TestBackend always draws");
 
         terminal.backend().buffer().clone()
@@ -278,7 +298,9 @@ mod tests {
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 
         terminal
-            .draw(|frame| render(frame, &view_model(state), Theme::TerminalDefault))
+            .draw(|frame| {
+                render(frame, &view_model(state), Theme::TerminalDefault);
+            })
             .expect("TestBackend always draws");
 
         terminal.backend().buffer().clone()
@@ -731,6 +753,60 @@ mod tests {
             panic!("a selected row has something to describe");
         };
         details
+    }
+
+    fn geometry_of(width: u16, height: u16, state: &State) -> Geometry {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
+        let mut geometry = Geometry::default();
+
+        terminal
+            .draw(|frame| geometry = render(frame, &view_model(state), Theme::TerminalDefault))
+            .expect("TestBackend always draws");
+
+        geometry
+    }
+
+    #[test]
+    fn the_frame_reports_what_each_panel_can_show() {
+        // At 40x20: a 16-column sidebar, Tables 12 rows tall and Ddl 8, so
+        // ten and six rows of content inside their borders.
+        let geometry = geometry_of(40, 20, &describing(orders()));
+
+        assert_eq!(geometry.height(Panel::Tables), 10);
+        assert_eq!(geometry.height(Panel::Ddl), 6);
+        assert_eq!(
+            geometry.ddl_lines(),
+            crate::details::lines(
+                &ddl_details(&describing(orders())),
+                14,
+                Theme::TerminalDefault
+            )
+            .len()
+        );
+    }
+
+    #[test]
+    fn a_grid_reports_the_rows_it_can_show_rather_than_its_height() {
+        let state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
+
+        let geometry = geometry_of(60, 12, &state);
+
+        // The Contents panel is 9 rows tall at this size: 7 inside its
+        // border, one of which the header takes.
+        assert_eq!(
+            geometry.height(Panel::Contents),
+            6,
+            "a page motion must not count the header as a row it can land on"
+        );
+    }
+
+    #[test]
+    fn a_collapsed_panel_reports_no_room_at_all() {
+        let geometry = geometry_of(40, 5, &describing(orders()));
+
+        assert_eq!(geometry.height(Panel::Ddl), 0);
+        assert_eq!(geometry.height(Panel::Queries), 0);
     }
 
     #[test]

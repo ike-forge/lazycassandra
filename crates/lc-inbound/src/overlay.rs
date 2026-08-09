@@ -127,7 +127,9 @@ mod tests {
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 
         terminal
-            .draw(|frame| render(frame, &view_model(&state), Theme::TerminalDefault))
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::TerminalDefault);
+            })
             .expect("TestBackend always draws");
 
         terminal.backend().buffer().clone()
