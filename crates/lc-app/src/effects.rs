@@ -10,9 +10,11 @@ use lc_domain::ports::Cluster;
 use lc_domain::{Effect, Msg};
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::input::Incoming;
+
 /// The effects that still have no port behind them are inert. `Quit` needs no
 /// work here — `update` has already set `State::should_quit`.
-pub(crate) fn run(tx: &UnboundedSender<Msg>, cluster: &Arc<dyn Cluster>, effect: &Effect) {
+pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, effect: &Effect) {
     match effect {
         Effect::Connect(conn) => {
             let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
@@ -22,7 +24,7 @@ pub(crate) fn run(tx: &UnboundedSender<Msg>, cluster: &Arc<dyn Cluster>, effect:
                     Err(error) => Msg::ConnectFailed { conn, error },
                 };
                 // A closed channel means the main loop has already ended.
-                let _sent = tx.send(msg);
+                let _sent = tx.send(msg.into());
             });
         }
 
@@ -36,7 +38,7 @@ pub(crate) fn run(tx: &UnboundedSender<Msg>, cluster: &Arc<dyn Cluster>, effect:
                     },
                     Err(error) => Msg::SchemaFailed { conn, error },
                 };
-                let _sent = tx.send(msg);
+                let _sent = tx.send(msg.into());
             });
         }
 
@@ -56,7 +58,7 @@ pub(crate) fn run(tx: &UnboundedSender<Msg>, cluster: &Arc<dyn Cluster>, effect:
                     },
                     Err(error) => Msg::Failed { query, error },
                 };
-                let _sent = tx.send(msg);
+                let _sent = tx.send(msg.into());
             });
         }
 

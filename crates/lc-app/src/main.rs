@@ -5,16 +5,18 @@
 
 mod effects;
 mod input;
+mod mouse;
 
 use std::sync::Arc;
 
 use anyhow::Result;
+use input::Incoming;
 use lc_domain::model::ConnId;
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
 use lc_domain::state::Geometry;
 use lc_domain::{Msg, State, update, view_model};
-use lc_inbound::Theme;
+use lc_inbound::{FrameMap, Rendered, Theme};
 use lc_outbound::cassandra::CassandraCluster;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
@@ -25,9 +27,17 @@ async fn main() -> Result<()> {
     // panic does not leave the user in raw mode. It does not cover panics on
     // tokio workers — architecture.md §11 has that still open.
     let terminal = ratatui::init();
-    let result = run(terminal).await;
+    let result = captured(terminal).await;
     ratatui::restore();
     result
+}
+
+/// Holds mouse capture for exactly as long as the loop runs, so it is released
+/// while the terminal is still ours.
+async fn captured(terminal: DefaultTerminal) -> Result<()> {
+    let _capture = mouse::MouseCapture::enable()?;
+
+    run(terminal).await
 }
 
 /// The fixture's convention (docker/compose.yaml). Scaffolding until the
@@ -40,12 +50,12 @@ fn contact_point() -> String {
 }
 
 /// Draws a frame and reports what it turned out to be.
-fn draw(terminal: &mut DefaultTerminal, state: &State, theme: Theme) -> Result<Geometry> {
-    let mut geometry = Geometry::default();
+fn draw(terminal: &mut DefaultTerminal, state: &State, theme: Theme) -> Result<Rendered> {
+    let mut rendered = Rendered::default();
 
-    terminal.draw(|frame| geometry = lc_inbound::render(frame, &view_model(state), theme))?;
+    terminal.draw(|frame| rendered = lc_inbound::render(frame, &view_model(state), theme))?;
 
-    Ok(geometry)
+    Ok(rendered)
 }
 
 /// Tells the domain what the frame turned out to be, but only when it
@@ -53,14 +63,26 @@ fn draw(terminal: &mut DefaultTerminal, state: &State, theme: Theme) -> Result<G
 ///
 /// Sending unconditionally would redraw, re-measure and redraw forever
 /// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
-fn report(tx: &mpsc::UnboundedSender<Msg>, last: &mut Option<Geometry>, geometry: Geometry) {
+fn report(tx: &mpsc::UnboundedSender<Incoming>, last: &mut Option<Geometry>, geometry: Geometry) {
     if *last == Some(geometry) {
         return;
     }
 
     *last = Some(geometry);
     // A closed channel means the main loop has already ended.
-    let _sent = tx.send(Msg::Measured(geometry));
+    let _sent = tx.send(Msg::Measured(geometry).into());
+}
+
+/// A pointer event only means something against the frame it happened in, so
+/// it is resolved here rather than on the reader thread, which has none.
+///
+/// `None` is a gesture that landed on nothing, or one with no binding behind
+/// it: no message, and so no redraw.
+fn resolve(incoming: Incoming, map: &FrameMap) -> Option<Msg> {
+    match incoming {
+        Incoming::Msg(msg) => Some(msg),
+        Incoming::Mouse(event) => lc_inbound::input::to_pointer(event, map).map(Msg::Pointer),
+    }
 }
 
 async fn run(mut terminal: DefaultTerminal) -> Result<()> {
@@ -82,10 +104,16 @@ async fn run(mut terminal: DefaultTerminal) -> Result<()> {
         effects::run(&tx, &cluster, effect);
     }
 
-    report(&tx, &mut measured, draw(&mut terminal, &state, theme)?);
+    let rendered = draw(&mut terminal, &state, theme)?;
+    let mut map = rendered.map;
+    report(&tx, &mut measured, rendered.geometry);
     state.dirty = false;
 
-    while let Some(msg) = rx.recv().await {
+    while let Some(incoming) = rx.recv().await {
+        let Some(msg) = resolve(incoming, &map) else {
+            continue;
+        };
+
         for effect in update(&mut state, msg) {
             effects::run(&tx, &cluster, &effect);
         }
@@ -95,7 +123,9 @@ async fn run(mut terminal: DefaultTerminal) -> Result<()> {
         }
 
         if state.dirty {
-            report(&tx, &mut measured, draw(&mut terminal, &state, theme)?);
+            let rendered = draw(&mut terminal, &state, theme)?;
+            map = rendered.map;
+            report(&tx, &mut measured, rendered.geometry);
             state.dirty = false;
         }
     }
