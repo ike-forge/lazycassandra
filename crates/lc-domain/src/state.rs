@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::contents::ContentsPanel;
+use crate::editor::Editor;
 use crate::model::{ConnId, DbError, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::style::Severity;
@@ -22,6 +23,9 @@ pub struct State {
     /// The Table DDL panel scrolls a viewport rather than a selection: it has
     /// no row to act on, so there is nothing for a cursor to mean.
     pub ddl: Scroll,
+    /// The Queries panel's buffer. Not a `QueriesPanel`: the panel is the
+    /// editor until the session log arrives.
+    pub queries: Editor,
     /// What the last frame turned out to be, so a motion knows how far a page
     /// is and where the end is.
     pub geometry: Geometry,
@@ -193,6 +197,19 @@ const CONTENTS_HINTS: &[Binding] = &[
     },
 ];
 
+const QUERIES_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Key::Enter],
+        action: "newline",
+    },
+    // Named here and nowhere else: `Esc` only leaves a panel that takes text,
+    // so this is the one bar where saying so is true (hint bar design §3).
+    Binding {
+        keys: &[Key::Escape],
+        action: "leave",
+    },
+];
+
 impl Panel {
     /// Every panel, in reading order.
     pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
@@ -241,18 +258,29 @@ impl Panel {
         Self::ALL.into_iter().find(|panel| panel.shortcut() == key)
     }
 
+    /// Whether letters typed at this panel are text rather than bindings.
+    ///
+    /// Focus is the mode (design §3). Exhaustive for the reason [`Panel::hints`]
+    /// is: a fifth panel cannot compile without saying which it is.
+    #[must_use]
+    pub const fn takes_text(self) -> bool {
+        match self {
+            Self::Tables | Self::Ddl | Self::Contents => false,
+            Self::Queries => true,
+        }
+    }
+
     /// What this panel responds to.
     ///
     /// Exhaustive, so a fifth panel cannot compile without declaring its
-    /// bindings — the same guarantee `ALL` and `shortcut` give. Queries has
-    /// none yet and says so.
+    /// bindings — the same guarantee `ALL` and `shortcut` give.
     #[must_use]
     pub const fn hints(self) -> &'static [Binding] {
         match self {
             Self::Tables => TABLES_HINTS,
             Self::Ddl => DDL_HINTS,
             Self::Contents => CONTENTS_HINTS,
-            Self::Queries => &[],
+            Self::Queries => QUERIES_HINTS,
         }
     }
 }
@@ -877,15 +905,11 @@ mod tests {
     }
 
     #[test]
-    fn only_the_queries_panel_has_nothing_to_offer() {
+    fn every_panel_says_what_it_responds_to() {
         for panel in Panel::ALL {
-            let empty = panel.hints().is_empty();
-
-            assert_eq!(
-                empty,
-                panel == Panel::Queries,
-                "{panel:?} claiming {} bindings is a deliberate change",
-                panel.hints().len()
+            assert!(
+                !panel.hints().is_empty(),
+                "{panel:?} responds to nothing, which no panel does any more"
             );
         }
     }

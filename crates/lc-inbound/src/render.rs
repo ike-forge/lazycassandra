@@ -73,7 +73,11 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let body = crate::body::render(frame, inner, &panel.body, theme);
+        // An overlay owns the frame: nothing beneath it shows a cursor, or it
+        // blinks over the modal at a position that means nothing there.
+        let focused = panel.panel == view.focus && view.overlay.is_none();
+
+        let body = crate::body::render(frame, inner, &panel.body, focused, theme);
 
         match &body {
             Some(drawn) => {
@@ -284,8 +288,8 @@ mod tests {
             bars[2]
         );
         assert!(
-            bars[3].contains("nothing here yet"),
-            "Queries has nothing: {:?}",
+            bars[3].contains("⏎ newline"),
+            "Queries takes text: {:?}",
             bars[3]
         );
     }
@@ -1499,5 +1503,180 @@ mod tests {
         let (_buffer, tiny) = draw_mapped(39, 6, &State::default());
         assert_eq!(tiny.hit(0, 0), None, "nothing is drawn, so nothing is hit");
         assert_eq!(tiny.hit(20, 3), None);
+    }
+
+    /// A state focused on `focus`, with `text` in the Queries buffer.
+    fn with_query(text: &str, focus: Panel) -> State {
+        let mut state = State {
+            focus,
+            ..State::default()
+        };
+        for character in text.chars() {
+            if character == '\n' {
+                state.queries.insert_newline();
+            } else {
+                state.queries.insert(character);
+            }
+        }
+        state
+    }
+
+    /// The drawn frame and where the terminal cursor ended up, if it is shown.
+    fn drawn_with_cursor(
+        width: u16,
+        height: u16,
+        state: &State,
+    ) -> (Buffer, Option<ratatui::layout::Position>) {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(state), Theme::TerminalDefault);
+            })
+            .expect("TestBackend always draws");
+
+        let backend = terminal.backend();
+        let cursor = backend.cursor_visible().then(|| backend.cursor_position());
+
+        (backend.buffer().clone(), cursor)
+    }
+
+    /// The Queries panel at 80x24 is `Rect { x: 20, y: 20, w: 60, h: 3 }`:
+    /// borders on rows 20 and 22, its one content row on 21, and its inner
+    /// left edge at column 21. The hint bar owns row 23.
+    const CONTENT_ROW: u16 = 21;
+    const INNER_LEFT: u16 = 21;
+
+    #[test]
+    fn the_editor_draws_what_has_been_typed() {
+        let (buffer, _) = drawn_with_cursor(80, 24, &with_query("SELECT * FROM t", Panel::Queries));
+
+        assert!(
+            row(&buffer, CONTENT_ROW).contains("SELECT * FROM t"),
+            "the buffer is on the panel's one content row: {:?}",
+            row(&buffer, CONTENT_ROW)
+        );
+    }
+
+    #[test]
+    fn the_cursor_sits_where_the_domain_says_it_is() {
+        let state = with_query("SELECT", Panel::Queries);
+        let expected = state.queries.cursor();
+
+        let (_, cursor) = drawn_with_cursor(80, 24, &state);
+
+        let cursor = cursor.expect("a focused editor shows a cursor");
+        assert_eq!(
+            cursor.x,
+            INNER_LEFT + u16::try_from(expected.column).expect("a test column fits"),
+            "one column past the six typed"
+        );
+        assert_eq!(cursor.y, CONTENT_ROW);
+    }
+
+    #[test]
+    fn an_unfocused_editor_sets_no_cursor() {
+        let (_, cursor) = drawn_with_cursor(80, 24, &with_query("SELECT", Panel::Tables));
+
+        assert_eq!(
+            cursor, None,
+            "a cursor in an unfocused panel would say it takes the keys"
+        );
+    }
+
+    #[test]
+    fn a_long_line_scrolls_sideways_and_keeps_the_cursor_on_screen() {
+        let long = "SELECT * FROM keyspace_with_a_long_name.table_with_a_long_name WHERE id = 7";
+        let state = with_query(long, Panel::Queries);
+
+        let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
+        let drawn = row(&buffer, CONTENT_ROW);
+
+        assert!(
+            drawn.contains("WHERE id = 7"),
+            "the cursor's end of the line is what is shown: {drawn:?}"
+        );
+        assert!(
+            !drawn.contains("SELECT *"),
+            "the start has scrolled off to the left: {drawn:?}"
+        );
+        let cursor = cursor.expect("a focused editor shows a cursor");
+        assert!(
+            cursor.x < 80,
+            "the cursor stays inside the frame at {}",
+            cursor.x
+        );
+    }
+
+    #[test]
+    fn a_tall_buffer_scrolls_and_says_so() {
+        let state = with_query("one\ntwo\nthree\nfour", Panel::Queries);
+
+        let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
+        let drawn = row(&buffer, CONTENT_ROW);
+
+        assert!(
+            drawn.contains("four"),
+            "the cursor's line is the one drawn: {drawn:?}"
+        );
+        assert_eq!(
+            cursor.expect("a focused editor shows a cursor").y,
+            CONTENT_ROW,
+            "the cursor's own row is on screen"
+        );
+        assert!(
+            drawn.ends_with(THUMB),
+            "four lines in a one-row panel grows the scrollbar: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn a_double_width_character_does_not_desync_the_cursor_from_the_scroll() {
+        // Thirty two-column characters force a horizontal scroll whose
+        // arithmetic offset lands inside one of them, not on a boundary
+        // between characters.
+        let long = format!("{}SELECT", "永".repeat(30));
+        let state = with_query(&long, Panel::Queries);
+
+        let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
+        let drawn = row(&buffer, CONTENT_ROW);
+
+        assert!(
+            drawn.contains("SELECT"),
+            "the cursor's end of the line is what is shown: {drawn:?}"
+        );
+        assert_eq!(
+            buffer.cell((INNER_LEFT, CONTENT_ROW)).map(Cell::symbol),
+            Some("永"),
+            "the drawn row begins on a whole character the offset names, not a half-dropped one: {drawn:?}"
+        );
+
+        let cursor = cursor.expect("a focused editor shows a cursor");
+        assert_eq!(cursor.y, CONTENT_ROW);
+        assert_eq!(
+            buffer.cell((cursor.x - 1, CONTENT_ROW)).map(Cell::symbol),
+            Some("T"),
+            "the cursor sits one cell past the last character typed, not inside or short of it"
+        );
+    }
+
+    #[test]
+    fn an_overlay_hides_the_cursor_even_when_the_editor_is_focused() {
+        let state = State {
+            overlay: Some(Overlay {
+                title: "Query failed".to_owned(),
+                message: "boom".to_owned(),
+                severity: Severity::Danger,
+            }),
+            ..with_query("SELECT", Panel::Queries)
+        };
+
+        let (_, cursor) = drawn_with_cursor(80, 24, &state);
+
+        assert_eq!(
+            cursor, None,
+            "an overlay owns the frame; a cursor beneath it would blink over the modal at a position that means nothing there"
+        );
     }
 }

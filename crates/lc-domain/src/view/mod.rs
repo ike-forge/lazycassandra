@@ -15,9 +15,11 @@ mod title;
 
 pub use contents::{GridCell, GridColumn};
 pub use details::{DetailRow, Details, Group, Section};
-pub use hints::{Binding, Hint, HintBar, HintGroup};
+pub use hints::{Binding, Hint, HintBar};
 pub use tables::{Marker, TreeRow};
 pub use title::PanelTitle;
+
+pub use crate::editor::Position;
 
 use crate::model::DbError;
 use crate::state::{Overlay, Panel, State};
@@ -94,6 +96,15 @@ pub enum PanelBody {
         details: Details,
         offset: usize,
     },
+    /// A text buffer and where its cursor is.
+    ///
+    /// Carries no offsets. The renderer derives both from the cursor and the
+    /// area it has, the way it already does for a list's selection — so an
+    /// editor scrolls without any state being stored for it (design §4).
+    Editor {
+        lines: Vec<String>,
+        cursor: Position,
+    },
     /// A result set: one header per column, one row per row.
     ///
     /// Carries no widths. Sizing columns needs to know how wide the panel is,
@@ -143,7 +154,10 @@ fn body(state: &State, panel: Panel) -> PanelBody {
         Panel::Tables => tables::body(state),
         Panel::Ddl => details::body(state),
         Panel::Contents => contents::body(state),
-        Panel::Queries => PanelBody::Blank,
+        Panel::Queries => PanelBody::Editor {
+            lines: state.queries.lines().to_vec(),
+            cursor: state.queries.cursor(),
+        },
     }
 }
 
@@ -237,21 +251,17 @@ mod tests {
     }
 
     #[test]
-    fn the_queries_panel_is_the_last_one_with_no_content() {
+    fn the_queries_panel_shows_its_buffer() {
         let view = view_model(&loaded(&["shop"]));
 
-        for panel in view
-            .panels
-            .iter()
-            .filter(|panel| panel.panel == Panel::Queries)
-        {
-            assert_eq!(
-                panel.body,
-                PanelBody::Blank,
-                "{:?} has no content yet",
-                panel.panel
-            );
-        }
+        assert_eq!(
+            view.panels[3].body,
+            PanelBody::Editor {
+                lines: vec![String::new()],
+                cursor: Position::default(),
+            },
+            "an untouched buffer is one empty line with the cursor on it"
+        );
     }
 
     #[test]
