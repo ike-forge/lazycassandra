@@ -57,11 +57,5 @@ From the panel scrolling slice (doc/specs/2026-08-09-panel-scrolling-design.md):
 
 From the mouse input slice (doc/specs/2026-08-09-mouse-input-design.md):
 
-- The wheel moves the *selection* in Tables and Contents, because neither
-  panel stores a viewport — `body.rs` derives the offset per frame from the
-  selected index. The view therefore only scrolls once the selection reaches
-  an edge, exactly as under a held `j`. If the bounded result-set cache
-  (architecture.md §11) ever forces a stored viewport, the wheel should move
-  that instead (design §6).
 - A wheel notch is three rows, which is a guess. `WHEEL_ROWS` in `update.rs`
   is the one place to change it after a few weeks of use.

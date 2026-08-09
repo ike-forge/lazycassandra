@@ -1,7 +1,7 @@
 # List viewport — design
 
 **Date:** 2026-08-09
-**Status:** designed, not implemented
+**Status:** implemented
 
 The wheel scrolls the rows and leaves the selection where you put it.
 

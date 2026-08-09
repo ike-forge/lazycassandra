@@ -235,6 +235,11 @@ edge, exactly as it does under a held `j`. Honest, and slightly janky. If the
 bounded result-set cache of architecture.md §11 ever forces a stored viewport,
 the wheel should move that instead; TODO.md carries the note.
 
+**Superseded.** Both panels hold a viewport now, and the wheel moves it:
+[list viewport design](2026-08-09-list-viewport-design.md). The prediction in
+this paragraph — that the view only scrolls once the selection reaches an edge —
+is exactly what a user reported as a broken wheel.
+
 **A wheel notch is three rows**, or three lines in the Ddl panel — whatever the
 panel scrolls in. One is sluggish enough that the pointer feels broken; three is
 what terminals and terminal applications have settled on. It is a named
