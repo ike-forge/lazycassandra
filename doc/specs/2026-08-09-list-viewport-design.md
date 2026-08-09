@@ -24,9 +24,24 @@ They were right. This gives those panels a viewport.
 | `j` `k` `PageUp` `PageDown` `Home` `End` | The cursor | The offset is pulled to cover it |
 | A click on a row | The cursor | The offset is pulled to cover it — a no-op, the row was on screen |
 | A tree transition, a schema reload | The cursor | The offset is pulled to cover it |
+| A resize that changes the panel's height | Neither | The offset is pulled to cover the cursor (§5) |
 
 The selection is where you are. The wheel is a look somewhere else, and a
 keypress returns you.
+
+**This breaks the decomposition rule, deliberately.**
+[Mouse input](2026-08-09-mouse-input-design.md) §1 required every gesture to
+reach a state some binding already reaches, because the hint bar names keys and
+a mouse-only capability has nowhere to announce itself. A wheel notch now
+reaches "the viewport moved, the selection did not", and no key does that: `j`
+and `k` move the selection and let the view follow.
+
+The rule worth keeping is the narrower one it was protecting. *Nothing the user
+acts on* is reachable only by mouse — every command operates against the
+selection, and the selection is still moved only by things the bar names. What
+the wheel moves alone is which rows you are looking at, and the panel announces
+that in its scrollbar rather than in the bar. doc/shortcuts.md §7 records the
+exception where a reader will meet it.
 
 **A selection scrolled out of view stays where it is.** It is not dragged to the
 edge, and the next `j` moves it from where it actually sits rather than from
@@ -122,7 +137,7 @@ assembled from what did the drawing, not from what was asked for, so a click
 while scrolled resolves against the offset the widget actually drew from
 rather than the one it was asked to use.
 
-## 5. Three edges
+## 5. Four edges
 
 **A new table opens at the top.** `ContentsPanel::requested` and `refused` reset
 the cursor today and must reset the offset with it, or reading a second table
@@ -135,6 +150,19 @@ follow and the clamp with no special case.
 **A wheel notch is three `Scroll::down`s**, bounded by the same `(len, height)`
 as `End` — so it stops with the last row at the bottom rather than dragging it
 to the top.
+
+**A resize follows the cursor, and only a resize.** A panel that loses rows
+would otherwise leave its selection off screen until the next keypress: the
+renderer used to drag the view to the selection on every frame, and no longer
+does, while §3's epilogue follows only a cursor that *moved* — a resize moves
+none. So `Msg::Measured` follows the cursor of each panel whose height changed.
+
+Keyed on the height rather than on the message, because a follow on every
+measurement would undo a wheel. A wheel changes no height, so it cannot trigger
+this; and `lc-app` reports no measurement at all for a frame whose geometry did
+not change, which a wheel's repaint does not. It terminates for the same
+reason: the follow marks the state dirty, the redraw reports the same geometry,
+and no height changed the second time.
 
 ## 6. What this costs
 
@@ -184,6 +212,9 @@ whose absence lets ratatui quietly restore the behaviour this design removes.
   offset the minimum distance. Worth revisiting once the viewport is real, and
   cheap to add to `Scroll` when it is.
 - **Dragging the scrollbar.** It is drawn over the block's right border and
-  spends no content width; making it a target is a mouse slice of its own, and
-  it would be the first gesture that does not decompose into an existing
-  binding (mouse input §1).
+  spends no content width; making it a target is a mouse slice of its own. It
+  is no longer the first gesture that would reach a state no key can reach —
+  the wheel already is, and §1 records why that exception was accepted. A drag
+  would be the second, and would have to argue for itself on the narrower rule
+  the wheel left standing: nothing the user acts on is reachable only by
+  mouse.

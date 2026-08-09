@@ -246,18 +246,27 @@ one — `Esc` always does. A long message can push the overlay's box down far
 enough to cover the bar row too; a press on what looks like the overlay's own
 bottom edge is this same case, not a bug.
 
-**Every gesture decomposes into a binding that already exists.** A click on a
-tree row is a selection followed by `Enter`; a wheel notch is three rows of
-viewport, which the keyboard reaches by walking the selection there. This is
-what keeps §2's "a binding must be visible" true: the hint bar names keys, so
-a mouse-only capability would have nowhere to announce itself. A gesture that
-does not decompose is a binding that needs a key first.
+**Every gesture reaches the same state a key does — with one stated
+exception.** A click on a tree row is a selection followed by `Enter`. This is
+what keeps §2's "a binding must be visible" true: the hint bar names keys, so a
+capability reachable only by mouse would have nowhere to announce itself.
+
+**The wheel is that exception, and it is deliberate.** A notch moves a viewport
+and nothing else, and no key does that — `j` and `k` move the selection and let
+the view follow. So the wheel is the one gesture that reaches a state the
+keyboard cannot. The rule it still honours is the one that matters: *nothing
+the user acts on* is reachable only by mouse. The selection, which every
+command operates against, is moved only by things the bar names; what the wheel
+moves alone is which rows you are looking at, and the panel shows that in the
+scrollbar rather than in the bar
+([list viewport design](specs/2026-08-09-list-viewport-design.md) §1).
+
+Any further gesture is measured against the narrower rule, not this exception.
 
 **The wheel scrolls; it does not select.** Tables and Contents each hold a
 viewport of their own, so a notch moves the rows and leaves the selection where
 you put it — scroll far enough and the selected row is simply not on screen, and
-the next `j` brings the view back to it
-([list viewport design](specs/2026-08-09-list-viewport-design.md)).
+the next `j`, or a resize, brings the view back to it.
 
 **One dispatch point, again.** `handle_pointer` in
 [`update.rs`](../crates/lc-domain/src/update.rs) is to a gesture what
