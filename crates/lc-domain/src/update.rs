@@ -7,7 +7,7 @@
 use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::state::{ConnectionState, Cursor, Overlay, Panel, SchemaState, State};
+use crate::state::{ConnectionState, Cursor, Geometry, Overlay, Panel, SchemaState, State};
 use crate::style::Severity;
 use crate::tree::Node;
 
@@ -25,6 +25,9 @@ pub enum Msg {
     /// The terminal was resized. Carries no geometry — the renderer reads the
     /// real size from `frame.area()` — it exists only to trigger a repaint.
     Resized,
+    /// What the frame just drawn turned out to be. The renderer's one report
+    /// back into the domain (design §3).
+    Measured(Geometry),
     Tick,
     Connected {
         conn: ConnId,
@@ -99,6 +102,23 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::Resized => {
             state.mark_dirty();
+            Vec::new()
+        }
+
+        // No unconditional `mark_dirty`: this message describes the frame
+        // that produced it, so redrawing on every one of them would
+        // re-measure and redraw forever (design §3).
+        Msg::Measured(geometry) => {
+            state.geometry = geometry;
+
+            let before = state.ddl;
+            state
+                .ddl
+                .clamp_to(geometry.ddl_lines(), geometry.height(Panel::Ddl));
+
+            if state.ddl != before {
+                state.mark_dirty();
+            }
             Vec::new()
         }
 
@@ -201,6 +221,10 @@ fn quit(state: &mut State) -> Vec<Effect> {
 enum Motion {
     Up,
     Down,
+    PageUp,
+    PageDown,
+    Start,
+    End,
 }
 
 fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
@@ -220,8 +244,12 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Escape => state.overlay = None,
         Key::Tab => state.focus = state.focus.next(),
         Key::BackTab => state.focus = state.focus.previous(),
-        Key::Char('j') | Key::Down => move_selection(state, Motion::Down),
-        Key::Char('k') | Key::Up => move_selection(state, Motion::Up),
+        Key::Char('j') | Key::Down => scroll(state, Motion::Down),
+        Key::Char('k') | Key::Up => scroll(state, Motion::Up),
+        Key::PageDown => scroll(state, Motion::PageDown),
+        Key::PageUp => scroll(state, Motion::PageUp),
+        Key::Home => scroll(state, Motion::Start),
+        Key::End => scroll(state, Motion::End),
         Key::Enter | Key::Char(' ') => return activate(state),
         Key::Char('l') | Key::Right => transition(state, Transition::Open),
         Key::Char('h') | Key::Left => transition(state, Transition::Close),
@@ -243,21 +271,44 @@ enum Transition {
     Close,
 }
 
-fn move_selection(state: &mut State, motion: Motion) {
-    let rows = focused_row_count(state);
+/// Applies `motion` to whatever the focused panel moves: a selection in
+/// Tables and Contents, a viewport in Ddl.
+fn scroll(state: &mut State, motion: Motion) {
+    let height = state.geometry.height(state.focus);
+
+    if state.focus == Panel::Ddl {
+        let len = state.geometry.ddl_lines();
+
+        match motion {
+            Motion::Down => state.ddl.down(len, height),
+            Motion::Up => state.ddl.up(),
+            Motion::PageDown => state.ddl.page_down(len, height),
+            Motion::PageUp => state.ddl.page_up(height),
+            Motion::Start => state.ddl.to_start(),
+            Motion::End => state.ddl.to_end(len, height),
+        }
+        return;
+    }
+
+    let len = focused_row_count(state);
 
     let Some(cursor) = focused_cursor(state) else {
         return;
     };
 
     match motion {
-        Motion::Down => cursor.down(rows),
+        Motion::Down => cursor.down(len),
         Motion::Up => cursor.up(),
+        Motion::PageDown => cursor.page_down(len, height),
+        Motion::PageUp => cursor.page_up(height),
+        Motion::Start => cursor.to_start(),
+        Motion::End => cursor.to_end(len),
     }
 }
 
-/// How many rows the focused panel has to move over. Ddl and Queries have
-/// none, so `j` and `k` are inert there rather than moving another panel's
+/// How many rows the focused panel's *cursor* moves over. Ddl scrolls a
+/// viewport rather than a selection and never reaches here; Queries has
+/// nothing, so a motion there is inert rather than moving another panel's
 /// selection from a distance.
 fn focused_row_count(state: &State) -> usize {
     match state.focus {
@@ -1268,6 +1319,160 @@ mod tests {
             state.tables.cursor.index(),
             1,
             "the clamp must count tree rows, not keyspaces"
+        );
+    }
+
+    fn measured(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
+        update(state, Msg::Measured(Geometry::new(heights, ddl_lines)));
+    }
+
+    #[test]
+    fn page_down_moves_the_tree_by_one_panel_height() {
+        let mut state = browsing(&["a", "b", "c", "d", "e", "f", "g", "h"]);
+        measured(&mut state, [3, 0, 0, 0], 0);
+
+        press(&mut state, Key::PageDown);
+
+        assert_eq!(state.tables.cursor.index(), 3);
+
+        press(&mut state, Key::PageUp);
+
+        assert_eq!(state.tables.cursor.index(), 0);
+    }
+
+    #[test]
+    fn home_and_end_reach_the_ends_of_the_tree_in_one_key() {
+        let mut state = browsing(&["a", "b", "c", "d"]);
+        measured(&mut state, [3, 0, 0, 0], 0);
+
+        press(&mut state, Key::End);
+
+        assert_eq!(state.tables.cursor.index(), 3);
+
+        press(&mut state, Key::Home);
+
+        assert_eq!(state.tables.cursor.index(), 0);
+    }
+
+    #[test]
+    fn page_down_moves_the_grid_by_one_panel_height() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(page_of(30)),
+            },
+        );
+        state.focus = Panel::Contents;
+        measured(&mut state, [0, 0, 8, 0], 0);
+
+        press(&mut state, Key::PageDown);
+
+        assert_eq!(state.contents.cursor.index(), 8);
+    }
+
+    #[test]
+    fn the_ddl_panel_scrolls_a_viewport_rather_than_a_selection() {
+        let mut state = browsing(&["a", "b", "c"]);
+        state.focus = Panel::Ddl;
+        measured(&mut state, [0, 6, 0, 0], 20);
+        let tree_row = state.tables.cursor.index();
+
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.ddl.offset(), 2);
+        assert_eq!(
+            state.tables.cursor.index(),
+            tree_row,
+            "the tree must not move while another panel has focus"
+        );
+
+        press(&mut state, Key::End);
+
+        assert_eq!(
+            state.ddl.offset(),
+            14,
+            "End leaves the last line at the bottom of the panel"
+        );
+    }
+
+    #[test]
+    fn a_motion_in_the_tree_leaves_the_ddl_viewport_alone() {
+        let mut state = browsing(&["a", "b", "c"]);
+        measured(&mut state, [3, 6, 0, 0], 20);
+
+        press(&mut state, Key::PageDown);
+        press(&mut state, Key::End);
+
+        assert_eq!(state.ddl.offset(), 0);
+    }
+
+    #[test]
+    fn a_motion_before_the_first_measurement_moves_nothing() {
+        let mut state = browsing(&["a", "b", "c"]);
+        state.focus = Panel::Ddl;
+
+        press(&mut state, Key::PageDown);
+        press(&mut state, Key::End);
+
+        assert_eq!(
+            state.ddl.offset(),
+            0,
+            "a panel of unknown height has no page and no end"
+        );
+    }
+
+    #[test]
+    fn the_new_motions_emit_no_effects() {
+        for key in [Key::PageDown, Key::PageUp, Key::Home, Key::End] {
+            let mut state = browsing(&["a", "b", "c"]);
+            measured(&mut state, [3, 6, 6, 1], 20);
+
+            let effects = press(&mut state, key);
+
+            assert!(effects.is_empty(), "{key:?} issued {effects:?}");
+        }
+    }
+
+    /// The frame this message describes is the frame that produced it.
+    /// Marking dirty unconditionally would redraw, re-measure and redraw
+    /// forever (design §3).
+    #[test]
+    fn a_measurement_that_changes_nothing_leaves_the_state_clean() {
+        let mut state = browsing(&["a", "b", "c"]);
+        let geometry = Geometry::new([3, 6, 6, 1], 20);
+        update(&mut state, Msg::Measured(geometry));
+        state.dirty = false;
+
+        let effects = update(&mut state, Msg::Measured(geometry));
+
+        assert!(effects.is_empty());
+        assert!(
+            !state.dirty,
+            "a measurement of the frame already drawn must not ask for another"
+        );
+    }
+
+    #[test]
+    fn a_measurement_pulls_a_stale_offset_back_inside_the_panel() {
+        let mut state = browsing(&["a", "b", "c"]);
+        state.focus = Panel::Ddl;
+        measured(&mut state, [0, 6, 0, 0], 40);
+        press(&mut state, Key::End);
+        assert_eq!(state.ddl.offset(), 34);
+        state.dirty = false;
+
+        // The tree cursor moved to a table with far fewer options.
+        measured(&mut state, [0, 6, 0, 0], 8);
+
+        assert_eq!(state.ddl.offset(), 2);
+        assert!(
+            state.dirty,
+            "the offset moved, so the frame must be repainted"
         );
     }
 }
