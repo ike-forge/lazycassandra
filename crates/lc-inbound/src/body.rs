@@ -1,8 +1,8 @@
 //! Drawing what a panel contains.
 //!
 //! Scrolling lives here rather than in the domain: the domain has no idea the
-//! panel is eight rows tall. A `ListState` built per frame from the selected
-//! index computes the offset, so no scroll state is stored anywhere.
+//! panel is eight rows tall. The offset itself comes from the domain; the
+//! renderer contributes only the arithmetic that needs a width or a height.
 
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, TreeRow};
@@ -88,8 +88,12 @@ pub(crate) fn render(
             notice(frame, area, text, *token, theme);
             None
         }
-        PanelBody::Tree { rows, selected } => Some(Body {
-            extent: tree(frame, area, rows, *selected, theme),
+        PanelBody::Tree {
+            rows,
+            selected,
+            offset,
+        } => Some(Body {
+            extent: tree(frame, area, rows, *selected, *offset, theme),
             unit: Unit::Rows { header: 0 },
         }),
         PanelBody::Details { details, offset } => Some(Body {
@@ -100,8 +104,9 @@ pub(crate) fn render(
             columns,
             rows,
             selected,
+            offset,
         } => Some(Body {
-            extent: grid(frame, area, columns, rows, *selected, theme),
+            extent: grid(frame, area, columns, rows, *selected, *offset, theme),
             unit: Unit::Rows {
                 header: HEADER_ROWS,
             },
@@ -117,21 +122,46 @@ fn notice(frame: &mut Frame, area: Rect, text: &str, token: Option<Token>, theme
     frame.render_widget(paragraph, area);
 }
 
-fn tree(frame: &mut Frame, area: Rect, rows: &[TreeRow], selected: usize, theme: Theme) -> Extent {
+/// The selection, but only when the rows drawn include it.
+///
+/// `None` is not merely "draw no highlight". `ratatui` honours a supplied
+/// offset only when nothing is selected, and otherwise walks the offset until
+/// the selection is in view — so handing it a selection it cannot see would
+/// drag the viewport back and undo the scroll
+/// (doc/specs/2026-08-09-list-viewport-design.md §4).
+const fn visible(selected: usize, offset: usize, height: usize) -> Option<usize> {
+    if selected >= offset && selected < offset + height {
+        Some(selected)
+    } else {
+        None
+    }
+}
+
+fn tree(
+    frame: &mut Frame,
+    area: Rect,
+    rows: &[TreeRow],
+    selected: usize,
+    offset: usize,
+    theme: Theme,
+) -> Extent {
     let items: Vec<ListItem> = rows.iter().map(|row| item(row, theme)).collect();
+    let height = usize::from(area.height);
 
     let list = List::new(items).highlight_style(theme.style(Token::Selected));
-    let mut state = ListState::default().with_selected(Some(selected));
+    let mut state = ListState::default()
+        .with_offset(offset)
+        .with_selected(visible(selected, offset, height));
 
     frame.render_stateful_widget(list, area, &mut state);
 
-    // Read back rather than recomputed: the widget owns the arithmetic that
-    // keeps the selection on screen, and a second copy of it here would be a
-    // second thing to keep right.
+    // Read back rather than assumed: the offset handed in is what the widget
+    // draws from, and reading it out keeps the hit map assembled from what
+    // actually drew (mouse input design §4).
     Extent {
         position: state.offset(),
         total: rows.len(),
-        visible: usize::from(area.height),
+        visible: height,
     }
 }
 
@@ -145,6 +175,7 @@ fn grid(
     columns: &[GridColumn],
     rows: &[Vec<GridCell>],
     selected: usize,
+    offset: usize,
     theme: Theme,
 ) -> Extent {
     // Only the columns that fit are handed to the widget. `Constraint::Length`
@@ -175,7 +206,13 @@ fn grid(
         .header(header)
         .column_spacing(COLUMN_SPACING)
         .row_highlight_style(theme.style(Token::Selected));
-    let mut state = TableState::default().with_selected(Some(selected));
+    let mut state = TableState::default()
+        .with_offset(offset)
+        .with_selected(visible(
+            selected,
+            offset,
+            usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS)),
+        ));
 
     frame.render_stateful_widget(table, area, &mut state);
 

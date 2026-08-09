@@ -52,6 +52,7 @@ fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
     PanelBody::Tree {
         rows,
         selected: tables.cursor.index(),
+        offset: tables.scroll.offset(),
     }
 }
 
@@ -143,7 +144,7 @@ mod tests {
     fn keyspaces_are_listed_with_the_clusters_own_dimmed_and_last() {
         let state = loaded(&["system_schema", "typezoo", "shop"]);
 
-        let PanelBody::Tree { rows, selected } = tables_body(&state) else {
+        let PanelBody::Tree { rows, selected, .. } = tables_body(&state) else {
             panic!("a loaded schema lists its keyspaces");
         };
 

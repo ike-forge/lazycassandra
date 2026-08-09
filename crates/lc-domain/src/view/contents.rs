@@ -85,6 +85,7 @@ fn grid(state: &State, table: &TableRef, page: &Page) -> PanelBody {
             .map(|row| row.values.iter().map(grid_cell).collect())
             .collect(),
         selected: state.contents.cursor.index(),
+        offset: state.contents.scroll.offset(),
     }
 }
 
@@ -238,6 +239,7 @@ mod tests {
             columns,
             rows,
             selected,
+            ..
         } = contents_body(&state)
         else {
             panic!("a loaded page draws a grid");

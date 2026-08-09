@@ -450,9 +450,11 @@ mod tests {
             }),
             ..State::default()
         };
-        for _ in 0..selected {
-            state.tables.cursor.down(names.len());
-        }
+        state.tables.cursor.go_to(selected, names.len());
+        // Five rows of body at the sizes these tests draw. Set with the cursor
+        // for the reason `select_contents` sets it: half a state is not a
+        // state (list viewport design §6).
+        state.tables.scroll.follow(selected, 5);
         state
     }
 
@@ -606,6 +608,64 @@ mod tests {
         CqlValue::Text(value.to_owned())
     }
 
+    /// Places the cursor and the viewport that belongs with it, as `update`
+    /// does — a fixture that sets one without the other describes a state the
+    /// application cannot be in
+    /// (doc/specs/2026-08-09-list-viewport-design.md §6).
+    fn select_contents(state: &mut State, index: usize, height: usize) {
+        let len = state.contents.row_count();
+        state.contents.cursor.go_to(index, len);
+        state.contents.scroll.follow(index, height);
+    }
+
+    #[test]
+    fn a_stored_offset_decides_which_rows_are_drawn() {
+        let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
+        let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
+        let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
+        let mut state = showing(page_of(&["id"], &rows));
+        // The selection stays on row 0; only the viewport moves, which is what
+        // no test could express before the offset was state.
+        state.contents.scroll.follow(12, 1);
+
+        let buffer = draw_state(60, 12, &state);
+        let drawn: Vec<String> = (2..7).map(|y| row(&buffer, y)).collect();
+
+        assert!(
+            drawn.iter().any(|line| line.contains("row12")),
+            "the stored offset decides the top row, got {drawn:?}"
+        );
+        assert!(
+            !drawn.iter().any(|line| line.contains("row00")),
+            "the selected row is scrolled away, got {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn a_selection_scrolled_out_of_view_is_not_highlighted() {
+        let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
+        let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
+        let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
+        let mut state = showing(page_of(&["id"], &rows));
+        state.contents.scroll.follow(12, 1);
+
+        let buffer = draw_state(60, 12, &state);
+        let reversed = |y: u16| {
+            buffer
+                .cell((17, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        for y in 2..7 {
+            assert!(
+                !reversed(y),
+                "row 0 is off screen, so nothing drawn is the selection"
+            );
+        }
+    }
+
     #[test]
     fn a_page_is_drawn_as_a_header_over_its_rows() {
         let state = showing(page_of(
@@ -745,9 +805,7 @@ mod tests {
         let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
         let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
         let mut state = showing(page_of(&["id"], &rows));
-        for _ in 0..19 {
-            state.contents.cursor.down(20);
-        }
+        select_contents(&mut state, 19, 5);
 
         let buffer = draw_state(60, 12, &state);
         let drawn: Vec<String> = (2..8).map(|y| row(&buffer, y)).collect();
@@ -1199,9 +1257,7 @@ mod tests {
         let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
         let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
         let mut state = showing(page_of(&["id"], &rows));
-        for _ in 0..19 {
-            state.contents.cursor.down(20);
-        }
+        select_contents(&mut state, 19, 5);
 
         let (buffer, map) = draw_mapped(60, 12, &state);
         let mut resolved = 0;

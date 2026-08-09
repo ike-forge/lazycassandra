@@ -61,6 +61,10 @@ pub enum PanelBody {
     Tree {
         rows: Vec<TreeRow>,
         selected: usize,
+        /// The first row drawn. State rather than a value the renderer
+        /// derives, so a wheel can move it without moving `selected`
+        /// (doc/specs/2026-08-09-list-viewport-design.md §2).
+        offset: usize,
     },
     /// A heading and grouped rows: what is selected, described.
     ///
@@ -79,6 +83,8 @@ pub enum PanelBody {
         columns: Vec<GridColumn>,
         rows: Vec<Vec<GridCell>>,
         selected: usize,
+        /// The first row drawn, as [`PanelBody::Tree::offset`].
+        offset: usize,
     },
 }
 

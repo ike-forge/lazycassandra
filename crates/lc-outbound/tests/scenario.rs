@@ -105,7 +105,7 @@ async fn connecting_and_describing_fills_the_tables_panel() {
 
     run(&cluster, &mut state, effects).await;
 
-    let PanelBody::Tree { rows, selected } = &view_model(&state).panels[0].body else {
+    let PanelBody::Tree { rows, selected, .. } = &view_model(&state).panels[0].body else {
         panic!("a described cluster lists its keyspaces");
     };
     assert_eq!(
@@ -166,7 +166,7 @@ async fn pressing_l_unfolds_a_keyspace_and_the_view_model_shows_its_tables() {
         "unfolding is a pure state change and must emit no effect (table-list design §2)"
     );
 
-    let PanelBody::Tree { rows, selected } = &view_model(&state).panels[0].body else {
+    let PanelBody::Tree { rows, selected, .. } = &view_model(&state).panels[0].body else {
         panic!("a described cluster with tables lists a tree");
     };
     assert_eq!(
@@ -206,7 +206,7 @@ async fn pressing_h_from_a_table_lands_on_its_parent_keyspace() {
         "stepping out to the parent is a pure state change and must emit no effect (table-list design §2)"
     );
 
-    let PanelBody::Tree { rows, selected } = &view_model(&state).panels[0].body else {
+    let PanelBody::Tree { rows, selected, .. } = &view_model(&state).panels[0].body else {
         panic!("a described cluster with tables lists a tree");
     };
     assert_eq!(*selected, 0);
@@ -283,6 +283,7 @@ async fn pressing_enter_on_a_table_fills_the_contents_panel() {
         columns,
         rows,
         selected,
+        ..
     } = &view.panels[2].body
     else {
         panic!("a table that was read draws a grid");
