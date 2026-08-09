@@ -215,11 +215,14 @@ The domain never names a colour. It emits **semantic style tokens**:
 enum Token { PartitionKey, ClusteringKey, Posture(Posture), Severity(Severity), Muted, /* … */ }
 ```
 
-A `Theme` in `lc-inbound` maps `Token → ratatui::Style`. The default theme maps
-only to the sixteen ANSI colours (`Color::Red`, `Color::Blue`, …) and **never
-sets a background** — so it inherits whatever palette the user's terminal
-already has, on light or dark alike. Themes that hardcode RGB are possible, and
-are strictly opt-in.
+A `Theme` in `lc-inbound` maps `Token → ratatui::Style`. The default theme
+**never sets a background** and leaves body text unstyled, so it inherits
+whatever palette the user's terminal already has, on light or dark alike. Every
+token that carries meaning — key structure, severity, write posture — maps to
+one of the sixteen ANSI colours, so it survives a terminal whose palette is
+unusable. A token that only *marks* something may spend an accent instead; the
+`no_token_sets_a_background` test is the mechanical statement of what stays off
+limits.
 
 Practical consequence: nothing in the domain has to change to add a theme, and
 no theme can invent a meaning the domain didn't define.

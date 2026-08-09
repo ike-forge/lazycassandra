@@ -5,7 +5,7 @@ hint bar, a scrollbar that stops doubling the border, and a Table DDL panel
 that separates a table's shape from its settings and lays the short properties
 out as a table.
 
-**Status:** planned.
+**Status:** implemented.
 **Date:** 2026-08-09
 
 ---
