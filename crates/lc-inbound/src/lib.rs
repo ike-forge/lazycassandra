@@ -14,6 +14,7 @@ pub mod layout;
 mod overlay;
 pub mod render;
 pub mod theme;
+mod too_small;
 
 pub use render::render;
 pub use theme::Theme;

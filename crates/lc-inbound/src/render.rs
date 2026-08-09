@@ -19,8 +19,12 @@ use crate::theme::Theme;
 /// how many lines the Ddl body wrapped to
 /// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
 pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
-    let Shell::Panels(rects) = layout(frame.area()) else {
-        return Geometry::default();
+    let rects = match layout(frame.area()) {
+        Shell::Panels(rects) => rects,
+        Shell::TooSmall(area) => {
+            crate::too_small::render(frame, area);
+            return Geometry::default();
+        }
     };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
@@ -107,7 +111,8 @@ mod tests {
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
     };
     use lc_domain::posture::Posture;
-    use lc_domain::state::{Connection, ConnectionState, Geometry, Panel, SchemaState};
+    use lc_domain::state::{Connection, ConnectionState, Geometry, Overlay, Panel, SchemaState};
+    use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
@@ -233,15 +238,87 @@ mod tests {
     }
 
     #[test]
-    fn a_collapsed_panel_is_not_drawn_at_all() {
-        // Five rows leaves no room for a second panel in either column.
-        let buffer = draw(40, 5);
-        let contains = |needle: &str| (0..5).any(|y| row(&buffer, y).contains(needle));
+    fn a_frame_below_the_minimum_draws_the_notice_and_nothing_else() {
+        for (width, height) in [(39, 6), (40, 5), (39, 5)] {
+            let buffer = draw(width, height);
+            let text: String = (0..height).map(|y| row(&buffer, y)).collect();
 
-        assert!(contains("Tables"));
-        assert!(contains("Table contents"));
-        assert!(!contains("Table DDL"), "Ddl collapsed to zero rows");
-        assert!(!contains("Queries"), "Queries collapsed to zero rows");
+            assert!(
+                text.contains("need 40×6"),
+                "{width}x{height} must say what it needs, got {text:?}"
+            );
+            assert!(
+                !text.contains('┌'),
+                "{width}x{height} must draw no panel, got {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_notice_names_the_frame_it_was_given() {
+        let buffer = draw(24, 5);
+        let text: String = (0..5).map(|y| row(&buffer, y)).collect();
+
+        assert!(text.contains("have 24×5"), "got {text:?}");
+    }
+
+    #[test]
+    fn the_notice_drops_its_least_useful_line_first() {
+        let lines = |height| {
+            let buffer = draw(30, height);
+            (0..height)
+                .map(|y| row(&buffer, y).trim().to_owned())
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(lines(3), ["Too small", "need 40×6", "have 30×3"]);
+        assert_eq!(lines(2), ["need 40×6", "have 30×2"]);
+        assert_eq!(lines(1), ["need 40×6"]);
+    }
+
+    #[test]
+    fn nothing_is_drawn_over_the_notice() {
+        let state = State {
+            overlay: Some(Overlay {
+                title: "Cannot connect".to_owned(),
+                message: "no route to host".to_owned(),
+                severity: Severity::Danger,
+            }),
+            ..State::default()
+        };
+        let mut terminal =
+            Terminal::new(TestBackend::new(39, 6)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::TerminalDefault);
+            })
+            .expect("TestBackend always draws");
+
+        let buffer = terminal.backend().buffer().clone();
+        let text: String = (0..6).map(|y| row(&buffer, y)).collect();
+
+        assert!(
+            !text.contains("Cannot connect"),
+            "an overlay has nothing to sit over, got {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_frame_below_the_minimum_measures_nothing() {
+        let state = State::default();
+        let mut terminal =
+            Terminal::new(TestBackend::new(39, 6)).expect("TestBackend always initialises");
+        let mut geometry = Geometry::default();
+
+        terminal
+            .draw(|frame| {
+                geometry = render(frame, &view_model(&state), Theme::TerminalDefault);
+            })
+            .expect("TestBackend always draws");
+
+        assert_eq!(geometry, Geometry::default());
     }
 
     fn table(name: &str) -> Table {

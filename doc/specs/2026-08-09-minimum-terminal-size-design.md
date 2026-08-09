@@ -1,7 +1,7 @@
 # Minimum terminal size — design
 
 **Date:** 2026-08-09
-**Status:** designed
+**Status:** implemented
 
 Below some size the four-panel shell stops being a smaller version of itself and
 becomes a broken-looking one. `layout.rs` degrades gracefully and without limit:
