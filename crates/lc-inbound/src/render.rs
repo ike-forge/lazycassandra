@@ -51,6 +51,7 @@ mod tests {
     };
     use lc_domain::posture::Posture;
     use lc_domain::state::{Connection, ConnectionState, Panel, SchemaState};
+    use lc_domain::view::PanelBody;
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -693,6 +694,66 @@ mod tests {
         assert!(
             ddl_rows(&buffer).iter().all(String::is_empty),
             "the Tables panel already says why there is nothing; twice is noise"
+        );
+    }
+
+    /// The `Details` the Ddl panel would draw for `state`.
+    fn ddl_details(state: &State) -> lc_domain::view::Details {
+        let PanelBody::Details { details, .. } = view_model(state).panels[1].body.clone() else {
+            panic!("a selected row has something to describe");
+        };
+        details
+    }
+
+    #[test]
+    fn the_ddl_panel_scrolls_to_the_lines_below_its_fold() {
+        // At 40x20 the sidebar is 16 columns and the Ddl panel is 8 rows, so
+        // its body is fourteen columns of six rows — and `orders()` wraps to
+        // more than six lines in that.
+        const WIDTH: usize = 14;
+        const HEIGHT: usize = 6;
+
+        let state = describing(orders());
+        let all = crate::details::lines(&ddl_details(&state), WIDTH, Theme::TerminalDefault);
+        assert!(
+            all.len() > HEIGHT,
+            "the fixture must overflow the panel or this test proves nothing"
+        );
+        let tail = all.last().expect("the body has lines").to_string();
+        assert!(
+            !tail.trim().is_empty(),
+            "the assertions below need a tail to look for"
+        );
+
+        let mut scrolled = describing(orders());
+        scrolled.ddl.to_end(all.len(), HEIGHT);
+
+        let before = draw_state(40, 20, &state);
+        let after = draw_state(40, 20, &scrolled);
+        // Inside the Ddl panel only: rows 13..18, columns 1..14. A full-width
+        // row would also carry whatever the Contents panel is saying.
+        let visible = |buffer: &Buffer| -> Vec<String> {
+            (13..19)
+                .map(|y| {
+                    (1..15)
+                        .filter_map(|x| buffer.cell((x, y)))
+                        .map(Cell::symbol)
+                        .collect::<String>()
+                })
+                .collect()
+        };
+
+        assert!(
+            !visible(&before)
+                .iter()
+                .any(|line| line.contains(tail.trim())),
+            "the tail starts below the fold"
+        );
+        assert!(
+            visible(&after)
+                .iter()
+                .any(|line| line.contains(tail.trim())),
+            "scrolling to the end must bring it into view"
         );
     }
 

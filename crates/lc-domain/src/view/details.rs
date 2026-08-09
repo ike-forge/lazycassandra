@@ -55,9 +55,16 @@ pub(super) fn body(state: &State) -> PanelBody {
     };
 
     match state.tables.selected(schema) {
-        Some(Node::Table { keyspace, table }) => PanelBody::Details(of_table(keyspace, table)),
-        Some(Node::Keyspace { keyspace, .. }) => PanelBody::Details(of_keyspace(keyspace)),
+        Some(Node::Table { keyspace, table }) => scrolled(state, of_table(keyspace, table)),
+        Some(Node::Keyspace { keyspace, .. }) => scrolled(state, of_keyspace(keyspace)),
         None => PanelBody::Blank,
+    }
+}
+
+fn scrolled(state: &State, details: Details) -> PanelBody {
+    PanelBody::Details {
+        details,
+        offset: state.ddl.offset(),
     }
 }
 
@@ -175,7 +182,7 @@ mod tests {
     }
 
     fn details(state: &State) -> Details {
-        let PanelBody::Details(details) = ddl_body(state) else {
+        let PanelBody::Details { details, .. } = ddl_body(state) else {
             panic!("a selected row has something to describe");
         };
         details
@@ -425,6 +432,18 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn the_projection_carries_the_panels_own_offset() {
+        let mut state = browsing(orders());
+        state.ddl.to_end(9, 3);
+
+        let PanelBody::Details { offset, .. } = ddl_body(&state) else {
+            panic!("a selected table has something to describe");
+        };
+
+        assert_eq!(offset, 6);
     }
 
     #[test]

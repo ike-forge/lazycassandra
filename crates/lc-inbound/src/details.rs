@@ -29,15 +29,30 @@ const INDENT: usize = 2;
 const TYPE_INDENT: usize = 4;
 const ELLIPSIS: char = '…';
 
-pub(crate) fn render(frame: &mut Frame, area: Rect, details: &Details, theme: Theme) {
-    let width = usize::from(area.width);
+pub(crate) fn render(
+    frame: &mut Frame,
+    area: Rect,
+    details: &Details,
+    offset: usize,
+    theme: Theme,
+) {
+    let lines = lines(details, usize::from(area.width), theme);
+    let offset = u16::try_from(offset).unwrap_or(u16::MAX);
 
+    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), area);
+}
+
+/// Every line the body occupies at `width`.
+///
+/// Also what the frame reports back as `Geometry::ddl_lines`, so the domain
+/// can bound an offset over text it cannot wrap itself (design §2).
+pub(crate) fn lines(details: &Details, width: usize, theme: Theme) -> Vec<Line<'static>> {
     let mut lines = vec![Line::raw(truncate(&details.heading, width)), Line::raw("")];
     for section in &details.sections {
         lines.extend(section_lines(section, width, theme));
     }
 
-    frame.render_widget(Paragraph::new(lines), area);
+    lines
 }
 
 /// A heading and its rows, with no blank line of their own: the heading is

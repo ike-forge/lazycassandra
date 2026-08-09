@@ -59,7 +59,14 @@ pub enum PanelBody {
         selected: usize,
     },
     /// A heading and grouped rows: what is selected, described.
-    Details(Details),
+    ///
+    /// `offset` is the first line drawn, counted in wrapped lines. Only the
+    /// renderer can produce those; the domain scrolls by them on the strength
+    /// of the count `Msg::Measured` brings back (design §2).
+    Details {
+        details: Details,
+        offset: usize,
+    },
     /// A result set: one header per column, one row per row.
     ///
     /// Carries no widths. Sizing columns needs to know how wide the panel is,

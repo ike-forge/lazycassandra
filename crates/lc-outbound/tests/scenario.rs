@@ -406,7 +406,7 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
 }
 
 fn ddl_details(state: &State) -> Details {
-    let PanelBody::Details(details) = &view_model(state).panels[1].body else {
+    let PanelBody::Details { details, .. } = &view_model(state).panels[1].body else {
         panic!("a selected row has something to describe");
     };
     details.clone()
