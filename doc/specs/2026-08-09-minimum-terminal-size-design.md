@@ -124,6 +124,15 @@ It stays. `layout` is public and total, its tests cover every size including
 `Rect` its parameter admits. Removing it would trade a proven-total function for
 one that is correct only because of a caller's guard.
 
+It does have to change how it is tested. The two tests that reach the branch
+today — `the_minor_panel_collapses_rather_than_shrink_below_its_floor` at 80×5
+and `the_sidebar_disappears_before_the_main_column_does` at 20×24 — both name
+sizes that now return `TooSmall`, so neither can reach the branch through
+`layout` any more. They become direct tests of `split`, which is private and
+in the same module. A branch nothing can reach and nothing tests is dead code
+wearing a totality argument; tested at the unit that owns it, the argument
+holds.
+
 The same is true of `PANEL_MIN_H` on the height axis: it now describes the
 minimum rather than a floor anything falls to.
 
@@ -152,6 +161,8 @@ something the gate introduces, and the gate reduces how often it is reachable.
 - The existing size list gains 40×6, and the sizes below the floor move to the
   `TooSmall` assertions. `the_panels_tile_the_area_exactly` keeps its meaning
   for every size that yields `Panels`.
+- `split` collapses and lifts its minor part, tested directly at the sizes
+  `layout` no longer passes it (§5).
 
 **Render.**
 
