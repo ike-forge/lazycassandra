@@ -109,6 +109,73 @@ impl Editor {
         self.settle();
     }
 
+    /// Steps back one character, onto the end of the line above at column 0.
+    pub fn left(&mut self) {
+        if self.cursor.column > 0 {
+            self.cursor.column -= 1;
+        } else if self.cursor.line > 0 {
+            self.cursor.line -= 1;
+            self.cursor.column = self.line_len();
+        }
+
+        self.settle();
+    }
+
+    /// Steps on one character, onto the start of the line below at end-of-line.
+    pub fn right(&mut self) {
+        if self.cursor.column < self.line_len() {
+            self.cursor.column += 1;
+        } else if self.cursor.line + 1 < self.lines.len() {
+            self.cursor.line += 1;
+            self.cursor.column = 0;
+        }
+
+        self.settle();
+    }
+
+    /// Moves the cursor up one line, preserving the desired column.
+    pub fn up(&mut self) {
+        self.to_line(self.cursor.line.saturating_sub(1));
+    }
+
+    /// Moves the cursor down one line, preserving the desired column.
+    pub fn down(&mut self) {
+        self.to_line(self.cursor.line.saturating_add(1));
+    }
+
+    /// Moves the cursor up by the given height, preserving the desired column.
+    pub fn page_up(&mut self, height: usize) {
+        self.to_line(self.cursor.line.saturating_sub(height));
+    }
+
+    /// Moves the cursor down by the given height, preserving the desired column.
+    pub fn page_down(&mut self, height: usize) {
+        self.to_line(self.cursor.line.saturating_add(height));
+    }
+
+    /// Moves the cursor to the start of the current line.
+    pub fn line_start(&mut self) {
+        self.cursor.column = 0;
+        self.settle();
+    }
+
+    /// The end of the cursor's line, not of the buffer — what `End` does in a
+    /// text editor, and a deliberate divergence from the other three panels
+    /// (design §3).
+    pub fn line_end(&mut self) {
+        self.cursor.column = self.line_len();
+        self.settle();
+    }
+
+    /// Every vertical motion. `desired_column` is read and left alone, so a
+    /// pass over a short line does not cost the column for good.
+    #[allow(clippy::wrong_self_convention)] // to_line mutates cursor position on vertical motion
+    fn to_line(&mut self, line: usize) {
+        // `lines` is never empty, so this cannot underflow.
+        self.cursor.line = line.min(self.lines.len() - 1);
+        self.cursor.column = self.desired_column.min(self.line_len());
+    }
+
     /// Characters on the cursor's line, which is also the largest column the
     /// cursor may hold on it.
     fn line_len(&self) -> usize {
@@ -302,5 +369,117 @@ mod tests {
 
         assert_eq!(editor.text(), "aé", "a char is removed, not a byte");
         assert_eq!(editor.cursor().column, 2);
+    }
+
+    #[test]
+    fn the_cursor_walks_left_and_right_within_a_line() {
+        let mut editor = typed("SELECT");
+
+        editor.left();
+        editor.left();
+        assert_eq!(editor.cursor().column, 4);
+
+        editor.right();
+        assert_eq!(editor.cursor().column, 5);
+    }
+
+    #[test]
+    fn left_at_the_start_of_a_line_wraps_to_the_end_of_the_one_above() {
+        let mut editor = typed("SELECT *\nFROM t");
+        at(&mut editor, 1, 0);
+
+        editor.left();
+
+        assert_eq!(editor.cursor(), Position { line: 0, column: 8 });
+    }
+
+    #[test]
+    fn right_at_the_end_of_a_line_wraps_to_the_start_of_the_one_below() {
+        let mut editor = typed("SELECT *\nFROM t");
+        at(&mut editor, 0, 8);
+
+        editor.right();
+
+        assert_eq!(editor.cursor(), Position { line: 1, column: 0 });
+    }
+
+    #[test]
+    fn the_cursor_cannot_walk_off_either_end_of_the_buffer() {
+        let mut editor = typed("SELECT");
+
+        at(&mut editor, 0, 0);
+        editor.left();
+        editor.up();
+        assert_eq!(editor.cursor(), Position { line: 0, column: 0 });
+
+        at(&mut editor, 0, 6);
+        editor.right();
+        editor.down();
+        assert_eq!(editor.cursor(), Position { line: 0, column: 6 });
+    }
+
+    #[test]
+    fn the_column_survives_a_pass_over_a_short_line() {
+        let mut editor = typed("SELECT * FROM t\nx\nWHERE id = 7");
+        at(&mut editor, 0, 12);
+
+        editor.down();
+        assert_eq!(editor.cursor().column, 1, "the short line has no column 12");
+
+        editor.down();
+        assert_eq!(
+            editor.cursor().column,
+            12,
+            "the column the user chose is restored, not the one the short line allowed"
+        );
+    }
+
+    #[test]
+    fn an_edit_gives_up_the_column_the_cursor_was_aiming_for() {
+        let mut editor = typed("SELECT * FROM t\nx\nWHERE id = 7");
+        at(&mut editor, 0, 12);
+        editor.down();
+
+        editor.insert('y');
+        editor.down();
+
+        assert_eq!(
+            editor.cursor().column,
+            2,
+            "typing on the short line is where the cursor now wants to be"
+        );
+    }
+
+    #[test]
+    fn home_and_end_reach_the_ends_of_the_line() {
+        let mut editor = typed("SELECT * FROM t\nWHERE id = 7");
+
+        editor.line_start();
+        assert_eq!(editor.cursor(), Position { line: 1, column: 0 });
+
+        editor.line_end();
+        assert_eq!(
+            editor.cursor(),
+            Position { line: 1, column: 12 },
+            "the line's end, not the buffer's"
+        );
+    }
+
+    #[test]
+    fn a_page_moves_one_panel_height_and_stops_at_the_ends() {
+        let mut editor = typed("a\nb\nc\nd\ne\nf");
+        at(&mut editor, 0, 0);
+
+        editor.page_down(3);
+        assert_eq!(editor.cursor().line, 3);
+
+        editor.page_down(3);
+        assert_eq!(editor.cursor().line, 5, "the last line, not past it");
+
+        editor.page_up(3);
+        assert_eq!(editor.cursor().line, 2);
+
+        editor.page_up(9);
+        assert_eq!(editor.cursor().line, 0);
     }
 }
