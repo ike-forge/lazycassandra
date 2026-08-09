@@ -27,9 +27,12 @@ the size at which all four panels clear them simultaneously:
 
 ```rust
 // lc-inbound/src/layout.rs
-const MIN_W: u16 = SIDEBAR_MIN_W + MAIN_RESERVE_W;   // 16 + 24 = 40
-const MIN_H: u16 = 2 * PANEL_MIN_H;                  //  3 +  3 =  6
+const MIN_W: u16 = SIDEBAR_MIN_W + MAIN_RESERVE_W;       // 16 + 24 = 40
+const MIN_H: u16 = 2 * PANEL_MIN_H + BAR_H;              //  3 + 3 + 1 = 7
 ```
+
+`BAR_H` arrived with the hint bar; deriving the floor rather than declaring it
+is what let it move without a second place to remember.
 
 Width: the sidebar cannot go below `SIDEBAR_MIN_W` and the main column reserves
 `MAIN_RESERVE_W` before the sidebar is allowed to exist at all. Height: each
@@ -53,7 +56,7 @@ in the frame:
 
 ```
 Too small
-need 40×6
+need 40×7
 have 24×5
 ```
 
@@ -68,8 +71,8 @@ must do survives longest:
 | Rows | Shown |
 |---|---|
 | ≥ 3 | all three |
-| 2 | `need 40×6`, `have 24×5` |
-| 1 | `need 40×6` |
+| 2 | `need 40×7`, `have 24×5` |
+| 1 | `need 40×7` |
 | 0 | nothing |
 
 Below nine columns the lines are clipped by the terminal rather than shortened

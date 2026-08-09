@@ -1,7 +1,7 @@
 # Hint bar — design
 
 **Date:** 2026-08-09
-**Status:** designed
+**Status:** implemented
 
 One row along the bottom of the frame naming what the focused panel responds
 to. vision.md §7 Phase 0 promises a contextual keybinding bar; §4 principle 1
@@ -307,6 +307,6 @@ grows by two entries.
 ## 10. Documentation
 
 doc/shortcuts.md §2's "a binding must be visible" stops being aspirational and
-names the bar. §4 drops the hint bar from the deliberately-unbound table and
-§6's checklist gains the step that a new binding declares itself in
-`Panel::hints()` or says in the commit why it should stay hidden.
+names the bar. §6's checklist gains the step that a new binding declares itself
+in `Panel::hints()` or `GLOBAL`, or says in the commit why it stays hidden. §4
+is unchanged: the bar was never in its table of deliberately-unbound keys.

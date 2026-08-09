@@ -63,6 +63,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Geometry {
         }
     }
 
+    let bar = rects.bar();
+    frame.render_widget(crate::hints::line(&view.hints, bar.width, theme), bar);
+
     if let Some(overlay) = &view.overlay {
         crate::overlay::render(frame, overlay, theme);
     }
@@ -160,6 +163,51 @@ mod tests {
         assert_eq!(row(&buffer, 7), "┌Table DDL─────┐└──────────────────────┘");
         assert_eq!(row(&buffer, 8), "│              │┌Queries───────────────┐");
         assert_eq!(row(&buffer, 10), "└──────────────┘└──────────────────────┘");
+    }
+
+    #[test]
+    fn the_hint_bar_sits_on_the_bottom_row() {
+        let buffer = draw(80, 24);
+
+        assert_eq!(
+            row(&buffer, 23).trim_end(),
+            " j/k move  l/h fold  ⏎ open │ tab panel  q quit"
+        );
+        assert!(
+            !row(&buffer, 22).contains("q quit"),
+            "the bar owns one row and no more"
+        );
+    }
+
+    #[test]
+    fn the_bar_says_what_the_focused_panel_does() {
+        let bars: Vec<String> = Panel::ALL
+            .iter()
+            .map(|&panel| row(&draw_focused(80, 24, panel), 23).trim_end().to_owned())
+            .collect();
+
+        assert!(bars[0].contains("l/h fold"), "Tables folds: {:?}", bars[0]);
+        assert!(bars[1].contains("j/k scroll"), "Ddl scrolls: {:?}", bars[1]);
+        assert!(
+            bars[2].contains("j/k move"),
+            "Contents moves: {:?}",
+            bars[2]
+        );
+        assert!(
+            bars[3].contains("nothing here yet"),
+            "Queries has nothing: {:?}",
+            bars[3]
+        );
+    }
+
+    #[test]
+    fn a_narrow_frame_drops_hints_rather_than_the_bar() {
+        let buffer = draw(40, 12);
+
+        assert_eq!(
+            row(&buffer, 11).trim_end(),
+            " j/k move  l/h fold │ tab panel  q quit"
+        );
     }
 
     #[test]

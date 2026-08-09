@@ -109,9 +109,10 @@ or is inert; it never means something else somewhere. A panel that cannot honour
 a motion swallows it rather than passing it on.
 
 **A binding must be visible.** vision.md §4, principle 1: discoverability is
-ambient. The focus letters are underlined in their titles today. The contextual
-hint bar that covers the rest is promised in Phase 0 and unbuilt — which is a
-reason to keep the set small, not a reason to add keys and document them here.
+ambient. The focus letters are underlined in their titles; everything else is
+named in the hint bar along the bottom row, contextual to the focused panel
+([design](specs/2026-08-09-hint-bar-design.md)). A binding in neither place is
+a binding only this file knows about.
 
 **No modes.** There is no state in which a letter means something other than its
 binding. This holds only until the Queries panel takes text input, and that is
@@ -197,6 +198,7 @@ already takes has its arm swallowed, focus does not land, and the test fails.
 3. Add the arm to `handle_key`, above the panel-focus arm only if it must
    outrank a focus letter — and say why in the commit.
 4. Pin it with a test, and add the row to §5.
-5. Make it visible: a title mark, or the hint bar once that exists. A binding
-   only this file knows about is a binding nobody has.
+5. Make it visible. A panel binding declares itself in `Panel::hints()`; a
+   global one goes in `GLOBAL`. If it belongs in neither, say in the commit
+   why it should stay hidden.
 6. Update §1 and §3 here in the same commit.
