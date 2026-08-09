@@ -49,6 +49,23 @@ pub fn to_key_press(event: KeyEvent) -> Option<KeyPress> {
     })
 }
 
+/// Whether a pointer event is one of the gestures anything binds.
+///
+/// The reader thread refuses the rest before they cost a channel send:
+/// `EnableMouseCapture` turns on any-event tracking, so a pointer crossing
+/// the window reports one event per cell
+/// (doc/specs/2026-08-09-mouse-input-design.md §2).
+#[must_use]
+pub fn is_bound(event: MouseEvent) -> bool {
+    event.modifiers.is_empty()
+        && matches!(
+            event.kind,
+            MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+        )
+}
+
 /// Resolves a pointer event against the frame it happened in.
 ///
 /// Returns `None` for a gesture the design does not bind, and for one that
@@ -61,7 +78,7 @@ pub fn to_pointer(event: MouseEvent, map: &FrameMap) -> Option<Pointer> {
     // is refused too, for a different reason: under mouse capture, shift-drag
     // is the terminal's own text-selection escape hatch, so a shifted press is
     // a user selecting text rather than clicking a row (design §6).
-    if !event.modifiers.is_empty() {
+    if !is_bound(event) {
         return None;
     }
 
@@ -201,6 +218,51 @@ mod tests {
                 None,
                 "there is no horizontal navigation to reach"
             );
+        }
+    }
+
+    /// The reader thread's filter and `to_pointer`'s refusal must never
+    /// disagree in the direction that drops something the domain would have
+    /// accepted — a filter that is merely stricter is safe, one that is looser
+    /// is a silent behaviour change.
+    #[test]
+    fn is_bound_accepts_everything_to_pointer_would() {
+        let kinds = [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollLeft,
+            MouseEventKind::ScrollRight,
+        ];
+        let modifiers = [
+            KeyModifiers::NONE,
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SHIFT,
+        ];
+
+        for kind in kinds {
+            for modifiers in modifiers {
+                let event = MouseEvent {
+                    kind,
+                    column: 3,
+                    row: 2,
+                    modifiers,
+                };
+
+                if to_pointer(event, &map()).is_some() {
+                    assert!(
+                        is_bound(event),
+                        "to_pointer resolved {event:?} but is_bound would have \
+                         dropped it before it reached to_pointer"
+                    );
+                }
+            }
         }
     }
 

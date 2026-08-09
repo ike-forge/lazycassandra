@@ -10,9 +10,11 @@ use tokio::sync::mpsc::UnboundedSender;
 /// What the main loop receives.
 ///
 /// A pointer event only means something against the frame it happened in, and
-/// this thread has no frame — so it forwards the event and the main loop, which
-/// holds the map, resolves it
-/// (doc/specs/2026-08-09-mouse-input-design.md §4).
+/// this thread has no frame — so a bound one is forwarded whole, and the main
+/// loop, which holds the map, resolves it
+/// (doc/specs/2026-08-09-mouse-input-design.md §4). Gestures `is_bound` refuses
+/// — chiefly `Moved`, which any-event tracking reports for every cell the
+/// pointer crosses — never reach the channel at all (design §2).
 #[derive(Debug)]
 pub(crate) enum Incoming {
     Msg(Msg),
@@ -37,8 +39,10 @@ pub(crate) fn spawn_reader(tx: UnboundedSender<Incoming>) {
                 Event::Key(key) => lc_inbound::input::to_key_press(key)
                     .map(Msg::Input)
                     .map(Incoming::Msg),
-                Event::Mouse(mouse) => Some(Incoming::Mouse(mouse)),
-                Event::Resize(..) => Some(Incoming::Msg(Msg::Resized)),
+                Event::Mouse(mouse) if lc_inbound::input::is_bound(mouse) => {
+                    Some(Incoming::Mouse(mouse))
+                }
+                Event::Resize(..) => Some(Msg::Resized.into()),
                 _ => None,
             };
 
