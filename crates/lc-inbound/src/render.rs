@@ -3,6 +3,7 @@
 use lc_domain::ViewModel;
 use lc_domain::style::Token;
 use ratatui::Frame;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Block;
 
 use crate::layout::layout;
@@ -19,7 +20,14 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) {
             continue;
         }
 
-        let mut block = Block::bordered().title(panel.title.text());
+        let (before, shortcut, after) = panel.title.split();
+        let title = Line::from(vec![
+            Span::raw(before),
+            Span::styled(shortcut, theme.style(Token::Shortcut)),
+            Span::raw(after),
+        ]);
+
+        let mut block = Block::bordered().title(title);
         if panel.panel == view.focus {
             block = block.border_style(theme.style(Token::Focused));
         }
@@ -126,6 +134,42 @@ mod tests {
         assert!(!bold(0, 0), "Tables is not");
         assert!(!bold(0, 8), "Ddl is not");
         assert!(!bold(16, 9), "Queries is not");
+    }
+
+    #[test]
+    fn each_panel_underlines_the_key_that_focuses_it() {
+        let buffer = draw(40, 12);
+        let underlined = |x, y| {
+            buffer
+                .cell((x, y))
+                .expect("cell is in bounds")
+                .modifier
+                .contains(Modifier::UNDERLINED)
+        };
+
+        // "┌Tables" and "┌Table contents" on row 0, "┌Table DDL" on row 8,
+        // "┌Queries" on row 9 — the border occupies the first column of each.
+        assert!(underlined(1, 0), "Tables underlines its T");
+        assert!(underlined(23, 0), "Table contents underlines its c");
+        assert!(underlined(2, 8), "Table DDL underlines its a");
+        assert!(underlined(18, 9), "Queries underlines its u");
+    }
+
+    #[test]
+    fn nothing_but_the_shortcut_is_underlined() {
+        let buffer = draw(40, 12);
+        let underlined = |x, y| {
+            buffer
+                .cell((x, y))
+                .expect("cell is in bounds")
+                .modifier
+                .contains(Modifier::UNDERLINED)
+        };
+
+        for x in [0, 2, 3, 6] {
+            assert!(!underlined(x, 0), "column {x} of row 0 is not the mark");
+        }
+        assert!(!underlined(1, 8), "the T of Table DDL is not its mark");
     }
 
     #[test]

@@ -50,6 +50,9 @@ impl Theme {
             // Reversed video needs no explicit colour, so a selection reads
             // the same way Focused does on an impoverished palette.
             Token::Selected => Style::new().add_modifier(Modifier::REVERSED),
+            // Underlined rather than coloured: it labels a key, and it has to
+            // stay readable beside a title that is bold when focused.
+            Token::Shortcut => Style::new().add_modifier(Modifier::UNDERLINED),
         }
     }
 }
@@ -84,6 +87,7 @@ mod tests {
             Token::Muted,
             Token::Focused,
             Token::Selected,
+            Token::Shortcut,
         ];
 
         for token in tokens {
@@ -103,6 +107,17 @@ mod tests {
         assert_eq!(
             style.fg, None,
             "the selection inverts the user's own palette rather than replacing it"
+        );
+    }
+
+    #[test]
+    fn a_shortcut_is_underlined_without_spending_a_colour() {
+        let style = Theme::TerminalDefault.style(Token::Shortcut);
+
+        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(
+            style.fg, None,
+            "every colour in this theme already carries a meaning"
         );
     }
 }

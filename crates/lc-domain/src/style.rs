@@ -17,6 +17,8 @@ pub enum Token {
     Muted,
     /// The panel accepting input.
     Focused,
+    /// The key that focuses a panel, inside that panel's title.
+    Shortcut,
     /// The row the cursor is on.
     Selected,
 }
