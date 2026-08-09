@@ -77,8 +77,8 @@ built, in the domain, and travels in the `ViewModel`.
 ```rust
 pub struct PanelTitle {
     text: String,
-    /// Byte index of the shortcut letter, always on a char boundary.
-    mark: Option<usize>,
+    /// Byte range of the shortcut letter, always on a char boundary.
+    mark: Option<Range<usize>>,
 }
 
 impl PanelTitle {
@@ -96,7 +96,7 @@ title lands in the fixed prefix, ahead of any keyspace or table name.
 
 `mark` is `Option` so the type is total — a title that does not contain its own
 letter yields `(text, "", "")` and simply draws unmarked, rather than panicking
-or forcing an `unwrap` at a construction site. That case is a bug, and §6 pins
+or forcing an `unwrap` at a construction site. That case is a bug, and §5 pins
 it shut with a test rather than a runtime check.
 
 `view::title()` becomes `PanelTitle::marking(text, panel.shortcut())`, which
@@ -127,9 +127,14 @@ panel, focused or not: it is a label, not a state indicator.
 
 - Each shortcut focuses its panel from every starting focus, and emits no
   effects.
-- The four shortcuts are distinct, and disjoint from the bindings `handle_key`
-  already claims (`q`, `j`, `k`, `l`, `h`, space) — a property test over
-  `Panel::ALL`, so adding a colliding panel key fails.
+- The four shortcuts are distinct (`every_panel_has_a_distinct_shortcut`, a
+  property test over `Panel::ALL`). Disjointness from the bindings
+  `handle_key` already claims (`q`, `j`, `k`, `l`, `h`, space) is proven
+  behaviourally rather than by naming those keys:
+  `a_shortcut_focuses_its_panel_from_any_other_panel` requires every
+  from/to pair over `Panel::ALL` to actually land on `to`, so a panel
+  claiming one of those keys would have its arm swallowed by the earlier
+  binding and the assertion would fail.
 - `from_shortcut` is the inverse of `shortcut` over `ALL`, and rejects an
   unbound letter.
 - Every panel's title marks its own shortcut, checked across every
