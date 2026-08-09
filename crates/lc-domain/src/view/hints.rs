@@ -41,17 +41,19 @@ pub struct HintBar {
 /// learned once: a user who never presses `tab` has no way to find the other
 /// three panels (design §3).
 ///
-/// `?` leads because the bar drops global hints from the left: `q quit` is last
-/// to go because a user who can read one hint needs the way out, and `?` is
-/// next because it is the way to every binding the bar had no room for.
+/// The bar drops global hints from the left as the frame narrows, so position
+/// is survival order: `q quit` is last to go because a user who can read one
+/// hint needs the way out, `?` sits just ahead of it because it is the way to
+/// every binding the bar had no room for, and `tab panel` — which teaches only
+/// one binding — is the first to go.
 pub(crate) const GLOBAL: &[Binding] = &[
-    Binding {
-        keys: &[Key::Char('?')],
-        action: "commands",
-    },
     Binding {
         keys: &[Key::Tab],
         action: "panel",
+    },
+    Binding {
+        keys: &[Key::Char('?')],
+        action: "commands",
     },
     Binding {
         keys: &[Key::Char('q')],
@@ -210,19 +212,29 @@ mod tests {
     }
 
     #[test]
-    fn the_bar_names_the_palette_that_reaches_the_rest() {
-        assert_eq!(
-            bar(&fits()).global[0].keys,
-            "?",
-            "the way to every other binding survives longest but one"
+    fn the_bar_names_the_palette_between_panel_and_quit() {
+        let global = bar(&fits()).global;
+        let position = |action: &str| {
+            global
+                .iter()
+                .position(|hint| hint.action == action)
+                .unwrap_or_else(|| panic!("{action} is on the bar"))
+        };
+
+        assert!(
+            position("commands") > position("panel"),
+            "? outlives tab panel"
         );
+        assert!(position("quit") > position("commands"), "q quit outlives ?");
     }
 
     #[test]
     fn the_bar_drops_the_palette_hint_where_no_palette_would_fit() {
-        assert_eq!(
-            bar(&State::default()).global[0].action,
-            "panel",
+        assert!(
+            bar(&State::default())
+                .global
+                .iter()
+                .all(|hint| hint.action != "commands"),
             "a hint for a key that can do nothing here is a bar that lies"
         );
     }

@@ -351,17 +351,18 @@ doc/shortcuts.md §2 requires a binding to be visible, so `?` goes on the bar:
 
 ```rust
 pub(crate) const GLOBAL: &[Binding] = &[
-    Binding { keys: &[Key::Char('?')], action: "commands" },
     Binding { keys: &[Key::Tab],       action: "panel" },
+    Binding { keys: &[Key::Char('?')], action: "commands" },
     Binding { keys: &[Key::Char('q')], action: "quit" },
 ];
 ```
 
-First, ahead of `tab panel`. The bar drops global hints from the left when the
-frame narrows (hint bar design §6), so the order is a priority: `q quit` is last
-to go because a user who can read one hint needs the way out, and `? commands`
-is second-to-last because it is now the way to everything else. `tab panel`
-teaches one binding; `?` teaches all of them.
+Between `tab panel` and `q quit`. The bar drops global hints from the left when
+the frame narrows (hint bar design §6), so position is a priority, read from the
+right: `q quit` is last to go because a user who can read one hint needs the way
+out, `? commands` goes just before it because it is now the way to everything
+else, and `tab panel` — which teaches one binding rather than all of them — is
+the first to go.
 
 **While the palette is open the bar describes the palette**, not the panel
 underneath it:

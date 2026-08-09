@@ -137,6 +137,8 @@ fn push_joined(spans: &mut Vec<Span<'static>>, segments: &[Segment], theme: Them
 mod tests {
     use lc_domain::state::{Geometry, Panel};
     use lc_domain::{State, view_model};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     use super::*;
 
@@ -180,14 +182,32 @@ mod tests {
         assert_eq!(drawn(Panel::Tables, 6), "");
     }
 
+    /// The `Geometry` a real 100x24 frame produces — the same frame
+    /// `render::tests::the_frame_reports_how_many_rows_a_palette_would_show`
+    /// pins at `command_rows() == 14` — rather than a width/height
+    /// combination no terminal actually produces (design §5.1).
+    fn fitting_geometry() -> Geometry {
+        let mut terminal =
+            Terminal::new(TestBackend::new(100, 24)).expect("TestBackend always initialises");
+        let mut geometry = Geometry::default();
+
+        terminal
+            .draw(|frame| {
+                geometry = crate::render::render(
+                    frame,
+                    &view_model(&State::default()),
+                    Theme::TerminalDefault,
+                );
+            })
+            .expect("TestBackend always draws");
+
+        geometry
+    }
+
     #[test]
-    fn a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_first_among_the_globals() {
-        // `bar_of`/`drawn` never carry a geometry a palette would fit, so
-        // they cannot reach `? commands` through the width-fitting path at
-        // all (hints.rs `bar`, gated on `command_rows`, design §5.1) — this
-        // is the one test that sends a real fitting `Geometry` through it.
+    fn a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel() {
         let state = State {
-            geometry: Geometry::new([8, 14, 20, 1], 37, 14),
+            geometry: fitting_geometry(),
             ..State::default()
         };
         let bar = view_model(&state).hints;
@@ -201,18 +221,22 @@ mod tests {
 
         assert_eq!(
             drawn(80),
-            " j/k move  l/h fold  ⏎ open │ ? commands  tab panel  q quit"
+            " j/k move  l/h fold  ⏎ open │ tab panel  ? commands  q quit"
         );
-        assert_eq!(drawn(46), " j/k move │ ? commands  tab panel  q quit");
         assert_eq!(
-            drawn(38),
-            " j/k move │ tab panel  q quit",
-            "? goes before tab panel as the frame narrows"
+            drawn(46),
+            " j/k move │ tab panel  ? commands  q quit",
+            "tab panel is still here alongside ? commands"
+        );
+        assert_eq!(
+            drawn(40),
+            " j/k move │ ? commands  q quit",
+            "tab panel goes first as the frame narrows"
         );
         assert_eq!(
             drawn(28),
             " j/k move │ q quit",
-            "q quit is still the last one out"
+            "? commands goes next; q quit is still the last one out"
         );
     }
 
