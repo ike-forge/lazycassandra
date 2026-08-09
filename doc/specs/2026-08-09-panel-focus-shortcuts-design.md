@@ -1,7 +1,7 @@
 # Panel focus shortcuts — design
 
 **Date:** 2026-08-09
-**Status:** designed
+**Status:** implemented
 
 Four panels, four keys: `t` Tables, `a` Table DDL, `c` Contents, `u` Queries.
 Each panel's title underlines the letter that reaches it, so the binding is
