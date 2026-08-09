@@ -14,18 +14,24 @@ key does something, it does it there.
 
 ### Global
 
-Reachable from every panel, in every connection state.
+Reachable from every panel that does not take text, in every connection
+state. `Esc`, `Tab` and `Shift-Tab` are the exceptions that really are
+unconditional; the five marked rows are text instead, inside the one panel
+that takes text — see the Queries subsection below.
 
 | Key | Action |
 |---|---|
-| `q` | Quit. Cancels every in-flight query. |
+| `q`¹ | Quit. Cancels every in-flight query. |
 | `Esc` | Dismiss the overlay. |
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
-| `t` | Focus **T**ables. |
-| `a` | Focus T**a**ble DDL. |
-| `c` | Focus Table **c**ontents. |
-| `u` | Focus Q**u**eries. |
+| `t`¹ | Focus **T**ables. |
+| `a`¹ | Focus T**a**ble DDL. |
+| `c`¹ | Focus Table **c**ontents. |
+| `u`¹ | Focus Q**u**eries. |
+
+¹ Not reachable from Queries. A panel that takes text claims every printable
+key before this table is consulted, so these type themselves there instead.
 
 The four focus letters are underlined in their panel's title, so the binding is
 learned by looking at the panel rather than by reading this file (vision.md §4,
@@ -37,25 +43,29 @@ See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design
 
 Applies to the focused panel and nothing else. What moves depends on the panel:
 Tables and Contents move a selection and let the viewport follow; Table DDL
-moves a viewport over lines; Queries has neither, so motion there is inert
-rather than reaching into another panel.
+moves a viewport over lines; Queries moves the cursor through its buffer.
 
 | Key | Action |
 |---|---|
-| `j` / `↓` | Down one row (one line in Table DDL). |
-| `k` / `↑` | Up one. |
+| `j` / `↓` | Down one row (one line in Table DDL; in Queries, `↓` only — `j` is text). |
+| `k` / `↑` | Up one (in Queries, `↑` only — `k` is text). |
 | `PageDown` | Down one panel height. |
 | `PageUp` | Up one panel height. |
-| `Home` | To the start. |
-| `End` | To the end. |
+| `Home` | To the start (to the **line**'s start in Queries — §2). |
+| `End` | To the end (to the **line**'s end in Queries — §2). |
 
 `End` in Table DDL stops at the last line rather than scrolling past it; in a
 list it lands on the last row. Both are the same `Motion::End`, resolved by the
 focused panel ([panel scrolling design](specs/2026-08-09-panel-scrolling-design.md)).
+Queries never reaches `Motion::End` at all: the editor claims `Home`/`End`
+itself, before the match that would call it (queries editor design §3).
 
 ### Tables panel
 
-Accepted anywhere, but a no-op unless Tables has focus.
+Accepted anywhere, but a no-op unless Tables has focus — except in Queries,
+which takes text: there `Enter` inserts a newline and `Space`, `l`/`→`,
+`h`/`←` insert themselves, none of them a no-op. See the Queries subsection
+below.
 
 | Key | Action |
 |---|---|
@@ -128,16 +138,24 @@ Neither set is the real one. Anyone who reaches for arrows should never hit a
 motion that only vim keys have, and the reverse (vision.md §4, principle 2 — the
 same key at every level of skill).
 
-**The same key means the same thing in every panel.** `j` moves down in all four
-or is inert; it never means something else somewhere. A panel that cannot honour
-a motion swallows it rather than passing it on.
+The pairing breaks in Queries, and only there: a panel that takes text claims
+`j`/`k`/`l`/`h` as characters before this match is reached, so only the
+arrows still move the cursor. This is the vim-key half of the same exception
+§3's key budget note makes for every letter.
 
-`Home` and `End` are the exception. Everywhere else they reach the ends of
-the document; in the editor they reach the ends of the line, because that is
-what they do in every text editor a user has met. The document's ends stay
-reachable with `PageUp` and `PageDown`.
+**The same key means the same thing in every panel.** `j` moves down in
+Tables, Contents and Table DDL — the panels that treat it as motion — or is
+inert; it never means something else there. A panel that cannot honour a
+motion swallows it rather than passing it on. Queries is the exception: it
+takes text, so `j` types itself, along with `k`/`l`/`h` — the vim/arrows rule
+above.
 
-A focus letter (`t`/`a`/`c`/`u`) is the other exception: it moves focus in
+`Home` and `End` are a second exception. Everywhere else they reach the ends
+of the document; in the editor they reach the ends of the line, because that
+is what they do in every text editor a user has met. The document's ends
+stay reachable with `PageUp` and `PageDown`.
+
+A focus letter (`t`/`a`/`c`/`u`) is a third exception: it moves focus in
 every panel that does not take text, and is text in the one panel that does.
 The rule's own enforcement test was renamed for this — §5.
 
@@ -173,12 +191,12 @@ Free, lowercase: `b` `d` `e` `f` `g` `i` `m` `n` `o` `p` `r` `s` `v` `w` `x`
 `y` `z`, every digit, and every uppercase letter.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
-`PageDown` `↑` `↓` `←` `→`.
+`PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
+editor binds, inside Queries.
 
-Named keys the domain understands but nothing binds: `Backspace` `Delete`
-`Insert` `F1`–`F12`. Anything crossterm reports outside that vocabulary —
-including every mouse event — is dropped at the edge and never reaches the
-domain.
+Named keys the domain understands but nothing binds: `Insert` `F1`–`F12`.
+Anything crossterm reports outside that vocabulary — including every mouse
+event — is dropped at the edge and never reaches the domain.
 
 Claim from the free set first. Re-using a taken key means retiring a binding,
 which is a spec-level change.
