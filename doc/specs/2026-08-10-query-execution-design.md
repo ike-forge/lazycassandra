@@ -176,9 +176,11 @@ pub enum Subject {
 `TableRef` stays exactly as it is, including `qualified()` — it is what the
 tree hands in, and a page that outlives a schema reload still has to say which
 table it came from. `Subject::label()` is what the title formats:
-`keyspace.table` for a table, and for a typed statement its first line with
-runs of whitespace collapsed to single spaces. The renderer's block title
-clips what does not fit; nothing truncates in the domain.
+`keyspace.table` for a table, and for a typed statement the statement itself
+with every run of whitespace — newlines included — collapsed to a single
+space, so a buffer written over four lines still titles the panel in one. The
+renderer's block title clips what does not fit; nothing truncates in the
+domain.
 
 `ContentsPanel::requested`, `page_ready`, `refused`, `failed` and `awaited`
 take and return `Subject` instead of `TableRef`. No new state, no second
@@ -223,9 +225,23 @@ vocabulary — it is the one the domain already uses for exactly this.
 `QUERIES_HINTS` gains `ctrl-r run`, first in the list: it is what the panel is
 for, and `⏎ newline` and `esc leave` are what it does while you get there.
 
-The palette's Queries section gains the same row. `commands.rs` has a test
-that no row outgrows the narrowest palette; `ctrl-r` is four columns wider than
-the widest key label there today, and the row is short enough that it holds.
+The palette has no Queries section at all — the editor slice added none, so a
+panel that takes text is the one thing the catalogue's completeness claim does
+not currently cover. `ctrl-r` cannot be added to a section that does not exist,
+so the section is added whole: `ctrl-r run`, and the editor's own non-text
+bindings (`⏎`, `bksp`/`del`, the arrows, `home`/`end`, `esc`). Listing only
+`ctrl-r` under a heading called "Queries" would say the panel does one thing.
+
+That has a consequence for the two catalogue sweeps in `update.rs`. Both share
+`sweep_fixtures()`, and none of its four states focuses Queries — deliberately,
+because `no_key_does_anything_the_palette_does_not_list` asks a question with no
+meaning in a panel where every printable key is text. So the fixtures split:
+that sweep keeps the four it has, and
+`every_key_the_palette_lists_does_something` runs over those four plus an
+editing state, which is the only one where `bksp`, `del` and `ctrl-r` can
+answer. The keys that leave the "not listed" sweep's reach — `bksp` and `del`,
+newly catalogued — get a test of their own saying they do nothing outside a
+panel that takes text.
 
 `doc/shortcuts.md` changes in the same commit: §1's Queries table gains the
 row, §2's ctrl rule is rewritten as §1 above describes, §3 gains a ctrl line to
@@ -251,7 +267,9 @@ In `update.rs` unless noted.
 | Classification | the `statement.rs` tests: `select_is_a_read`, `an_unknown_verb_is_treated_as_mutating`, `case_does_not_change_a_statements_kind`, `drop_and_truncate_are_destructive` |
 | A typed subject titles the panel | `a_typed_statement_titles_the_panel_with_its_first_line`, `a_multi_line_statement_collapses_to_one_title_line` (`view/contents.rs`) |
 | The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding` (`commands.rs`) |
-| Every binding is pressed as written | the existing sweep, now pressing `binding.modifiers` |
+| A modifier reaches the label | `a_ctrl_binding_is_labelled_with_its_modifier`, `an_unmodified_binding_is_labelled_bare` (`view/hints.rs`) |
+| Every binding is pressed as written | the existing sweeps, now pressing `binding.modifiers` |
+| The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
 
 The existing `a_modified_key_is_not_a_binding` is narrowed rather than deleted:
 it asserted that *any* ctrl key is inert, which stops being true. It becomes
