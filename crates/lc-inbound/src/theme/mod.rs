@@ -144,13 +144,13 @@ fn maybe(color: Option<Color>) -> Style {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::theme::contrast::{BLACK, WHITE, ratio};
 
     /// Every role a theme can spend on text. `base`, `surface` and
     /// `highlight` are what text is drawn *on* and are absent by design.
-    fn foregrounds(palette: &Palette) -> Vec<(&'static str, Color)> {
+    pub(super) fn foregrounds(palette: &Palette) -> Vec<(&'static str, Color)> {
         vec![
             ("muted", palette.muted),
             ("partition", palette.partition),
