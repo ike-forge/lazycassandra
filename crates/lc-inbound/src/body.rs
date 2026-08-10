@@ -140,6 +140,9 @@ pub(crate) fn render(
             rows,
             selected,
             offset,
+            first_column: _,
+            column: _,
+            gutter: _,
         } => Some(Body {
             extent: grid(frame, area, columns, rows, *selected, *offset, theme),
             unit: Unit::Rows {
