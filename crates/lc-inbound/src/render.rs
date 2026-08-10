@@ -1310,7 +1310,7 @@ mod tests {
         let page = sized_page(12, 3);
         let widths = lc_domain::grid::widths(&page);
         let mut state = showing(page);
-        let available = 22 - 1 - lc_domain::grid::COLUMN_SPACING;
+        let available = lc_domain::grid::available(22, 1);
 
         for column in path {
             state.contents.column.go_to(*column, widths.len());

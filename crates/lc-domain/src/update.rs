@@ -1023,13 +1023,8 @@ fn grid_columns(state: &State) -> Option<(Vec<u16>, u16)> {
 
     let gutter = grid::gutter(page.rows.len());
     let width = u16::try_from(state.geometry.grid_width()).unwrap_or(u16::MAX);
-    let available = width.saturating_sub(gutter).saturating_sub(if gutter == 0 {
-        0
-    } else {
-        grid::COLUMN_SPACING
-    });
 
-    Some((grid::widths(page), available))
+    Some((grid::widths(page), grid::available(width, gutter)))
 }
 
 /// Pulls the column viewport over the selected cell, and back inside a page

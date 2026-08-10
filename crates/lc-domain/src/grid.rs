@@ -47,6 +47,18 @@ pub fn widths(page: &Page) -> Vec<u16> {
         .collect()
 }
 
+/// The width left for columns once the gutter and its spacing are taken off.
+///
+/// One home for arithmetic the domain and the renderer must agree on exactly:
+/// a disagreement scrolls the cell cursor and the drawn window to different
+/// places, and no test can see it (design §6).
+#[must_use]
+pub const fn available(width: u16, gutter: u16) -> u16 {
+    width
+        .saturating_sub(gutter)
+        .saturating_sub(if gutter == 0 { 0 } else { COLUMN_SPACING })
+}
+
 /// How many columns fit in `available`, drawing from `first`.
 ///
 /// At least one whenever `first` names a column: a panel too narrow for even
@@ -162,6 +174,14 @@ mod tests {
         let page = page(&["id"], &[]);
 
         assert_eq!(widths(&page), vec![2]);
+    }
+
+    #[test]
+    fn the_gutter_costs_its_own_width_and_one_spacing_column() {
+        assert_eq!(available(22, 1), 22 - 1 - COLUMN_SPACING);
+        assert_eq!(available(22, 4), 22 - 4 - COLUMN_SPACING);
+        assert_eq!(available(22, 0), 22, "no gutter, no spacing beside it");
+        assert_eq!(available(1, 4), 0, "a body narrower than its own gutter");
     }
 
     #[test]

@@ -16,7 +16,7 @@
 //! several wrapped lines, which only the renderer that wrapped them can
 //! measure (doc/specs/2026-08-10-ddl-selection-design.md §5.4).
 
-use lc_domain::grid::{COLUMN_SPACING, fitting};
+use lc_domain::grid::{COLUMN_SPACING, available, fitting};
 use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
@@ -251,14 +251,7 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     let height = usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS));
 
     let widths: Vec<u16> = columns.iter().map(|column| column.width).collect();
-    // The same subtraction `update::grid_columns` makes against the width this
-    // panel reported. The cell cursor and the drawn window are placed from the
-    // two answers, so a disagreement scrolls the grid somewhere the domain did
-    // not ask for.
-    let available = area
-        .width
-        .saturating_sub(gutter)
-        .saturating_sub(if gutter == 0 { 0 } else { COLUMN_SPACING });
+    let available = available(area.width, gutter);
     let first_column = first_column.min(columns.len());
     let shown = fitting(&widths, first_column, available);
     let drawn = first_column..first_column + shown;
