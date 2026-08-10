@@ -3154,6 +3154,21 @@ mod tests {
         .collect()
     }
 
+    /// Every `KeyPress` worth sweeping for the palette's completeness claim.
+    ///
+    /// Unmodified, plus ctrl held: ctrl is the only modifier `handle_key`
+    /// dispatches on (`ctrl_key`) rather than refusing outright, so it is the
+    /// only one that can ever do something the palette fails to list. Alt is
+    /// refused wholesale before any arm sees it and shift never reaches a
+    /// letter — sweeping either would only double the cost of this test for
+    /// no coverage a future binding could fail to have.
+    fn every_press() -> Vec<KeyPress> {
+        every_key()
+            .into_iter()
+            .flat_map(|key| [KeyPress::new(key), KeyPress::ctrl(key)])
+            .collect()
+    }
+
     fn catalogued() -> Vec<KeyPress> {
         CATALOGUE
             .iter()
@@ -3230,15 +3245,14 @@ mod tests {
         let catalogued = catalogued();
 
         for state in sweep_fixtures() {
-            for key in every_key() {
-                let press = KeyPress::new(key);
+            for press in every_press() {
                 if catalogued.contains(&press) {
                     continue;
                 }
 
                 assert!(
                     !does_something(&state, press),
-                    "{key:?} does something and doc/shortcuts.md's palette does not list it"
+                    "{press:?} does something and doc/shortcuts.md's palette does not list it"
                 );
             }
         }

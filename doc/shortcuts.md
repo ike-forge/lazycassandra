@@ -43,12 +43,12 @@ See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design
 ### Motion
 
 Applies to the focused panel and nothing else. What moves depends on the panel:
-Tables and Contents move a selection and let the viewport follow; Table DDL
-moves a viewport over lines; Queries moves the cursor through its buffer.
+Tables, Contents and Table DDL move a selection and let the viewport follow;
+Queries moves the cursor through its buffer.
 
 | Key | Action |
 |---|---|
-| `j` / `↓` | Down one row (one line in Table DDL; in Queries, `↓` only — `j` is text). |
+| `j` / `↓` | Down one row (in Queries, `↓` only — `j` is text). |
 | `k` / `↑` | Up one (in Queries, `↑` only — `k` is text). |
 | `PageDown` | Down one panel height. |
 | `PageUp` | Up one panel height. |
