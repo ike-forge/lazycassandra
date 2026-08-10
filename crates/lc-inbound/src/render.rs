@@ -40,6 +40,12 @@ pub struct Rendered {
 /// how many lines the Ddl body wrapped to
 /// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
 pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
+    let ground = theme.ground();
+    if ground != Style::new() {
+        let area = frame.area();
+        frame.buffer_mut().set_style(area, ground);
+    }
+
     let command_rows = crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count());
     let rects = match layout(frame.area()) {
         Shell::Panels(rects) => rects,
@@ -48,11 +54,6 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             return Rendered::default();
         }
     };
-    let ground = theme.ground();
-    if ground != Style::new() {
-        let area = frame.area();
-        frame.buffer_mut().set_style(area, ground);
-    }
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
     let mut ddl_selection = DdlSpan::default();
@@ -405,9 +406,29 @@ mod tests {
             Color::Rgb(0x1e, 0x1e, 0x2e),
             "a flavour owns the whole frame, corners included"
         );
+    }
+
+    #[test]
+    fn a_flavour_paints_the_field_even_when_the_frame_is_too_small_for_a_panel() {
+        // Below layout::MIN_W x MIN_H (40x7), `render` takes the `TooSmall`
+        // arm and returns before the panel loop — the path the ground paint
+        // must cover too, or a flavour leaves a hole exactly where the notice
+        // is drawn.
+        let mut terminal =
+            Terminal::new(TestBackend::new(30, 6)).expect("TestBackend always initialises");
+        let state = State::default();
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::mocha());
+            })
+            .expect("TestBackend always draws");
+
+        let buffer = terminal.backend().buffer();
+
         assert!(
             buffer.content().iter().all(|cell| cell.bg != Color::Reset),
-            "a cell the flavour missed shows the terminal through it"
+            "a cell the flavour missed shows the terminal through it, notice included"
         );
     }
 
