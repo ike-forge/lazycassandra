@@ -46,12 +46,50 @@ pub enum ContentsState {
     },
     Loaded {
         subject: Subject,
-        page: Page,
+        page: GridPage,
     },
     Failed {
         subject: Subject,
         error: DbError,
     },
+}
+
+/// A page and the column widths measured from it.
+///
+/// One type rather than two fields because measuring is expensive and the
+/// answer never changes: [`crate::grid::widths`] runs [`crate::cell::text`]
+/// over every cell, which hex-expands a whole blob to 2n characters purely to
+/// count them. `update`'s epilogue and every drawn frame each wanted that
+/// answer, so an idle tick over a page of blobs allocated megabytes to reach
+/// the conclusion that nothing had moved — the cost
+/// [`crate::state::Loader`]'s repaint rule exists to avoid.
+///
+/// The widths are a pure function of the page and are built with it, so the
+/// cache has no way to go stale. That is why there is no public constructor
+/// taking both.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridPage {
+    page: Page,
+    widths: Vec<u16>,
+}
+
+impl GridPage {
+    fn new(page: Page) -> Self {
+        let widths = crate::grid::widths(&page);
+
+        Self { page, widths }
+    }
+
+    #[must_use]
+    pub const fn page(&self) -> &Page {
+        &self.page
+    }
+
+    /// Each column's natural width, measured once when the page landed.
+    #[must_use]
+    pub fn widths(&self) -> &[u16] {
+        &self.widths
+    }
 }
 
 /// Which table a request was about.
@@ -162,7 +200,10 @@ impl ContentsPanel {
             return;
         };
 
-        self.state = ContentsState::Loaded { subject, page };
+        self.state = ContentsState::Loaded {
+            subject,
+            page: GridPage::new(page),
+        };
     }
 
     /// Records a request that never became a query, because the domain
@@ -188,7 +229,7 @@ impl ContentsPanel {
     #[must_use]
     pub fn row_count(&self) -> usize {
         match &self.state {
-            ContentsState::Loaded { page, .. } => page.rows.len(),
+            ContentsState::Loaded { page, .. } => page.page().rows.len(),
             _ => 0,
         }
     }
@@ -197,7 +238,7 @@ impl ContentsPanel {
     #[must_use]
     pub fn column_count(&self) -> usize {
         match &self.state {
-            ContentsState::Loaded { page, .. } => page.columns.len(),
+            ContentsState::Loaded { page, .. } => page.page().columns.len(),
             _ => 0,
         }
     }
@@ -454,6 +495,22 @@ mod tests {
         assert_eq!(panel.column_count(), 0);
         assert_eq!(panel.column.index(), 0);
         assert_eq!(panel.columns.first(), 0);
+    }
+
+    #[test]
+    fn a_page_arrives_with_its_column_widths_already_measured() {
+        let (mut panel, query) = loading();
+
+        panel.page_ready(query, wide_page(3));
+
+        let ContentsState::Loaded { page, .. } = panel.state() else {
+            panic!("the page landed");
+        };
+        assert_eq!(
+            page.widths(),
+            crate::grid::widths(page.page()),
+            "measured once beside the page, not once per tick"
+        );
     }
 
     #[test]

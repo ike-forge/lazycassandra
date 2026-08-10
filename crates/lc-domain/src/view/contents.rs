@@ -5,8 +5,8 @@
 //! 8).
 
 use crate::cell;
-use crate::contents::{ContentsState, Subject, TableRef};
-use crate::model::{CqlValue, Page, Schema};
+use crate::contents::{ContentsState, GridPage, Subject, TableRef};
+use crate::model::{CqlValue, Schema};
 use crate::search::Filter;
 use crate::state::State;
 use crate::style::Token;
@@ -53,7 +53,11 @@ pub(super) fn title(state: &State) -> String {
             format!("{BASE} — {}", subject.label())
         }
         ContentsState::Loaded { subject, page } => {
-            format!("{BASE} — {} ({})", subject.label(), rows(page.rows.len()))
+            format!(
+                "{BASE} — {} ({})",
+                subject.label(),
+                rows(page.page().rows.len())
+            )
         }
     }
 }
@@ -77,18 +81,19 @@ pub(super) fn body(state: &State) -> PanelBody {
     }
 }
 
-fn grid(state: &State, subject: &Subject, page: &Page) -> PanelBody {
+fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
+    let page = grid_page.page();
+
+
     if page.rows.is_empty() {
         return waiting("No rows");
     }
-
-    let widths = crate::grid::widths(page);
 
     PanelBody::Grid {
         columns: page
             .columns
             .iter()
-            .zip(&widths)
+            .zip(grid_page.widths())
             .map(|(name, width)| GridColumn {
                 name: name.clone(),
                 token: column_token(state.schema(), subject.table(), name),
@@ -152,7 +157,7 @@ fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str)
 #[cfg(test)]
 mod tests {
     use crate::model::{
-        ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, QueryId, Row, Schema,
+        ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Page, QueryId, Row, Schema,
     };
     use crate::posture::Posture;
     use crate::search::{Filter, Filtered};

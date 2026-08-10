@@ -1016,15 +1016,15 @@ fn go_left(state: &mut State) {
 /// The columns the grid is drawing over, and the width they have.
 ///
 /// `None` when there is no page: nothing to fit, and nothing to follow.
-fn grid_columns(state: &State) -> Option<(Vec<u16>, u16)> {
+fn grid_columns(state: &State) -> Option<(&[u16], u16)> {
     let ContentsState::Loaded { page, .. } = state.contents.state() else {
         return None;
     };
 
-    let gutter = grid::gutter(page.rows.len());
+    let gutter = grid::gutter(page.page().rows.len());
     let width = u16::try_from(state.geometry.grid_width()).unwrap_or(u16::MAX);
 
-    Some((grid::widths(page), grid::available(width, gutter)))
+    Some((page.widths(), grid::available(width, gutter)))
 }
 
 /// Pulls the column viewport over the selected cell, and back inside a page
@@ -1040,13 +1040,18 @@ fn follow_grid_columns(state: &mut State) {
         return;
     };
 
+    // Moved out and back so the widths can stay borrowed from the page they
+    // were measured with rather than be copied per tick.
+    let mut columns = state.contents.columns;
     // Clamp first, follow second, mirroring `clamp_lists` before
     // `follow_moved_cursors` on the row axis: the clamp answers "is the
     // offset too far right for this page and this width", which can leave the
     // cursor off screen, and the follow is what puts it back. The other order
     // would let the clamp undo the follow and hide the selected cell.
-    state.contents.columns.clamp_to(&widths, available);
-    state.contents.columns.follow(column, &widths, available);
+    columns.clamp_to(widths, available);
+    columns.follow(column, widths, available);
+
+    state.contents.columns = columns;
 }
 
 fn transition(state: &mut State, transition: Transition) {
@@ -2295,7 +2300,7 @@ mod tests {
 
         update(
             &mut state,
-            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0, 80)),
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
         );
 
         assert_eq!(
@@ -2323,7 +2328,7 @@ mod tests {
 
         update(
             &mut state,
-            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0, 80)),
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
         );
 
         assert_eq!(
