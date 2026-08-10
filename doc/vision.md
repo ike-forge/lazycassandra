@@ -132,22 +132,28 @@ You build muscle memory for *where things are*, not just what keys do. Layout
 does not rearrange itself under you.
 
 **5. Wear the terminal's clothes.**
-The background is yours and LazyCassandra never overrides it; body text keeps
-your terminal's own foreground. The tool sits inside your setup instead of
-repainting over it — no imported colour scheme, nothing that clashes with the
-split next to it.
+The background is yours and LazyCassandra never paints over it; body text
+keeps your terminal's own foreground. What is drawn *on top* is ours,
+truecolor included, chosen to read on a light and a dark terminal alike.
 
-Highlights are ours. Where something has to be *marked* — an accent, an icon,
-a property name — we pick the colour, truecolor included. What that buys is
-bounded on purpose: meaning still belongs to the sixteen ANSI colours, because
-those are the ones that survive a terminal whose palette is unusable. Write
-posture, severity and key structure are drawn in them and always will be. An
-accent marks where to look; it never carries the meaning.
+The tool no longer reserves meaning for the sixteen ANSI colours. That rule
+bought resilience against a terminal palette that is close to extinct, at the
+cost of every distinction that makes a dense grid readable at a glance — the
+actual daily problem. A theme is a `Palette` of named roles now, and key
+structure, write posture and severity are drawn in whichever colour the
+active theme gives that role, not in a fixed ANSI slot. A poor-palette
+fallback, if one is ever wanted, ships as a theme of its own rather than as a
+constraint on every other theme.
 
-Themes are supported for people who want them, and one may ship for terminals
-with poor palettes. But the out-of-the-box experience is deliberately the least
-disruptive one, and the default must stay legible on light and dark backgrounds
-alike, because it cannot know which it is on.
+The default theme is still the least disruptive one: it leaves the frame's
+background, an overlay's background, body text and panel borders unset, so it
+paints no panel field and inherits whatever the terminal already has. What it
+does draw — key structure, severity, write posture, and the rest — must stay
+legible on light and dark backgrounds alike, because it cannot know which it
+is on. `the_default_palette_reads_on_black_and_on_white` holds that.
+LazyCassandra also ships four Catppuccin flavours that repaint everything,
+and a runtime picker (`T`) to move between all five with a live preview —
+see architecture.md §6 and specs/2026-08-10-themes-design.md.
 
 **6. Destructive things are obvious, reversible, or confirmed — pick two.**
 Read-only is the default posture on any connection not explicitly marked

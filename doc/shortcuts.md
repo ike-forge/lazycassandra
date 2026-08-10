@@ -23,6 +23,7 @@ that takes text — see the Queries subsection below.
 |---|---|
 | `q`¹ | Quit. Cancels every in-flight query. |
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
+| `T`¹ | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
 | `Esc` | Dismiss the overlay, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
 | `Tab` | Focus the next panel, in reading order, wrapping. |
@@ -81,6 +82,30 @@ is the preview. `Enter` on an empty query therefore clears the filter — there
 is no separate binding for that, only the empty query the invariant already
 turns into "no filter".
 See [panel search design](specs/2026-08-10-panel-search-design.md) §3.
+
+### The theme picker
+
+`T` opens `Overlay::Themes`, an `Overlay` of the same rank as the command
+palette (§2): it outranks focus and claims every key before the panel
+underneath ever sees one. It is refused on the same gate as the command
+palette — a frame too small to draw a list gets neither — and it is also
+reachable from the palette itself, which carries a row for it.
+
+| Key | Effect |
+|---|---|
+| `j` / `k`, `Down` / `Up` | Moves the cursor, **and sets `State.theme`** — the frame repaints in that theme immediately. |
+| `Enter` | Closes, keeping whatever theme is set. |
+| `Esc` | Sets `State.theme` back to the theme the picker opened on, then closes. |
+
+Live preview is why the picker restores rather than merely reverts: a message
+arriving over an open picker, or a frame shrinking below it, unwinds the
+preview the same way `Esc` does, so a half-previewed theme never strands
+itself. See [themes design](specs/2026-08-10-themes-design.md) §6.
+
+`T` is the only shifted-letter binding in the program. `t` already focuses
+Tables, so the picker could not take the lowercase key, and a shifted letter
+is a binding of its own rather than a synonym for the plain one (§2) — the
+same reasoning that keeps `A`, `C` and `U` unbound (§4).
 
 ### Motion
 
@@ -233,8 +258,11 @@ refused by panels that have nothing to do with it.
 letters no earlier arm took. Adding an arm above it can silently steal a focus
 key; the test that catches this is named in §5.
 
-**Lowercase only.** `T`, `A`, `C`, `U` arrive as distinct `Key::Char`s and stay
-unbound. Shift is never consulted for letters, and a shifted arrow is left as a
+**Shift is almost never consulted for letters.** `A`, `C`, `U` arrive as
+distinct `Key::Char`s and stay unbound; a shifted letter is a binding of its
+own, not a synonym for the plain one. `T` is the one exception, and it stays
+one: the theme picker took it because `t` was already Tables' (§1's picker
+subsection), not because the rule loosened. A shifted arrow is left as a
 synonym for the plain one so `Shift-↓` stays free for a future "extend
 selection".
 
@@ -361,6 +389,12 @@ every printable key appends to the query rather than doing anything else, `q`
 and `?` included — the panel-that-takes-text rule applied to an overlay
 (panel search design §1.1).
 
+The theme picker sits at the same rank too, entered deliberately with `T` and
+left with `Enter` or `Esc`. Like the palette it takes motion, not text: `j`/`k`
+and the arrows move its cursor, and moving previews — the one overlay whose
+motion has a side effect outside itself, since it writes `State.theme` on
+every step (§1's picker subsection, themes design §6).
+
 **`Esc` resolves in one order, first hit wins.** An overlay up is dismissed
 first — a search prompt cancels, restoring the filter it found applied; the
 palette just closes. Failing that, the focused panel's filter, if it has one,
@@ -377,10 +411,11 @@ means once a panel can carry state of its own (panel search design §6).
 ## 3. The key budget
 
 Taken, lowercase: `a` `c` `h` `j` `k` `l` `q` `t` `u`, plus `Space`, `?` and
-`/`.
+`/`. Taken, uppercase: `T`, the one shifted letter bound (§1's picker
+subsection, §2).
 
 Free, lowercase: `b` `d` `e` `f` `g` `i` `m` `n` `o` `p` `r` `s` `v` `w` `x`
-`y` `z`, every digit, and every uppercase letter.
+`y` `z`, every digit, and every uppercase letter but `T`.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
@@ -411,7 +446,7 @@ which is a spec-level change.
 | Not bound | Why |
 |---|---|
 | `1`–`4` focus | Superseded by `t`/`a`/`c`/`u`, which the panel can show in its own title; a digit cannot. |
-| `T` `A` `C` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. |
+| `A` `C` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. `T` left this row to open the theme picker (§1); the other three are still unbound for the same reason it was. |
 | `ctrl-d` / `ctrl-u` | The ctrl layer exists now but these two are not in it yet; see §2. |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
@@ -460,6 +495,21 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `ctrl-e` belongs to Table DDL alone | `ctrl_e_belongs_to_the_ddl_panel_alone` |
 | An open palette still claims it first | `an_open_palette_swallows_ctrl_e` |
 | Shifted letters stay free | `a_shifted_shortcut_stays_unbound` |
+| `T` opens the picker on the theme in force | `the_picker_opens_on_the_theme_in_force` |
+| Moving the cursor previews the theme live | `moving_the_cursor_previews_the_theme` |
+| `Enter` keeps the previewed theme | `enter_keeps_the_previewed_theme` |
+| `Esc` restores the theme the picker opened on | `escape_restores_the_theme_the_picker_opened_on` |
+| The picker cursor stops at either end of the list | `the_picker_cursor_cannot_run_off_the_list` |
+| The picker is refused where it cannot be drawn | `a_frame_too_small_for_a_list_refuses_the_picker` |
+| A shrink below the picker closes it and restores the theme | `a_frame_that_shrinks_below_the_picker_closes_it_and_restores_the_theme` |
+| A message over an open picker restores the theme | `a_message_arriving_over_an_open_picker_restores_the_theme` |
+| A click dismisses the picker and restores the theme | `a_click_dismisses_the_picker_and_restores_the_theme` |
+| The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
+| The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
+| The default theme paints no panel field, and the cursor row is the one token that paints a background | `the_default_theme_paints_no_panel_field`, `the_cursor_row_is_the_only_token_that_paints_a_background` (`inbound/theme/mod.rs`) |
+| The default palette reads on black and on white | `the_default_palette_reads_on_black_and_on_white` (`inbound/theme/mod.rs`) |
+| Every flavour reads against its own base, and a highlight bar is distinct from its field | `every_flavour_reads_against_its_own_base`, `a_highlight_bar_is_distinct_from_its_field` (`inbound/theme/catppuccin.rs`) |
+| Every flavour sets every surface | `every_flavour_paints_every_surface` (`inbound/theme/catppuccin.rs`) |
 | Focus letters are distinct and total | `every_panel_has_a_distinct_shortcut`, `a_shortcut_leads_back_to_the_panel_that_claims_it`, `the_shortcuts_are_the_ones_the_design_names` — all in `state.rs` |
 | No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` |
 | A focus letter is text in a panel that takes text | `a_shortcut_is_text_in_a_panel_that_takes_text` |

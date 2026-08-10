@@ -1,6 +1,6 @@
 # Themes — design
 
-**Status:** approved, not implemented.
+**Status:** implemented.
 **Date:** 2026-08-10
 
 A colour role palette, a default theme that still wears the terminal's
