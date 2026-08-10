@@ -15,5 +15,22 @@ use crate::state::Scroll;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DdlPanel {
     pub scroll: Scroll,
-    pub filter: Option<Filter>,
+    /// Private for the reason [`crate::tree::TablesPanel`]'s filter is:
+    /// setting it is going to owe a repair, and a public field would let a
+    /// caller skip it (design §2.1, §2.2).
+    filter: Option<Filter>,
+}
+
+impl DdlPanel {
+    /// The filter narrowing the panel's body, if any.
+    #[must_use]
+    pub fn filter(&self) -> Option<&Filter> {
+        self.filter.as_ref()
+    }
+
+    /// Sets the filter. Not public: [`State::apply_filter`](crate::state::State::apply_filter)
+    /// is the one caller, and the repair a change here owes is its job.
+    pub(crate) fn set_filter(&mut self, filter: Option<Filter>) {
+        self.filter = filter;
+    }
 }

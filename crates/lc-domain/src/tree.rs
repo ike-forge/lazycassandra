@@ -23,9 +23,10 @@ pub struct TablesPanel {
     /// transitions below, so nothing can unfold a keyspace the schema lacks.
     /// Ordered rather than hashed per conventions.md §4.
     unfolded: BTreeSet<String>,
-    /// Narrows [`TablesPanel::rows`]. Public like `cursor` and `scroll`: the
-    /// invariant that mattered is inside [`Filter`] already.
-    pub filter: Option<Filter>,
+    /// Narrows [`TablesPanel::rows`]. Private for the reason `unfolded` is:
+    /// setting it is going to owe a cursor clamp, and a public field would let
+    /// a caller skip it (design §2.1, §2.2).
+    filter: Option<Filter>,
 }
 
 /// One row of the flattened tree.
@@ -42,6 +43,18 @@ pub enum Node<'a> {
 }
 
 impl TablesPanel {
+    /// The filter narrowing [`TablesPanel::rows`], if any.
+    #[must_use]
+    pub fn filter(&self) -> Option<&Filter> {
+        self.filter.as_ref()
+    }
+
+    /// Sets the filter. Not public: [`State::apply_filter`](crate::state::State::apply_filter)
+    /// is the one caller, and the cursor clamp a change here owes is its job.
+    pub(crate) fn set_filter(&mut self, filter: Option<Filter>) {
+        self.filter = filter;
+    }
+
     /// The tree, flattened in display order: user keyspaces first, then the
     /// cluster's own, each with its tables spliced in when unfolded.
     #[must_use]

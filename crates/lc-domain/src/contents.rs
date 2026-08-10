@@ -18,8 +18,10 @@ pub struct ContentsPanel {
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
     state: ContentsState,
-    /// Narrows the rows shown from `state`.
-    pub filter: Option<Filter>,
+    /// Narrows the rows shown from `state`. Private for the reason `state`
+    /// is: setting it is going to owe a cursor clamp, and a public field
+    /// would let a caller skip it (design §2.1, §2.2).
+    filter: Option<Filter>,
 }
 
 /// How far along the panel's one request is.
@@ -75,6 +77,18 @@ impl ContentsPanel {
     #[must_use]
     pub const fn state(&self) -> &ContentsState {
         &self.state
+    }
+
+    /// The filter narrowing the rows shown, if any.
+    #[must_use]
+    pub fn filter(&self) -> Option<&Filter> {
+        self.filter.as_ref()
+    }
+
+    /// Sets the filter. Not public: [`State::apply_filter`](crate::state::State::apply_filter)
+    /// is the one caller, and the cursor clamp a change here owes is its job.
+    pub(crate) fn set_filter(&mut self, filter: Option<Filter>) {
+        self.filter = filter;
     }
 
     /// The query this panel is waiting on, if any.

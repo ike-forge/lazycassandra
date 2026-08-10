@@ -565,24 +565,25 @@ impl State {
 
     /// The filter applied to `target`, if any.
     #[must_use]
-    pub const fn filter(&self, target: Filtered) -> Option<&Filter> {
+    pub fn filter(&self, target: Filtered) -> Option<&Filter> {
         match target {
-            Filtered::Tables => self.tables.filter.as_ref(),
-            Filtered::Ddl => self.ddl.filter.as_ref(),
-            Filtered::Contents => self.contents.filter.as_ref(),
+            Filtered::Tables => self.tables.filter(),
+            Filtered::Ddl => self.ddl.filter(),
+            Filtered::Contents => self.contents.filter(),
         }
     }
 
-    /// Applies `filter` to `target` and repairs what it invalidates.
+    /// Applies `filter` to `target`.
     ///
-    /// Not a `&mut Option<Filter>` handed out: a caller that sets the filter and
-    /// forgets the repair leaves a cursor pointing past the rows the panel now
-    /// has, and there is no reason for that to be a caller's job (design §3.3).
+    /// Not a `&mut Option<Filter>` handed out: repairing what a filter
+    /// invalidates — a cursor left pointing past the rows the panel now has —
+    /// belongs here rather than to every caller that sets one. The Tables
+    /// cursor clamp lands with the filtered tree it needs.
     pub fn apply_filter(&mut self, target: Filtered, filter: Option<Filter>) {
         match target {
-            Filtered::Tables => self.tables.filter = filter,
-            Filtered::Ddl => self.ddl.filter = filter,
-            Filtered::Contents => self.contents.filter = filter,
+            Filtered::Tables => self.tables.set_filter(filter),
+            Filtered::Ddl => self.ddl.set_filter(filter),
+            Filtered::Contents => self.contents.set_filter(filter),
         }
     }
 }
