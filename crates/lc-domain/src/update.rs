@@ -412,8 +412,10 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
             state.contents.cursor.go_to(row, len);
             Vec::new()
         }
-        // Ddl and Queries are both scrolled views with nothing a press can
-        // address — lines, not rows (design §4).
+        // Queries has no rows at all. Ddl has rows now (design §3), but the
+        // hit map this press was resolved against reports lines, not rows, so
+        // a click cannot name one — click-to-select stays out of scope by
+        // design (design §7).
         Panel::Ddl | Panel::Queries => Vec::new(),
     }
 }
@@ -2390,22 +2392,15 @@ mod tests {
     }
 
     #[test]
-    fn a_motion_in_the_tree_leaves_the_ddl_cursor_alone() {
-        let mut state = browsing(&["a", "b", "c"]);
-        sized(&mut state, [3, 6, 0, 0], 20);
-
-        press(&mut state, Key::PageDown);
-        press(&mut state, Key::End);
-
-        assert_eq!(state.ddl.cursor.index(), 0);
-    }
-
-    #[test]
     fn ddl_motion_still_moves_the_cursor_before_the_first_measurement() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
         let rows = crate::view::ddl_rows(&state);
-        assert!(rows > 0, "a keyspace always has its replication to show");
+        assert!(
+            rows > 1,
+            "a keyspace's replication must have more than one row, or End \
+             landing on rows - 1 == 0 would hold even if the cursor never moved"
+        );
 
         press(&mut state, Key::PageDown);
         press(&mut state, Key::End);
@@ -2509,6 +2504,67 @@ mod tests {
         assert!(
             state.dirty,
             "the offset moved, so the frame must be repainted"
+        );
+    }
+
+    #[test]
+    fn the_ddl_cursor_clamps_when_the_selected_table_shrinks() {
+        use crate::model::{Column, Keyspace, PrimaryKey, Replication, TableOptions};
+
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let conn = current_conn(&state);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('l'));
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::End);
+        assert!(
+            state.ddl.cursor.index() > 0,
+            "the fixture table has more than one row"
+        );
+
+        // Same keyspace and table name, so `described()` sees no subject
+        // change — the clamp below is the only thing that can pull the
+        // cursor back in.
+        let shrunk = crate::model::Table {
+            name: "orders".to_owned(),
+            primary_key: PrimaryKey {
+                partition: vec![Column {
+                    name: "id".to_owned(),
+                    cql_type: "uuid".to_owned(),
+                }],
+                clustering: Vec::new(),
+            },
+            static_columns: Vec::new(),
+            regular_columns: Vec::new(),
+            options: TableOptions::default(),
+        };
+        let schema = Schema {
+            keyspaces: [(
+                "shop".to_owned(),
+                Keyspace {
+                    name: "shop".to_owned(),
+                    replication: Replication::SimpleStrategy { factor: 1 },
+                    tables: [("orders".to_owned(), shrunk)].into_iter().collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema),
+            },
+        );
+
+        let rows = crate::view::ddl_rows(&state);
+        assert_eq!(rows, 1, "one partition column and nothing else");
+        assert_eq!(
+            state.ddl.cursor.index(),
+            0,
+            "the clamp must pull the cursor back even though no measurement arrived"
         );
     }
 
