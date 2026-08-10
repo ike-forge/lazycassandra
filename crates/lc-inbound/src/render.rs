@@ -1282,6 +1282,37 @@ mod tests {
     }
 
     #[test]
+    fn the_row_and_the_cell_are_marked_in_an_unfocused_panel_too() {
+        // `body::grid` ignores the `focused` flag, which is design §3's
+        // deliberate decision rather than an oversight: every other selection
+        // in the program is drawn unfocused, and the border says which panel
+        // is live. True by construction today, so only a fixture drawn with
+        // focus elsewhere would notice a future `if focused`.
+        let mut state = showing(sized_page(4, 3));
+        state.focus = Panel::Tables;
+
+        let buffer = draw_state(40, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let modifiers = |x: u16| {
+            buffer
+                .cell((x, area.y + 2))
+                .expect("inside the panel")
+                .modifier
+        };
+        let first = area.x + 3;
+
+        assert!(
+            modifiers(first).contains(Modifier::UNDERLINED),
+            "the selected cell keeps its highlight without focus"
+        );
+        assert!(
+            modifiers(first + 3).contains(Modifier::REVERSED)
+                && !modifiers(first + 3).contains(Modifier::UNDERLINED),
+            "and the rest of its row keeps the row tint alone"
+        );
+    }
+
+    #[test]
     fn the_gutter_is_muted_and_the_values_beside_it_are_not() {
         let buffer = frame_showing_grid(4, 40, 3);
         let area = block_area(&buffer, "Table contents");
