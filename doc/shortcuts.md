@@ -85,7 +85,7 @@ character and not a binding. What it does not claim keeps its global meaning.
 
 | Key | Action |
 |---|---|
-| `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. |
+| `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. A buffer that is empty or all whitespace runs nothing, and the bar greys the hint out while that is so — §2. |
 | any printable key | Insert it. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
@@ -186,6 +186,18 @@ most frames (design §3); `Shift-Tab` is `Tab`'s inverse, and Tables'
 as `j/k move` — neither teaches something the bar's existing hints don't. A
 binding that is in none of a title, the bar, or the palette is a binding only
 this file knows about.
+
+A hint the bar shows must be true *in the frame it is shown in*, and one
+binding is not: `ctrl-r` on an empty or whitespace-only buffer runs nothing
+(query execution design §3), and an empty buffer is what the Queries panel
+starts as. Hiding the hint until the buffer fills would hide the thing the
+panel exists for from the user who has not typed yet, so it is **greyed
+instead** — same place, same width, without the weight a live key carries.
+Greyed is the third answer beside naming and omitting, and it is what a
+conditional binding gets; it is not a licence to name a key and grey it rather
+than think about whether it belongs on the bar. `esc` is still omitted from the
+other three bars rather than greyed there: it would be grey in most frames, and
+a permanently grey hint teaches nothing.
 
 **Focus is the mode, and an overlay outranks focus.** A panel either takes
 text or it does not, and `Panel::takes_text` is the one exhaustive answer. In a
@@ -315,6 +327,9 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A statement is classified by its first keyword | the `statement.rs` tests |
 | A modifier reaches the label | `an_unmodified_binding_is_labelled_bare`, `a_ctrl_binding_is_labelled_with_its_modifier` (`view/hints.rs`) |
 | The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding`, `the_palette_has_a_queries_section` (`commands.rs`) |
+| The bar greys `ctrl-r run` while there is nothing to run | `the_run_hint_is_inert_while_there_is_nothing_to_run`, `the_run_hint_is_live_once_there_is_a_statement`, `nothing_but_the_run_hint_is_ever_inert` (`view/hints.rs`) |
+| A greyed hint is drawn distinctly and keeps its width | `an_inert_hint_is_greyed_rather_than_dropped` (`inbound/hints.rs`) |
+| The bar's sweep asks only what it claims | `every_hint_the_bar_shows_does_something` |
 | The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what

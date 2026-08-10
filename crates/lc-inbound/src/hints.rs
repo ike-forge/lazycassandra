@@ -1,7 +1,7 @@
 //! The hint bar: what the focused panel responds to, along the bottom row.
 
 use lc_domain::style::Token;
-use lc_domain::view::{Hint, HintBar};
+use lc_domain::view::{Hint, HintBar, Liveness};
 use ratatui::text::{Line, Span};
 
 use crate::theme::Theme;
@@ -28,6 +28,7 @@ pub(crate) fn line(bar: &HintBar, width: u16, theme: Theme) -> Line<'static> {
 struct Segment {
     keys: String,
     action: String,
+    liveness: Liveness,
 }
 
 impl Segment {
@@ -35,6 +36,7 @@ impl Segment {
         Self {
             keys: hint.keys.clone(),
             action: hint.action.to_owned(),
+            liveness: hint.liveness,
         }
     }
 
@@ -45,10 +47,19 @@ impl Segment {
         self.keys.chars().count() + 1 + self.action.chars().count()
     }
 
+    /// An inert hint keeps its width — `fit` drops hints whole and must not
+    /// see a different bar — and gives up the bold that says the key is live:
+    /// both halves go to `Muted`, so the whole segment recedes together
+    /// whatever `HintAction` is later drawn as.
     fn spans(&self, theme: Theme) -> Vec<Span<'static>> {
+        let (keys, action) = match self.liveness {
+            Liveness::Live => (Token::HintKey, Token::HintAction),
+            Liveness::Inert => (Token::Muted, Token::Muted),
+        };
+
         vec![
-            Span::styled(self.keys.clone(), theme.style(Token::HintKey)),
-            Span::styled(format!(" {}", self.action), theme.style(Token::HintAction)),
+            Span::styled(self.keys.clone(), theme.style(keys)),
+            Span::styled(format!(" {}", self.action), theme.style(action)),
         ]
     }
 }
@@ -244,14 +255,17 @@ mod tests {
                 Hint {
                     keys: "j/k".to_owned(),
                     action: "scroll",
+                    liveness: Liveness::Live,
                 },
                 Hint {
                     keys: "tab".to_owned(),
                     action: "panel",
+                    liveness: Liveness::Live,
                 },
                 Hint {
                     keys: "q".to_owned(),
                     action: "cancel",
+                    liveness: Liveness::Live,
                 },
             ],
         };
@@ -263,6 +277,45 @@ mod tests {
                 .map(|span| span.content.as_ref())
                 .collect::<String>(),
             " q cancel"
+        );
+    }
+
+    #[test]
+    fn an_inert_hint_is_greyed_rather_than_dropped() {
+        let of = |liveness| {
+            let bar = HintBar {
+                panel: vec![Hint {
+                    keys: "ctrl-r".to_owned(),
+                    action: "run",
+                    liveness,
+                }],
+                global: vec![],
+            };
+            line(&bar, 80, Theme::TerminalDefault)
+        };
+
+        let live = of(Liveness::Live);
+        let inert = of(Liveness::Inert);
+
+        assert_eq!(
+            live.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            inert
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "an inert hint stays put and keeps its width, so `fit` sees the same bar"
+        );
+        assert_ne!(
+            live.spans[1].style, inert.spans[1].style,
+            "an inert key must not read as pressable"
+        );
+        assert_eq!(
+            inert.spans[1].style,
+            Theme::TerminalDefault.style(Token::Muted)
         );
     }
 

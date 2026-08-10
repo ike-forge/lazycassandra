@@ -2434,13 +2434,6 @@ mod tests {
         state.ddl.page_down(40, 3);
         state.focus = focus;
 
-        // `ctrl-r` needs a buffer to run: an empty one is a mistake with no
-        // consequence (`an_empty_buffer_runs_nothing`), which would make the
-        // hint's own binding look unbound.
-        if focus == Panel::Queries {
-            type_into(&mut state, "SELECT * FROM shop.orders");
-        }
-
         state
     }
 
@@ -2461,10 +2454,24 @@ mod tests {
         }
     }
 
+    /// Live hints only. An inert one is drawn greyed and promises nothing —
+    /// `ctrl-r` on an empty buffer is the one there is (query execution
+    /// design §3) — so pressing it and demanding a change would be asserting
+    /// the opposite of what the bar says.
+    ///
+    /// `hints::bar` renders the panel's bindings in order, which is what lets
+    /// the two be zipped.
     #[test]
     fn every_hint_the_bar_shows_does_something() {
         for panel in Panel::ALL {
-            for binding in panel.hints() {
+            let shown = crate::view::hints::bar(&populated(panel)).panel;
+            assert_eq!(shown.len(), panel.hints().len());
+
+            for (binding, hint) in panel.hints().iter().zip(&shown) {
+                if hint.liveness == crate::view::Liveness::Inert {
+                    continue;
+                }
+
                 for &key in binding.keys {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);

@@ -16,11 +16,23 @@ pub struct Binding {
     pub action: &'static str,
 }
 
+/// Whether pressing a hint's key in this frame would do anything.
+///
+/// A hint that would not is drawn greyed rather than dropped: the binding is
+/// still what the panel is for, and a bar whose contents move as the buffer
+/// fills teaches less than one that stays put (doc/shortcuts.md §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    Live,
+    Inert,
+}
+
 /// One binding, as text, for a renderer that never sees a [`Key`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hint {
     pub keys: String,
     pub action: &'static str,
+    pub liveness: Liveness,
 }
 
 /// What the focused panel does, and what works everywhere.
@@ -128,8 +140,33 @@ pub(crate) fn bar(state: &State) -> HintBar {
     }
 
     HintBar {
-        panel: state.focus.hints().iter().map(rendered).collect(),
+        panel: state
+            .focus
+            .hints()
+            .iter()
+            .map(|binding| Hint {
+                liveness: liveness(state, binding),
+                ..rendered(binding)
+            })
+            .collect(),
         global,
+    }
+}
+
+/// `ctrl-r` on an empty or whitespace-only buffer submits nothing, silently
+/// (query execution design §3), and an empty buffer is the panel's starting
+/// state — so the hint the panel leads with would otherwise be a lie in the
+/// first frame the user sees. Matched by key rather than by action, for the
+/// same reason `?` is above.
+///
+/// Nothing else in the bar is conditional today; the mechanism is general and
+/// this is its one use.
+fn liveness(state: &State, binding: &Binding) -> Liveness {
+    let runs = binding.modifiers.ctrl && binding.keys == [Key::Char('r')];
+    if runs && state.queries.text().trim().is_empty() {
+        Liveness::Inert
+    } else {
+        Liveness::Live
     }
 }
 
@@ -137,6 +174,7 @@ fn rendered(binding: &Binding) -> Hint {
     Hint {
         keys: label(binding),
         action: binding.action,
+        liveness: Liveness::Live,
     }
 }
 
@@ -355,5 +393,67 @@ mod tests {
             Some(("ctrl-r", "run")),
             "the panel exists to run queries, so the bar says that first"
         );
+    }
+
+    /// The `Queries` bar with `text` in its buffer, `\n` meaning Enter.
+    fn queries_bar(text: &str) -> HintBar {
+        let mut state = fits();
+        state.focus = Panel::Queries;
+        for character in text.chars() {
+            if character == '\n' {
+                state.queries.insert_newline();
+            } else {
+                state.queries.insert(character);
+            }
+        }
+        bar(&state)
+    }
+
+    fn run_hint(bar: &HintBar) -> &Hint {
+        bar.panel
+            .iter()
+            .find(|hint| hint.action == "run")
+            .expect("the queries bar names the run binding")
+    }
+
+    #[test]
+    fn the_run_hint_is_inert_while_there_is_nothing_to_run() {
+        for buffer in ["", "   ", " \n\t "] {
+            let bar = queries_bar(buffer);
+
+            assert_eq!(
+                run_hint(&bar).liveness,
+                Liveness::Inert,
+                "ctrl-r on {buffer:?} submits nothing, and a bar that lies is worse than no bar"
+            );
+        }
+    }
+
+    #[test]
+    fn the_run_hint_is_live_once_there_is_a_statement() {
+        assert_eq!(
+            run_hint(&queries_bar("SELECT * FROM shop.orders")).liveness,
+            Liveness::Live
+        );
+    }
+
+    #[test]
+    fn nothing_but_the_run_hint_is_ever_inert() {
+        for panel in Panel::ALL {
+            let state = State {
+                focus: panel,
+                ..fits()
+            };
+            let bar = bar(&state);
+
+            for hint in bar.panel.iter().chain(&bar.global) {
+                assert!(
+                    hint.liveness == Liveness::Live || hint.action == "run",
+                    "{panel:?}'s '{} {}' is inert and nothing says why",
+                    hint.keys,
+                    hint.action
+                );
+            }
+        }
     }
 }
