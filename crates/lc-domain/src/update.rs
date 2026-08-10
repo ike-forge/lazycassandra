@@ -3314,6 +3314,27 @@ mod tests {
     }
 
     #[test]
+    fn an_alt_modified_key_is_not_a_binding() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('l'));
+
+        press_chord(
+            &mut state,
+            Key::Char('j'),
+            Modifiers {
+                alt: true,
+                ..Modifiers::NONE
+            },
+        );
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "alt-j is refused rather than reinterpreted as a slower j"
+        );
+    }
+
+    #[test]
     fn ctrl_alt_r_does_not_run_the_buffer() {
         let mut state = editing("SELECT * FROM shop.orders");
 
@@ -3338,8 +3359,7 @@ mod tests {
     fn an_open_palette_swallows_ctrl_r() {
         let mut state = editing("SELECT * FROM shop.orders");
         state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
-        press(&mut state, Key::Escape);
-        press(&mut state, Key::Char('?'));
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
 
         let effects = run_query(&mut state);
 
