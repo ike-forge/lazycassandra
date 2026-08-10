@@ -3175,15 +3175,36 @@ mod tests {
         fixtures
     }
 
+    /// Only the `Queries` group is checked against the editor fixture. Every
+    /// printable key types itself there, so a Global, Motion or Tables key
+    /// pressed in the editor would "do something" whether or not its real
+    /// binding still exists — testing those groups against it would blind
+    /// the sweep to exactly the regression it exists to catch.
     #[test]
     fn every_key_the_palette_lists_does_something() {
-        let fixtures = sweep_fixtures_with_editor();
+        let plain = sweep_fixtures();
+        let with_editor = sweep_fixtures_with_editor();
 
-        for press in catalogued() {
-            assert!(
-                fixtures.iter().any(|state| does_something(state, press)),
-                "the palette lists {press:?} and no state responds to it"
-            );
+        for group in CATALOGUE {
+            let fixtures = if group.heading == "Queries" {
+                &with_editor
+            } else {
+                &plain
+            };
+
+            for binding in group.bindings {
+                for &key in binding.keys {
+                    let press = KeyPress {
+                        key,
+                        modifiers: binding.modifiers,
+                    };
+                    assert!(
+                        fixtures.iter().any(|state| does_something(state, press)),
+                        "{} lists {press:?} and no state responds to it",
+                        group.heading
+                    );
+                }
+            }
         }
     }
 
