@@ -65,6 +65,21 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
             .title(title);
+
+        // Right-aligned on the top border, and dropped whole when the border
+        // cannot hold both: a truncated term is a lie about what is applied
+        // (design §5.1). Drawn on every panel that has one, focused or not —
+        // the marker is the only place a filter that survives a focus change
+        // still says so.
+        if let Some(term) = &panel.filter {
+            let marker = format!("/{term}");
+            if marker_fits(area.width, panel.title.text(), &marker) {
+                block = block.title(
+                    Line::from(Span::styled(marker, theme.style(Token::Muted))).right_aligned(),
+                );
+            }
+        }
+
         let border = if panel.panel == view.focus {
             theme.style(Token::Focused)
         } else {
@@ -112,10 +127,12 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         Some(OverlayView::Commands { rows, selected }) => {
             crate::palette::render(frame, rows, *selected, theme);
         }
-        // Drawn on the hint bar row, not here — Task 9. `Some` still spends
-        // the cursor guard above, which is the only thing this slice needs
-        // (panel search design §1).
-        Some(OverlayView::Search { .. }) | None => {}
+        // Drawn on the hint bar row, not here: a prompt is a text field, not
+        // a modal over the panels (design §5.2).
+        Some(OverlayView::Search { query }) => {
+            render_prompt(frame, hint_bar, query, view, theme);
+        }
+        None => {}
     }
 
     Rendered {
@@ -145,6 +162,45 @@ fn bar_split(bar: Rect) -> (Rect, Rect) {
             ..bar
         },
     )
+}
+
+/// `rect` split at `taken` columns from its left edge, clamped to what `rect`
+/// actually has — the shape `bar_split` uses for the loader, reused here for
+/// the query so a query wider than the bar cannot push the split past the
+/// rect it is dividing.
+fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
+    let taken = taken.min(rect.width);
+
+    (
+        Rect {
+            width: taken,
+            ..rect
+        },
+        Rect {
+            x: rect.x + taken,
+            width: rect.width - taken,
+            ..rect
+        },
+    )
+}
+
+/// Both titles and the two corners plus a space either side of each.
+fn marker_fits(width: u16, title: &str, marker: &str) -> bool {
+    let needed = title.chars().count() + marker.chars().count() + 6;
+    usize::from(width) >= needed
+}
+
+/// The query at the left of the bar row, `⏎ apply` / `esc cancel` at the
+/// right of what it leaves — composed rather than drawn over the hints, which
+/// `render` already put on `hint_bar` before this runs.
+fn render_prompt(frame: &mut Frame, hint_bar: Rect, query: &str, view: &ViewModel, theme: Theme) {
+    let line = Line::from(format!(" /{query}"));
+    let taken = u16::try_from(line.width()).unwrap_or(hint_bar.width);
+    let (left, right) = split_left(hint_bar, taken);
+
+    frame.render_widget(line, left);
+    frame.render_widget(crate::hints::line(&view.hints, right.width, theme), right);
+    frame.set_cursor_position((left.x + left.width, left.y));
 }
 
 /// Over the block's right border, so it spends no content width — and only
@@ -1759,7 +1815,12 @@ mod tests {
     }
 
     #[test]
-    fn an_open_prompt_hides_the_cursor_even_when_the_editor_is_focused() {
+    fn an_open_prompts_own_cursor_replaces_the_editors() {
+        // Renamed and its expectation updated by Task 9: a prompt used to
+        // draw nothing of its own, so the editor's cursor being suppressed
+        // meant no cursor showed at all. Now the prompt is a text field with
+        // a cursor of its own, on the bar row — still not the editor's, for
+        // the same reason as before (design §5.2).
         let state = State {
             overlay: Some(Overlay::Search(Prompt::opened(Filtered::Tables, None))),
             ..with_query("SELECT", Panel::Queries)
@@ -1767,10 +1828,182 @@ mod tests {
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
+        // Row 23 is the bar; column 11 is the hint bar's start (9, past the
+        // loader and its gap) plus the two cells of the prompt's empty query,
+        // `" /"`.
         assert_eq!(
-            cursor, None,
+            cursor,
+            Some(ratatui::layout::Position::new(11, 23)),
             "a prompt outranks focus exactly as a message or the palette does; \
-             a cursor blinking beneath it would say the editor still had the keys"
+             the cursor shown is the prompt's own, not the editor's"
+        );
+    }
+
+    /// The colour, background and modifier of the first cell whose row
+    /// contains `needle` — compared field by field rather than as a whole
+    /// `Style`, because a `Cell` has no way to say a colour was never set
+    /// versus set to the terminal's default, so a `Style` rebuilt from one
+    /// cannot be asserted equal to the `Style` a `Theme` hands out.
+    fn style_of_first(buffer: &Buffer, needle: &str) -> (Color, Color, Modifier) {
+        for y in 0..buffer.area.height {
+            let text = row(buffer, y);
+            if let Some(byte_at) = text.find(needle) {
+                // `str::find` returns a byte offset; the border glyphs before
+                // it (`╭`, `─`, …) are multi-byte in UTF-8 but one column
+                // each, so the column is the count of `char`s before it, not
+                // the byte offset itself.
+                let column = text[..byte_at].chars().count();
+                let x = u16::try_from(column).expect("a drawn row's width fits u16");
+                let cell = buffer.cell((x, y)).expect("a found position is in bounds");
+                return (cell.fg, cell.bg, cell.modifier);
+            }
+        }
+        panic!("{needle:?} was not drawn");
+    }
+
+    #[test]
+    fn a_panel_wears_the_filter_applied_to_it() {
+        let mut state = browsing(&["shop"], 0);
+        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+
+        let buffer = draw_state(80, 24, &state);
+
+        assert!(
+            row(&buffer, top_border(&buffer, "Tables").1).contains("/ord"),
+            "the term sits on the panel's own top border"
+        );
+    }
+
+    #[test]
+    fn the_marker_is_drawn_muted() {
+        // On an unfocused panel: `Block` patches `border_style` under every
+        // title span, focused Tables included (its own shortcut span already
+        // reads BOLD from that, ambiently). Filtering Ddl instead, with the
+        // default focus on Tables, isolates the marker's own style from that
+        // ambient one.
+        let mut state = browsing(&["shop"], 0);
+        state.apply_filter(Filtered::Ddl, Filter::new("ord"));
+
+        let buffer = draw_state(80, 24, &state);
+        let (fg, bg, modifier) = style_of_first(&buffer, "/ord");
+        let expected = Theme::TerminalDefault.style(Token::Muted);
+
+        assert_eq!(
+            fg,
+            expected.fg.unwrap_or(Color::Reset),
+            "no colour override"
+        );
+        assert_eq!(
+            bg,
+            expected.bg.unwrap_or(Color::Reset),
+            "no colour override"
+        );
+        assert_eq!(
+            modifier, expected.add_modifier,
+            "the dim modifier, and only that"
+        );
+    }
+
+    #[test]
+    fn the_marker_is_dropped_rather_than_truncated() {
+        let mut state = browsing(&["shop"], 0);
+        state.apply_filter(
+            Filtered::Tables,
+            Filter::new("a_very_long_search_term_indeed"),
+        );
+
+        let buffer = draw_state(40, 24, &state);
+        let border = row(&buffer, top_border(&buffer, "Tables").1);
+
+        assert!(
+            !border.contains('/'),
+            "a truncated term is a lie about what is applied, got {border:?}"
+        );
+        assert!(border.contains("Tables"), "and the title survives");
+    }
+
+    #[test]
+    fn the_marker_fits_flush_against_the_corner_it_is_tuned_for() {
+        // At 40 columns Tables sits on its 16-column floor: 1 (`╭`) + 6
+        // (`Tables`) + 4 (`/ord`) + 1 (`╮`) leaves exactly 4 columns of
+        // border between title and marker — `marker_fits`'s constant of 6
+        // read as "both corners plus a space either side of each" tuned
+        // against this exact border, not picked from the arithmetic alone.
+        let mut state = browsing(&["shop"], 0);
+        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+
+        let buffer = draw_state(40, 24, &state);
+        let border = row(&buffer, top_border(&buffer, "Tables").1);
+
+        assert_eq!(
+            border, "╭Tables────/ord╮╭Table contents────────╮",
+            "the widest term this width can hold, sitting flush with no gap and no overlap"
+        );
+    }
+
+    #[test]
+    fn an_unfocused_panel_still_wears_its_marker() {
+        // The marker's whole point: a filter that survives a focus change
+        // has to say so from the panel it is applied to, not from the bar,
+        // which only ever describes the focused panel (design §5.1).
+        let mut state = State {
+            focus: Panel::Contents,
+            ..browsing(&["shop"], 0)
+        };
+        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+
+        let buffer = draw_state(80, 24, &state);
+
+        assert!(
+            row(&buffer, top_border(&buffer, "Tables").1).contains("/ord"),
+            "Tables is unfocused but its own border still carries the marker"
+        );
+    }
+
+    #[test]
+    fn an_open_prompt_owns_the_bar_row() {
+        let mut prompt = Prompt::opened(Filtered::Tables, None);
+        prompt.push('o');
+        prompt.push('r');
+        let state = State {
+            overlay: Some(Overlay::Search(prompt)),
+            ..State::default()
+        };
+
+        let buffer = draw_state(80, 24, &state);
+        let bar = row(&buffer, 23);
+
+        assert!(bar.contains("/or"), "the query is on the bar: {bar:?}");
+        assert!(
+            bar.contains("cancel"),
+            "and so are the prompt's own keys: {bar:?}"
+        );
+        assert!(
+            !bar.contains("j/k move"),
+            "the panel's own hints are gone while the prompt is up: {bar:?}"
+        );
+    }
+
+    #[test]
+    fn the_prompts_cursor_sits_after_the_query() {
+        let mut prompt = Prompt::opened(Filtered::Tables, None);
+        prompt.push('o');
+        prompt.push('r');
+        let state = State {
+            overlay: Some(Overlay::Search(prompt)),
+            ..State::default()
+        };
+
+        let (_, cursor) = drawn_with_cursor(80, 24, &state);
+
+        // The bar row is 23 at this size. The hint bar itself starts at
+        // column 9 — past the loader's 8 cells and `bar_split`'s 1-cell gap —
+        // and the query's leading space plus its two characters put the
+        // cursor 4 cells further on.
+        assert_eq!(
+            cursor,
+            Some(ratatui::layout::Position::new(13, 23)),
+            "one cell past the last character typed"
         );
     }
 
