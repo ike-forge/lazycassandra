@@ -34,6 +34,10 @@ pub enum Token {
     /// Named for what it marks, like [`Token::PropertyName`]: the domain
     /// still names no colour (architecture.md §6).
     Match,
+    /// The cell the cursor is on, drawn over the selected row: the row says
+    /// where you are, the cell says what a command would act on
+    /// (doc/specs/2026-08-10-table-display-design.md §3).
+    SelectedCell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

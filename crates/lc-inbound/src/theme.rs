@@ -82,6 +82,16 @@ impl Theme {
             // `fg` alone (no `bg`) survives being patched under the row's
             // highlight style, so a matched, selected cell keeps its colour.
             Token::Match => Style::new().fg(MATCH).add_modifier(Modifier::BOLD),
+            // Underlined on top of that reversal: the cell has to be visible
+            // *against* the selected row, so it cannot spend the same
+            // modifier, and a colour would compete with the key-structure
+            // colours the grid already carries. It composes with `Match`
+            // rather than replacing it — that token spends `fg` for this very
+            // reason, so the cursor's cell can also be a match and read as
+            // both.
+            Token::SelectedCell => Style::new()
+                .add_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::UNDERLINED),
         }
     }
 }
@@ -116,6 +126,7 @@ mod tests {
             Token::Muted,
             Token::Focused,
             Token::Selected,
+            Token::SelectedCell,
             Token::Shortcut,
             Token::HintKey,
             Token::HintAction,
@@ -141,6 +152,16 @@ mod tests {
             style.fg, None,
             "the selection inverts the user's own palette rather than replacing it"
         );
+    }
+
+    #[test]
+    fn a_selected_cell_reads_against_the_selected_row_without_spending_a_colour() {
+        let row = Theme::TerminalDefault.style(Token::Selected);
+        let cell = Theme::TerminalDefault.style(Token::SelectedCell);
+
+        assert_ne!(row.add_modifier, cell.add_modifier);
+        assert_eq!(cell.fg, None);
+        assert_eq!(cell.bg, None);
     }
 
     #[test]

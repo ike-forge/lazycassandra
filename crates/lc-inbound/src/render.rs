@@ -51,6 +51,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
     let mut ddl_selection = DdlSpan::default();
+    let mut grid_width = 0;
     let mut hits = [PanelHit::default(); 4];
 
     for (index, panel) in view.panels.iter().enumerate() {
@@ -91,6 +92,13 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
+        // Every body kind, not only a grid: it is the panel's width, which is
+        // what the domain needs in order to decide what would fit once a page
+        // arrives (doc/specs/2026-08-10-table-display-design.md §6).
+        if panel.panel == Panel::Contents {
+            grid_width = usize::from(inner.width);
+        }
+
         // An overlay owns the frame: nothing beneath it shows a cursor, or it
         // blinks over the modal at a position that means nothing there.
         let focused = panel.panel == view.focus && view.overlay.is_none();
@@ -106,6 +114,11 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                 }
                 if drawn.extent.overflows() {
                     scrollbar(frame, area, &drawn.extent, border, theme);
+                }
+                if let Some(columns) = &drawn.columns
+                    && columns.overflows()
+                {
+                    horizontal_scrollbar(frame, area, columns, border, theme);
                 }
             }
             // `Blank` and `Notice` do not scroll, so what such a panel can
@@ -139,7 +152,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
-            .with_ddl_selection(ddl_selection),
+            .with_ddl_selection(ddl_selection)
+            .with_grid_width(grid_width),
         map: FrameMap::new(hits),
     }
 }
@@ -237,22 +251,73 @@ pub(crate) fn scrollbar(
     border: Style,
     theme: Theme,
 ) {
+    bar(
+        frame,
+        area,
+        extent,
+        ScrollbarOrientation::VerticalRight,
+        border,
+        theme,
+    );
+}
+
+/// Over the bottom border, mirroring [`scrollbar`] on the right one, and only
+/// when a column is off screen — so its absence says nothing is hidden
+/// (doc/specs/2026-08-10-table-display-design.md §9).
+fn horizontal_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    extent: &Extent,
+    border: Style,
+    theme: Theme,
+) {
+    bar(
+        frame,
+        area,
+        extent,
+        ScrollbarOrientation::HorizontalBottom,
+        border,
+        theme,
+    );
+}
+
+fn bar(
+    frame: &mut Frame,
+    area: Rect,
+    extent: &Extent,
+    orientation: ScrollbarOrientation,
+    border: Style,
+    theme: Theme,
+) {
+    let (track, margin) = match orientation {
+        ScrollbarOrientation::HorizontalBottom | ScrollbarOrientation::HorizontalTop => (
+            symbols::line::HORIZONTAL,
+            Margin {
+                horizontal: 1,
+                vertical: 0,
+            },
+        ),
+        _ => (
+            symbols::line::VERTICAL,
+            Margin {
+                horizontal: 0,
+                vertical: 1,
+            },
+        ),
+    };
     let mut state =
         ScrollbarState::new(extent.total.saturating_sub(extent.visible)).position(extent.position);
 
     frame.render_stateful_widget(
         // No arrows: they would land on the block's corners.
-        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        Scrollbar::new(orientation)
             .begin_symbol(None)
             .end_symbol(None)
-            .track_symbol(Some(symbols::line::VERTICAL))
+            .track_symbol(Some(track))
             .track_style(border)
             .thumb_symbol(THUMB)
             .thumb_style(theme.style(Token::Muted)),
-        area.inner(Margin {
-            horizontal: 0,
-            vertical: 1,
-        }),
+        area.inner(margin),
         &mut state,
     );
 }
@@ -913,15 +978,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▸ shop        ││id email                                  │"
+            "│▸ shop        ││  id email                                │",
+            "the header leaves the gutter blank"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││1  ada@example.com                        │"
+            "│              ││1 1  ada@example.com                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││2  bob@example.com                        │"
+            "│              ││2 2  bob@example.com                      │"
         );
     }
 
@@ -937,7 +1003,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 2),
-            "│              ││8f14e45f-ceea-467a-9c2b…                  │",
+            "│              ││1 8f14e45f-ceea-467a-9c2b…                │",
             "a silently clipped value looks like a shorter value"
         );
     }
@@ -958,12 +1024,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▸ shop              ││a                        b                                        │",
+            "│▸ shop              ││  a                        b                                      │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│                    ││8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…                 │",
+            "│                    ││1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…               │",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -975,10 +1041,11 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let header = |x: u16| buffer.cell((x, 1)).expect("inside the panel");
 
-        assert_eq!(header(17).fg, Color::Yellow, "id is the partition key");
-        assert!(header(17).modifier.contains(Modifier::BOLD));
+        // Column 17 is the gutter, so the first heading starts two along.
+        assert_eq!(header(19).fg, Color::Yellow, "id is the partition key");
+        assert!(header(19).modifier.contains(Modifier::BOLD));
         assert_eq!(
-            header(20).fg,
+            header(22).fg,
             Color::Reset,
             "a regular column spends no colour — it is the baseline"
         );
@@ -1031,12 +1098,12 @@ mod tests {
         let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
 
         assert!(
-            cell(20).modifier.contains(Modifier::DIM),
+            cell(22).modifier.contains(Modifier::DIM),
             "the null is muted"
         );
         assert!(
-            !cell(17).modifier.contains(Modifier::DIM),
-            "the value beside it is not"
+            !cell(19).modifier.contains(Modifier::DIM),
+            "the value beside it is not — the gutter at 17 is, and is not what this is about"
         );
     }
 
@@ -1053,9 +1120,11 @@ mod tests {
         state.apply_filter(Filtered::Contents, Filter::new("null"));
 
         let buffer = draw_state(70, 12, &state);
+        // Shifted right by the row-number gutter and its spacing: one digit
+        // for a one-row page, plus one column (table display design §4).
         let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
-        let null_cell = cell(21);
-        let word_cell = cell(27);
+        let null_cell = cell(23);
+        let word_cell = cell(29);
 
         assert!(
             null_cell.modifier.contains(Modifier::DIM),
@@ -1130,6 +1199,113 @@ mod tests {
         assert_eq!(
             row(&buffer, 1),
             "│▸ shop        ││No rows                                   │"
+        );
+    }
+
+    /// A page of `columns` columns and `rows` rows, every value as wide as its
+    /// heading.
+    fn sized_page(columns: usize, rows: usize) -> Page {
+        Page {
+            columns: (0..columns).map(|index| format!("c{index}")).collect(),
+            rows: (0..rows)
+                .map(|row| lc_domain::model::Row {
+                    values: (0..columns).map(|_| text(&format!("v{row}"))).collect(),
+                })
+                .collect(),
+            next: None,
+        }
+    }
+
+    /// A `width`-wide frame showing a page of `columns` columns and `rows`
+    /// rows, with the cursor on its first cell.
+    fn frame_showing_grid(columns: usize, width: u16, rows: usize) -> Buffer {
+        draw_state(width, 12, &showing(sized_page(columns, rows)))
+    }
+
+    /// The same, one column wide, scrolled so that `offset` is the top row.
+    fn frame_showing_scrolled_grid(rows: usize, offset: usize) -> Buffer {
+        let mut state = showing(sized_page(1, rows));
+        state.contents.scroll.follow(offset, 1);
+
+        draw_state(60, 12, &state)
+    }
+
+    #[test]
+    fn a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar() {
+        let buffer = frame_showing_grid(12, 40, 20);
+
+        assert!(has_horizontal_scrollbar(&buffer, "Table contents"));
+    }
+
+    #[test]
+    fn a_grid_that_fits_gets_no_horizontal_scrollbar() {
+        let buffer = frame_showing_grid(2, 200, 20);
+
+        assert!(
+            !has_horizontal_scrollbar(&buffer, "Table contents"),
+            "its absence is what says nothing is hidden"
+        );
+    }
+
+    #[test]
+    fn the_selected_cell_is_marked_apart_from_the_rest_of_its_row() {
+        let buffer = frame_showing_grid(4, 40, 3);
+        let area = block_area(&buffer, "Table contents");
+        // The top border, then the grid's header row, then the first row.
+        let y = area.y + 2;
+        let styles: Vec<_> = (area.x + 1..area.right() - 1)
+            .filter_map(|x| buffer.cell((x, y)))
+            .map(|cell| cell.modifier)
+            .collect();
+
+        assert!(
+            styles.windows(2).any(|pair| pair[0] != pair[1]),
+            "the selected row must not be uniformly styled: the cell sits inside it"
+        );
+    }
+
+    #[test]
+    fn rows_are_numbered_from_one() {
+        let buffer = frame_showing_grid(2, 200, 20);
+        let text = block_row(&buffer, "Table contents", 1);
+
+        assert!(text.trim_start().starts_with('1'), "got {text:?}");
+    }
+
+    #[test]
+    fn the_row_number_is_the_pages_own_index_after_a_scroll() {
+        // A twelve-row page scrolled to put its fourth row at the top.
+        let buffer = frame_showing_scrolled_grid(12, 3);
+        let text = block_row(&buffer, "Table contents", 1);
+
+        assert!(
+            text.trim_start().starts_with('4'),
+            "the fourth row is still row 4, got {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed() {
+        // `lc_domain::grid::widths` caps a column at 24 and not at the panel,
+        // which leaves the renderer a length the area cannot satisfy: 22
+        // columns of body, less the one-wide gutter and its spacing, is 20.
+        // Handed one it cannot honour, ratatui shrinks every column — the
+        // gutter among them — and truncates with no ellipsis to say so.
+        let state = showing(page_of(
+            &["id"],
+            &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
+        ));
+
+        let buffer = draw_state(40, 12, &state);
+        let drawn = block_row(&buffer, "Table contents", 1);
+
+        assert!(
+            drawn.starts_with("1 "),
+            "the gutter keeps its own width: {drawn:?}"
+        );
+        assert!(
+            drawn.trim_end().ends_with('…'),
+            "and the value says it continues: {drawn:?}"
         );
     }
 
@@ -1539,6 +1715,20 @@ mod tests {
             geometry.height(Panel::Contents),
             5,
             "a page motion must not count the header as a row it can land on"
+        );
+    }
+
+    #[test]
+    fn the_frame_reports_how_wide_the_contents_panel_is() {
+        // The Contents block is 44 columns of the 60 at this size, so 42
+        // inside its borders.
+        let state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
+
+        assert_eq!(geometry_of(60, 12, &state).grid_width(), 42);
+        assert_eq!(
+            geometry_of(60, 12, &State::default()).grid_width(),
+            42,
+            "the width is the panel's, and the domain needs it before a page arrives"
         );
     }
 
@@ -2320,14 +2510,24 @@ mod tests {
     }
 
     /// The row a bordered block's top edge sits on, found by its left corner.
+    ///
+    /// The scan stops at the block's own right corner: panels sit side by
+    /// side, so a row read to the frame's edge carries the titles of every
+    /// block to the right of this one as well.
     fn top_border(buffer: &Buffer, expect: &str) -> (u16, u16) {
         for y in 0..buffer.area.height {
             for x in 0..buffer.area.width {
                 if buffer.cell((x, y)).is_some_and(|cell| cell.symbol() == "╭") {
-                    let row: String = (x..buffer.area.width)
-                        .filter_map(|at| buffer.cell((at, y)))
-                        .map(Cell::symbol)
-                        .collect();
+                    let mut row = String::new();
+                    for at in x..buffer.area.width {
+                        let Some(cell) = buffer.cell((at, y)) else {
+                            break;
+                        };
+                        row.push_str(cell.symbol());
+                        if cell.symbol() == "╮" {
+                            break;
+                        }
+                    }
                     if row.contains(expect) {
                         return (x, y);
                     }
@@ -2384,13 +2584,9 @@ mod tests {
         assert!(!styled(selected + 1), "and only the cursor's row is");
     }
 
-    /// Whether the block titled `title` has a scrollbar drawn over its right
-    /// border. The track scan stops above the bottom border row: that row's
-    /// corner is `┘`, which is `!= "│"` whether or not a scrollbar was drawn,
-    /// and including it would make the scan true unconditionally.
-    fn has_scrollbar(buffer: &Buffer, title: &str) -> bool {
+    /// The whole block titled `title`, borders included.
+    fn block_area(buffer: &Buffer, title: &str) -> Rect {
         let (x, y) = top_border(buffer, title);
-        let width = block_width(buffer, title);
         let bottom = (y + 1..buffer.area.height)
             .find(|at| {
                 buffer
@@ -2399,10 +2595,49 @@ mod tests {
             })
             .expect("a bordered block has a bottom edge");
 
-        (y + 1..bottom).any(|at| {
+        Rect::new(x, y, block_width(buffer, title), bottom - y + 1)
+    }
+
+    /// The `line`th row of the block titled `title`, inside its borders.
+    ///
+    /// Distinct from [`row_text`], which reads an absolute buffer row at the
+    /// Ddl panel's fixed coordinates.
+    fn block_row(buffer: &Buffer, title: &str, line: u16) -> String {
+        let area = block_area(buffer, title);
+
+        (area.x + 1..area.right() - 1)
+            .filter_map(|x| buffer.cell((x, area.y + 1 + line)))
+            .map(Cell::symbol)
+            .collect()
+    }
+
+    /// Whether the block titled `title` has a scrollbar drawn over its right
+    /// border. The track scan stops above the bottom border row: that row's
+    /// corner is `┘`, which is `!= "│"` whether or not a scrollbar was drawn,
+    /// and including it would make the scan true unconditionally.
+    fn has_scrollbar(buffer: &Buffer, title: &str) -> bool {
+        let area = block_area(buffer, title);
+        let x = area.right() - 1;
+
+        (area.y + 1..area.bottom() - 1).any(|y| {
             buffer
-                .cell((x + width - 1, at))
-                .is_some_and(|cell| cell.symbol() != "│")
+                .cell((x, y))
+                .is_some_and(|cell| cell.symbol() != symbols::line::VERTICAL)
+        })
+    }
+
+    /// Whether the block titled `title` has a horizontal scrollbar drawn over
+    /// its bottom border. The corners stay `╰` and `╯` whether or not one is
+    /// drawn, so the cells between them are what to look at: an untouched
+    /// bottom border is all `─`.
+    fn has_horizontal_scrollbar(buffer: &Buffer, title: &str) -> bool {
+        let area = block_area(buffer, title);
+        let y = area.bottom() - 1;
+
+        (area.x + 1..area.right() - 1).any(|x| {
+            buffer
+                .cell((x, y))
+                .is_some_and(|cell| cell.symbol() != symbols::line::HORIZONTAL)
         })
     }
 
