@@ -128,3 +128,12 @@ From the command palette slice (doc/specs/2026-08-09-command-palette-design.md �
   through `handle_key` rather than growing a second dispatch point.
 - Contextual ordering. The palette shows the same three groups whatever has
   focus; vision.md §4 principle 1 promises a *contextual* map.
+
+From the panel search slice (doc/specs/2026-08-10-panel-search-design.md §8):
+
+- Search in Queries. `/` types a `/` there, and every other printable key is
+  text too, so search has no key left to claim without either breaking the
+  panel-takes-text rule or lifting the blanket refusal of ctrl one key at a
+  time. The route in is `esc` then `/`, once Queries has a vim-style normal
+  mode — that slice's decision, not this one's, since it also has to invent
+  how one leaves the panel once `esc` no longer does that.

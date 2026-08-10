@@ -1,7 +1,7 @@
 # Panel search — design
 
 **Date:** 2026-08-10
-**Status:** designed
+**Status:** implemented
 
 `/` opens a prompt on the hint bar row. What you type filters or highlights the
 focused panel, live, and stays applied — shown greyed at the top right of that

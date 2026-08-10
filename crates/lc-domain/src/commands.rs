@@ -351,6 +351,16 @@ mod tests {
     }
 
     #[test]
+    fn the_catalogue_lists_search() {
+        assert!(
+            commands()
+                .iter()
+                .any(|binding| binding.keys.contains(&Key::Char('/'))),
+            "no row binds /"
+        );
+    }
+
+    #[test]
     fn a_palette_opens_on_the_first_command() {
         assert_eq!(CommandsPanel::opened().selected(), 1);
     }
