@@ -102,7 +102,9 @@ pub(crate) fn render(
             extent: tree(frame, area, rows, *selected, *offset, theme),
             unit: Unit::Rows { header: 0 },
         }),
-        PanelBody::Details { details, offset } => Some(Body {
+        PanelBody::Details {
+            details, offset, ..
+        } => Some(Body {
             extent: crate::details::render(frame, area, details, *offset, theme),
             unit: Unit::Lines,
         }),

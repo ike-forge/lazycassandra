@@ -21,9 +21,8 @@ pub struct State {
     pub focus: Panel,
     pub tables: TablesPanel,
     pub contents: ContentsPanel,
-    /// The Table DDL panel scrolls a viewport rather than a selection: it has
-    /// no row to act on, so there is nothing for a cursor to mean.
-    pub ddl: Scroll,
+    /// The Table DDL panel's cursor and viewport.
+    pub ddl: DdlPanel,
     /// The Queries panel's buffer. Not a `QueriesPanel`: the panel is the
     /// editor until the session log arrives.
     pub queries: Editor,
@@ -470,6 +469,17 @@ impl Scroll {
         // `Ord::min` is not const.
         self.offset = if offset > last { last } else { offset };
     }
+}
+
+/// The Table DDL panel: a cursor over the rows it describes, and a viewport
+/// over the lines they wrapped to.
+///
+/// The two count in different units — see [`Span`] — which is why this panel
+/// is not in `update`'s `LISTS` and follows a span rather than an index.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DdlPanel {
+    pub cursor: Cursor,
+    pub scroll: Scroll,
 }
 
 /// What the last frame turned out to be.

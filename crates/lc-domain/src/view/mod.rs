@@ -119,6 +119,10 @@ pub enum PanelBody {
     /// of the count `Msg::Measured` brings back (design §2).
     Details {
         details: Details,
+        /// The row the Ddl cursor is on, in [`Details::rows`] order — the
+        /// same meaning [`PanelBody::Tree::selected`] and
+        /// [`PanelBody::Grid::selected`] carry.
+        selected: usize,
         offset: usize,
     },
     /// A text buffer and where its cursor is.
@@ -163,6 +167,16 @@ pub fn view_model(state: &State) -> ViewModel {
             Activity::Resting
         },
     }
+}
+
+/// How many rows the Table DDL panel describes.
+///
+/// Built by the same projection the panel draws rather than counted a second
+/// way: two row counts that can disagree is exactly the drift `tree.rs`'s
+/// single flattening exists to prevent.
+#[must_use]
+pub fn ddl_rows(state: &State) -> usize {
+    details::of(state).map_or(0, |details| details.row_count())
 }
 
 fn title(state: &State, panel: Panel) -> String {

@@ -112,7 +112,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     // opens at its top rather than halfway down the last one. Stated once here
     // rather than at each of the four paths that can move the tree selection.
     if described(state) != subject {
-        state.ddl.to_start();
+        state.ddl.cursor.to_start();
+        state.ddl.scroll.to_start();
     }
 
     clamp_lists(state);
@@ -506,30 +507,19 @@ enum Transition {
     Close,
 }
 
-/// Applies `motion` to whatever the focused panel moves: a viewport in Ddl, a
-/// selection elsewhere.
+/// Applies `motion` to the focused panel's selection.
 ///
 /// The focused panel and no other. A wheel names the panel under the pointer
 /// and moves its viewport directly ([`wheel`]), so nothing but a key reaches
 /// here.
+///
+/// In Ddl the height is counted in wrapped lines and the cursor in rows, so a
+/// page overshoots on a run of wrapped values. Accepted rather than corrected:
+/// the fix needs a line-to-row map from the renderer, and `home`/`end` are
+/// exact regardless (design §4).
 fn scroll(state: &mut State, motion: Motion) {
     let panel = state.focus;
     let height = state.geometry.height(panel);
-
-    if panel == Panel::Ddl {
-        let len = state.geometry.ddl_lines();
-
-        match motion {
-            Motion::Down => state.ddl.down(len, height),
-            Motion::Up => state.ddl.up(),
-            Motion::PageDown => state.ddl.page_down(len, height),
-            Motion::PageUp => state.ddl.page_up(height),
-            Motion::Start => state.ddl.to_start(),
-            Motion::End => state.ddl.to_end(len, height),
-        }
-        return;
-    }
-
     let len = row_count(state, panel);
 
     let Some(cursor) = panel_cursor(state, panel) else {
@@ -546,15 +536,15 @@ fn scroll(state: &mut State, motion: Motion) {
     }
 }
 
-/// How many rows `panel`'s *cursor* moves over. Ddl scrolls a viewport rather
-/// than a selection and never reaches here; Queries never arrives here
-/// either — the editor claims the motion keys first (design §3), so this arm
-/// is unreachable in practice and kept for exhaustiveness.
+/// How many rows `panel`'s *cursor* moves over. Queries never arrives here —
+/// the editor claims the motion keys first (queries editor design §3) — so
+/// its arm is unreachable in practice and kept for exhaustiveness.
 fn row_count(state: &State, panel: Panel) -> usize {
     match panel {
         Panel::Tables => tree_rows(state),
+        Panel::Ddl => crate::view::ddl_rows(state),
         Panel::Contents => state.contents.row_count(),
-        Panel::Ddl | Panel::Queries => 0,
+        Panel::Queries => 0,
     }
 }
 
@@ -564,8 +554,9 @@ fn row_count(state: &State, panel: Panel) -> usize {
 fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
     match panel {
         Panel::Tables => Some(&mut state.tables.cursor),
+        Panel::Ddl => Some(&mut state.ddl.cursor),
         Panel::Contents => Some(&mut state.contents.cursor),
-        Panel::Ddl | Panel::Queries => None,
+        Panel::Queries => None,
     }
 }
 
@@ -601,12 +592,22 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         }
     }
 
-    let before = state.ddl;
+    // Follows here rather than in `update`'s epilogue because the epilogue's
+    // geometry describes the *previous* frame, and so the previously selected
+    // row: there is no correct offset for it to compute (design §5.4).
+    //
+    // Unconditional, and safe from the wheel without a guard: a wheel changes
+    // no height, no wrapped-line count and no span, so `lc-app` sends no
+    // measurement at all. The same covers ctrl-e and ctrl-y.
+    let before = state.ddl.scroll;
+    let height = geometry.height(Panel::Ddl);
     state
         .ddl
-        .clamp_to(geometry.ddl_lines(), geometry.height(Panel::Ddl));
+        .scroll
+        .follow_span(geometry.ddl_selection(), height);
+    state.ddl.scroll.clamp_to(geometry.ddl_lines(), height);
 
-    if state.ddl != before {
+    if state.ddl.scroll != before {
         state.mark_dirty();
     }
 
@@ -629,8 +630,9 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     Vec::new()
 }
 
-/// The panels whose viewport `update` maintains. Ddl keeps its own, moved
-/// directly by the motions that scroll it.
+/// The panels whose viewport `update` follows by index. Ddl keeps its own: its
+/// offset counts wrapped lines rather than rows, so it is followed by span
+/// in `measured` instead (design §5.1).
 const LISTS: [Panel; 2] = [Panel::Tables, Panel::Contents];
 
 /// The viewport `panel` draws through, for the panels that have one.
@@ -638,7 +640,7 @@ fn panel_scroll(state: &mut State, panel: Panel) -> Option<&mut Scroll> {
     match panel {
         Panel::Tables => Some(&mut state.tables.scroll),
         Panel::Contents => Some(&mut state.contents.scroll),
-        Panel::Ddl => Some(&mut state.ddl),
+        Panel::Ddl => Some(&mut state.ddl.scroll),
         Panel::Queries => None,
     }
 }
@@ -657,8 +659,9 @@ fn scroll_len(state: &State, panel: Panel) -> usize {
 fn cursor_index(state: &State, panel: Panel) -> usize {
     match panel {
         Panel::Tables => state.tables.cursor.index(),
+        Panel::Ddl => state.ddl.cursor.index(),
         Panel::Contents => state.contents.cursor.index(),
-        Panel::Ddl | Panel::Queries => 0,
+        Panel::Queries => 0,
     }
 }
 
@@ -687,6 +690,13 @@ fn clamp_lists(state: &mut State) {
             scroll.clamp_to(len, height);
         }
     }
+
+    // Not in the loop above: `LISTS` is the panels whose offsets are followed
+    // by index, and Ddl's offset counts lines while its cursor counts rows
+    // (design §5.1). The clamp is unconditional for the same reason the loop
+    // is — a schema reload that shrinks a table changes no geometry, so no
+    // measurement arrives to clamp against.
+    state.ddl.cursor.clamp_to(crate::view::ddl_rows(state));
 }
 
 /// Pulls the offset of each list whose selection moved, so the selection is
@@ -823,7 +833,7 @@ mod tests {
     use crate::commands::{CATALOGUE, CommandsPanel};
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
-    use crate::state::Connection;
+    use crate::state::{Connection, Span};
     use crate::tree::tests_support::schema_of as tabled_schema;
 
     fn schema_of(names: &[&str]) -> Schema {
@@ -2113,7 +2123,7 @@ mod tests {
     }
 
     #[test]
-    fn a_panel_with_no_rows_swallows_motion_rather_than_passing_it_on() {
+    fn motion_in_one_panel_never_reaches_another() {
         let mut state = read_shop_orders();
         let tree_row = state.tables.cursor.index();
 
@@ -2122,6 +2132,63 @@ mod tests {
 
         assert_eq!(state.tables.cursor.index(), tree_row);
         assert_eq!(state.contents.cursor.index(), 0);
+    }
+
+    #[test]
+    fn motion_in_the_ddl_panel_walks_the_rows_it_describes() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        let rows = crate::view::ddl_rows(&state);
+        assert!(rows > 2, "the fixture describes a key and some options");
+
+        for _ in 0..rows + 3 {
+            press(&mut state, Key::Char('j'));
+        }
+        assert_eq!(
+            state.ddl.cursor.index(),
+            rows - 1,
+            "j stops on the last row"
+        );
+
+        press(&mut state, Key::Home);
+        assert_eq!(state.ddl.cursor.index(), 0);
+
+        press(&mut state, Key::End);
+        assert_eq!(state.ddl.cursor.index(), rows - 1);
+    }
+
+    #[test]
+    fn describing_another_node_opens_the_ddl_panel_at_its_first_row() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::End);
+        assert!(state.ddl.cursor.index() > 0);
+
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('k'));
+
+        assert_eq!(state.ddl.cursor.index(), 0);
+        assert_eq!(state.ddl.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn a_measurement_pulls_the_viewport_onto_the_selected_row() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 4, 8, 1], 40, 0).with_ddl_selection(Span {
+                first: 20,
+                lines: 2,
+            })),
+        );
+
+        assert_eq!(
+            state.ddl.scroll.offset(),
+            18,
+            "the row measured at lines 20..22 has to be on screen in a four-line panel"
+        );
     }
 
     #[test]
@@ -2213,16 +2280,17 @@ mod tests {
     }
 
     #[test]
-    fn the_ddl_panel_scrolls_a_viewport_rather_than_a_selection() {
+    fn motion_in_the_ddl_panel_moves_its_cursor_not_its_focus() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
         sized(&mut state, [0, 6, 0, 0], 20);
         let tree_row = state.tables.cursor.index();
+        let rows = crate::view::ddl_rows(&state);
 
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('j'));
 
-        assert_eq!(state.ddl.offset(), 2);
+        assert_eq!(state.ddl.cursor.index(), 2.min(rows - 1));
         assert_eq!(
             state.tables.cursor.index(),
             tree_row,
@@ -2231,36 +2299,34 @@ mod tests {
 
         press(&mut state, Key::End);
 
-        assert_eq!(
-            state.ddl.offset(),
-            14,
-            "End leaves the last line at the bottom of the panel"
-        );
+        assert_eq!(state.ddl.cursor.index(), rows - 1);
     }
 
     #[test]
-    fn a_motion_in_the_tree_leaves_the_ddl_viewport_alone() {
+    fn a_motion_in_the_tree_leaves_the_ddl_cursor_alone() {
         let mut state = browsing(&["a", "b", "c"]);
         sized(&mut state, [3, 6, 0, 0], 20);
 
         press(&mut state, Key::PageDown);
         press(&mut state, Key::End);
 
-        assert_eq!(state.ddl.offset(), 0);
+        assert_eq!(state.ddl.cursor.index(), 0);
     }
 
     #[test]
-    fn a_motion_before_the_first_measurement_moves_nothing() {
+    fn ddl_motion_still_moves_the_cursor_before_the_first_measurement() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
+        let rows = crate::view::ddl_rows(&state);
+        assert!(rows > 0, "a keyspace always has its replication to show");
 
         press(&mut state, Key::PageDown);
         press(&mut state, Key::End);
 
         assert_eq!(
-            state.ddl.offset(),
-            0,
-            "a panel of unknown height has no page and no end"
+            state.ddl.cursor.index(),
+            rows - 1,
+            "the cursor counts rows, not the still-unmeasured panel height"
         );
     }
 
@@ -2295,60 +2361,64 @@ mod tests {
         );
     }
 
-    /// A table scrolled to line 34 and then left must not hand the next table
-    /// its offset: the reader would open mid-document with nothing saying so.
+    /// A table scrolled to its last row and then left must not hand the next
+    /// table its cursor position: the reader would open mid-document with
+    /// nothing saying so.
     #[test]
     fn moving_the_tree_selection_returns_the_ddl_panel_to_the_top() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
         state.focus = Panel::Ddl;
-        sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        assert!(state.ddl.cursor.index() > 0);
 
         state.focus = Panel::Tables;
         press(&mut state, Key::Char('j'));
 
-        assert_eq!(state.ddl.offset(), 0, "users is a document of its own");
+        assert_eq!(
+            state.ddl.cursor.index(),
+            0,
+            "users is a document of its own"
+        );
     }
 
     #[test]
     fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.focus = Panel::Ddl;
-        sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        let end = state.ddl.cursor.index();
+        assert!(end > 0);
         state.focus = Panel::Tables;
 
         press(&mut state, Key::Char('l'));
 
         assert_eq!(
-            state.ddl.offset(),
-            34,
+            state.ddl.cursor.index(),
+            end,
             "shop is still the selected node, so the panel is still on its description"
         );
 
         // A second `l` steps onto shop's first table, which is a new subject.
         press(&mut state, Key::Char('l'));
 
-        assert_eq!(state.ddl.offset(), 0);
+        assert_eq!(state.ddl.cursor.index(), 0);
     }
 
     #[test]
-    fn a_measurement_pulls_a_stale_offset_back_inside_the_panel() {
+    fn a_measurement_pulls_a_stale_scroll_offset_back_inside_the_panel() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
         sized(&mut state, [0, 6, 0, 0], 40);
-        press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        state.ddl.scroll.to_end(40, 6);
+        assert_eq!(state.ddl.scroll.offset(), 34);
         state.dirty = false;
 
-        // The tree cursor moved to a table with far fewer options.
+        // The panel shrank to a wrapping of far fewer lines.
         sized(&mut state, [0, 6, 0, 0], 8);
 
-        assert_eq!(state.ddl.offset(), 2);
+        assert_eq!(state.ddl.scroll.offset(), 2);
         assert!(
             state.dirty,
             "the offset moved, so the frame must be repainted"
@@ -2385,7 +2455,8 @@ mod tests {
         }
 
         sized(&mut state, [3, 3, 3, 3], 40);
-        state.ddl.page_down(40, 3);
+        let ddl_len = crate::view::ddl_rows(&state);
+        state.ddl.cursor.page_down(ddl_len, 3);
         state.focus = focus;
         state
     }
@@ -2644,7 +2715,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.ddl.offset(), 3);
+        assert_eq!(state.ddl.scroll.offset(), 3);
     }
 
     #[test]
@@ -2697,9 +2768,13 @@ mod tests {
         let mut state = browsing(&["a", "b", "c", "d"]);
         state.geometry = Geometry::new([3, 3, 3, 1], 0, 0);
         state.focus = Panel::Queries;
-        state.ddl.down(100, 2);
+        state.ddl.scroll.down(100, 2);
         let ddl_before = state.ddl;
-        assert_ne!(ddl_before.offset(), 0, "the fixture must start scrolled");
+        assert_ne!(
+            ddl_before.scroll.offset(),
+            0,
+            "the fixture must start scrolled"
+        );
 
         let effects = point(
             &mut state,
@@ -2870,9 +2945,9 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["a", "b", "c", "d", "e", "f"])]);
         state.geometry = Geometry::new([3, 3, 3, 1], 40, 0);
         click_row(&mut state, Panel::Tables, 0);
-        state.ddl.page_down(40, 3);
+        state.ddl.scroll.page_down(40, 3);
         let before = state.ddl;
-        assert_ne!(before.offset(), 0, "the fixture starts scrolled");
+        assert_ne!(before.scroll.offset(), 0, "the fixture starts scrolled");
 
         roll(&mut state, Panel::Tables, Wheel::Down);
 
