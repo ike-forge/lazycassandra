@@ -913,8 +913,16 @@ fn activate(state: &mut State) -> Vec<Effect> {
     read(state, table)
 }
 
-/// Replaces whatever the Contents panel is showing with a read of `table`.
+/// Replaces whatever the Contents panel is showing with a read of `table`,
+/// and takes focus there.
+///
+/// Focus moves now rather than when the page lands: it is a consequence of the
+/// keypress, and a focus change that waits on the network happens at a time
+/// the user cannot predict
+/// (doc/specs/2026-08-10-table-display-design.md §1).
 fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
+    state.focus = Panel::Contents;
+
     let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
     submit_into_contents(state, Subject::Table(table), stmt)
 }
@@ -955,6 +963,11 @@ fn run(state: &mut State) -> Vec<Effect> {
 
 /// Puts `stmt`'s result in the Contents panel, cancelling whatever it was
 /// waiting on. One grid, one outstanding query, whichever way it was asked for.
+///
+/// Focus is deliberately not touched here. Reading from the tree moves it
+/// ([`read`]); `ctrl-r` does not, because the user is composing in a panel
+/// that takes text and pulling focus out of it would turn their next
+/// keystrokes into bindings (doc/specs/2026-08-10-table-display-design.md §1).
 fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) -> Vec<Effect> {
     let mut effects = Vec::new();
 
@@ -1108,6 +1121,7 @@ mod tests {
     use crate::search::{Filter, Filtered, Prompt};
     use crate::state::{Connection, Span};
     use crate::tree::tests_support::schema_of as tabled_schema;
+    use crate::view::tests_support::tabled;
 
     fn schema_of(names: &[&str]) -> Schema {
         tabled_schema(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
@@ -2621,6 +2635,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let first = state.contents.outstanding().expect("the panel is waiting");
+        state.focus = Panel::Tables;
         press(&mut state, Key::Char('j'));
 
         let effects = press(&mut state, Key::Enter);
@@ -2636,6 +2651,89 @@ mod tests {
         );
         let second = state.contents.outstanding().expect("waiting on the second");
         assert_ne!(second, first);
+    }
+
+    #[test]
+    fn reading_a_table_lands_focus_in_contents() {
+        for key in [Key::Enter, Key::Char(' ')] {
+            let mut state = tabled(&[("shop", &["orders"])]);
+            state.focus = Panel::Tables;
+            press(&mut state, Key::Char('l'));
+            press(&mut state, Key::Char('j'));
+
+            press(&mut state, key);
+
+            assert_eq!(state.focus, Panel::Contents, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_table_lands_focus_in_contents_too() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('l'));
+
+        click_row(&mut state, Panel::Tables, 1);
+
+        assert_eq!(state.focus, Panel::Contents);
+    }
+
+    #[test]
+    fn focus_moves_before_the_page_arrives() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Enter);
+
+        assert!(
+            matches!(state.contents.state(), ContentsState::Loading { .. }),
+            "focus is a consequence of the keypress, not of the network"
+        );
+        assert_eq!(state.focus, Panel::Contents);
+    }
+
+    #[test]
+    fn a_refused_read_still_lands_focus_in_contents() {
+        // No connection, so `submit` refuses before a query is made. `read`
+        // is called directly because the tree can only select a table when
+        // its schema is loaded, which itself requires a connection — the two
+        // cannot be pulled apart through key presses.
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.connection = ConnectionState::Disconnected;
+        state.focus = Panel::Tables;
+
+        read(&mut state, TableRef::new("shop", "orders"));
+
+        assert_eq!(state.focus, Panel::Contents);
+    }
+
+    #[test]
+    fn unfolding_a_keyspace_leaves_focus_in_tables() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(
+            state.focus,
+            Panel::Tables,
+            "a fold is not a read and moves nothing"
+        );
+    }
+
+    #[test]
+    fn reading_a_table_leaves_the_tree_selection_where_it_was() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+        let selected = state.tables.cursor.index();
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(state.tables.cursor.index(), selected);
     }
 
     #[test]
@@ -2660,6 +2758,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let first = state.contents.outstanding().expect("the panel is waiting");
+        state.focus = Panel::Tables;
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Enter);
 
@@ -3112,9 +3211,9 @@ mod tests {
     /// A state where every motion has somewhere to go in both directions:
     /// two keyspaces with the second unfolded, a page of rows under the
     /// Contents cursor, and a DDL document longer than its panel. A cursor
-    /// resting on 0 would make `k` and `home` inert and fail a correct hint.
-    /// The Ddl viewport is likewise nudged off zero, or `ctrl-y` would find
-    /// nothing to scroll up over.
+    /// resting on 0 would make `k`/`h` and `home` inert and fail a correct
+    /// hint. The Ddl viewport is likewise nudged off zero, or `ctrl-y` would
+    /// find nothing to scroll up over.
     fn populated(focus: Panel) -> State {
         let mut state = browsing_tables(&[("alpha", &["a1"]), ("shop", &["orders", "users"])]);
         state.tables.cursor.go_to(1, 2);
@@ -3130,14 +3229,27 @@ mod tests {
                 .contents
                 .outstanding()
                 .expect("pressing enter on a table issues a read");
+            // Three columns, not `page_of`'s one: `h`/`l` need a middle
+            // column to move away from in both directions for their hint to
+            // be exercised.
             update(
                 &mut state,
                 Msg::PageReady {
                     query,
-                    page: Box::new(page_of(20)),
+                    page: Box::new(Page {
+                        columns: vec!["id".to_owned(), "name".to_owned(), "email".to_owned()],
+                        rows: vec![
+                            Row {
+                                values: vec![CqlValue::Null, CqlValue::Null, CqlValue::Null],
+                            };
+                            20
+                        ],
+                        next: None,
+                    }),
                 },
             );
             state.contents.cursor.go_to(5, 20);
+            state.contents.column.go_to(1, 3);
         }
 
         sized(&mut state, [3, 3, 3, 3], 40);

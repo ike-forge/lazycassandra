@@ -1341,8 +1341,8 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        let heading = row_text(&buffer, "Table contents", 0);
-        let first = row_text(&buffer, "Table contents", 1);
+        let heading = block_row(&buffer, "Table contents", 0);
+        let first = block_row(&buffer, "Table contents", 1);
         let underlined = |x: u16| {
             buffer
                 .cell((x, area.y + 2))

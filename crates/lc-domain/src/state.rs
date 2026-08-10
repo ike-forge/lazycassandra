@@ -229,6 +229,10 @@ const CONTENTS_HINTS: &[Binding] = &[
         action: "move",
     },
     Binding {
+        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Char('h'))],
+        action: "column",
+    },
+    Binding {
         keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
