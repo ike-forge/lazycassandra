@@ -763,6 +763,13 @@ fn transition(state: &mut State, transition: Transition) {
         return;
     }
 
+    // A filter forces every retained keyspace open (design §4.1), so folding
+    // would change nothing on screen. Swallowed rather than half-honoured:
+    // doc/shortcuts.md §2, a panel that cannot honour a motion swallows it.
+    if state.tables.filter().is_some() {
+        return;
+    }
+
     let Some((tables, schema)) = state.tables_and_schema() else {
         return;
     };
@@ -824,6 +831,7 @@ mod tests {
     use crate::commands::{CATALOGUE, CommandsPanel};
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
+    use crate::search::{Filter, Filtered};
     use crate::state::Connection;
     use crate::tree::tests_support::schema_of as tabled_schema;
 
@@ -1816,6 +1824,48 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(row_count(&state), 1);
+    }
+
+    #[test]
+    fn l_and_h_are_swallowed_while_a_filter_is_applied() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("shop"));
+        let before = row_count(&state);
+
+        press(&mut state, Key::Char('h'));
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(
+            row_count(&state),
+            before,
+            "a filter forces its matches open, so folding could only look broken"
+        );
+    }
+
+    #[test]
+    fn l_and_h_still_fold_once_the_filter_is_gone() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(row_count(&state), 3);
+    }
+
+    #[test]
+    fn the_cursor_clamps_as_a_filter_shrinks_the_tree() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+        assert_eq!(state.tables.cursor.index(), 2, "on users");
+
+        state.apply_filter(Filtered::Tables, Filter::new("orders"));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "two rows survive, so the last one is index 1"
+        );
     }
 
     #[test]

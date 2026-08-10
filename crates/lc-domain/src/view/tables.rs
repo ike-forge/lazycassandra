@@ -46,7 +46,13 @@ fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
     let rows: Vec<TreeRow> = tables.rows(schema).iter().map(tree_row).collect();
 
     if rows.is_empty() {
-        return waiting("No keyspaces");
+        return match tables.filter() {
+            Some(filter) => waiting(&format!(
+                "No keyspace or table matches \"{}\"",
+                filter.as_str()
+            )),
+            None => waiting("No keyspaces"),
+        };
     }
 
     PanelBody::Tree {
@@ -88,6 +94,8 @@ mod tests {
     use crate::posture::Posture;
     use crate::state::{Connection, ConnectionState, SchemaState, State};
     use crate::style::{Severity, Token};
+
+    use crate::search::{Filter, Filtered};
 
     use super::super::tests_support::{loaded, panel_body, state_with, tabled};
     use super::*;
@@ -235,6 +243,31 @@ mod tests {
 
     #[test]
     fn a_cluster_with_no_keyspaces_says_so_rather_than_listing_nothing() {
+        assert_eq!(
+            tables_body(&loaded(&[])),
+            PanelBody::Notice {
+                text: "No keyspaces".to_owned(),
+                token: Some(Token::Muted),
+            }
+        );
+    }
+
+    #[test]
+    fn a_filter_that_matches_nothing_says_so() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("zzz"));
+
+        assert_eq!(
+            tables_body(&state),
+            PanelBody::Notice {
+                text: "No keyspace or table matches \"zzz\"".to_owned(),
+                token: Some(Token::Muted),
+            }
+        );
+    }
+
+    #[test]
+    fn an_unfiltered_empty_schema_still_says_no_keyspaces() {
         assert_eq!(
             tables_body(&loaded(&[])),
             PanelBody::Notice {

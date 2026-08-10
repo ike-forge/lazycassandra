@@ -573,7 +573,7 @@ impl State {
         }
     }
 
-    /// Applies `filter` to `target`.
+    /// Applies `filter` to `target`, and repairs what it invalidates.
     ///
     /// Not a `&mut Option<Filter>` handed out: repairing what a filter
     /// invalidates — a cursor left pointing past the rows the panel now has —
@@ -581,7 +581,18 @@ impl State {
     /// cursor clamp lands with the filtered tree it needs.
     pub fn apply_filter(&mut self, target: Filtered, filter: Option<Filter>) {
         match target {
-            Filtered::Tables => self.tables.set_filter(filter),
+            Filtered::Tables => {
+                self.tables.set_filter(filter);
+                let rows = self.schema().map(|schema| self.tables.rows(schema).len());
+                if let Some(rows) = rows {
+                    self.tables.cursor.clamp_to(rows);
+                }
+            }
+            // The Table DDL offset is counted in wrapped lines, a width-dependent
+            // count only the renderer can produce. `Msg::Measured` already
+            // clamps it against a real count; clamping here would clamp against
+            // the previous frame's count, which is wrong exactly when the
+            // filter just shrank the body (design §3.3).
             Filtered::Ddl => self.ddl.set_filter(filter),
             Filtered::Contents => self.contents.set_filter(filter),
         }
