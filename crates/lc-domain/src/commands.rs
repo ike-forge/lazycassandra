@@ -111,6 +111,23 @@ const TABLES: &[Binding] = &[
     },
 ];
 
+// `l`/`h` are listed twice, here and under `Tables`, and that is the point:
+// the four horizontal keys mean move left / move right and each panel resolves
+// them in its own vocabulary (doc/shortcuts.md §2). One row saying
+// "unfold the keyspace" would omit what they do in a grid, and the palette may
+// not omit a key that does something
+// (doc/specs/2026-08-09-command-palette-design.md §2).
+const CONTENTS: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Right)],
+        action: "next column",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('h')), KeyPress::new(Key::Left)],
+        action: "previous column",
+    },
+];
+
 const DDL: &[Binding] = &[Binding {
     keys: &[
         KeyPress::ctrl(Key::Char('e')),
@@ -166,6 +183,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Table DDL",
         bindings: DDL,
+    },
+    Group {
+        heading: "Table contents",
+        bindings: CONTENTS,
     },
     Group {
         heading: "Queries",
