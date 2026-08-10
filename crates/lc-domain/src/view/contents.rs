@@ -7,6 +7,7 @@
 use crate::cell;
 use crate::contents::{ContentsState, TableRef};
 use crate::model::{CqlValue, Page, Schema};
+use crate::search::Filter;
 use crate::state::State;
 use crate::style::Token;
 
@@ -30,6 +31,12 @@ pub struct GridCell {
     /// `Some(Token::Muted)` for a null, which is what keeps it apart from a
     /// text column whose value is the word "null".
     pub token: Option<Token>,
+    /// Whether the applied filter matched `text`.
+    ///
+    /// A field of its own rather than a second meaning for `token`:
+    /// overwriting the null marker on a match would lose that distinction
+    /// for exactly the cells the user went looking for (design §4.3).
+    pub matched: bool,
 }
 
 pub(super) fn title(state: &State) -> String {
@@ -82,20 +89,28 @@ fn grid(state: &State, table: &TableRef, page: &Page) -> PanelBody {
         rows: page
             .rows
             .iter()
-            .map(|row| row.values.iter().map(grid_cell).collect())
+            .map(|row| {
+                row.values
+                    .iter()
+                    .map(|value| grid_cell(value, state.contents.filter()))
+                    .collect()
+            })
             .collect(),
         selected: state.contents.cursor.index(),
         offset: state.contents.scroll.offset(),
     }
 }
 
-fn grid_cell(value: &CqlValue) -> GridCell {
+fn grid_cell(value: &CqlValue, filter: Option<&Filter>) -> GridCell {
+    let text = cell::text(value);
+
     GridCell {
-        text: cell::text(value),
+        matched: filter.is_some_and(|filter| filter.matches(&text)),
         token: match value {
             CqlValue::Null => Some(Token::Muted),
             _ => None,
         },
+        text,
     }
 }
 
@@ -123,6 +138,7 @@ mod tests {
         ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, QueryId, Row, Schema,
     };
     use crate::posture::Posture;
+    use crate::search::{Filter, Filtered};
     use crate::state::{Connection, ConnectionState, SchemaState, State};
     use crate::style::Severity;
 
@@ -350,6 +366,92 @@ mod tests {
             contents_title(&two),
             "Table contents — shop.orders (2 rows)"
         );
+    }
+
+    #[test]
+    fn a_filter_flags_the_cells_that_match_and_keeps_every_row() {
+        let mut state = showing(page_of(
+            &["id", "email"],
+            &[
+                &[
+                    CqlValue::Int(1),
+                    CqlValue::Text("ali@example.com".to_owned()),
+                ],
+                &[
+                    CqlValue::Int(2),
+                    CqlValue::Text("bob@example.com".to_owned()),
+                ],
+            ],
+        ));
+        let before = match contents_body(&state) {
+            PanelBody::Grid { rows, .. } => rows.len(),
+            other => panic!("expected a grid, got {other:?}"),
+        };
+
+        state.apply_filter(Filtered::Contents, Filter::new("ali"));
+
+        let PanelBody::Grid { rows, .. } = contents_body(&state) else {
+            panic!("a filter must not turn the grid into a notice");
+        };
+        assert_eq!(
+            rows.len(),
+            before,
+            "contents highlights; it does not filter"
+        );
+        assert!(
+            rows.iter().flatten().any(|cell| cell.matched),
+            "the fixture contains a cell whose text holds \"ali\""
+        );
+        assert!(
+            rows.iter().flatten().any(|cell| !cell.matched),
+            "and one that does not"
+        );
+    }
+
+    #[test]
+    fn a_matched_null_is_still_a_null() {
+        let mut state = showing(page_of(
+            &["id", "email"],
+            &[&[CqlValue::Int(1), CqlValue::Null]],
+        ));
+
+        state.apply_filter(Filtered::Contents, Filter::new("null"));
+
+        let PanelBody::Grid { rows, .. } = contents_body(&state) else {
+            panic!("expected a grid");
+        };
+        let null = rows
+            .iter()
+            .flatten()
+            .find(|cell| cell.token == Some(Token::Muted))
+            .expect("the fixture has a null");
+
+        assert!(
+            null.matched,
+            "a null renders as the word null, so it answers this filter"
+        );
+        assert_eq!(
+            null.token,
+            Some(Token::Muted),
+            "and must stay distinguishable from a text column holding \"null\""
+        );
+    }
+
+    #[test]
+    fn no_filter_flags_nothing() {
+        let state = showing(page_of(
+            &["id", "email"],
+            &[&[
+                CqlValue::Int(1),
+                CqlValue::Text("ali@example.com".to_owned()),
+            ]],
+        ));
+
+        let PanelBody::Grid { rows, .. } = contents_body(&state) else {
+            panic!("expected a grid");
+        };
+
+        assert!(rows.iter().flatten().all(|cell| !cell.matched));
     }
 
     #[test]

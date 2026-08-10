@@ -212,7 +212,7 @@ fn grid(
             cells
                 .iter()
                 .zip(widths)
-                .map(|(cell, width)| styled(&cell.text, cell.token, *width, theme)),
+                .map(|(cell, width)| styled(&cell.text, cell_token(cell), *width, theme)),
         )
     });
 
@@ -277,6 +277,17 @@ fn widths(columns: &[GridColumn], rows: &[Vec<GridCell>], available: u16) -> Vec
             u16::try_from(widest).unwrap_or(cap).clamp(1, cap)
         })
         .collect()
+}
+
+/// A matched cell draws as a match, not as whatever `token` says a null or a
+/// key column is: the value is still visibly a match, and the raw text
+/// (`"null"`, unstyled otherwise) already carries the rest of the meaning.
+fn cell_token(cell: &GridCell) -> Option<Token> {
+    if cell.matched {
+        Some(Token::Match)
+    } else {
+        cell.token
+    }
 }
 
 fn styled(text: &str, token: Option<Token>, width: u16, theme: Theme) -> Cell<'static> {

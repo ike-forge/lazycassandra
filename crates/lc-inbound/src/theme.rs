@@ -21,6 +21,9 @@ pub(crate) const ACCENT: Color = Color::Rgb(0xfa, 0xb2, 0x83);
 /// A property name in the Table DDL panel: light enough to stay legible on a
 /// dark background without washing out on a light one.
 const PROPERTY: Color = Color::Rgb(0x7a, 0xa2, 0xf7);
+/// A cell the applied filter matched: warm enough to stand out from
+/// `PROPERTY`'s cool blue, and unrelated to any severity or key colour.
+const MATCH: Color = Color::Rgb(0xe0, 0xaf, 0x68);
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Theme {
@@ -73,6 +76,12 @@ impl Theme {
             // Reversed video needs no explicit colour, so a selection reads
             // the same way Focused does on an impoverished palette.
             Token::Selected => Style::new().add_modifier(Modifier::REVERSED),
+            // A colour, not REVERSED: `Token::Selected` already owns that
+            // modifier, and REVERSED over REVERSED cancels out — the
+            // cursor's row can contain matches, and both must still read.
+            // `fg` alone (no `bg`) survives being patched under the row's
+            // highlight style, so a matched, selected cell keeps its colour.
+            Token::Match => Style::new().fg(MATCH).add_modifier(Modifier::BOLD),
         }
     }
 }
@@ -111,6 +120,7 @@ mod tests {
             Token::HintKey,
             Token::HintAction,
             Token::PropertyName,
+            Token::Match,
         ];
 
         for token in tokens {
@@ -141,6 +151,22 @@ mod tests {
         assert_eq!(
             style.fg, None,
             "every colour in this theme already carries a meaning"
+        );
+    }
+
+    #[test]
+    fn a_match_is_legible_over_a_selected_row() {
+        let theme = Theme::TerminalDefault;
+        let selected = theme.style(Token::Selected);
+        let matched = theme.style(Token::Match);
+
+        assert_ne!(
+            matched, selected,
+            "the cursor's row can contain matches; both must still read"
+        );
+        assert!(
+            matched.fg.is_some() || matched.bg.is_some(),
+            "REVERSED over REVERSED cancels out, so Match must carry a colour"
         );
     }
 }
