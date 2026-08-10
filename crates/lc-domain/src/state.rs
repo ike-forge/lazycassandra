@@ -189,6 +189,12 @@ const TABLES_HINTS: &[Binding] = &[
         keys: &[Key::Enter],
         action: "open",
     },
+    // Not global: it does nothing in Queries, where `/` is text (panel
+    // search design §5.3).
+    Binding {
+        keys: &[Key::Char('/')],
+        action: "search",
+    },
 ];
 
 const DDL_HINTS: &[Binding] = &[
@@ -204,6 +210,10 @@ const DDL_HINTS: &[Binding] = &[
         keys: &[Key::Home, Key::End],
         action: "ends",
     },
+    Binding {
+        keys: &[Key::Char('/')],
+        action: "search",
+    },
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
@@ -218,6 +228,10 @@ const CONTENTS_HINTS: &[Binding] = &[
     Binding {
         keys: &[Key::Home, Key::End],
         action: "ends",
+    },
+    Binding {
+        keys: &[Key::Char('/')],
+        action: "search",
     },
 ];
 

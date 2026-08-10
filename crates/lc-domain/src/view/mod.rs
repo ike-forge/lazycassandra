@@ -104,6 +104,11 @@ pub struct PanelView {
     pub panel: Panel,
     pub title: PanelTitle,
     pub body: PanelBody,
+    /// The applied filter's term, as typed. Drawn on the panel's own top
+    /// border, focused or not: a filter that survives a focus change has to
+    /// say so from the panel it is applied to, not from the bar, which only
+    /// ever describes the focused panel (panel search design §5.1).
+    pub filter: Option<String>,
 }
 
 /// What a panel has to show.
@@ -168,6 +173,9 @@ pub fn view_model(state: &State) -> ViewModel {
             panel,
             title: PanelTitle::marking(title(state, panel), panel.shortcut()),
             body: body(state, panel),
+            filter: crate::search::Filtered::of(panel)
+                .and_then(|target| state.filter(target))
+                .map(|filter| filter.as_str().to_owned()),
         }),
         focus: state.focus,
         hints: hints::bar(state),
@@ -324,6 +332,21 @@ mod tests {
             view_model(&state).overlay,
             Some(OverlayView::Message(message))
         );
+    }
+
+    #[test]
+    fn a_panel_carries_the_filter_applied_to_it() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.apply_filter(
+            crate::search::Filtered::Contents,
+            crate::search::Filter::new("ORD"),
+        );
+
+        let view = view_model(&state);
+
+        assert_eq!(view.panels[2].filter.as_deref(), Some("ORD"), "as typed");
+        assert_eq!(view.panels[0].filter, None);
+        assert_eq!(view.panels[3].filter, None, "Queries holds none");
     }
 
     #[test]
