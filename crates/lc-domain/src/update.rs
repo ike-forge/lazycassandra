@@ -279,13 +279,18 @@ enum Motion {
 fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     state.mark_dirty();
 
-    // ctrl and alt turn a key into a separate binding, refused here rather
-    // than reinterpreted. shift is not checked: a shifted letter already
-    // arrives as a different Key::Char, and a shifted arrow is left as a
-    // synonym for the plain one so it stays free for a future "extend
-    // selection" binding.
-    if press.modifiers.ctrl || press.modifiers.alt {
+    // alt turns a key into a separate binding, refused here rather than
+    // reinterpreted, and so does alt on top of ctrl: a two-modifier chord is a
+    // third layer and no layer is designed. shift is not checked: a shifted
+    // letter already arrives as a different Key::Char, and a shifted arrow is
+    // left as a synonym for the plain one so it stays free for a future
+    // "extend selection" binding.
+    if press.modifiers.alt {
         return Vec::new();
+    }
+
+    if press.modifiers.ctrl {
+        return ctrl(state, press.key);
     }
 
     // An open palette takes the keys it uses
@@ -327,6 +332,23 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     }
 
     Vec::new()
+}
+
+/// The ctrl layer's whole key table
+/// (doc/specs/2026-08-10-query-execution-design.md §1).
+///
+/// Dispatched above the palette check, so it honours that rule itself rather
+/// than inheriting it: routing a modified key into `palette_key`, which
+/// matches on the key alone, would make `ctrl-j` move the palette cursor.
+fn ctrl(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(state.overlay, Some(Overlay::Commands(_))) {
+        return Vec::new();
+    }
+
+    match key {
+        Key::Char('r') => run(state),
+        _ => Vec::new(),
+    }
 }
 
 /// Rows a wheel notch moves, in whatever unit the panel scrolls in. One is
@@ -736,6 +758,45 @@ fn activate(state: &mut State) -> Vec<Effect> {
 
 /// Replaces whatever the Contents panel is showing with a read of `table`.
 fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
+    let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
+    submit_into_contents(state, Subject::Table(table), stmt)
+}
+
+/// `ctrl-r`: the Queries buffer, whole, as one statement (design §3).
+fn run(state: &mut State) -> Vec<Effect> {
+    if state.focus != Panel::Queries {
+        return Vec::new();
+    }
+
+    let text = state.queries.text();
+    let cql = text.trim();
+    if cql.is_empty() {
+        return Vec::new();
+    }
+
+    let stmt = Statement::typed(cql);
+
+    // Refused rather than executed: vision.md §4 principle 6 makes typed
+    // confirmation the condition on these running at all, and the flow that
+    // asks for it is unbuilt. This call site becomes the prompt (design §5).
+    if stmt.kind.is_destructive() {
+        state.overlay = Some(Overlay::Message(Message {
+            title: "Not run".to_owned(),
+            message:
+                "Dropping and truncating wait on a typed confirmation, which is not built yet."
+                    .to_owned(),
+            severity: Severity::Danger,
+        }));
+        state.mark_dirty();
+        return Vec::new();
+    }
+
+    submit_into_contents(state, Subject::Typed(cql.to_owned()), stmt)
+}
+
+/// Puts `stmt`'s result in the Contents panel, cancelling whatever it was
+/// waiting on. One grid, one outstanding query, whichever way it was asked for.
+fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) -> Vec<Effect> {
     let mut effects = Vec::new();
 
     // Dropping the id is what actually stops a late page from being applied;
@@ -745,8 +806,6 @@ fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
         effects.push(Effect::Cancel(superseded));
     }
 
-    let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
-    let subject = Subject::Table(table);
     match submit(state, stmt) {
         Ok((query, submitted)) => {
             state.contents.requested(query, subject);
@@ -822,6 +881,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 mod tests {
     use super::*;
     use crate::commands::{CATALOGUE, CommandsPanel};
+    use crate::contents::ContentsState;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::state::Connection;
@@ -1475,44 +1535,25 @@ mod tests {
         assert_eq!(effects, vec![Effect::Quit]);
     }
 
-    #[test]
-    fn a_modified_key_is_not_a_binding() {
-        let mut state = browsing(&["a", "b"]);
-
-        update(
-            &mut state,
-            Msg::Input(KeyPress {
-                key: Key::Char('j'),
-                modifiers: Modifiers {
-                    ctrl: true,
-                    ..Modifiers::default()
-                },
-            }),
-        );
-
-        assert_eq!(
-            state.tables.cursor.index(),
-            0,
-            "ctrl-j is a different binding, not a slower j"
-        );
-    }
-
     /// A state focused on Queries with `text` typed into it, `\n` meaning
     /// Enter — the same convention `editor.rs`'s own helper uses.
     fn editing(text: &str) -> State {
-        let mut state = browsing(&["a"]);
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.focus = Panel::Queries;
-        for character in text.chars() {
-            press(
-                &mut state,
-                if character == '\n' {
-                    Key::Enter
-                } else {
-                    Key::Char(character)
-                },
-            );
-        }
+        type_into(&mut state, text);
         state
+    }
+
+    /// Types `text` into the focused editor, `\n` meaning Enter — the same
+    /// convention `editor.rs`'s own helper uses.
+    fn type_into(state: &mut State, text: &str) {
+        for character in text.chars() {
+            if character == '\n' {
+                press(state, Key::Enter);
+            } else {
+                press(state, Key::Char(character));
+            }
+        }
     }
 
     #[test]
@@ -3088,5 +3129,224 @@ mod tests {
                 "the palette lists {key:?} and no state responds to it"
             );
         }
+    }
+
+    /// `ctrl-r`, the one member of the ctrl layer
+    /// (doc/specs/2026-08-10-query-execution-design.md §1).
+    fn run_query(state: &mut State) -> Vec<Effect> {
+        press_chord(
+            state,
+            Key::Char('r'),
+            Modifiers {
+                ctrl: true,
+                ..Modifiers::NONE
+            },
+        )
+    }
+
+    #[test]
+    fn ctrl_r_runs_the_query_buffer() {
+        let mut state = editing("SELECT * FROM shop.orders");
+
+        let effects = run_query(&mut state);
+
+        let query = state
+            .contents
+            .outstanding()
+            .expect("the panel is waiting on the query it just ran");
+        assert_eq!(
+            effects,
+            vec![
+                Effect::Execute {
+                    conn: current_conn(&state),
+                    query,
+                    stmt: Box::new(Statement::typed("SELECT * FROM shop.orders")),
+                },
+                Effect::RecordHistory(Box::new(Statement::typed("SELECT * FROM shop.orders"))),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_query_titles_the_panel_with_what_was_typed() {
+        let mut state = editing("SELECT * FROM shop.orders");
+        run_query(&mut state);
+        let query = state.contents.outstanding().expect("waiting");
+
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(page_of(3)),
+            },
+        );
+
+        assert_eq!(state.contents.row_count(), 3);
+        let ContentsState::Loaded { subject, .. } = state.contents.state() else {
+            panic!("the page landed, so the panel is loaded");
+        };
+        assert_eq!(
+            subject.label(),
+            "SELECT * FROM shop.orders",
+            "the panel says which query it is showing"
+        );
+    }
+
+    #[test]
+    fn ctrl_r_outside_queries_runs_nothing() {
+        for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
+            let mut state = editing("SELECT * FROM shop.orders");
+            state.focus = panel;
+
+            assert!(
+                run_query(&mut state).is_empty(),
+                "the buffer is run from the panel it is typed in, not from {panel:?}"
+            );
+            assert_eq!(state.contents.outstanding(), None);
+        }
+    }
+
+    #[test]
+    fn an_empty_buffer_runs_nothing() {
+        for text in ["", "   \n  \n"] {
+            let mut state = editing(text);
+
+            assert!(run_query(&mut state).is_empty());
+            assert_eq!(
+                state.contents.outstanding(),
+                None,
+                "an empty buffer is a mistake with no consequence, not an error box"
+            );
+            assert!(state.overlay.is_none());
+        }
+    }
+
+    #[test]
+    fn running_a_query_cancels_a_pending_table_read() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let read = state.contents.outstanding().expect("the read is in flight");
+        state.focus = Panel::Queries;
+        type_into(&mut state, "SELECT * FROM shop.users");
+
+        let effects = run_query(&mut state);
+
+        assert!(
+            effects.contains(&Effect::Cancel(read)),
+            "one grid means one outstanding query"
+        );
+        assert!(!state.in_flight.contains_key(&read));
+    }
+
+    #[test]
+    fn reading_a_table_cancels_a_pending_query() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Queries;
+        type_into(&mut state, "SELECT * FROM shop.users");
+        run_query(&mut state);
+        let query = state
+            .contents
+            .outstanding()
+            .expect("the query is in flight");
+        state.focus = Panel::Tables;
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(effects.contains(&Effect::Cancel(query)));
+        assert!(!state.in_flight.contains_key(&query));
+    }
+
+    #[test]
+    fn a_destructive_statement_is_refused_until_confirmation_exists() {
+        let mut state = editing("DROP TABLE shop.orders");
+
+        let effects = run_query(&mut state);
+
+        assert!(
+            effects.is_empty(),
+            "nothing reaches the cluster without the confirmation vision.md §4 principle 6 requires"
+        );
+        assert_eq!(state.contents.outstanding(), None);
+        assert!(
+            matches!(
+                state.overlay,
+                Some(Overlay::Message(Message {
+                    severity: Severity::Danger,
+                    ..
+                }))
+            ),
+            "the refusal says why"
+        );
+    }
+
+    #[test]
+    fn a_typed_write_is_refused_on_a_read_only_connection() {
+        let mut state = editing("INSERT INTO shop.orders (id) VALUES (1)");
+
+        let effects = run_query(&mut state);
+
+        assert!(effects.is_empty());
+        assert!(
+            matches!(state.contents.state(), ContentsState::Failed { .. }),
+            "the posture gate refuses it and the panel says so"
+        );
+    }
+
+    #[test]
+    fn an_unbound_ctrl_key_does_nothing() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('l'));
+
+        press_chord(
+            &mut state,
+            Key::Char('j'),
+            Modifiers {
+                ctrl: true,
+                ..Modifiers::NONE
+            },
+        );
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "ctrl-j is a binding of its own that does not exist yet, not a slower j"
+        );
+    }
+
+    #[test]
+    fn ctrl_alt_r_does_not_run_the_buffer() {
+        let mut state = editing("SELECT * FROM shop.orders");
+
+        let effects = press_chord(
+            &mut state,
+            Key::Char('r'),
+            Modifiers {
+                ctrl: true,
+                alt: true,
+                shift: false,
+            },
+        );
+
+        assert!(
+            effects.is_empty(),
+            "two modifiers are a third layer, and no layer is designed"
+        );
+        assert_eq!(state.contents.outstanding(), None);
+    }
+
+    #[test]
+    fn an_open_palette_swallows_ctrl_r() {
+        let mut state = editing("SELECT * FROM shop.orders");
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+        press(&mut state, Key::Escape);
+        press(&mut state, Key::Char('?'));
+
+        let effects = run_query(&mut state);
+
+        assert!(
+            effects.is_empty(),
+            "an open palette is what the user is looking at, and it claims every key"
+        );
+        assert_eq!(state.contents.outstanding(), None);
     }
 }
