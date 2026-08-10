@@ -5,6 +5,7 @@
 //! with its own vocabulary rather than another field on `State`
 //! (architecture.md §11).
 
+use crate::grid::ColumnScroll;
 use crate::model::{DbError, Page, QueryId};
 use crate::search::Filter;
 use crate::state::{Cursor, Scroll};
@@ -13,8 +14,14 @@ use crate::state::{Cursor, Scroll};
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ContentsPanel {
     pub cursor: Cursor,
+    /// The selected column. With [`ContentsPanel::cursor`] it names one cell,
+    /// which is what a future delete or edit acts on
+    /// (doc/specs/2026-08-10-table-display-design.md §2).
+    pub column: Cursor,
     /// The first row drawn (doc/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
+    /// The first column drawn (doc/specs/2026-08-10-table-display-design.md §5).
+    pub columns: ColumnScroll,
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
     state: ContentsState,
@@ -144,7 +151,9 @@ impl ContentsPanel {
     pub fn requested(&mut self, query: QueryId, subject: Subject) {
         self.state = ContentsState::Loading { query, subject };
         self.cursor = Cursor::default();
+        self.column = Cursor::default();
         self.scroll = Scroll::default();
+        self.columns = ColumnScroll::default();
     }
 
     /// Applies a page, if it is the one being waited on.
@@ -161,7 +170,9 @@ impl ContentsPanel {
     pub fn refused(&mut self, subject: Subject, error: DbError) {
         self.state = ContentsState::Failed { subject, error };
         self.cursor = Cursor::default();
+        self.column = Cursor::default();
         self.scroll = Scroll::default();
+        self.columns = ColumnScroll::default();
     }
 
     /// Records a failure, if it belongs to the query being waited on.
@@ -182,6 +193,15 @@ impl ContentsPanel {
         }
     }
 
+    /// The columns on screen, for a cursor that must not run past them.
+    #[must_use]
+    pub fn column_count(&self) -> usize {
+        match &self.state {
+            ContentsState::Loaded { page, .. } => page.columns.len(),
+            _ => 0,
+        }
+    }
+
     /// What `query` was about, when it is the outstanding one.
     fn awaited(&self, query: QueryId) -> Option<Subject> {
         match &self.state {
@@ -197,7 +217,7 @@ impl ContentsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{CqlValue, Row};
+    use crate::model::{CqlValue, DbError, Row};
 
     fn page(rows: i64) -> Page {
         Page {
@@ -207,6 +227,18 @@ mod tests {
                     values: vec![CqlValue::Int(i)],
                 })
                 .collect(),
+            next: None,
+        }
+    }
+
+    fn wide_page(columns: usize) -> Page {
+        Page {
+            columns: (0..columns).map(|i| format!("c{i}")).collect(),
+            rows: vec![Row {
+                values: (0..columns)
+                    .map(|i| CqlValue::Int(i64::try_from(i).expect("the fixture is small")))
+                    .collect(),
+            }],
             next: None,
         }
     }
@@ -413,5 +445,55 @@ mod tests {
 
         assert_eq!(panel.row_count(), 3);
         assert_eq!(panel.outstanding(), None, "the wait is over");
+    }
+
+    #[test]
+    fn a_fresh_panel_has_no_columns_to_move_over() {
+        let panel = ContentsPanel::default();
+
+        assert_eq!(panel.column_count(), 0);
+        assert_eq!(panel.column.index(), 0);
+        assert_eq!(panel.columns.first(), 0);
+    }
+
+    #[test]
+    fn a_loaded_page_reports_its_columns() {
+        let (mut panel, query) = loading();
+
+        panel.page_ready(query, wide_page(4));
+
+        assert_eq!(panel.column_count(), 4);
+    }
+
+    #[test]
+    fn a_request_returns_the_cell_cursor_to_the_first_cell() {
+        let (mut panel, query) = loading();
+        panel.page_ready(query, wide_page(4));
+        panel.cursor.go_to(0, 1);
+        panel.column.go_to(3, 4);
+        panel.columns.follow(3, &[1, 1, 1, 1], 4);
+
+        panel.requested(
+            QueryId::next(),
+            Subject::Table(TableRef::new("shop", "carts")),
+        );
+
+        assert_eq!(panel.column.index(), 0);
+        assert_eq!(panel.columns.first(), 0);
+    }
+
+    #[test]
+    fn a_refusal_returns_the_cell_cursor_to_the_first_cell() {
+        let (mut panel, query) = loading();
+        panel.page_ready(query, wide_page(4));
+        panel.column.go_to(3, 4);
+
+        panel.refused(
+            Subject::Table(TableRef::new("shop", "carts")),
+            DbError::Unreachable("no".to_owned()),
+        );
+
+        assert_eq!(panel.column.index(), 0);
+        assert_eq!(panel.columns.first(), 0);
     }
 }
