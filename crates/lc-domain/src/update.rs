@@ -787,7 +787,6 @@ fn run(state: &mut State) -> Vec<Effect> {
                     .to_owned(),
             severity: Severity::Danger,
         }));
-        state.mark_dirty();
         return Vec::new();
     }
 
@@ -3374,7 +3373,13 @@ mod tests {
 
         assert!(effects.is_empty());
         assert!(
-            matches!(state.contents.state(), ContentsState::Failed { .. }),
+            matches!(
+                state.contents.state(),
+                ContentsState::Failed {
+                    error: DbError::ReadOnly,
+                    ..
+                }
+            ),
             "the posture gate refuses it and the panel says so"
         );
     }

@@ -54,11 +54,7 @@ impl KeyPress {
     pub const fn new(key: Key) -> Self {
         Self {
             key,
-            modifiers: Modifiers {
-                ctrl: false,
-                alt: false,
-                shift: false,
-            },
+            modifiers: Modifiers::NONE,
         }
     }
 }
