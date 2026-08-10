@@ -11,6 +11,7 @@ pub mod model;
 pub mod pointer;
 pub mod ports;
 pub mod posture;
+pub mod search;
 pub mod state;
 pub mod style;
 pub mod tree;
