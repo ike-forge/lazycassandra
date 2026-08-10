@@ -156,41 +156,9 @@ const MOCHA_FLAVOUR: Flavour = Flavour {
     red: rgb(0xf38ba8),
 };
 
-// `expect` rather than `allow`, so this stops silently outliving its reason:
-// the `ThemeChoice` wiring that spends these (design §6) lands in a later
-// task, and only the non-test build is unreached until then — `mod tests`
-// already spends all four.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed by the ThemeChoice wiring, not yet landed"
-    )
-)]
 pub(crate) const LATTE: Palette = LATTE_FLAVOUR.palette();
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed by the ThemeChoice wiring, not yet landed"
-    )
-)]
 pub(crate) const FRAPPE: Palette = FRAPPE_FLAVOUR.palette();
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed by the ThemeChoice wiring, not yet landed"
-    )
-)]
 pub(crate) const MACCHIATO: Palette = MACCHIATO_FLAVOUR.palette();
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumed by the ThemeChoice wiring, not yet landed"
-    )
-)]
 pub(crate) const MOCHA: Palette = MOCHA_FLAVOUR.palette();
 
 #[cfg(test)]

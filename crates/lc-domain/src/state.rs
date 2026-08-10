@@ -14,6 +14,7 @@ use crate::model::{ConnId, DbError, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::search::{Filter, Filtered, Prompt};
 use crate::style::Severity;
+use crate::theme::ThemeChoice;
 use crate::tree::TablesPanel;
 use crate::view::hints::Binding;
 
@@ -44,6 +45,8 @@ pub struct State {
     /// repainting on every keypress of a held-down `j` (architecture.md §3).
     pub dirty: bool,
     pub should_quit: bool,
+    /// The theme in force. A name; `lc-inbound` owns what it looks like.
+    pub theme: ThemeChoice,
 }
 
 /// The loader's phase.

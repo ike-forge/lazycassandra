@@ -25,6 +25,7 @@ use crate::commands::{self, CommandRow};
 use crate::model::DbError;
 use crate::state::{Message, Overlay, Panel, State};
 use crate::style::{Severity, Token};
+use crate::theme::ThemeChoice;
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +40,7 @@ pub struct ViewModel {
     /// Whether the tool is waiting on the cluster, and how far into the
     /// loader's cycle that wait is.
     pub activity: Activity,
+    pub theme: ThemeChoice,
 }
 
 /// What the loader has to say.
@@ -195,6 +197,7 @@ pub fn view_model(state: &State) -> ViewModel {
         } else {
             Activity::Resting
         },
+        theme: state.theme,
     }
 }
 

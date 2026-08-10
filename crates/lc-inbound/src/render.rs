@@ -335,6 +335,7 @@ fn bar(
 
 #[cfg(test)]
 mod tests {
+    use lc_domain::ThemeChoice;
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{Subject, TableRef};
     use lc_domain::model::{
@@ -394,7 +395,11 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(&state), Theme::mocha());
+                render(
+                    frame,
+                    &view_model(&state),
+                    Theme::of(ThemeChoice::CatppuccinMocha),
+                );
             })
             .expect("TestBackend always draws");
 
@@ -420,7 +425,11 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(&state), Theme::mocha());
+                render(
+                    frame,
+                    &view_model(&state),
+                    Theme::of(ThemeChoice::CatppuccinMocha),
+                );
             })
             .expect("TestBackend always draws");
 

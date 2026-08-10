@@ -16,11 +16,13 @@ pub mod posture;
 pub mod search;
 pub mod state;
 pub mod style;
+pub mod theme;
 pub mod tree;
 pub mod update;
 pub mod view;
 
 pub use posture::Posture;
 pub use state::State;
+pub use theme::ThemeChoice;
 pub use update::{Effect, Msg, init, update};
 pub use view::{OverlayView, PanelView, ViewModel, view_model};

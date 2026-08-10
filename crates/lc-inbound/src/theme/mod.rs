@@ -15,6 +15,7 @@ mod default;
 #[cfg(test)]
 mod contrast;
 
+use lc_domain::ThemeChoice;
 use lc_domain::posture::Posture;
 use lc_domain::style::{Severity, Token};
 use ratatui::style::{Color, Modifier, Style};
@@ -58,17 +59,23 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self {
-            palette: &default::DEFAULT,
-        }
+        Self::of(ThemeChoice::default())
     }
 }
 
 impl Theme {
-    #[cfg(test)]
-    pub(crate) const fn mocha() -> Self {
+    /// The palette `choice` names. The one place a theme name becomes a
+    /// colour (architecture.md §6).
+    #[must_use]
+    pub const fn of(choice: ThemeChoice) -> Self {
         Self {
-            palette: &catppuccin::MOCHA,
+            palette: match choice {
+                ThemeChoice::TerminalDefault => &default::DEFAULT,
+                ThemeChoice::CatppuccinLatte => &catppuccin::LATTE,
+                ThemeChoice::CatppuccinFrappe => &catppuccin::FRAPPE,
+                ThemeChoice::CatppuccinMacchiato => &catppuccin::MACCHIATO,
+                ThemeChoice::CatppuccinMocha => &catppuccin::MOCHA,
+            },
         }
     }
 
@@ -298,6 +305,25 @@ pub(crate) mod tests {
             "a match must carry something the row's own highlight does not, \
              so it still reads once patched under it"
         );
+    }
+
+    #[test]
+    fn every_choice_maps_to_a_palette_of_its_own() {
+        let palettes: Vec<Palette> = ThemeChoice::ALL
+            .iter()
+            .map(|choice| *Theme::of(*choice).palette())
+            .collect();
+
+        for (index, palette) in palettes.iter().enumerate() {
+            assert!(
+                palettes
+                    .iter()
+                    .skip(index + 1)
+                    .all(|other| other != palette),
+                "{:?} shares a palette with a later theme",
+                ThemeChoice::ALL[index]
+            );
+        }
     }
 
     /// Every token, so a new one cannot be added without deciding what the
