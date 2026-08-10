@@ -138,7 +138,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 
     Rendered {
-        geometry: Geometry::new(heights, ddl_lines, command_rows).with_ddl_selection(ddl_selection),
+        geometry: Geometry::new(heights, ddl_lines, command_rows)
+            .with_ddl_selection(ddl_selection),
         map: FrameMap::new(hits),
     }
 }

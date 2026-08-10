@@ -5,7 +5,8 @@
 //! open one with (architecture.md §3).
 
 use crate::commands::CommandsPanel;
-use crate::contents::{Subject, TableRef};
+use crate::contents::{ContentsState, Subject, TableRef};
+use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
@@ -106,6 +107,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     let subject = described(state);
     let cursors = cursor_indices(state);
     let scrolls = (state.tables.scroll, state.contents.scroll);
+    let columns = state.contents.columns;
 
     let effects = apply(state, msg);
 
@@ -118,11 +120,19 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     }
 
     clamp_lists(state);
+    // Before the viewport follows it, so a page that lost columns cannot
+    // strand either.
+    state
+        .contents
+        .column
+        .clamp_to(state.contents.column_count());
     follow_moved_cursors(state, cursors);
+    follow_grid_columns(state);
 
     // `Msg::Measured` marks nothing dirty by itself, so a clamp it provoked
     // would otherwise not be drawn until the next unrelated keypress.
-    if (state.tables.scroll, state.contents.scroll) != scrolls {
+    if (state.tables.scroll, state.contents.scroll) != scrolls || state.contents.columns != columns
+    {
         state.mark_dirty();
     }
 
@@ -335,8 +345,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Home => scroll(state, Motion::Start),
         Key::End => scroll(state, Motion::End),
         Key::Enter | Key::Char(' ') => return activate(state),
-        Key::Char('l') | Key::Right => transition(state, Transition::Open),
-        Key::Char('h') | Key::Left => transition(state, Transition::Close),
+        Key::Char('l') | Key::Right => go_right(state),
+        Key::Char('h') | Key::Left => go_left(state),
         Key::Char('/') => open_prompt(state),
         // Last, so every binding above keeps precedence over a panel key.
         Key::Char(key) => {
@@ -964,6 +974,65 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
     }
 
     effects
+}
+
+/// `l` and `→`: into the tree, or on to the next column.
+///
+/// The four horizontal keys mean *move left* and *move right*, and each panel
+/// resolves that in its own vocabulary — the shape `j`/`k` already have
+/// (doc/shortcuts.md §2, doc/specs/2026-08-10-table-display-design.md §2).
+fn go_right(state: &mut State) {
+    match state.focus {
+        Panel::Tables => transition(state, Transition::Open),
+        Panel::Contents => {
+            let len = state.contents.column_count();
+            state.contents.column.down(len);
+        }
+        Panel::Ddl | Panel::Queries => {}
+    }
+}
+
+fn go_left(state: &mut State) {
+    match state.focus {
+        Panel::Tables => transition(state, Transition::Close),
+        Panel::Contents => state.contents.column.up(),
+        Panel::Ddl | Panel::Queries => {}
+    }
+}
+
+/// The columns the grid is drawing over, and the width they have.
+///
+/// `None` when there is no page: nothing to fit, and nothing to follow.
+fn grid_columns(state: &State) -> Option<(Vec<u16>, u16)> {
+    let ContentsState::Loaded { page, .. } = state.contents.state() else {
+        return None;
+    };
+
+    let gutter = grid::gutter(page.rows.len());
+    let width = u16::try_from(state.geometry.grid_width()).unwrap_or(u16::MAX);
+    let available = width.saturating_sub(gutter).saturating_sub(if gutter == 0 {
+        0
+    } else {
+        grid::COLUMN_SPACING
+    });
+
+    Some((grid::widths(page), available))
+}
+
+/// Pulls the column viewport over the selected cell, and back inside a page
+/// that narrowed.
+///
+/// Unconditional, for [`clamp_lists`]'s reason: a new page changes no
+/// geometry, so no [`Msg::Measured`] arrives to clamp against.
+fn follow_grid_columns(state: &mut State) {
+    let column = state.contents.column.index();
+
+    let Some((widths, available)) = grid_columns(state) else {
+        state.contents.columns = ColumnScroll::default();
+        return;
+    };
+
+    state.contents.columns.follow(column, &widths, available);
 }
 
 fn transition(state: &mut State, transition: Transition) {
@@ -2072,6 +2141,154 @@ mod tests {
         assert_eq!(row_count(&state), 3, "stepping out must not fold");
     }
 
+    /// A state focused on Contents, showing a page of `columns` columns each
+    /// two characters wide, in a grid `width` characters across.
+    fn grid_of(columns: usize, width: usize) -> State {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: (0..columns).map(|i| format!("c{i}")).collect(),
+                rows: vec![Row {
+                    values: (0..columns).map(|_| CqlValue::Int(1)).collect(),
+                }],
+                next: None,
+            },
+        );
+        state.focus = Panel::Contents;
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(width)),
+        );
+        state
+    }
+
+    #[test]
+    fn l_and_right_move_the_grid_cursor_one_column() {
+        for key in [Key::Char('l'), Key::Right] {
+            let mut state = grid_of(4, 80);
+
+            press(&mut state, key);
+
+            assert_eq!(state.contents.column.index(), 1, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn h_and_left_move_the_grid_cursor_back_one_column() {
+        for key in [Key::Char('h'), Key::Left] {
+            let mut state = grid_of(4, 80);
+            press(&mut state, Key::Char('l'));
+
+            press(&mut state, key);
+
+            assert_eq!(state.contents.column.index(), 0, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn the_grid_cursor_cannot_run_off_either_edge_of_a_page() {
+        let mut state = grid_of(2, 80);
+
+        for _ in 0..5 {
+            press(&mut state, Key::Char('l'));
+        }
+        assert_eq!(state.contents.column.index(), 1, "stops on the last column");
+
+        for _ in 0..5 {
+            press(&mut state, Key::Char('h'));
+        }
+        assert_eq!(state.contents.column.index(), 0, "stops on the first");
+    }
+
+    #[test]
+    fn a_grid_with_no_page_swallows_horizontal_motion() {
+        let mut state = State {
+            focus: Panel::Contents,
+            ..State::default()
+        };
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(state.contents.column.index(), 0);
+        assert_eq!(state.contents.columns.first(), 0);
+    }
+
+    #[test]
+    fn horizontal_motion_belongs_to_the_focused_panel_only() {
+        let mut state = grid_of(4, 80);
+        state.focus = Panel::Ddl;
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(state.contents.column.index(), 0);
+    }
+
+    #[test]
+    fn the_column_viewport_follows_the_cell_cursor() {
+        // Four columns of width 2 ("c0" and a one-digit value) with one space
+        // between: 2+1+2 = 5 fits two columns in a grid 7 wide once the
+        // one-digit gutter and its spacing are taken off.
+        let mut state = grid_of(4, 7);
+
+        press(&mut state, Key::Char('l'));
+        assert_eq!(
+            state.contents.columns.first(),
+            0,
+            "column 1 is already drawn"
+        );
+
+        press(&mut state, Key::Char('l'));
+        assert_eq!(
+            state.contents.columns.first(),
+            1,
+            "the shortest move that draws column 2"
+        );
+    }
+
+    #[test]
+    fn a_narrower_frame_pulls_the_column_viewport_back_to_the_cursor() {
+        let mut state = grid_of(4, 80);
+        for _ in 0..3 {
+            press(&mut state, Key::Char('l'));
+        }
+        assert_eq!(state.contents.columns.first(), 0, "all four fit at 80");
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(7)),
+        );
+
+        assert_eq!(
+            state.contents.columns.first(),
+            2,
+            "the selected column must stay drawn after a resize"
+        );
+    }
+
+    #[test]
+    fn home_and_end_still_reach_the_ends_of_the_row_list() {
+        let mut state = grid_of(4, 80);
+        press(&mut state, Key::Char('l'));
+
+        press(&mut state, Key::End);
+
+        assert_eq!(
+            state.contents.column.index(),
+            1,
+            "End reaches the ends of the document, which in a grid is the rows"
+        );
+        assert_eq!(
+            state.contents.cursor.index(),
+            0,
+            "one row, so End stays on it"
+        );
+    }
+
     #[test]
     fn enter_on_a_table_leaves_the_tree_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
@@ -2638,7 +2855,10 @@ mod tests {
     }
 
     fn sized(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
-        update(state, Msg::Measured(Geometry::new(heights, ddl_lines, 0)));
+        update(
+            state,
+            Msg::Measured(Geometry::new(heights, ddl_lines, 0)),
+        );
     }
 
     #[test]
@@ -3464,7 +3684,10 @@ mod tests {
         assert_eq!(state.contents.cursor.index(), 6);
         assert_eq!(state.contents.scroll.offset(), 2, "on the last drawn row");
 
-        update(&mut state, Msg::Measured(Geometry::new([2, 2, 2, 1], 0, 0)));
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([2, 2, 2, 1], 0, 0)),
+        );
 
         assert_eq!(
             state.contents.scroll.offset(),
@@ -3482,7 +3705,10 @@ mod tests {
         let scrolled = state.contents.scroll.offset();
         assert_eq!(scrolled, 15);
 
-        update(&mut state, Msg::Measured(Geometry::new([5, 5, 5, 1], 0, 0)));
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([5, 5, 5, 1], 0, 0)),
+        );
 
         assert_eq!(
             state.contents.scroll.offset(),
@@ -3502,7 +3728,10 @@ mod tests {
         state.dirty = false;
 
         // Eight rows in an eight-row panel leave nothing to scroll.
-        update(&mut state, Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0)));
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0)),
+        );
 
         assert_eq!(state.contents.scroll.offset(), 0);
         assert!(
