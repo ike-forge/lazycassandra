@@ -1,18 +1,29 @@
 //! What the focused panel responds to, as the bar will say it.
 
-use crate::model::Key;
+use crate::model::{Key, KeyPress};
 use crate::search::Filtered;
 use crate::state::{Overlay, State};
 
-/// A binding, keyed by the values `handle_key` actually matches on.
+/// A binding, keyed by the presses `handle_key` actually matches on.
 ///
-/// Not a display string: a string could name a key no arm of `handle_key`
+/// Not a display string: a string could name a press no arm of `handle_key`
 /// claims and nothing would ever catch it, and a bar that lies is worse than
 /// no bar (design §2). `update::tests` presses every one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
-    pub keys: &'static [Key],
+    pub keys: &'static [KeyPress],
     pub action: &'static str,
+}
+
+/// Whether pressing a hint's key in this frame would do anything.
+///
+/// A hint that would not is drawn greyed rather than dropped: the binding is
+/// still what the panel is for, and a bar whose contents move as the buffer
+/// fills teaches less than one that stays put (doc/shortcuts.md §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    Live,
+    Inert,
 }
 
 /// One binding, as text, for a renderer that never sees a [`Key`].
@@ -20,6 +31,7 @@ pub struct Binding {
 pub struct Hint {
     pub keys: String,
     pub action: &'static str,
+    pub liveness: Liveness,
 }
 
 /// What the focused panel does, and what works everywhere.
@@ -40,11 +52,11 @@ pub struct HintBar {
 /// and `tab panel` — which teaches only one binding — is the first to go.
 pub(crate) const GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Tab],
+        keys: &[KeyPress::new(Key::Tab)],
         action: "panel",
     },
     Binding {
-        keys: &[Key::Char('?')],
+        keys: &[KeyPress::new(Key::Char('?'))],
         action: "commands",
     },
 ];
@@ -56,7 +68,7 @@ pub(crate) const GLOBAL: &[Binding] = &[
 /// `pub(crate)` so `update`'s "every global hint does something" test can
 /// still reach it now that it has left [`GLOBAL`].
 pub(crate) const QUIT: Binding = Binding {
-    keys: &[Key::Char('q')],
+    keys: &[KeyPress::new(Key::Char('q'))],
     action: "quit",
 };
 
@@ -67,15 +79,15 @@ pub(crate) const QUIT: Binding = Binding {
 /// end is everything left for the bar to say.
 const PALETTE: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "scroll",
     },
     Binding {
-        keys: &[Key::PageDown, Key::PageUp],
+        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
     Binding {
-        keys: &[Key::Home, Key::End],
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
 ];
@@ -87,11 +99,11 @@ const PALETTE: &[Binding] = &[
 /// quitting (design §7) — both close it, so both are named.
 const PALETTE_GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('?'), Key::Escape],
+        keys: &[KeyPress::new(Key::Char('?')), KeyPress::new(Key::Escape)],
         action: "close",
     },
     Binding {
-        keys: &[Key::Char('q')],
+        keys: &[KeyPress::new(Key::Char('q'))],
         action: "quit",
     },
 ];
@@ -101,11 +113,11 @@ const PALETTE_GLOBAL: &[Binding] = &[
 /// lie design §2 exists to prevent (panel search design §5.2).
 const SEARCH_GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Enter],
+        keys: &[KeyPress::new(Key::Enter)],
         action: "apply",
     },
     Binding {
-        keys: &[Key::Escape],
+        keys: &[KeyPress::new(Key::Escape)],
         action: "cancel",
     },
 ];
@@ -114,7 +126,7 @@ const SEARCH_GLOBAL: &[Binding] = &[
 /// (hint bar design §3). With a filter applied, it clears one — which is
 /// what keeps clearing discoverable (panel search design §5.3).
 const CLEAR: Binding = Binding {
-    keys: &[Key::Escape],
+    keys: &[KeyPress::new(Key::Escape)],
     action: "clear",
 };
 
@@ -140,14 +152,22 @@ pub(crate) fn bar(state: &State) -> HintBar {
     let fits = state.geometry.command_rows() > 0;
     let mut global: Vec<Hint> = GLOBAL
         .iter()
-        .filter(|binding| fits || !binding.keys.contains(&Key::Char('?')))
+        .filter(|binding| fits || !binding.keys.contains(&KeyPress::new(Key::Char('?'))))
         .map(rendered)
         .collect();
     if !state.focus.takes_text() {
         global.push(rendered(&QUIT));
     }
 
-    let mut panel: Vec<Hint> = state.focus.hints().iter().map(rendered).collect();
+    let mut panel: Vec<Hint> = state
+        .focus
+        .hints()
+        .iter()
+        .map(|binding| Hint {
+            liveness: liveness(state, binding),
+            ..rendered(binding)
+        })
+        .collect();
     if Filtered::of(state.focus).is_some_and(|target| state.filter(target).is_some()) {
         panel.push(rendered(&CLEAR));
     }
@@ -155,21 +175,49 @@ pub(crate) fn bar(state: &State) -> HintBar {
     HintBar { panel, global }
 }
 
+/// `ctrl-r` on an empty or whitespace-only buffer submits nothing, silently
+/// (query execution design §3), and an empty buffer is the panel's starting
+/// state — so the hint the panel leads with would otherwise be a lie in the
+/// first frame the user sees. Matched by press rather than by action, for the
+/// same reason `?` is above.
+///
+/// Nothing else in the bar is conditional today; the mechanism is general and
+/// this is its one use.
+fn liveness(state: &State, binding: &Binding) -> Liveness {
+    let runs = binding.keys == [KeyPress::ctrl(Key::Char('r'))];
+    if runs && state.queries.text().trim().is_empty() {
+        Liveness::Inert
+    } else {
+        Liveness::Live
+    }
+}
+
 fn rendered(binding: &Binding) -> Hint {
     Hint {
         keys: label(binding.keys),
         action: binding.action,
+        liveness: Liveness::Live,
     }
 }
 
-pub(crate) fn label(keys: &[Key]) -> String {
+pub(crate) fn label(keys: &[KeyPress]) -> String {
     keys.iter().copied().map(name).collect::<Vec<_>>().join("/")
+}
+
+fn name(press: KeyPress) -> String {
+    let key = key_name(press.key);
+
+    if press.modifiers.ctrl {
+        format!("ctrl-{key}")
+    } else {
+        key
+    }
 }
 
 /// Named rather than drawn, for the keys with no printable form: the arrow
 /// glyphs collide with each other, and a terminal font may draw any of them
 /// as a box (design §3).
-fn name(key: Key) -> String {
+fn key_name(key: Key) -> String {
     match key {
         Key::Char(' ') => "space".to_owned(),
         Key::Char(character) => character.to_string(),
@@ -208,16 +256,37 @@ mod tests {
     }
 
     #[test]
+    fn a_binding_behind_ctrl_is_named_with_a_ctrl_prefix() {
+        assert_eq!(
+            label(&[
+                KeyPress::ctrl(Key::Char('e')),
+                KeyPress::ctrl(Key::Char('y')),
+            ]),
+            "ctrl-e/ctrl-y"
+        );
+        assert_eq!(label(&[KeyPress::new(Key::Char('j'))]), "j");
+    }
+
+    #[test]
     fn several_keys_for_one_action_join_with_a_slash() {
-        assert_eq!(label(&[Key::Char('j'), Key::Char('k')]), "j/k");
-        assert_eq!(label(&[Key::PageDown, Key::PageUp]), "pgdn/pgup");
+        assert_eq!(
+            label(&[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))]),
+            "j/k"
+        );
+        assert_eq!(
+            label(&[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)]),
+            "pgdn/pgup"
+        );
     }
 
     #[test]
     fn a_key_with_no_printable_form_is_named_rather_than_drawn() {
-        assert_eq!(label(&[Key::Home, Key::End]), "home/end");
-        assert_eq!(label(&[Key::Char(' ')]), "space");
-        assert_eq!(label(&[Key::Tab]), "tab");
+        assert_eq!(
+            label(&[KeyPress::new(Key::Home), KeyPress::new(Key::End)]),
+            "home/end"
+        );
+        assert_eq!(label(&[KeyPress::new(Key::Char(' '))]), "space");
+        assert_eq!(label(&[KeyPress::new(Key::Tab)]), "tab");
     }
 
     #[test]
@@ -258,7 +327,7 @@ mod tests {
 
         let bar = bar(&state);
 
-        assert_eq!(bar.panel[0].action, "newline");
+        assert_eq!(bar.panel[0].action, "run");
         assert!(
             bar.global.iter().all(|hint| hint.action != "quit"),
             "q types a q in the editor, and a bar that lies is worse than no bar"
@@ -374,5 +443,81 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("⏎", "apply"), ("esc", "cancel")]
         );
+    }
+
+    #[test]
+    fn the_queries_bar_names_the_run_binding() {
+        let mut state = fits();
+        state.focus = Panel::Queries;
+
+        let panel = bar(&state).panel;
+
+        assert_eq!(
+            panel.first().map(|hint| (hint.keys.as_str(), hint.action)),
+            Some(("ctrl-r", "run")),
+            "the panel exists to run queries, so the bar says that first"
+        );
+    }
+
+    /// The `Queries` bar with `text` in its buffer, `\n` meaning Enter.
+    fn queries_bar(text: &str) -> HintBar {
+        let mut state = fits();
+        state.focus = Panel::Queries;
+        for character in text.chars() {
+            if character == '\n' {
+                state.queries.insert_newline();
+            } else {
+                state.queries.insert(character);
+            }
+        }
+        bar(&state)
+    }
+
+    fn run_hint(bar: &HintBar) -> &Hint {
+        bar.panel
+            .iter()
+            .find(|hint| hint.action == "run")
+            .expect("the queries bar names the run binding")
+    }
+
+    #[test]
+    fn the_run_hint_is_inert_while_there_is_nothing_to_run() {
+        for buffer in ["", "   ", " \n\t "] {
+            let bar = queries_bar(buffer);
+
+            assert_eq!(
+                run_hint(&bar).liveness,
+                Liveness::Inert,
+                "ctrl-r on {buffer:?} submits nothing, and a bar that lies is worse than no bar"
+            );
+        }
+    }
+
+    #[test]
+    fn the_run_hint_is_live_once_there_is_a_statement() {
+        assert_eq!(
+            run_hint(&queries_bar("SELECT * FROM shop.orders")).liveness,
+            Liveness::Live
+        );
+    }
+
+    #[test]
+    fn nothing_but_the_run_hint_is_ever_inert() {
+        for panel in Panel::ALL {
+            let state = State {
+                focus: panel,
+                ..fits()
+            };
+            let bar = bar(&state);
+
+            for hint in bar.panel.iter().chain(&bar.global) {
+                assert!(
+                    hint.liveness == Liveness::Live || hint.action == "run",
+                    "{panel:?}'s '{} {}' is inert and nothing says why",
+                    hint.keys,
+                    hint.action
+                );
+            }
+        }
     }
 }

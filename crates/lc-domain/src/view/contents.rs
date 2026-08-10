@@ -5,7 +5,7 @@
 //! 8).
 
 use crate::cell;
-use crate::contents::{ContentsState, TableRef};
+use crate::contents::{ContentsState, Subject, TableRef};
 use crate::model::{CqlValue, Page, Schema};
 use crate::search::Filter;
 use crate::state::State;
@@ -44,11 +44,11 @@ pub(super) fn title(state: &State) -> String {
 
     match state.contents.state() {
         ContentsState::Empty => BASE.to_owned(),
-        ContentsState::Loading { table, .. } | ContentsState::Failed { table, .. } => {
-            format!("{BASE} — {}", table.qualified())
+        ContentsState::Loading { subject, .. } | ContentsState::Failed { subject, .. } => {
+            format!("{BASE} — {}", subject.label())
         }
-        ContentsState::Loaded { table, page } => {
-            format!("{BASE} — {} ({})", table.qualified(), rows(page.rows.len()))
+        ContentsState::Loaded { subject, page } => {
+            format!("{BASE} — {} ({})", subject.label(), rows(page.rows.len()))
         }
     }
 }
@@ -68,11 +68,11 @@ pub(super) fn body(state: &State) -> PanelBody {
         ContentsState::Empty => waiting("Press Enter on a table"),
         ContentsState::Loading { .. } => waiting("Loading rows…"),
         ContentsState::Failed { error, .. } => failure(error),
-        ContentsState::Loaded { table, page } => grid(state, table, page),
+        ContentsState::Loaded { subject, page } => grid(state, subject, page),
     }
 }
 
-fn grid(state: &State, table: &TableRef, page: &Page) -> PanelBody {
+fn grid(state: &State, subject: &Subject, page: &Page) -> PanelBody {
     if page.rows.is_empty() {
         return waiting("No rows");
     }
@@ -83,7 +83,7 @@ fn grid(state: &State, table: &TableRef, page: &Page) -> PanelBody {
             .iter()
             .map(|name| GridColumn {
                 name: name.clone(),
-                token: column_token(state.schema(), table, name),
+                token: column_token(state.schema(), subject.table(), name),
             })
             .collect(),
         rows: page
@@ -117,7 +117,12 @@ fn grid_cell(value: &CqlValue, filter: Option<&Filter>) -> GridCell {
 /// Where a column sits in the table's physical layout, which vision.md §2
 /// exists to keep visible — here, in the grid being read, rather than a panel
 /// away.
-fn column_token(schema: Option<&Schema>, table: &TableRef, column: &str) -> Option<Token> {
+///
+/// `None` for a typed statement: its columns can be a projection, an
+/// aggregate, or a join of nothing, and claiming a partition key among them
+/// would be a decoration the schema does not support.
+fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str) -> Option<Token> {
+    let table = table?;
     let found = schema
         .and_then(|schema| schema.keyspaces.get(&table.keyspace))
         .and_then(|keyspace| keyspace.tables.get(&table.table))?;
@@ -174,7 +179,7 @@ mod tests {
         let query = QueryId::next();
         state
             .contents
-            .requested(query, TableRef::new("shop", "orders"));
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
         state.contents.page_ready(query, page);
         state
     }
@@ -194,9 +199,10 @@ mod tests {
     #[test]
     fn a_panel_waiting_on_rows_names_the_table_it_is_waiting_for() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state
-            .contents
-            .requested(QueryId::next(), TableRef::new("shop", "orders"));
+        state.contents.requested(
+            QueryId::next(),
+            Subject::Table(TableRef::new("shop", "orders")),
+        );
 
         assert_eq!(
             contents_body(&state),
@@ -214,7 +220,7 @@ mod tests {
         let query = QueryId::next();
         state
             .contents
-            .requested(query, TableRef::new("shop", "orders"));
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
         state.contents.failed(query, DbError::Timeout);
 
         let PanelBody::Notice { text, token } = contents_body(&state) else {
@@ -313,7 +319,7 @@ mod tests {
         let query = QueryId::next();
         state
             .contents
-            .requested(query, TableRef::new("shop", "orders"));
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
         state.contents.page_ready(
             query,
             page_of(

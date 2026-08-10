@@ -47,7 +47,7 @@ See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design
 filter can apply to. It is drawn on the bar row, not over the panels, but it
 is an `Overlay` exactly like the command palette: it outranks focus and
 claims every printable key before the panel underneath ever sees one, `q`
-and `?` included — see §2's third exception.
+and `?` included — see §2's exceptions.
 
 | Key | Effect |
 |---|---|
@@ -55,7 +55,22 @@ and `?` included — see §2's third exception.
 | `Backspace` | Removes the last character, then applies. |
 | `Enter` | Closes the prompt, leaving whatever filter is applied. |
 | `Esc` | Restores the filter that was applied before the prompt opened, then closes. |
-| anything else | Inert, including `Tab`/`Shift-Tab` — the panel being filtered cannot change under a live query. |
+| anything the ctrl layer does not claim | Inert, including `Tab`/`Shift-Tab` — the panel being filtered cannot change under a live query. |
+
+The prompt is inert to everything the ctrl layer does not claim, rather than
+to everything it does not use itself: ctrl is dispatched above every overlay
+(§2), so a chord reaches `ctrl_key` before the prompt is consulted. With a
+prompt open over Table DDL, `ctrl-e` and `ctrl-y` still scroll that panel's
+viewport. `ctrl-r` is reachable the same way and inert for a reason of its
+own — it runs the buffer only from Queries, and Queries holds no filter, so
+no prompt can be open while it has focus.
+
+That is safe rather than merely tolerated. Ctrl is a layer of its own,
+decided in another slice; a member moves no focus and changes no `target`,
+which the prompt captured when it opened, so the query it is filtering cannot
+change under it. And where a member's result raises a message over the
+prompt, `raise` puts the prompt's previous filter back before replacing it,
+so the panel underneath is left as the prompt found it.
 
 Filtering is live: every edit re-applies the filter, so the panel underneath
 is the preview. `Enter` on an empty query therefore clears the filter — there
@@ -66,21 +81,30 @@ See [panel search design](specs/2026-08-10-panel-search-design.md) §3.
 ### Motion
 
 Applies to the focused panel and nothing else. What moves depends on the panel:
-Tables and Contents move a selection and let the viewport follow; Table DDL
-moves a viewport over lines; Queries moves the cursor through its buffer.
+Tables, Contents and Table DDL move a selection and let the viewport follow;
+Queries moves the cursor through its buffer.
 
 | Key | Action |
 |---|---|
-| `j` / `↓` | Down one row (one line in Table DDL; in Queries, `↓` only — `j` is text). |
+| `j` / `↓` | Down one row (in Queries, `↓` only — `j` is text). |
 | `k` / `↑` | Up one (in Queries, `↑` only — `k` is text). |
 | `PageDown` | Down one panel height. |
 | `PageUp` | Up one panel height. |
 | `Home` | To the start (to the **line**'s start in Queries — §2). |
 | `End` | To the end (to the **line**'s end in Queries — §2). |
 
-`End` in Table DDL stops at the last line rather than scrolling past it; in a
-list it lands on the last row. Both are the same `Motion::End`, resolved by the
-focused panel ([panel scrolling design](specs/2026-08-09-panel-scrolling-design.md)).
+`End` reaches the last row everywhere it applies, Table DDL included — a list
+has an end, not a document with room to scroll past its last line. Both are
+the same `Motion::End`, resolved by the focused panel
+([panel scrolling design](specs/2026-08-09-panel-scrolling-design.md)). Table
+DDL is the one place paging is not exact: `PageDown`/`PageUp` move the cursor
+by the panel's height counted in wrapped **lines**, while the cursor itself
+counts **rows**, so a page overshoots on a run of wrapped values. `Home` and
+`End` stay exact regardless — landing on index zero or the last row needs no
+counting in either unit. The fix needs a line-to-row map from the renderer,
+and the design accepted the imprecision rather than build one for a panel
+that usually fits on one screen
+([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4).
 Queries never reaches `Motion::End` at all: the editor claims `Home`/`End`
 itself, before the match that would call it (queries editor design §3).
 
@@ -111,6 +135,24 @@ swallows it rather than passing it on (§2). `Enter`/`Space` and a click still
 read a table into Contents under a filter; only the fold/unfold path is
 swallowed.
 
+### Table DDL panel
+
+Accepted anywhere, but a no-op unless Table DDL has focus.
+
+| Key | Action |
+|---|---|
+| `ctrl-e` | Scroll the viewport down one line, leaving the cursor where it is. |
+| `ctrl-y` | Scroll it up one line. |
+
+Two of the ctrl layer's three members (§2), and the only panel that needs a
+key to move a viewport on its own: a table option can be taller than the
+panel, so this is the one place a selection and a viewport can genuinely
+disagree — elsewhere the two never diverge, and there
+is no viewport to move independently of the selection. A selection scrolled
+out of view is not drawn; the next `j` or `k` brings the viewport back to it,
+because motion follows the cursor.
+See [Table DDL selection design](specs/2026-08-10-ddl-selection-design.md) §4.1.
+
 ### Queries panel
 
 The panel takes text, so while it has focus every printable key is a
@@ -118,6 +160,7 @@ character and not a binding. What it does not claim keeps its global meaning.
 
 | Key | Action |
 |---|---|
+| `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. A buffer that is empty or all whitespace runs nothing, and the bar greys the hint out while that is so — §2. |
 | any printable key | Insert it. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
@@ -127,7 +170,9 @@ character and not a binding. What it does not claim keeps its global meaning.
 | `Esc` | Leave the editor for Tables. |
 
 `Tab` and `Shift-Tab` still move focus. Nothing else global survives inside
-the editor — including `q`, which types a `q`.
+the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
+it is the ctrl layer's Queries member and does nothing outside this panel,
+just as `ctrl-e`/`ctrl-y` do nothing outside Table DDL.
 See [queries editor design](specs/2026-08-09-queries-editor-design.md).
 
 ---
@@ -149,16 +194,22 @@ Every key is dispatched unconditionally and a panel-specific action checks
 program responds to, at the cost of a guard per action — the trade is deliberate
 and is revisited when the CQL editor lands.
 
-This now has three exceptions, in that order of precedence. An open command
-palette claims every key before anything else is consulted, because it is drawn
-over the panels and the panel underneath is not what the user is looking at.
-Failing that, an open search prompt claims every key the same way: it is the
-same shape of thing — a state that outranks focus, entered with `/` and left
-with `Enter` or `Esc` — but it claims every printable key as text rather than
-as motion, `q` and `?` typing themselves exactly as they would in a panel
-that takes text (panel search design §1.1). Failing that, a panel that takes
-text claims the printable and editing keys before the table is reached.
-Everything none of the three claims is still dispatched globally and still
+This now has four exceptions, in that order of precedence. First, a modifier:
+`handle_key` returns on alt and routes ctrl into `ctrl_key`, the layer's own
+key table, before any check below — so `ctrl-r` is never a plain `r`, in the
+editor, in the palette, or under a search prompt (`ctrl_key` repeats the
+palette guard itself, for exactly that reason; it does not repeat the prompt's,
+because the prompt has no motion for a ctrl chord to be mistaken for). Then an
+open command palette claims every unmodified key before anything else is
+consulted, because it is drawn over the panels and the panel underneath is not
+what the user is looking at. Failing that, an open search prompt claims every
+unmodified key the same way: it is the same shape of thing — a state that
+outranks focus, entered with `/` and left with `Enter` or `Esc` — but it claims
+every printable key as text rather than as motion, `q` and `?` typing
+themselves exactly as they would in a panel that takes text (panel search
+design §1.1). Failing that, a panel that takes text claims the printable and
+editing keys before the table is reached.
+Everything none of the four claims is still dispatched globally and still
 refused by panels that have nothing to do with it.
 
 **Match order is precedence.** The panel-focus arm is last, so it can only claim
@@ -170,11 +221,21 @@ unbound. Shift is never consulted for letters, and a shifted arrow is left as a
 synonym for the plain one so `Shift-↓` stays free for a future "extend
 selection".
 
-**Ctrl and alt are refused wholesale.** `handle_key` returns early on either
-modifier rather than folding the key into its unmodified meaning: `ctrl-j` is a
-different binding that does not exist yet, not a slower `j`. The ctrl layer gets
-designed as a layer (`ctrl-d`/`ctrl-u` are the first candidates, TODO.md), not
-smuggled in one key at a time.
+**Ctrl is one designed layer; alt is refused wholesale.** `handle_key` routes a
+ctrl-modified key into `ctrl_key`, which is the layer's whole key table, and
+returns early on alt and on ctrl+alt together — a two-modifier chord is a third
+layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
+of its own and never a synonym for the plain one, so `ctrl-j` still does
+nothing, and a member pressed outside its panel is inert rather than a binding
+for whatever is focused. The layer has three members. `ctrl-e` and `ctrl-y`
+scroll the Table DDL viewport without moving its cursor, which is the one
+panel whose cursor and viewport can disagree
+([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4.1).
+`ctrl-r` runs the Queries buffer: the panel takes text, so every printable key
+there is a character and the action the panel exists for has no unmodified key
+available ([query execution design](specs/2026-08-10-query-execution-design.md)
+§1). Each member gates on its own panel; `ctrl_key` itself only refuses the
+palette. `ctrl-d`/`ctrl-u` are still unbound and still want designing.
 
 **Vim and arrows are synonyms, both ways.** `j`/`↓`, `k`/`↑`, `l`/`→`, `h`/`←`.
 Neither set is the real one. Anyone who reaches for arrows should never hit a
@@ -218,6 +279,18 @@ conditionally, and naming it there would still be a lie in most frames
 as `j/k move` — neither teaches something the bar's existing hints don't. A
 binding that is in none of a title, the bar, or the palette is a binding only
 this file knows about.
+
+A hint the bar shows must be true *in the frame it is shown in*, and one
+binding is not: `ctrl-r` on an empty or whitespace-only buffer runs nothing
+(query execution design §3), and an empty buffer is what the Queries panel
+starts as. Hiding the hint until the buffer fills would hide the thing the
+panel exists for from the user who has not typed yet, so it is **greyed
+instead** — same place, same width, without the weight a live key carries.
+Greyed is the third answer beside naming and omitting, and it is what a
+conditional binding gets; it is not a licence to name a key and grey it rather
+than think about whether it belongs on the bar. `esc` is still omitted from the
+other three bars rather than greyed there: it would be grey in most frames, and
+a permanently grey hint teaches nothing.
 
 **Focus is the mode, and an overlay outranks focus.** A panel either takes
 text or it does not, and `Panel::takes_text` is the one exhaustive answer. In a
@@ -265,9 +338,17 @@ Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
 editor binds, inside Queries.
 
+Ctrl taken: `ctrl-e` and `ctrl-y` in Table DDL, `ctrl-r` in Queries. The rest
+of the layer is free — including `e`, `y` and `r` themselves everywhere but the
+panel that claims them — with `ctrl-d`/`ctrl-u` spoken for (§4). Alt is not a
+layer and nothing may claim from it.
+
 Named keys the domain understands but nothing binds: `Insert` `F1`–`F12`.
 Anything crossterm reports outside that vocabulary is dropped at the edge and
 never reaches the domain. The pointer is not in this budget at all — see §7.
+
+The ctrl namespace is separate from the plain-key budget above: `r` is free as
+a plain key and taken behind ctrl.
 
 Claim from the free set first. Re-using a taken key means retiring a binding,
 which is a spec-level change.
@@ -283,7 +364,7 @@ which is a spec-level change.
 |---|---|
 | `1`–`4` focus | Superseded by `t`/`a`/`c`/`u`, which the panel can show in its own title; a digit cannot. |
 | `T` `A` `C` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. |
-| `ctrl-d` / `ctrl-u` | Wants the ctrl layer designed first; see §2. |
+| `ctrl-d` / `ctrl-u` | The ctrl layer exists now but these two are not in it yet; see §2. |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
 | Horizontal motion | The grid caps at 24 columns and draws nothing past the right edge. Column navigation is unbuilt (vision.md §8). |
 | User-defined bindings | vision.md §7 Phase 5. |
@@ -299,7 +380,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `j`/`k` walk a list | `j_and_k_walk_the_keyspace_list` |
 | Arrows are synonyms | `the_arrow_keys_do_what_j_and_k_do` |
 | Motion stops at both ends | `the_selection_cannot_run_off_a_list_it_has_not_loaded`, `the_grid_cursor_cannot_run_off_a_page` |
-| Motion is the focused panel's only | `motion_belongs_to_the_focused_panel_only`, `a_panel_with_no_rows_swallows_motion_rather_than_passing_it_on` |
+| Motion is the focused panel's only | `motion_belongs_to_the_focused_panel_only`, `motion_in_one_panel_never_reaches_another` |
 | `Enter`/`Space` agree | `enter_and_space_both_toggle_a_keyspace`, `space_reads_a_table_the_same_way_enter_does` |
 | `l`/`h` and arrows agree | `l_and_right_open_a_keyspace`, `h_and_left_close_a_keyspace` |
 | `h` steps out before folding | `h_from_a_table_steps_out_to_its_keyspace_before_folding` |
@@ -308,7 +389,10 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Esc` clears the overlay | `escape_dismisses_the_overlay` |
 | `Tab`/`Shift-Tab` cycle and wrap | `tab_walks_the_panels_in_reading_order_and_wraps`, `shift_tab_walks_them_the_other_way` |
 | Paging and `Home`/`End` | `page_down_moves_the_tree_by_one_panel_height`, `home_and_end_reach_the_ends_of_the_tree_in_one_key` |
-| Ctrl/alt are not synonyms | `a_modified_key_is_not_a_binding` |
+| Ctrl/alt are not synonyms | `an_unbound_ctrl_key_does_nothing`, `an_alt_modified_key_is_not_a_binding` |
+| `ctrl-e`/`ctrl-y` scroll Table DDL's viewport and leave its cursor alone | `ctrl_e_and_ctrl_y_scroll_the_ddl_panel_without_moving_its_cursor` |
+| `ctrl-e` belongs to Table DDL alone | `ctrl_e_belongs_to_the_ddl_panel_alone` |
+| An open palette still claims it first | `an_open_palette_swallows_ctrl_e` |
 | Shifted letters stay free | `a_shifted_shortcut_stays_unbound` |
 | Focus letters are distinct and total | `every_panel_has_a_distinct_shortcut`, `a_shortcut_leads_back_to_the_panel_that_claims_it`, `the_shortcuts_are_the_ones_the_design_names` — all in `state.rs` |
 | No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` |
@@ -376,6 +460,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Esc`'s full precedence chain | `escape_clears_the_focused_panels_filter_when_no_overlay_is_up`, `escape_prefers_the_overlay_to_the_filter`, `escape_leaves_queries_when_nothing_else_claims_it` (rung 3 alone — rung 2 before rung 3 is unpinnable until Queries can hold a filter, design §8) |
 | `Tab` is inert while the prompt is up | `tab_is_inert_while_the_prompt_is_up` |
 | A click cancels the prompt | `a_click_cancels_the_prompt` |
+| The ctrl layer outranks an open prompt, and an unclaimed chord is still not text | `the_ctrl_layer_reaches_past_an_open_prompt`, `an_unclaimed_ctrl_chord_is_not_text_in_the_prompt` |
+| A filter that shrinks Table DDL pulls its cursor back | `a_ddl_filter_that_shrinks_the_panel_pulls_its_cursor_back` |
 | A filter survives a focus change | `a_filter_survives_a_focus_change` |
 | A filter is read back from the panel it was applied to | `a_filter_is_read_back_from_the_panel_it_was_applied_to` (`state.rs`) |
 | The three filters are independent | `the_three_filters_are_independent` (`state.rs`) |
@@ -391,6 +477,21 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The prompt owns the bar row, and its cursor | `an_open_prompt_owns_the_bar_row`, `an_open_prompts_own_cursor_replaces_the_editors`, `the_prompts_cursor_sits_after_the_query` (`inbound/render.rs`) |
 | A matched cell reads apart from an unmatched one, on and off the selected row | `a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row` (`inbound/render.rs`) |
 | `Token::Match` is legible over `Token::Selected` | `a_match_is_legible_over_a_selected_row` (`inbound/theme.rs`) |
+| `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
+| It runs only from Queries | `ctrl_r_outside_queries_runs_nothing` |
+| An empty buffer is inert | `an_empty_buffer_runs_nothing` |
+| Either path cancels the other | `running_a_query_cancels_a_pending_table_read`, `reading_a_table_cancels_a_pending_query` |
+| Destructive is refused, unexecuted | `a_destructive_statement_is_refused_until_confirmation_exists` |
+| The posture gate still applies | `a_typed_write_is_refused_on_a_read_only_connection` |
+| A second modifier is not a binding | `ctrl_alt_r_does_not_run_the_buffer` |
+| The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
+| A statement is classified by its first keyword | the `statement.rs` tests |
+| A modifier reaches the label | `a_binding_behind_ctrl_is_named_with_a_ctrl_prefix` (`view/hints.rs`) |
+| The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding`, `the_palette_has_a_queries_section` (`commands.rs`) |
+| The bar greys `ctrl-r run` while there is nothing to run | `the_run_hint_is_inert_while_there_is_nothing_to_run`, `the_run_hint_is_live_once_there_is_a_statement`, `nothing_but_the_run_hint_is_ever_inert` (`view/hints.rs`) |
+| A greyed hint is drawn distinctly and keeps its width | `an_inert_hint_is_greyed_rather_than_dropped` (`inbound/hints.rs`) |
+| The bar's sweep asks only what it claims | `every_hint_the_bar_shows_does_something` |
+| The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an
@@ -469,10 +570,11 @@ scrollbar rather than in the bar
 
 Any further gesture is measured against the narrower rule, not this exception.
 
-**The wheel scrolls; it does not select.** Tables and Contents each hold a
-viewport of their own, so a notch moves the rows and leaves the selection where
-you put it — scroll far enough and the selected row is simply not on screen, and
-the next `j`, or a resize, brings the view back to it.
+**The wheel scrolls; it does not select.** Tables, Contents and Table DDL each
+hold a viewport of their own, so a notch moves the rows (or, in Table DDL,
+the lines) and leaves the selection — the cursor, in Table DDL — where you put
+it. Scroll far enough and the selected row is simply not on screen, and the
+next `j`, or a resize, brings the view back to it.
 
 **One dispatch point, again.** `handle_pointer` in
 [`update.rs`](../crates/lc-domain/src/update.rs) is to a gesture what

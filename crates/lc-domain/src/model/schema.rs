@@ -63,17 +63,15 @@ pub struct TableOptions {
     by_name: BTreeMap<String, String>,
 }
 
-/// Table options worth seeing first, most important first.
+/// Table options in the order the panel lists them, most worth seeing first.
 ///
-/// Leads with what silently costs data or latency — what the table is for, the
-/// TTL that deletes rows out from under you, the tombstone window, the
-/// compaction strategy — and trails with what gets looked up once a year.
-const BY_IMPORTANCE: &[&str] = &[
-    "comment",
+/// A layout rule, not an importance rule. These are the properties whose
+/// values fit on one line, so they read as a scannable block; the three in
+/// [`BULKY`] wrap and would split it
+/// (doc/specs/2026-08-10-ddl-selection-design.md §2).
+const RANKED: &[&str] = &[
     "default_time_to_live",
     "gc_grace_seconds",
-    "compaction",
-    "compression",
     "caching",
     "bloom_filter_fp_chance",
     "speculative_retry",
@@ -92,29 +90,43 @@ const BY_IMPORTANCE: &[&str] = &[
     "extensions",
 ];
 
+/// The options long enough to wrap the panel, drawn last.
+///
+/// Below the unranked tail rather than above it, so a wide option from a
+/// Cassandra major this build predates cannot land between the compact table
+/// and the blocks under it. `comment` loses the top of the panel to buy that,
+/// which is a real cost and a deliberate one (design §2).
+const BULKY: &[&str] = &["comment", "compaction", "compression"];
+
+fn listed(name: &str) -> bool {
+    RANKED.contains(&name) || BULKY.contains(&name)
+}
+
 impl TableOptions {
     #[must_use]
     pub const fn new(by_name: BTreeMap<String, String>) -> Self {
         Self { by_name }
     }
 
-    /// Ranked properties first in [`BY_IMPORTANCE`] order, then everything
-    /// else alphabetically.
+    /// Ranked properties first, then whatever this build has not heard of,
+    /// alphabetically, then the bulky ones.
     ///
-    /// The tail is what keeps a cluster whose properties predate or postdate
-    /// that list fully visible rather than half-shown.
+    /// The middle chunk is what keeps a cluster whose properties predate or
+    /// postdate [`RANKED`] fully visible rather than half-shown.
     pub fn in_display_order(&self) -> impl Iterator<Item = (&str, &str)> {
-        let ranked = BY_IMPORTANCE
-            .iter()
-            .filter_map(|name| self.get(name).map(|value| (*name, value)));
+        let named = |names: &'static [&'static str]| {
+            names
+                .iter()
+                .filter_map(|name| self.get(name).map(|value| (*name, value)))
+        };
 
         let rest = self
             .by_name
             .iter()
-            .filter(|(name, _)| !BY_IMPORTANCE.contains(&name.as_str()))
+            .filter(|(name, _)| !listed(name))
             .map(|(name, value)| (name.as_str(), value.as_str()));
 
-        ranked.chain(rest)
+        named(RANKED).chain(rest).chain(named(BULKY))
     }
 
     #[must_use]
@@ -282,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn options_are_listed_by_importance_rather_than_by_name() {
+    fn options_are_listed_by_layout_rather_than_by_name() {
         let options = options(&[
             ("bloom_filter_fp_chance", "0.01"),
             ("comment", "orders"),
@@ -291,7 +303,7 @@ mod tests {
 
         assert_eq!(
             ordered(&options),
-            ["comment", "gc_grace_seconds", "bloom_filter_fp_chance"]
+            ["gc_grace_seconds", "bloom_filter_fp_chance", "comment"]
         );
     }
 
@@ -299,7 +311,7 @@ mod tests {
     fn a_property_this_cassandra_version_does_not_have_is_simply_absent() {
         let options = options(&[("comment", "orders"), ("id", "abc")]);
 
-        assert_eq!(ordered(&options), ["comment", "id"]);
+        assert_eq!(ordered(&options), ["id", "comment"]);
     }
 
     #[test]
@@ -316,12 +328,12 @@ mod tests {
         assert_eq!(
             ordered(&options),
             [
-                "comment",
                 "id",
                 "dclocal_read_repair_chance",
-                "read_repair_chance"
+                "read_repair_chance",
+                "comment",
             ],
-            "unranked properties sort alphabetically after every ranked one"
+            "unranked properties sort alphabetically after every ranked one, and the bulky ones sort last of all"
         );
     }
 
@@ -336,12 +348,44 @@ mod tests {
     #[test]
     fn every_ranked_name_is_listed_once() {
         let mut seen = std::collections::BTreeSet::new();
-        for name in BY_IMPORTANCE {
+        for name in RANKED.iter().chain(BULKY.iter()) {
             assert!(
                 seen.insert(*name),
                 "{name} is ranked twice, so one of the two positions is dead"
             );
         }
+    }
+
+    #[test]
+    fn the_bulky_options_are_listed_below_even_the_ones_this_build_has_never_heard_of() {
+        let options = TableOptions::new(BTreeMap::from([
+            ("comment".to_owned(), "Order history.".to_owned()),
+            (
+                "compaction".to_owned(),
+                "{'class': 'SizeTieredCompactionStrategy'}".to_owned(),
+            ),
+            (
+                "compression".to_owned(),
+                "{'chunk_length_in_kb': '16'}".to_owned(),
+            ),
+            ("gc_grace_seconds".to_owned(), "864000".to_owned()),
+            ("zzz_option_from_the_future".to_owned(), "on".to_owned()),
+        ]));
+
+        assert_eq!(
+            options
+                .in_display_order()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+            [
+                "gc_grace_seconds",
+                "zzz_option_from_the_future",
+                "comment",
+                "compaction",
+                "compression",
+            ],
+            "an unranked option must not land between the compact table and the blocks below it"
+        );
     }
 
     #[test]

@@ -8,7 +8,14 @@
 //! offset at all: both its vertical and horizontal offsets are derived from
 //! the cursor and the area every frame
 //! (doc/specs/2026-08-09-queries-editor-design.md §5).
+//!
+//! [`Body::selection`] is the one thing besides [`Extent`] a body reports
+//! back. Every panel but Ddl can locate its own selection from a row index
+//! alone, so `Span::default()` is all they carry; Ddl's selection can span
+//! several wrapped lines, which only the renderer that wrapped them can
+//! measure (doc/specs/2026-08-10-ddl-selection-design.md §5.4).
 
+use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
 use ratatui::Frame;
@@ -62,6 +69,12 @@ impl Extent {
 pub(crate) struct Body {
     pub(crate) extent: Extent,
     pub(crate) unit: Unit,
+    /// Where the body drew its selection, in the unit [`Extent`] counts in.
+    ///
+    /// Only the Ddl body reports one: it is the one panel whose selection
+    /// spans more than a line, and so the one whose offset cannot be derived
+    /// from a row index.
+    pub(crate) selection: Span,
 }
 
 /// What a body's [`Extent`] counts in.
@@ -102,14 +115,25 @@ pub(crate) fn render(
         } => Some(Body {
             extent: tree(frame, area, rows, *selected, *offset, theme),
             unit: Unit::Rows { header: 0 },
+            selection: Span::default(),
         }),
-        PanelBody::Details { details, offset } => Some(Body {
-            extent: crate::details::render(frame, area, details, *offset, theme),
-            unit: Unit::Lines,
-        }),
+        PanelBody::Details {
+            details,
+            selected,
+            offset,
+        } => {
+            let (extent, selection) =
+                crate::details::render(frame, area, details, *selected, *offset, theme);
+            Some(Body {
+                extent,
+                unit: Unit::Lines,
+                selection,
+            })
+        }
         PanelBody::Editor { lines, cursor } => Some(Body {
             extent: editor(frame, area, lines, *cursor, focused),
             unit: Unit::Lines,
+            selection: Span::default(),
         }),
         PanelBody::Grid {
             columns,
@@ -121,6 +145,7 @@ pub(crate) fn render(
             unit: Unit::Rows {
                 header: HEADER_ROWS,
             },
+            selection: Span::default(),
         }),
     }
 }

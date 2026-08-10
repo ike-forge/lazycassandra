@@ -233,7 +233,9 @@ impl TablesPanel {
 #[cfg(test)]
 pub(crate) mod tests_support {
     use super::*;
-    use crate::model::{Column, PrimaryKey, Replication, TableOptions};
+    use crate::model::{
+        ClusteringColumn, ClusteringOrder, Column, PrimaryKey, Replication, TableOptions,
+    };
     use std::collections::BTreeMap;
 
     pub(crate) fn table(name: &str) -> Table {
@@ -244,11 +246,22 @@ pub(crate) mod tests_support {
                     name: "id".to_owned(),
                     cql_type: "uuid".to_owned(),
                 }],
-                clustering: Vec::new(),
+                clustering: vec![ClusteringColumn {
+                    column: Column {
+                        name: "created_at".to_owned(),
+                        cql_type: "timestamp".to_owned(),
+                    },
+                    order: ClusteringOrder::Ascending,
+                }],
             },
             static_columns: Vec::new(),
             regular_columns: Vec::new(),
-            options: TableOptions::default(),
+            options: options(&[
+                ("gc_grace_seconds", "864000"),
+                ("bloom_filter_fp_chance", "0.01"),
+                ("caching", "{'keys': 'ALL'}"),
+                ("comment", "fixture"),
+            ]),
         }
     }
 

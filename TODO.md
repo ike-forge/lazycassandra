@@ -48,10 +48,12 @@ From the table metadata slice (doc/specs/2026-08-09-table-metadata-design.md):
 
 From the panel scrolling slice (doc/specs/2026-08-09-panel-scrolling-design.md):
 
-- `ctrl-d` and `ctrl-u`. `handle_key` refuses every ctrl and alt press, so
-  vim's half-page motions need that guard reworked and the test that pins
-  "a modified key is not a binding" rewritten — worth doing when the ctrl
-  layer is designed, not in passing (design §5).
+- `ctrl-d` and `ctrl-u`. The ctrl layer exists now and has three members:
+  `ctrl-e`/`ctrl-y` in Table DDL
+  (doc/specs/2026-08-10-ddl-selection-design.md §4.1) and `ctrl-r` in Queries
+  (doc/specs/2026-08-10-query-execution-design.md). Vim's half-page motions
+  still are not in it, and want the layer designed rather than a fourth arm
+  added in passing (design §5).
 - A long `Notice` still cannot scroll. One sentence is the assumption; a
   `DbError` carrying a paragraph would break it.
 
@@ -67,10 +69,6 @@ From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9
   about forty rows tall — so multi-line CQL is legible only by scrolling.
   The panel is meant to grow with its content and its focus, which is a
   layout change with its own spec, not a tweak to the percentage.
-- Execute the buffer. Nothing turns it into a `Statement` or an
-  `Effect::Execute` yet, and doing so has to answer where the result lands:
-  `ContentsPanel` models exactly one outstanding read keyed to a `TableRef`,
-  which a typed query has no business claiming.
 - The session log. architecture.md §4 calls this panel "statement entry and
   session log"; only the first half exists. When it lands, `State.queries`
   becomes a `QueriesPanel` holding both.
@@ -118,7 +116,23 @@ From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9
   stored viewport of its own, the way the list panels do (list viewport
   design), or keeps deriving its offsets from the cursor and stays out of
   reach of the pointer. That is a design question, not a bug, and it is
-  unanswered on purpose.
+  unanswered on purpose. Table DDL shares that `click_at` arm for a plainer
+  reason: it already has a row cursor (ddl selection design), so wiring its
+  click is the same `go_to` call Tables and Contents already make — an
+  unwired binding, not an open question.
+
+From the query execution slice (doc/specs/2026-08-10-query-execution-design.md):
+
+- Running the buffer sends all of it as one statement. Splitting on statement
+  boundaries, and running only the one under the cursor, needs a CQL parser —
+  it lands in `Statement::typed`
+  (doc/specs/2026-08-10-query-execution-design.md §3, §10).
+- A destructive statement typed into the editor is refused rather than
+  confirmed. The typed-confirmation flow vision.md §4 principle 6 requires
+  replaces that refusal (design §5).
+- A query's result does not page. Neither does a table read; `Effect::FetchNextPage`
+  exists and nothing drives it. Both paths get it at once (design §10).
+
 From the command palette slice (doc/specs/2026-08-09-command-palette-design.md §10):
 
 - Search. The palette is named Commands and carries a selection precisely so
@@ -132,8 +146,10 @@ From the command palette slice (doc/specs/2026-08-09-command-palette-design.md �
 From the panel search slice (doc/specs/2026-08-10-panel-search-design.md §8):
 
 - Search in Queries. `/` types a `/` there, and every other printable key is
-  text too, so search has no key left to claim without either breaking the
-  panel-takes-text rule or lifting the blanket refusal of ctrl one key at a
-  time. The route in is `esc` then `/`, once Queries has a vim-style normal
-  mode — that slice's decision, not this one's, since it also has to invent
-  how one leaves the panel once `esc` no longer does that.
+  text too, so search has no unmodified key left to claim without breaking the
+  panel-takes-text rule. The ctrl layer exists now and could hold one, but a
+  `ctrl-/` would put search behind a different key in Queries than in the other
+  three panels, which is what the *same key means the same thing in every
+  panel* rule is for. The route in is `esc` then `/`, once Queries has a
+  vim-style normal mode — that slice's decision, not this one's, since it also
+  has to invent how one leaves the panel once `esc` no longer does that.

@@ -1,7 +1,7 @@
 //! Drawing a frame.
 
 use lc_domain::ViewModel;
-use lc_domain::state::{Geometry, Panel};
+use lc_domain::state::{Geometry, Panel, Span as DdlSpan};
 use lc_domain::style::Token;
 use lc_domain::view::OverlayView;
 use ratatui::Frame;
@@ -50,6 +50,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
+    let mut ddl_selection = DdlSpan::default();
     let mut hits = [PanelHit::default(); 4];
 
     for (index, panel) in view.panels.iter().enumerate() {
@@ -101,6 +102,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                 heights[index] = drawn.extent.visible;
                 if panel.panel == Panel::Ddl {
                     ddl_lines = drawn.extent.total;
+                    ddl_selection = drawn.selection;
                 }
                 if drawn.extent.overflows() {
                     scrollbar(frame, area, &drawn.extent, border, theme);
@@ -136,7 +138,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 
     Rendered {
-        geometry: Geometry::new(heights, ddl_lines, command_rows),
+        geometry: Geometry::new(heights, ddl_lines, command_rows).with_ddl_selection(ddl_selection),
         map: FrameMap::new(hits),
     }
 }
@@ -257,7 +259,7 @@ pub(crate) fn scrollbar(
 #[cfg(test)]
 mod tests {
     use lc_domain::commands::CommandsPanel;
-    use lc_domain::contents::TableRef;
+    use lc_domain::contents::{Subject, TableRef};
     use lc_domain::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
@@ -381,7 +383,7 @@ mod tests {
             .collect();
 
         assert!(bars[0].contains("l/h fold"), "Tables folds: {:?}", bars[0]);
-        assert!(bars[1].contains("j/k scroll"), "Ddl scrolls: {:?}", bars[1]);
+        assert!(bars[1].contains("j/k move"), "Ddl moves: {:?}", bars[1]);
         assert!(
             bars[2].contains("j/k move"),
             "Contents moves: {:?}",
@@ -758,7 +760,7 @@ mod tests {
         let query = QueryId::next();
         state
             .contents
-            .requested(query, TableRef::new("shop", "orders"));
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
         state.contents.page_ready(query, page);
         state
     }
@@ -1219,16 +1221,173 @@ mod tests {
                 // is configured to do.
                 "",
                 "Options",
-                // Short enough for one line each; `bloom_filter_fp_chance` and
-                // its value need 26 of the panel's 23, so it keeps the
-                // wrapped shape.
-                "comment  Order history.",
                 "gc_grace_seconds 864000",
+                // `bloom_filter_fp_chance` and its value need 26 of the
+                // panel's 23, so it keeps the wrapped shape.
                 "bloom_filter_fp_chance",
                 "  0.01",
+                // `comment` is bulky, so it sorts last even though it fits
+                // on one line here.
+                "comment  Order history.",
                 // The row the shorter body leaves unfilled.
                 "",
             ]
+        );
+    }
+
+    /// Every row inside the Ddl body (100x41, see [`ddl_rows`]) whose first
+    /// content cell carries the reversed modifier [`Theme::TerminalDefault`]
+    /// gives `Token::Selected`.
+    fn highlighted_rows(buffer: &Buffer) -> Vec<u16> {
+        (25..39)
+            .filter(|&y| {
+                buffer
+                    .cell((1, y))
+                    .is_some_and(|cell| cell.modifier.contains(Modifier::REVERSED))
+            })
+            .collect()
+    }
+
+    /// The text a Ddl body row drew, at the same coordinates [`ddl_rows`]
+    /// reads.
+    fn row_text(buffer: &Buffer, row: u16) -> String {
+        (1..24)
+            .filter_map(|x| buffer.cell((x, row)))
+            .map(Cell::symbol)
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    }
+
+    #[test]
+    fn every_line_of_a_selected_property_is_highlighted() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        // `bloom_filter_fp_chance` and its value need 26 of the panel's 23
+        // columns, so this row is one cursor stop drawn across two lines.
+        state.ddl.cursor.go_to(4, lc_domain::view::ddl_rows(&state));
+
+        let buffer = draw_state(100, 41, &state);
+
+        assert_eq!(
+            highlighted_rows(&buffer),
+            [35, 36],
+            "a wrapped value is one cursor stop, so exactly its own two lines \
+             are the selection — not fewer, and not bleeding into comment below"
+        );
+    }
+
+    #[test]
+    fn a_one_line_property_has_exactly_its_own_line_reversed() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        state.ddl.cursor.go_to(3, lc_domain::view::ddl_rows(&state));
+
+        let buffer = draw_state(100, 41, &state);
+
+        assert_eq!(
+            highlighted_rows(&buffer),
+            [34],
+            "gc_grace_seconds fits one line, so exactly it is the selection"
+        );
+    }
+
+    #[test]
+    fn a_section_heading_is_never_drawn_as_the_selection() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        state.ddl.cursor.to_start();
+
+        let buffer = draw_state(100, 41, &state);
+        let highlighted = highlighted_rows(&buffer);
+
+        assert!(
+            !highlighted.is_empty(),
+            "the first row must be drawn as the selection"
+        );
+        for row in highlighted {
+            let text = row_text(&buffer, row);
+            assert!(
+                !text.ends_with("Partition Key") && !text.starts_with("Options"),
+                "row {row} is a heading: {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_selected_block_scrolled_fully_out_of_view_is_not_highlighted() {
+        // The Ddl half of `a_selection_scrolled_out_of_view_is_not_highlighted`
+        // and its tree counterpart: `details.rs` argues in prose that
+        // `Paragraph` needs no such guard because it only ever draws the lines
+        // it is scrolled to. This is what checks that argument.
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        let details = ddl_details(&state);
+        state.ddl.cursor.go_to(0, details.row_count());
+
+        // 40x20: a fourteen-column, five-row Ddl body — narrow enough that
+        // `orders()` wraps well past it.
+        let total = crate::details::lay_out(&details, 0, 14, Theme::TerminalDefault)
+            .lines
+            .len();
+        assert!(
+            total > 5,
+            "the fixture must overflow the panel or this test proves nothing"
+        );
+        state.ddl.scroll.to_end(total, 5);
+
+        let buffer = draw_state(40, 20, &state);
+        let reversed = (13..18).any(|y| {
+            buffer
+                .cell((1, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        });
+
+        assert!(
+            !reversed,
+            "customer_id scrolled off the top must not still be drawn as the selection"
+        );
+    }
+
+    #[test]
+    fn a_selected_block_scrolled_partly_out_of_view_keeps_its_visible_lines_highlighted() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        let details = ddl_details(&state);
+        let last = details.row_count() - 1;
+        state.ddl.cursor.go_to(last, details.row_count());
+
+        // `comment` is the last row and wraps to three lines at this width;
+        // scrolling thirteen lines down cuts its first two into view and
+        // leaves the third below the fold.
+        let total = crate::details::lay_out(&details, last, 14, Theme::TerminalDefault)
+            .lines
+            .len();
+        for _ in 0..13 {
+            state.ddl.scroll.down(total, 5);
+        }
+
+        let buffer = draw_state(40, 20, &state);
+        let reversed = |y: u16| {
+            buffer
+                .cell((1, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        assert!(!reversed(13), "this line belongs to the row above comment");
+        assert!(!reversed(14), "this line belongs to the row above comment");
+        assert!(!reversed(15), "this line belongs to the row above comment");
+        assert!(
+            reversed(16),
+            "comment's first visible line stays highlighted"
+        );
+        assert!(
+            reversed(17),
+            "comment's second visible line stays highlighted"
         );
     }
 
@@ -1314,11 +1473,13 @@ mod tests {
         assert_eq!(geometry.height(Panel::Ddl), 5);
         assert_eq!(
             geometry.ddl_lines(),
-            crate::details::lines(
+            crate::details::lay_out(
                 &ddl_details(&describing(orders())),
+                0,
                 14,
                 Theme::TerminalDefault
             )
+            .lines
             .len()
         );
     }
@@ -1355,7 +1516,8 @@ mod tests {
         const HEIGHT: usize = 5;
 
         let state = describing(orders());
-        let all = crate::details::lines(&ddl_details(&state), WIDTH, Theme::TerminalDefault);
+        let all =
+            crate::details::lay_out(&ddl_details(&state), 0, WIDTH, Theme::TerminalDefault).lines;
         assert!(
             all.len() > HEIGHT,
             "the fixture must overflow the panel or this test proves nothing"
@@ -2262,9 +2424,9 @@ mod tests {
 
     #[test]
     fn the_narrowest_palette_still_fits_its_widest_row() {
-        // 50% of 70 columns lands exactly on MIN_W, the floor a wider action
+        // 50% of 78 columns lands exactly on MIN_W, the floor a wider action
         // would clip against if the margin were counted on one side only.
-        let drawn = buffer_text(&with_palette(70, 40));
+        let drawn = buffer_text(&with_palette(78, 40));
 
         assert!(
             drawn.contains("focus Table contents"),
@@ -2274,10 +2436,10 @@ mod tests {
 
     #[test]
     fn a_frame_that_would_clip_the_widest_row_gets_no_palette() {
-        // 50% of 68 columns is 34 — the old, undercounted MIN_W. A gate that
-        // let this through would draw a palette whose widest row is clipped
-        // by one character rather than refusing it outright.
-        let drawn = buffer_text(&with_palette(68, 40));
+        // 50% of 76 columns is 38, one under MIN_W. A gate that let this
+        // through would draw a palette whose widest row is clipped by one
+        // character rather than refusing it outright.
+        let drawn = buffer_text(&with_palette(76, 40));
 
         assert!(!drawn.contains("Commands"), "the block must not be titled");
         assert!(

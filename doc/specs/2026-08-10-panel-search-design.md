@@ -24,9 +24,10 @@ contents all answer no — so there is nowhere for a typed query to go without
 breaking the rule the whole binding set rests on.
 
 The command palette already established the way out. It is drawn over the
-panels, claims every key before anything else is consulted, and is entered and
-left deliberately. The search prompt is the same shape of thing: a state that
-outranks focus, entered with one key, left with two.
+panels, claims every unmodified key before focus is consulted — only the ctrl
+layer is dispatched above it (§3.1) — and is entered and left deliberately. The
+search prompt is the same shape of thing: a state that outranks focus, entered
+with one key, left with two.
 
 So it joins `Overlay`:
 
@@ -131,12 +132,20 @@ Beside the state it filters, not in a table on `State`:
 
 - `TablesPanel.filter: Option<Filter>`
 - `ContentsPanel.filter: Option<Filter>`
-- `state.ddl` becomes `DdlPanel { scroll: Scroll, filter: Option<Filter> }`
+- `state.ddl` becomes
+  `DdlPanel { cursor: Cursor, scroll: Scroll, filter: Option<Filter> }`, in a
+  new `lc-domain/src/ddl.rs`
 
 The Table DDL panel is the one that grows a struct where it had a bare
 `Scroll`. That follows the reason `tree.rs` and `contents.rs` exist at all
 (architecture.md §11): per-panel state with its own vocabulary, rather than
-another field on `State`.
+another field on `State`. The `cursor` is the Table DDL selection slice's, and
+only strengthens the argument — a panel with a cursor, a viewport and a filter
+is exactly the per-panel state that section is about.
+
+`cursor` and `scroll` are public; `filter` is not, and is reached through
+`filter()` / `set_filter()` for the reason `TablesPanel`'s is (§2.1): setting
+one owes a repair, and a public field would let a caller skip `apply_filter`.
 
 A filter therefore survives a focus change, and the three are independent — you
 can have one applied in Tables and a different one in Table contents.
@@ -169,7 +178,24 @@ to have something to put back — see §3.1.
 | `Backspace` | Removes the last character, then applies. |
 | `Enter` | Closes the prompt, leaving whatever is applied. |
 | `Esc` | Restores `previous` to the target and closes. |
-| anything else | Inert. |
+| anything the ctrl layer does not claim | Inert. |
+
+The last row said "anything else" when this was written, and that is no longer
+true: the ctrl layer landed in another slice, and `handle_key` routes a
+ctrl-modified key into `ctrl_key` *above* the palette and therefore above this
+prompt (doc/shortcuts.md §2). So `ctrl-e` and `ctrl-y` still scroll the Table
+DDL viewport with a prompt open over it, and `ctrl-r` would run the Queries
+buffer if a prompt could be open while Queries had focus — it cannot, since
+Queries holds no filter to open one over.
+
+The prompt is inert to the rest, and being reachable-past is right rather than
+merely tolerable. Ctrl is a layer of its own, designed as a layer and not
+smuggled in one key at a time; a member moves no focus and changes no `target`,
+which §3 captures at open, so the panel under a live query cannot change
+identity beneath it. And where a member raises a message overlay in place of
+the prompt, `raise` restores `previous` to the target before replacing it, so a
+displaced prompt leaves the panel exactly as it was found — the same guarantee
+`Esc` gives.
 
 `Enter` on an empty buffer therefore clears the filter, because §2's invariant
 already turned an empty query into `None`. There is no separate "clear"
@@ -204,12 +230,20 @@ cursor** to the filtered row count with the existing `Cursor::clamp_to`.
 
 The **Table DDL** offset is not clamped there, and deliberately. Its length is
 counted in wrapped lines, which only the renderer can produce — the domain
-learns it from `Msg::Measured`, whose handler already clamps `state.ddl` and
-marks dirty when that moved. A filter applied at keystroke *n* is drawn at
-frame *n*, measured, and repaired on the message that comes back. Clamping
-against `geometry.ddl_lines()` at apply time would clamp against the *previous*
-frame's count, which is a guess, and a wrong one exactly when the filter just
-shrank the body.
+learns it from `Msg::Measured`, whose handler already clamps
+`state.ddl.scroll` and marks dirty when that moved. A filter applied at
+keystroke *n* is drawn at frame *n*, measured, and repaired on the message that
+comes back. Clamping against `geometry.ddl_lines()` at apply time would clamp
+against the *previous* frame's count, which is a guess, and a wrong one exactly
+when the filter just shrank the body.
+
+The panel's **cursor** is a different matter, and needs no special case at all.
+It counts rows, which the domain can count for itself, and `view::ddl_rows`
+counts the rows the panel *draws* — `details::of` applies the filter before
+returning, so the filtered count is the only count anyone sees. `clamp_lists`
+runs in `update`'s epilogue on every message and clamps the cursor against it,
+so a filter that empties a section pulls the cursor back on the same keystroke
+that applied it, with no line count involved.
 
 Table contents needs neither: it filters nothing (§4.3).
 
@@ -448,17 +482,28 @@ one.
 ## 8. Queries, and the vim slice
 
 Queries takes text, so `/` types a `/` there — CQL comments and division both
-need it — and every other printable key is taken too. There is no key left for
-search to claim inside the editor without either breaking the
-panel-takes-text rule or lifting doc/shortcuts.md §2's blanket refusal of ctrl,
-which that rule says must be *designed as a layer, not smuggled in one key at a
-time*.
+need it — and every other printable key is taken with it. That is the whole of
+the obstacle: inside the editor there is no unmodified key left for search to
+claim, and claiming one anyway would break the panel-takes-text rule, which is
+the rule the editor exists under rather than an inconvenience beside it.
+
+The ctrl layer is no longer an argument here either way. This section once
+rested on doc/shortcuts.md §2 refusing ctrl wholesale, and on that refusal
+saying the layer must be *designed as a layer, not smuggled in one key at a
+time*. The layer has since been designed, in the query execution and Table DDL
+selection slices, so the prohibition it appealed to is gone. The conclusion is
+unchanged, because the reason was never really the prohibition: a `ctrl-/` for
+search would be a fourth member added for the convenience of one panel, and it
+would put search behind a different key in Queries than in the other three —
+the one thing doc/shortcuts.md §2's *same key means the same thing in every
+panel* rule is for.
 
 The route in is `esc` then `/`, once Queries has a vim-style normal mode: `esc`
 leaves insert mode instead of leaving the panel, and `/` in normal mode is
-search. That is the vim slice's decision to make, not this one's — this slice
-would have to invent the whole mode split, including how one leaves the panel
-at all once `esc` no longer does it.
+search — the same `/`, in a panel that has stopped taking text. That is the vim
+slice's decision to make, not this one's — this slice would have to invent the
+whole mode split, including how one leaves the panel at all once `esc` no
+longer does it.
 
 What this slice owes that slice is that nothing has to be redesigned when it
 lands:
@@ -508,6 +553,8 @@ Until then, `esc` in Queries leaves the editor, exactly as
 | `esc` cancels, restoring the filter that was there | `update.rs` |
 | `esc`'s full precedence chain | `update.rs` |
 | `tab` is inert while the prompt is up | `update.rs` |
+| The ctrl layer reaches past the prompt; an unclaimed chord is still not text | `update.rs` |
+| A filter that shrinks Table DDL pulls its cursor back | `update.rs` |
 | A click cancels the prompt | `update.rs` |
 | A filter survives a focus change | `update.rs` |
 | The three filters are independent | `update.rs` |
@@ -528,9 +575,9 @@ In the same commit, per doc/shortcuts.md §6:
 
 - **§1** — `/` in the global table; `esc`'s chain; `l`/`h` swallowed under a
   filter in the Tables subsection.
-- **§2** — the prompt as a third exception to *bindings are global; panels
-  refuse*, ordered after the palette and before a panel that takes text; and
-  `esc`'s precedence chain as a named rule.
+- **§2** — the prompt as an exception to *bindings are global; panels refuse*,
+  ordered after the ctrl layer and the palette and before a panel that takes
+  text; and `esc`'s precedence chain as a named rule.
 - **§3** — `/` moves from unspent to taken.
 - **§5** — the rows from §9 above.
 - **§7** — a click cancels an open prompt.

@@ -10,7 +10,7 @@ use crate::commands::CommandsPanel;
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::editor::Editor;
-use crate::model::{ConnId, DbError, Key, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::search::{Filter, Filtered, Prompt};
 use crate::style::Severity;
@@ -175,75 +175,88 @@ pub enum Panel {
 
 const TABLES_HINTS: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "move",
     },
     Binding {
-        keys: &[Key::Char('l'), Key::Char('h')],
+        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Char('h'))],
         action: "fold",
     },
     // `⏎` on a keyspace folds it and on a table reads it. The bar names the
     // focused panel and nothing finer (design §1), so one label has to cover
     // both — "open" is true of either row, "read" of half of them.
     Binding {
-        keys: &[Key::Enter],
+        keys: &[KeyPress::new(Key::Enter)],
         action: "open",
     },
     // Not global: it does nothing in Queries, where `/` is text (panel
     // search design §5.3).
     Binding {
-        keys: &[Key::Char('/')],
+        keys: &[KeyPress::new(Key::Char('/'))],
         action: "search",
     },
 ];
 
 const DDL_HINTS: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
+        action: "move",
+    },
+    Binding {
+        keys: &[
+            KeyPress::ctrl(Key::Char('e')),
+            KeyPress::ctrl(Key::Char('y')),
+        ],
         action: "scroll",
     },
     Binding {
-        keys: &[Key::PageDown, Key::PageUp],
+        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
     Binding {
-        keys: &[Key::Home, Key::End],
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
     Binding {
-        keys: &[Key::Char('/')],
+        keys: &[KeyPress::new(Key::Char('/'))],
         action: "search",
     },
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "move",
     },
     Binding {
-        keys: &[Key::PageDown, Key::PageUp],
+        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
     Binding {
-        keys: &[Key::Home, Key::End],
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
     Binding {
-        keys: &[Key::Char('/')],
+        keys: &[KeyPress::new(Key::Char('/'))],
         action: "search",
     },
 ];
 
 const QUERIES_HINTS: &[Binding] = &[
+    // First: it is what the panel is for. `⏎ newline` and `esc leave` are what
+    // it does on the way there.
     Binding {
-        keys: &[Key::Enter],
+        keys: &[KeyPress::ctrl(Key::Char('r'))],
+        action: "run",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Enter)],
         action: "newline",
     },
     // Named here and nowhere else: `Esc` only leaves a panel that takes text,
     // so this is the one bar where saying so is true (hint bar design §3).
     Binding {
-        keys: &[Key::Escape],
+        keys: &[KeyPress::new(Key::Escape)],
         action: "leave",
     },
 ];
@@ -388,6 +401,21 @@ impl Cursor {
     }
 }
 
+/// Where a selected row was drawn, counted in the lines a viewport scrolls
+/// over.
+///
+/// The Table DDL panel is the one place a cursor and an offset count in
+/// different units: the cursor walks described rows, the offset walks the
+/// wrapped lines they occupy, and only the renderer knows the conversion
+/// (doc/specs/2026-08-10-ddl-selection-design.md §5.4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Span {
+    /// The first line the row occupies.
+    pub first: usize,
+    /// How many it occupies. Zero means no row was drawn.
+    pub lines: usize,
+}
+
 /// A viewport offset over a document of known length.
 ///
 /// The offset is private for the reason [`Cursor`]'s index is: every motion
@@ -451,6 +479,29 @@ impl Scroll {
         }
     }
 
+    /// Pulls the viewport the shortest distance that puts `span` inside it.
+    ///
+    /// [`Self::follow`]'s counterpart for a selection that occupies more than
+    /// one line. A span taller than the panel cannot be made to fit, so its
+    /// first line goes to the top: a property drawn tail-first has its name
+    /// scrolled off, which is the half that says what the tail is.
+    pub const fn follow_span(&mut self, span: Span, height: usize) {
+        if span.lines == 0 || height == 0 {
+            return;
+        }
+
+        if span.first < self.offset || span.lines >= height {
+            self.offset = span.first;
+            return;
+        }
+
+        let last = span.first + span.lines - 1;
+
+        if last >= self.offset + height {
+            self.offset = last + 1 - height;
+        }
+    }
+
     const fn go_to(&mut self, offset: usize, len: usize, height: usize) {
         let last = len.saturating_sub(height);
         // `Ord::min` is not const.
@@ -466,6 +517,7 @@ impl Scroll {
 pub struct Geometry {
     heights: [usize; 4],
     ddl_lines: usize,
+    ddl_selection: Span,
     command_rows: usize,
 }
 
@@ -478,6 +530,7 @@ impl Geometry {
         Self {
             heights,
             ddl_lines,
+            ddl_selection: Span { first: 0, lines: 0 },
             command_rows,
         }
     }
@@ -513,6 +566,30 @@ impl Geometry {
     #[must_use]
     pub const fn command_rows(self) -> usize {
         self.command_rows
+    }
+
+    /// The span the frame drew the Ddl selection at.
+    ///
+    /// Split from [`Self::new`] because almost every caller is a test that has
+    /// no selection to describe, and a fourth positional `Span::default()` at
+    /// each of them says nothing.
+    #[must_use]
+    pub const fn with_ddl_selection(self, ddl_selection: Span) -> Self {
+        Self {
+            heights: self.heights,
+            ddl_lines: self.ddl_lines,
+            ddl_selection,
+            command_rows: self.command_rows,
+        }
+    }
+
+    /// Where the Ddl panel drew its selected row.
+    ///
+    /// The second thing only the renderer can produce, for the same reason as
+    /// [`Self::ddl_lines`]: it is a function of the wrapping.
+    #[must_use]
+    pub const fn ddl_selection(self) -> Span {
+        self.ddl_selection
     }
 }
 
@@ -1089,5 +1166,86 @@ mod tests {
         state.apply_filter(Filtered::Tables, None);
 
         assert_eq!(state.filter(Filtered::Tables), None);
+    }
+
+    #[test]
+    fn following_a_span_already_in_view_moves_nothing() {
+        let mut scroll = Scroll::default();
+        scroll.follow_span(Span { first: 2, lines: 3 }, 10);
+
+        assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn following_a_span_below_the_viewport_pulls_its_last_line_to_the_bottom() {
+        let mut scroll = Scroll::default();
+        scroll.follow_span(
+            Span {
+                first: 12,
+                lines: 3,
+            },
+            10,
+        );
+
+        assert_eq!(
+            scroll.offset(),
+            5,
+            "lines 5..15 are drawn, ending on the span"
+        );
+    }
+
+    #[test]
+    fn following_a_span_above_the_viewport_pulls_its_first_line_to_the_top() {
+        let mut scroll = Scroll::default();
+        scroll.to_end(100, 10);
+        scroll.follow_span(Span { first: 4, lines: 2 }, 10);
+
+        assert_eq!(scroll.offset(), 4);
+    }
+
+    #[test]
+    fn a_span_taller_than_the_panel_shows_its_head_rather_than_its_tail() {
+        let mut scroll = Scroll::default();
+        scroll.follow_span(
+            Span {
+                first: 20,
+                lines: 30,
+            },
+            10,
+        );
+
+        assert_eq!(
+            scroll.offset(),
+            20,
+            "a property's name is the half worth reading; its tail without it is not"
+        );
+    }
+
+    #[test]
+    fn a_span_of_no_lines_is_nothing_to_follow() {
+        let mut scroll = Scroll::default();
+        scroll.to_end(100, 10);
+        let before = scroll.offset();
+
+        scroll.follow_span(Span::default(), 10);
+
+        assert_eq!(scroll.offset(), before);
+    }
+
+    #[test]
+    fn a_geometry_carries_the_selected_ddl_rows_span() {
+        let span = Span { first: 7, lines: 4 };
+
+        assert_eq!(
+            Geometry::new([1, 2, 3, 4], 40, 5)
+                .with_ddl_selection(span)
+                .ddl_selection(),
+            span
+        );
+        assert_eq!(
+            Geometry::default().ddl_selection(),
+            Span::default(),
+            "a frame that drew no selection reports none"
+        );
     }
 }

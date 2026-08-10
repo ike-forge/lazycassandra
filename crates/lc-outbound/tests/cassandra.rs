@@ -455,7 +455,7 @@ async fn every_table_in_the_fixture_describes_itself() {
 }
 
 #[tokio::test]
-async fn the_option_set_covers_what_the_importance_ranking_expects_of_cassandra_5() {
+async fn the_option_set_covers_what_the_layout_rule_expects_of_cassandra_5() {
     let schema = fixture_schema().await;
 
     let table = schema
@@ -466,7 +466,7 @@ async fn the_option_set_covers_what_the_importance_ranking_expects_of_cassandra_
         .get("customers_by_id")
         .expect("customers_by_id exists");
 
-    // Not the whole ranking: it deliberately also names properties older and
+    // Not the whole list: it deliberately also names properties older and
     // newer majors carry, which this cluster does not have.
     for name in [
         "additional_write_policy",

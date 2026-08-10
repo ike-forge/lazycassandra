@@ -57,6 +57,21 @@ impl Statement {
             kind: StatementKind::Read,
         }
     }
+
+    /// A statement typed by hand, classified by its first keyword.
+    ///
+    /// A sniffer rather than a parser: a statement opening with a comment
+    /// classifies as [`StatementKind::Write`] and is refused on a read-only
+    /// connection. That is the conservative direction, and it is where a real
+    /// CQL parser lands when one arrives
+    /// (doc/specs/2026-08-10-query-execution-design.md §4).
+    #[must_use]
+    pub fn typed(cql: &str) -> Self {
+        Self {
+            cql: cql.to_owned(),
+            kind: kind_of(cql),
+        }
+    }
 }
 
 /// CQL folds an unquoted identifier to lower case, and `system_schema` reports
@@ -64,6 +79,20 @@ impl Statement {
 /// safe to interpolate quoted. An embedded quote is doubled, as CQL requires.
 fn quoted(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+/// An unrecognised verb is mutating: being wrong that way costs an error
+/// message, and being wrong the other way costs a write the posture was set to
+/// prevent (design §4).
+fn kind_of(cql: &str) -> StatementKind {
+    let verb = cql.split_whitespace().next().unwrap_or_default();
+
+    match verb.to_ascii_uppercase().as_str() {
+        "SELECT" => StatementKind::Read,
+        "DROP" | "TRUNCATE" => StatementKind::Destructive,
+        "CREATE" | "ALTER" => StatementKind::Schema,
+        _ => StatementKind::Write,
+    }
 }
 
 #[cfg(test)]
@@ -96,5 +125,59 @@ mod tests {
     #[test]
     fn selecting_is_a_read_and_so_survives_a_read_only_connection() {
         assert!(!Statement::select_all("shop", "orders", 200).mutates());
+    }
+
+    #[test]
+    fn selecting_is_a_read() {
+        assert_eq!(
+            Statement::typed("SELECT * FROM shop.orders").kind,
+            StatementKind::Read
+        );
+    }
+
+    #[test]
+    fn case_and_leading_space_do_not_change_a_kind() {
+        assert_eq!(Statement::typed("  select 1").kind, StatementKind::Read);
+        assert_eq!(
+            Statement::typed("InSeRt INTO t (a) VALUES (1)").kind,
+            StatementKind::Write
+        );
+    }
+
+    #[test]
+    fn dropping_and_truncating_are_destructive() {
+        for cql in ["DROP TABLE shop.orders", "truncate shop.orders"] {
+            assert_eq!(
+                Statement::typed(cql).kind,
+                StatementKind::Destructive,
+                "{cql} must not reach the cluster without confirmation"
+            );
+        }
+    }
+
+    #[test]
+    fn creating_and_altering_are_schema_changes() {
+        assert_eq!(
+            Statement::typed("CREATE TABLE t (a int PRIMARY KEY)").kind,
+            StatementKind::Schema
+        );
+        assert_eq!(
+            Statement::typed("ALTER TABLE t ADD b int").kind,
+            StatementKind::Schema
+        );
+    }
+
+    #[test]
+    fn an_unknown_verb_is_treated_as_mutating() {
+        // The conservative direction: a verb this table has not learned is
+        // refused on a read-only connection rather than waved through it.
+        assert!(Statement::typed("LIST ROLES").mutates());
+        assert!(Statement::typed("-- a comment first\nSELECT 1").mutates());
+    }
+
+    #[test]
+    fn the_cql_is_kept_verbatim() {
+        let cql = "SELECT *\nFROM shop.orders";
+        assert_eq!(Statement::typed(cql).cql, cql);
     }
 }
