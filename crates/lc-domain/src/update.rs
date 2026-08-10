@@ -2164,6 +2164,10 @@ mod tests {
     /// A state focused on Contents, showing a page of `columns` columns each
     /// two characters wide, in a grid `width` characters across.
     fn grid_of(columns: usize, width: usize) -> State {
+        grid_of_rows(columns, 1, width)
+    }
+
+    fn grid_of_rows(columns: usize, rows: usize, width: usize) -> State {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         let query = QueryId::next();
         state
@@ -2173,9 +2177,11 @@ mod tests {
             query,
             Page {
                 columns: (0..columns).map(|i| format!("c{i}")).collect(),
-                rows: vec![Row {
-                    values: (0..columns).map(|_| CqlValue::Int(1)).collect(),
-                }],
+                rows: (0..rows)
+                    .map(|_| Row {
+                        values: (0..columns).map(|_| CqlValue::Int(1)).collect(),
+                    })
+                    .collect(),
                 next: None,
             },
         );
@@ -2340,20 +2346,29 @@ mod tests {
 
     #[test]
     fn home_and_end_still_reach_the_ends_of_the_row_list() {
-        let mut state = grid_of(4, 80);
+        let mut state = grid_of_rows(4, 12, 80);
         press(&mut state, Key::Char('l'));
 
         press(&mut state, Key::End);
 
         assert_eq!(
-            state.contents.column.index(),
-            1,
+            state.contents.cursor.index(),
+            11,
             "End reaches the ends of the document, which in a grid is the rows"
         );
         assert_eq!(
-            state.contents.cursor.index(),
-            0,
-            "one row, so End stays on it"
+            state.contents.column.index(),
+            1,
+            "and says nothing about the column axis"
+        );
+
+        press(&mut state, Key::Home);
+
+        assert_eq!(state.contents.cursor.index(), 0, "and Home the other end");
+        assert_eq!(
+            state.contents.column.index(),
+            1,
+            "still on the column it was on"
         );
     }
 
