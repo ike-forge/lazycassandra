@@ -189,11 +189,14 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             if !state.connection.is_current(conn) {
                 return Vec::new();
             }
-            state.overlay = Some(Overlay::Message(Message {
-                title: "Connection failed".to_owned(),
-                message: error.to_string(),
-                severity: Severity::Danger,
-            }));
+            raise(
+                state,
+                Message {
+                    title: "Connection failed".to_owned(),
+                    message: error.to_string(),
+                    severity: Severity::Danger,
+                },
+            );
             state.connection = ConnectionState::Failed(error);
             state.mark_dirty();
             Vec::new()
@@ -208,11 +211,14 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                 _ => false,
             };
             if applied {
-                state.overlay = Some(Overlay::Message(Message {
-                    title: "Schema unavailable".to_owned(),
-                    message: error.to_string(),
-                    severity: Severity::Danger,
-                }));
+                raise(
+                    state,
+                    Message {
+                        title: "Schema unavailable".to_owned(),
+                        message: error.to_string(),
+                        severity: Severity::Danger,
+                    },
+                );
                 state.mark_dirty();
             }
             Vec::new()
@@ -448,6 +454,19 @@ fn edit(state: &mut State, key: Key) -> bool {
     }
 
     true
+}
+
+/// Installs a message overlay, cancelling a live search prompt first rather
+/// than overwriting it. An overlay message currently only ever arrives on the
+/// initial connect, before a prompt can be open — but the moment a reconnect
+/// or a schema-reload path exists, this is reachable, and the alternative
+/// silently drops `previous` (panel search design §3.1) and strands the
+/// filter the half-typed query had applied.
+fn raise(state: &mut State, message: Message) {
+    if let Some(Overlay::Search(prompt)) = &state.overlay {
+        state.apply_filter(prompt.target(), prompt.previous().cloned());
+    }
+    state.overlay = Some(Overlay::Message(message));
 }
 
 /// `/` opens a prompt over the focused panel. Refused where the panel holds no
@@ -1274,6 +1293,47 @@ mod tests {
         assert!(
             matches!(connection.schema, SchemaState::Loading),
             "schema failure from a connection we are no longer on must not be applied"
+        );
+    }
+
+    #[test]
+    fn a_message_arriving_over_an_open_prompt_restores_the_previous_filter() {
+        let mut state = connected(Posture::ReadOnly);
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(tabled_schema(&[("shop", &["orders"])])),
+            },
+        );
+        state.apply_filter(Filtered::Tables, Filter::new("shop"));
+
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('o'));
+        press(&mut state, Key::Char('r'));
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("or"),
+            "the live prompt is previewing its own buffer, not the previous filter"
+        );
+
+        update(
+            &mut state,
+            Msg::SchemaFailed {
+                conn,
+                error: DbError::Invalid("unauthorized".to_owned()),
+            },
+        );
+
+        assert!(
+            matches!(state.overlay, Some(Overlay::Message(_))),
+            "the failure must still be shown"
+        );
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("shop"),
+            "the half-typed query must not strand itself; the prompt's previous filter is restored"
         );
     }
 
