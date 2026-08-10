@@ -1,7 +1,7 @@
 # Query execution — design
 
 **Date:** 2026-08-10
-**Status:** designed
+**Status:** implemented
 
 The Queries panel takes text and nothing more. A query can be typed and never
 run, which makes the editor a notepad

@@ -85,6 +85,7 @@ character and not a binding. What it does not claim keeps its global meaning.
 
 | Key | Action |
 |---|---|
+| `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. |
 | any printable key | Insert it. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
@@ -94,7 +95,8 @@ character and not a binding. What it does not claim keeps its global meaning.
 | `Esc` | Leave the editor for Tables. |
 
 `Tab` and `Shift-Tab` still move focus. Nothing else global survives inside
-the editor — including `q`, which types a `q`.
+the editor — including `q`, which types a `q`. `ctrl-r` is not global — it is
+the ctrl layer's only member and does nothing outside this panel.
 See [queries editor design](specs/2026-08-09-queries-editor-design.md).
 
 ---
@@ -133,11 +135,16 @@ unbound. Shift is never consulted for letters, and a shifted arrow is left as a
 synonym for the plain one so `Shift-↓` stays free for a future "extend
 selection".
 
-**Ctrl and alt are refused wholesale.** `handle_key` returns early on either
-modifier rather than folding the key into its unmodified meaning: `ctrl-j` is a
-different binding that does not exist yet, not a slower `j`. The ctrl layer gets
-designed as a layer (`ctrl-d`/`ctrl-u` are the first candidates, TODO.md), not
-smuggled in one key at a time.
+**Ctrl is one designed layer; alt is refused wholesale.** `handle_key` routes a
+ctrl-modified key into `ctrl`, which is the layer's whole key table, and returns
+early on alt and on ctrl+alt together — a two-modifier chord is a third layer,
+undesigned. What the rule protects is unchanged: a ctrl key is a binding of its
+own and never a synonym for the plain one, so `ctrl-j` still does nothing. The
+layer has one member, `ctrl-r`, which runs the Queries buffer: the panel takes
+text, so every printable key there is a character and the action the panel
+exists for has no unmodified key available
+([query execution design](specs/2026-08-10-query-execution-design.md) §1).
+`ctrl-d`/`ctrl-u` are still unbound and still want designing.
 
 **Vim and arrows are synonyms, both ways.** `j`/`↓`, `k`/`↑`, `l`/`→`, `h`/`←`.
 Neither set is the real one. Anyone who reaches for arrows should never hit a
@@ -210,6 +217,9 @@ Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
 editor binds, inside Queries.
 
+Ctrl taken: `ctrl-r`. The rest of the layer is free, with `ctrl-d`/`ctrl-u`
+spoken for (§4). Alt is not a layer and nothing may claim from it.
+
 Named keys the domain understands but nothing binds: `Insert` `F1`–`F12`.
 Anything crossterm reports outside that vocabulary is dropped at the edge and
 never reaches the domain. The pointer is not in this budget at all — see §7.
@@ -228,7 +238,7 @@ which is a spec-level change.
 |---|---|
 | `1`–`4` focus | Superseded by `t`/`a`/`c`/`u`, which the panel can show in its own title; a digit cannot. |
 | `T` `A` `C` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. |
-| `ctrl-d` / `ctrl-u` | Wants the ctrl layer designed first; see §2. |
+| `ctrl-d` / `ctrl-u` | The ctrl layer exists now but these two are not in it yet; see §2. |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
 | Horizontal motion | The grid caps at 24 columns and draws nothing past the right edge. Column navigation is unbuilt (vision.md §8). |
 | User-defined bindings | vision.md §7 Phase 5. |
@@ -253,7 +263,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Esc` clears the overlay | `escape_dismisses_the_overlay` |
 | `Tab`/`Shift-Tab` cycle and wrap | `tab_walks_the_panels_in_reading_order_and_wraps`, `shift_tab_walks_them_the_other_way` |
 | Paging and `Home`/`End` | `page_down_moves_the_tree_by_one_panel_height`, `home_and_end_reach_the_ends_of_the_tree_in_one_key` |
-| Ctrl/alt are not synonyms | `a_modified_key_is_not_a_binding` |
+| Ctrl/alt are not synonyms | `an_unbound_ctrl_key_does_nothing` |
 | Shifted letters stay free | `a_shifted_shortcut_stays_unbound` |
 | Focus letters are distinct and total | `every_panel_has_a_distinct_shortcut`, `a_shortcut_leads_back_to_the_panel_that_claims_it`, `the_shortcuts_are_the_ones_the_design_names` — all in `state.rs` |
 | No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` |
@@ -293,6 +303,19 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update.rs`) |
 | `?` earns its place in the width-fitting bar, and goes before `q quit` but after `tab panel` | `a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel` (`inbound/hints.rs`) |
 | The palette is drawn, centred, capped and scrollable | `the_palette_lists_the_catalogue`, `the_palette_is_centred`, `a_wide_frame_does_not_get_a_wide_palette`, `a_tall_frame_does_not_get_a_palette_full_of_blank_rows`, `a_frame_too_small_for_a_palette_does_not_get_one` (`inbound/render.rs`) |
+| `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
+| It runs only from Queries | `ctrl_r_outside_queries_runs_nothing` |
+| An empty buffer is inert | `an_empty_buffer_runs_nothing` |
+| Either path cancels the other | `running_a_query_cancels_a_pending_table_read`, `reading_a_table_cancels_a_pending_query` |
+| Destructive is refused, unexecuted | `a_destructive_statement_is_refused_until_confirmation_exists` |
+| The posture gate still applies | `a_typed_write_is_refused_on_a_read_only_connection` |
+| Ctrl is still not a synonym | `an_unbound_ctrl_key_does_nothing`, `ctrl_alt_r_does_not_run_the_buffer` |
+| Alt is still refused wholesale | `an_alt_modified_key_is_not_a_binding` |
+| The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
+| A statement is classified by its first keyword | the `statement.rs` tests |
+| A modifier reaches the label | `an_unmodified_binding_is_labelled_bare`, `a_ctrl_binding_is_labelled_with_its_modifier` (`view/hints.rs`) |
+| The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding`, `the_palette_has_a_queries_section` (`commands.rs`) |
+| The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an
