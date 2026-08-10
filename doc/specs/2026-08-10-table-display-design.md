@@ -102,8 +102,11 @@ a row tint alone is what the panel does today and says nothing about which
 value is selected. The row answers *where am I*, the cell answers *what will
 this act on*.
 
-The cell highlight is drawn only when the panel has focus — same as every other
-selection in the program.
+Both are drawn whether or not the panel has focus, because that is what every
+other selection in the program does: `body::render` takes a `focused` flag and
+only the Queries editor consults it — a tree's selection and a grid's row are
+drawn in an unfocused panel today. Making the cell the one exception would be a
+new rule, and the border already says which panel is live.
 
 ## 4. The row-number gutter
 
@@ -140,8 +143,14 @@ these changes together, and it buys nothing the column cap in §7 does not
 already bound.
 
 The offset follows the cell cursor the shortest distance that puts it on
-screen. This is `Scroll::follow`'s existing contract, over columns instead of
-rows, and the reason `Scroll` is reused rather than a second type written.
+screen — `Scroll::follow`'s contract, restated over columns.
+
+It cannot be `Scroll` itself. Every method on `Scroll` takes a `height`,
+because a row viewport shows a fixed number of rows whatever the offset. A
+column viewport does not: how many columns fit depends on which one you start
+from, so the window size is a function of the offset rather than a constant
+beside it. The column viewport gets its own type, whose `follow` takes the
+widths and the available width in place of a height.
 
 **The wheel stays vertical.** doc/shortcuts.md §7 already drops horizontal
 wheel events at the edge, and this slice does not pick them up: a notch moves
@@ -201,19 +210,22 @@ A column narrower than its cap is still drawn at its natural width, as today.
 
 | File | Change |
 |---|---|
-| `lc-domain/src/contents.rs` | `column: Cursor` and `columns: Scroll` beside the existing pair; `column_count()` beside `row_count()`; both reset in `requested`/`refused` |
+| `lc-domain/src/grid.rs` | New. The column arithmetic: widths, what fits from an offset, the gutter's width, and `ColumnScroll` |
+| `lc-domain/src/contents.rs` | `column: Cursor` and `columns: ColumnScroll` beside the existing pair; `column_count()` beside `row_count()`; both reset in `requested`/`refused` |
 | `lc-domain/src/state.rs` | `Geometry` gains the grid's available character width; `CONTENTS_HINTS` names the column motion, so the bar teaches it |
 | `lc-domain/src/update.rs` | `h`/`l`/`←`/`→` dispatch on focus rather than reaching only the tree; `Enter`/`Space`/click on a table set focus; the column viewport follows and clamps |
 | `lc-domain/src/view/contents.rs` | `GridColumn` gains `width`; `PanelBody::Grid` gains the first drawn column, the selected column, and the gutter's width |
 | `lc-inbound/src/body.rs` | `widths()` and `fitting()` deleted; the gutter and cell highlight drawn; a second `Extent` returned for the horizontal bar |
 | `lc-inbound/src/render.rs` | `scrollbar` grows a bottom-border orientation |
 | `lc-inbound/src/theme.rs` | The cell-highlight token |
-| `lc-inbound/src/hit.rs` | Row resolution shifted by the gutter |
 | `doc/shortcuts.md` | §1 the new motions, §2 the rewritten left/right rule, §4 horizontal motion leaves the unbound table, §5 a row per new test |
 
-`hit.rs` changes shape not at all: a click still resolves to a panel and a row.
-The gutter and the column offset move where a row's cells start, not what a
-click means.
+`hit.rs` is untouched, and that is worth stating rather than discovering.
+`click_at` resolves on the `y` axis alone — a press inside a panel's body maps
+to `strip.first + (y - strip.top)` and never consults `x`. So the gutter and
+the column offset, which move only where a row's cells start horizontally,
+change nothing about what a press means. §4's claim that a click on the gutter
+is a click on its row is therefore free: it is already true.
 
 ## 9. The scrollbar
 
