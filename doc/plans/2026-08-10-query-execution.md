@@ -1247,28 +1247,52 @@ Change `does_something` to take a `KeyPress`:
 `every_key_the_palette_lists_does_something` needs the one fixture the other sweep must not have — a state focused on Queries, where every printable key is text and the "nothing beyond the palette" question has no meaning:
 
 ```rust
-    /// `sweep_fixtures` plus an editing state. Only this sweep gets it: in a
-    /// panel that takes text every printable key does something, so it would
-    /// tell `no_key_does_anything_the_palette_does_not_list` that the palette
-    /// is missing the alphabet. What is true there instead is pinned by
-    /// `a_letter_typed_in_queries_is_text_not_a_shortcut`.
+    /// `sweep_fixtures` plus an editing state, for the Queries group alone.
+    ///
+    /// Two reasons it is not the sweep's whole fixture list. In a panel that
+    /// takes text every printable key does something, so it would tell
+    /// `no_key_does_anything_the_palette_does_not_list` that the palette is
+    /// missing the alphabet — that is pinned by
+    /// `a_letter_typed_in_queries_is_text_not_a_shortcut` instead. And it
+    /// would satisfy every catalogued `Key::Char` by typing it, so a deleted
+    /// motion binding in another group would pass unnoticed.
     fn sweep_fixtures_with_editor() -> Vec<State> {
         let mut fixtures = sweep_fixtures();
         let mut editor = editing("SELECT * FROM shop.orders");
         editor.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+        // The cursor lands past the last character, where `del` has nothing
+        // to delete.
+        editor.queries.left();
         fixtures.push(editor);
         fixtures
     }
 
     #[test]
     fn every_key_the_palette_lists_does_something() {
-        let fixtures = sweep_fixtures_with_editor();
+        let elsewhere = sweep_fixtures();
+        let editing = sweep_fixtures_with_editor();
 
-        for press in catalogued() {
-            assert!(
-                fixtures.iter().any(|state| does_something(state, press)),
-                "the palette lists {press:?} and no state responds to it"
-            );
+        for group in CATALOGUE {
+            let fixtures = if group.heading == "Queries" {
+                &editing
+            } else {
+                &elsewhere
+            };
+
+            for binding in group.bindings {
+                for &key in binding.keys {
+                    let press = KeyPress {
+                        key,
+                        modifiers: binding.modifiers,
+                    };
+
+                    assert!(
+                        fixtures.iter().any(|state| does_something(state, press)),
+                        "the palette lists {press:?} under {} and no state responds to it",
+                        group.heading
+                    );
+                }
+            }
         }
     }
 ```
