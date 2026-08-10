@@ -444,7 +444,6 @@ fn edit(state: &mut State, key: Key) -> bool {
 
     match key {
         Key::Char(character) => editor.insert(character),
-        Key::Enter => editor.insert_newline(),
         Key::Backspace => editor.backspace(),
         Key::Delete => editor.delete(),
         Key::Left => editor.left(),
@@ -455,6 +454,7 @@ fn edit(state: &mut State, key: Key) -> bool {
         Key::End => editor.line_end(),
         Key::PageUp => editor.page_up(height),
         Key::PageDown => editor.page_down(height),
+        Key::Enter => editor.insert_newline(),
         Key::Escape | Key::Tab | Key::BackTab | Key::Insert | Key::F(_) => return false,
     }
 
@@ -3157,13 +3157,13 @@ mod tests {
         }
     }
 
-    /// `sweep_fixtures` plus an editing state. Only this sweep gets it: in a
-    /// panel that takes text every printable key does something, so it would
-    /// tell `no_key_does_anything_the_palette_does_not_list` that the palette
-    /// is missing the alphabet. What is true there instead is pinned by
+    /// An editing state, for the `Queries` group alone. It is kept out of
+    /// `sweep_fixtures` because in a panel that takes text every printable key
+    /// does something, which would tell
+    /// `no_key_does_anything_the_palette_does_not_list` that the palette is
+    /// missing the alphabet. What is true there instead is pinned by
     /// `a_letter_typed_in_queries_is_text_not_a_shortcut`.
-    fn sweep_fixtures_with_editor() -> Vec<State> {
-        let mut fixtures = sweep_fixtures();
+    fn editor_fixture() -> State {
         let mut editor = editing("SELECT * FROM shop.orders");
         editor.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
         // One step off the buffer's end: `Delete` has nothing to remove
@@ -3171,23 +3171,26 @@ mod tests {
         // in editor.rs), and `End` from the end is a no-op. Off by one, `Home`,
         // `End`, and `Delete` all have somewhere to move from.
         editor.queries.left();
-        fixtures.push(editor);
-        fixtures
+        editor
     }
 
-    /// Only the `Queries` group is checked against the editor fixture. Every
-    /// printable key types itself there, so a Global, Motion or Tables key
-    /// pressed in the editor would "do something" whether or not its real
-    /// binding still exists — testing those groups against it would blind
-    /// the sweep to exactly the regression it exists to catch.
+    /// The `Queries` group is checked against the editor fixture *alone*, and
+    /// every other group against `sweep_fixtures` alone. Both directions
+    /// matter. A Global, Motion or Tables key pressed in the editor types
+    /// itself, so it would "do something" whether or not its real binding
+    /// still exists. And a Queries key satisfied by some other fixture —
+    /// `⏎` folding a keyspace, `esc` dismissing an overlay, `home`/`end`
+    /// moving a tree cursor — would let the editor quietly stop claiming it
+    /// with the sweep still green. Each group is answered by the state it
+    /// describes.
     #[test]
     fn every_key_the_palette_lists_does_something() {
         let plain = sweep_fixtures();
-        let with_editor = sweep_fixtures_with_editor();
+        let editor = vec![editor_fixture()];
 
         for group in CATALOGUE {
             let fixtures = if group.heading == "Queries" {
-                &with_editor
+                &editor
             } else {
                 &plain
             };
