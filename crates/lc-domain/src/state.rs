@@ -14,6 +14,7 @@ use crate::model::{ConnId, DbError, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::search::{Filter, Filtered, Prompt};
 use crate::style::Severity;
+use crate::theme::ThemeChoice;
 use crate::tree::TablesPanel;
 use crate::view::hints::Binding;
 
@@ -44,6 +45,8 @@ pub struct State {
     /// repainting on every keypress of a held-down `j` (architecture.md §3).
     pub dirty: bool,
     pub should_quit: bool,
+    /// The theme in force. A name; `lc-inbound` owns what it looks like.
+    pub theme: ThemeChoice,
 }
 
 /// The loader's phase.
@@ -138,6 +141,14 @@ pub enum Overlay {
     /// Drawn on the hint bar row rather than over the panels, and in this
     /// enum for what that buys: a prompt and a palette cannot both be up.
     Search(Prompt),
+    /// The theme picker. `restored` is what `Esc` puts back: the cursor sets
+    /// `State.theme` as it moves, so the frame previews each theme and there
+    /// is nowhere else the previous one survives
+    /// (doc/specs/2026-08-10-themes-design.md §6).
+    Themes {
+        cursor: Cursor,
+        restored: ThemeChoice,
+    },
 }
 
 impl ConnectionState {

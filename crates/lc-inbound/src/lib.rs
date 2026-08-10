@@ -18,6 +18,7 @@ mod overlay;
 mod palette;
 pub mod render;
 pub mod theme;
+mod themes;
 mod too_small;
 
 pub use hit::FrameMap;

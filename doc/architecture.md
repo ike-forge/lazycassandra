@@ -7,8 +7,9 @@ guessed at.
 **Status:** Phase 1 begun — four crates, a running binary, the four-panel TUI
 shell rendering, the driver decided (§8), the first end-to-end query path: a
 keypress becomes an `Effect::Execute` and a driver page becomes a grid
-navigable in both axes, and a writable CQL buffer in the Queries panel
-(`editor.rs`).
+navigable in both axes, a writable CQL buffer in the Queries panel
+(`editor.rs`), and a themed renderer with a runtime picker (`T`) over five
+themes (§6).
 **Last updated:** 2026-08-10
 
 ---
@@ -232,26 +233,36 @@ Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
 
 ## 6. Theme plumbing
 
-VISION principle 5 says the default theme is the terminal's own. That falls out
-of the architecture rather than being bolted on.
+VISION principle 5 says the background is the terminal's own and everything
+drawn on top is ours. That falls out of the architecture rather than being
+bolted on.
 
 The domain never names a colour. It emits **semantic style tokens**:
 
 ```rust
-enum Token { PartitionKey, ClusteringKey, Posture(Posture), Severity(Severity), Muted, /* … */ }
+enum Token {
+    PartitionKey, ClusteringKey, RegularColumn, Posture(Posture),
+    Severity(Severity), Muted, Keyspace, Table, Keyword, Reference, Literal,
+    /* … */
+}
 ```
 
-A `Theme` in `lc-inbound` maps `Token → ratatui::Style`. The default theme
-**never sets a background** and leaves body text unstyled, so it inherits
-whatever palette the user's terminal already has, on light or dark alike. Every
-token that carries meaning — key structure, severity, write posture — maps to
-one of the sixteen ANSI colours, so it survives a terminal whose palette is
-unusable. A token that only *marks* something may spend an accent instead; the
-`no_token_sets_a_background` test is the mechanical statement of what stays off
-limits.
+A theme is a `Palette` — a struct of named colour roles — plus one
+`Token -> ratatui::Style` function shared by every theme, both in
+`lc-inbound`. `ThemeChoice` lives in `lc-domain` instead, because a theme
+*name* is not a colour: `State.theme` holds one, and `Theme::of` in
+`lc-inbound` is the single place a name becomes a `Palette`. Four roles —
+`base`, `surface`, `text`, `border` — are `Option<Color>`; the default theme
+leaves all four `None`, so it paints no panel field and inherits whatever
+background and body foreground the user's terminal already has, on light or
+dark alike. `the_default_theme_paints_no_panel_field` is the mechanical
+statement of that. A theme that does own its palette — the four Catppuccin
+flavours — sets every role and repaints everything.
 
-Practical consequence: nothing in the domain has to change to add a theme, and
-no theme can invent a meaning the domain didn't define.
+Practical consequence: nothing in the domain has to change to add a theme,
+and no theme can invent a meaning the domain didn't define. See
+specs/2026-08-10-themes-design.md for the roles, the five themes, and the
+runtime picker (`T`).
 
 ## 7. Configuration
 

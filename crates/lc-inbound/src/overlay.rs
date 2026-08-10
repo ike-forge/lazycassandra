@@ -24,6 +24,9 @@ pub(crate) fn render(frame: &mut Frame, overlay: &Message, theme: Theme) {
         return;
     };
 
+    // The severity replaces `theme.border_style()` rather than composing with
+    // it. This border is where the message says how bad it is, and that is
+    // the one border on screen that must not read like the others.
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(overlay.title.as_str())
@@ -31,6 +34,7 @@ pub(crate) fn render(frame: &mut Frame, overlay: &Message, theme: Theme) {
     let inner = block.inner(rect);
 
     frame.render_widget(Clear, rect);
+    frame.buffer_mut().set_style(rect, theme.overlay_ground());
     frame.render_widget(block, rect);
     frame.render_widget(
         Paragraph::new(overlay.message.as_str()).wrap(Wrap { trim: true }),
@@ -106,12 +110,11 @@ fn wrapped_line_count(message: &str, width: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use lc_domain::state::{ConnectionState, Message, Overlay};
-    use lc_domain::style::Severity;
+    use lc_domain::style::{Severity, Token};
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
-    use ratatui::style::Color;
 
     use crate::render::render;
     use crate::theme::Theme;
@@ -129,7 +132,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(&state), Theme::TerminalDefault);
+                render(frame, &view_model(&state), Theme::default());
             })
             .expect("TestBackend always draws");
 
@@ -160,12 +163,16 @@ mod tests {
     #[test]
     fn the_overlay_border_carries_the_severity() {
         let buffer = draw(60, 20, Some(failure()));
+        let danger = Theme::default()
+            .style(Token::Severity(Severity::Danger))
+            .fg
+            .expect("danger spends a colour");
 
         let red = (0..buffer.area.height).any(|y| {
             (0..buffer.area.width).any(|x| {
                 buffer
                     .cell((x, y))
-                    .is_some_and(|cell| cell.fg == Color::Red && cell.symbol() == "─")
+                    .is_some_and(|cell| cell.fg == danger && cell.symbol() == "─")
             })
         });
 

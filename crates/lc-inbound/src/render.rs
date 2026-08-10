@@ -40,6 +40,12 @@ pub struct Rendered {
 /// how many lines the Ddl body wrapped to
 /// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
 pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
+    let ground = theme.ground();
+    if ground != Style::new() {
+        let area = frame.area();
+        frame.buffer_mut().set_style(area, ground);
+    }
+
     let command_rows = crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count());
     let rects = match layout(frame.area()) {
         Shell::Panels(rects) => rects,
@@ -83,9 +89,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         }
 
         let border = if panel.panel == view.focus {
-            theme.style(Token::Focused)
+            theme.border_style().patch(theme.style(Token::Focused))
         } else {
-            Style::new()
+            theme.border_style()
         };
         block = block.border_style(border);
 
@@ -131,7 +137,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 
     let bar = rects.bar();
     let (loader, hint_bar) = bar_split(bar);
-    frame.render_widget(crate::loader::line(view.activity), loader);
+    frame.render_widget(crate::loader::line(view.activity, theme), loader);
     frame.render_widget(
         crate::hints::line(&view.hints, hint_bar.width, theme),
         hint_bar,
@@ -146,6 +152,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         // a modal over the panels (design §5.2).
         Some(OverlayView::Search { query }) => {
             render_prompt(frame, hint_bar, query, view, theme);
+        }
+        Some(OverlayView::Themes { labels, selected }) => {
+            crate::themes::render(frame, labels, *selected, theme);
         }
         None => {}
     }
@@ -329,6 +338,7 @@ fn bar(
 
 #[cfg(test)]
 mod tests {
+    use lc_domain::ThemeChoice;
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{Subject, TableRef};
     use lc_domain::model::{
@@ -362,7 +372,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(&state), Theme::TerminalDefault);
+                render(frame, &view_model(&state), Theme::default());
             })
             .expect("TestBackend always draws");
 
@@ -378,6 +388,83 @@ mod tests {
             .filter_map(|x| buffer.cell((x, y)))
             .map(Cell::symbol)
             .collect()
+    }
+
+    #[test]
+    fn a_flavour_paints_the_field_it_is_drawn_on() {
+        let mut terminal =
+            Terminal::new(TestBackend::new(80, 24)).expect("TestBackend always initialises");
+        let state = State::default();
+
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    &view_model(&state),
+                    Theme::of(ThemeChoice::CatppuccinMocha),
+                );
+            })
+            .expect("TestBackend always draws");
+
+        let buffer = terminal.backend().buffer();
+        let ground = buffer[(0, 0)].bg;
+
+        assert_eq!(
+            ground,
+            Color::Rgb(0x1e, 0x1e, 0x2e),
+            "a flavour owns the whole frame, corners included"
+        );
+    }
+
+    #[test]
+    fn a_flavour_paints_the_field_even_when_the_frame_is_too_small_for_a_panel() {
+        // Below layout::MIN_W x MIN_H (40x7), `render` takes the `TooSmall`
+        // arm and returns before the panel loop — the path the ground paint
+        // must cover too, or a flavour leaves a hole exactly where the notice
+        // is drawn.
+        let mut terminal =
+            Terminal::new(TestBackend::new(30, 6)).expect("TestBackend always initialises");
+        let state = State::default();
+
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    &view_model(&state),
+                    Theme::of(ThemeChoice::CatppuccinMocha),
+                );
+            })
+            .expect("TestBackend always draws");
+
+        let buffer = terminal.backend().buffer();
+
+        assert!(
+            buffer.content().iter().all(|cell| cell.bg != Color::Reset),
+            "a cell the flavour missed shows the terminal through it, notice included"
+        );
+    }
+
+    #[test]
+    fn the_default_theme_leaves_the_field_alone() {
+        let mut terminal =
+            Terminal::new(TestBackend::new(80, 24)).expect("TestBackend always initialises");
+        let state = State::default();
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::default());
+            })
+            .expect("TestBackend always draws");
+
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .all(|cell| cell.bg == Color::Reset),
+            "the background is the user's (vision.md §4, principle 5)"
+        );
     }
 
     #[test]
@@ -605,7 +692,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(&state), Theme::TerminalDefault);
+                render(frame, &view_model(&state), Theme::default());
             })
             .expect("TestBackend always draws");
 
@@ -634,7 +721,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                geometry = render(frame, &view_model(&state), Theme::TerminalDefault).geometry;
+                geometry = render(frame, &view_model(&state), Theme::default()).geometry;
             })
             .expect("TestBackend always draws");
 
@@ -709,7 +796,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(state), Theme::TerminalDefault);
+                render(frame, &view_model(state), Theme::default());
             })
             .expect("TestBackend always draws");
 
@@ -756,32 +843,28 @@ mod tests {
     #[test]
     fn the_clusters_own_keyspaces_are_dimmed() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-        let dim = |y: u16| {
-            buffer
-                .cell((1, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::DIM)
-        };
+        let fg = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
+        let muted = Theme::default()
+            .style(Token::Muted)
+            .fg
+            .expect("muted spends a colour");
 
-        assert!(!dim(1), "shop is the user's");
-        assert!(dim(2), "system is the cluster's");
+        assert_ne!(fg(1), muted, "shop is the user's");
+        assert_eq!(fg(2), muted, "system is the cluster's");
     }
 
     #[test]
     fn the_selected_row_is_the_one_the_cursor_is_on() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo", "system"], 1));
-        let reversed = |y: u16| {
-            buffer
-                .cell((1, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        };
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
+        let selected = |y: u16| buffer.cell((1, y)).expect("inside the panel").bg == highlight;
 
-        assert!(!reversed(1));
-        assert!(reversed(2), "typezoo is selected");
-        assert!(!reversed(3));
+        assert!(!selected(1));
+        assert!(selected(2), "typezoo is selected");
+        assert!(!selected(3));
     }
 
     #[test]
@@ -805,10 +888,13 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
         let cell = buffer.cell((1, 1)).expect("inside the panel");
+        let danger = Theme::default()
+            .style(Token::Severity(Severity::Danger))
+            .fg
+            .expect("danger spends a colour");
 
         assert_eq!(
-            cell.fg,
-            Color::Red,
+            cell.fg, danger,
             "a failure notice carries the danger token, not the muted one waiting states use"
         );
         assert!(
@@ -894,18 +980,17 @@ mod tests {
         let mut state = showing(page_of(&["id"], &rows));
         state.contents.scroll.follow(12, 1);
 
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
+
         let buffer = draw_state(60, 12, &state);
-        let reversed = |y: u16| {
-            buffer
-                .cell((17, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        };
+        let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
 
         for y in 2..7 {
             assert!(
-                !reversed(y),
+                !selected(y),
                 "row 0 is off screen, so nothing drawn is the selection"
             );
         }
@@ -917,13 +1002,8 @@ mod tests {
         on_screen.contents.cursor.go_to(12, 20);
         on_screen.contents.scroll.follow(12, 5);
         let buffer = draw_state(60, 12, &on_screen);
-        let highlighted = (2..7).any(|y| {
-            buffer
-                .cell((17, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        });
+        let highlighted =
+            (2..7).any(|y| buffer.cell((17, y)).expect("inside the panel").bg == highlight);
 
         assert!(
             highlighted,
@@ -943,15 +1023,13 @@ mod tests {
         let mut state = browsing(&refs, 0);
         state.tables.scroll.follow(11, 1);
 
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
         let (buffer, _map) = draw_mapped(40, 12, &state);
         let drawn: Vec<String> = (1..6).map(|y| row(&buffer, y)).collect();
-        let reversed = |y: u16| {
-            buffer
-                .cell((1, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        };
+        let selected = |y: u16| buffer.cell((1, y)).expect("inside the panel").bg == highlight;
 
         assert!(
             drawn.iter().any(|line| line.contains("ks11")),
@@ -959,7 +1037,7 @@ mod tests {
         );
         for y in 1..6 {
             assert!(
-                !reversed(y),
+                !selected(y),
                 "ks00 is off screen, so nothing drawn is the selection"
             );
         }
@@ -1045,9 +1123,13 @@ mod tests {
 
         let buffer = draw_state(60, 12, &state);
         let header = |x: u16| buffer.cell((x, 1)).expect("inside the panel");
+        let partition = Theme::default()
+            .style(Token::PartitionKey)
+            .fg
+            .expect("the partition key spends a colour");
 
         // Column 17 is the gutter, so the first heading starts two along.
-        assert_eq!(header(19).fg, Color::Yellow, "id is the partition key");
+        assert_eq!(header(19).fg, partition, "id is the partition key");
         assert!(header(19).modifier.contains(Modifier::BOLD));
         assert_eq!(
             header(22).fg,
@@ -1061,7 +1143,8 @@ mod tests {
         // Row 0 (not selected) and row 1 (the cursor's row) each hold one
         // cell the filter matches and one it does not — the composed case
         // is row 1, where `Token::Match` is drawn under `Token::Selected`'s
-        // REVERSED and still has to be tellable apart from the id beside it.
+        // background bar and still has to be tellable apart from the id
+        // beside it.
         let mut state = showing(page_of(
             &["id", "email"],
             &[
@@ -1078,46 +1161,69 @@ mod tests {
             let cell = buffer.cell((x, y)).expect("inside the panel");
             (cell.fg, cell.bg, cell.modifier)
         };
+        // Gutter, then `id` (one digit, the cursor's cell at column 0), then
+        // `email` (matched): 19 lands on the digit, 22 on `email`'s first
+        // character.
+        let unmatched_id = 19;
+        let matched_email = 22;
 
         assert_ne!(
-            style(20, 2),
-            style(17, 2),
+            style(matched_email, 2),
+            style(unmatched_id, 2),
             "row 0 is not selected: its matched email must still read apart from its unmatched id"
         );
-        assert_ne!(
-            style(20, 3),
-            style(17, 3),
-            "row 1 is the cursor's row: a matched cell must still read apart from an \
-             unmatched one under Selected's REVERSED"
+        assert!(
+            buffer
+                .cell((matched_email, 3))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::BOLD)
+                && !buffer
+                    .cell((unmatched_id, 3))
+                    .expect("inside the panel")
+                    .modifier
+                    .contains(Modifier::BOLD),
+            "row 1 is the cursor's row: its highlight text flattens both cells' colours, so \
+             `BOLD` is what still tells the matched cell apart from the unmatched one \
+             (the unmatched id is also the cell cursor, so it carries its own modifiers \
+             instead — never `BOLD`)"
         );
     }
 
     #[test]
     fn a_null_is_dimmed_so_it_reads_apart_from_the_word() {
-        let state = showing(page_of(
+        // Row 1 (not the cursor's row) so the row's own colours are not
+        // flattened under `Token::Selected`'s highlight text.
+        let mut state = showing(page_of(
             &["id", "email"],
-            &[&[CqlValue::Int(1), CqlValue::Null]],
+            &[
+                &[CqlValue::Int(1), text("a")],
+                &[CqlValue::Int(2), CqlValue::Null],
+            ],
         ));
+        state.contents.cursor.go_to(0, 2);
 
         let buffer = draw_state(60, 12, &state);
-        let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
+        let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
+        let muted = Theme::default()
+            .style(Token::Muted)
+            .fg
+            .expect("muted spends a colour");
 
-        assert!(
-            cell(22).modifier.contains(Modifier::DIM),
-            "the null is muted"
-        );
-        assert!(
-            !cell(19).modifier.contains(Modifier::DIM),
+        assert_eq!(cell(22).fg, muted, "the null is muted");
+        assert_ne!(
+            cell(19).fg,
+            muted,
             "the value beside it is not — the gutter at 17 is, and is not what this is about"
         );
     }
 
     #[test]
     fn a_matched_null_composes_match_with_muted_rather_than_losing_either() {
-        // Design §4.3 (amended): the renderer composes `Token::Match` with
-        // `Token::Muted` rather than one replacing the other, so a matched
-        // null stays tellable apart from a matched cell whose text is
-        // literally the word "null".
+        // Design §4.3 (amended): `Token::Muted` spends `DIM` alongside its
+        // colour precisely so `Style::patch` keeps it under `Token::Match`'s
+        // own colour, and a matched null stays tellable apart from a matched
+        // cell whose text is literally the word "null".
         let mut state = showing(page_of(
             &["id", "value", "note"],
             &[&[CqlValue::Int(1), CqlValue::Null, text("null")]],
@@ -1158,18 +1264,16 @@ mod tests {
         ));
         state.contents.cursor.down(2);
 
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
         let buffer = draw_state(60, 12, &state);
-        let reversed = |y: u16| {
-            buffer
-                .cell((17, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        };
+        let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
 
-        assert!(!reversed(1), "the header is never the selection");
-        assert!(!reversed(2), "nor is the first row");
-        assert!(reversed(3), "the second row is");
+        assert!(!selected(1), "the header is never the selection");
+        assert!(!selected(2), "nor is the first row");
+        assert!(selected(3), "the second row is");
     }
 
     #[test]
@@ -1293,21 +1397,20 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        let modifiers = |x: u16| {
-            buffer
-                .cell((x, area.y + 2))
-                .expect("inside the panel")
-                .modifier
-        };
+        let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
         let first = area.x + 3;
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
 
         assert!(
-            modifiers(first).contains(Modifier::UNDERLINED),
+            cell(first).modifier.contains(Modifier::UNDERLINED),
             "the selected cell keeps its highlight without focus"
         );
         assert!(
-            modifiers(first + 3).contains(Modifier::REVERSED)
-                && !modifiers(first + 3).contains(Modifier::UNDERLINED),
+            cell(first + 3).bg == highlight
+                && !cell(first + 3).modifier.contains(Modifier::UNDERLINED),
             "and the rest of its row keeps the row tint alone"
         );
     }
@@ -1316,17 +1419,20 @@ mod tests {
     fn the_gutter_is_muted_and_the_values_beside_it_are_not() {
         let buffer = frame_showing_grid(4, 40, 3);
         let area = block_area(&buffer, "Table contents");
-        let dim = |x: u16| {
-            buffer
-                .cell((x, area.y + 3))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::DIM)
-        };
+        let fg = |x: u16| buffer.cell((x, area.y + 3)).expect("inside the panel").fg;
+        let muted = Theme::default()
+            .style(Token::Muted)
+            .fg
+            .expect("muted spends a colour");
 
-        assert!(dim(area.x + 1), "the row number is chrome, not a value");
-        assert!(
-            !dim(area.x + 3),
+        assert_eq!(
+            fg(area.x + 1),
+            muted,
+            "the row number is chrome, not a value"
+        );
+        assert_ne!(
+            fg(area.x + 3),
+            muted,
             "and the value beside it reads at full weight"
         );
     }
@@ -1587,15 +1693,15 @@ mod tests {
     }
 
     /// Every row inside the Ddl body (100x41, see [`ddl_rows`]) whose first
-    /// content cell carries the reversed modifier [`Theme::TerminalDefault`]
-    /// gives `Token::Selected`.
+    /// content cell carries the background `Token::Selected` gives.
     fn highlighted_rows(buffer: &Buffer) -> Vec<u16> {
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
+
         (25..39)
-            .filter(|&y| {
-                buffer
-                    .cell((1, y))
-                    .is_some_and(|cell| cell.modifier.contains(Modifier::REVERSED))
-            })
+            .filter(|&y| buffer.cell((1, y)).is_some_and(|cell| cell.bg == highlight))
             .collect()
     }
 
@@ -1678,7 +1784,7 @@ mod tests {
 
         // 40x20: a fourteen-column, five-row Ddl body — narrow enough that
         // `orders()` wraps well past it.
-        let total = crate::details::lay_out(&details, 0, 14, Theme::TerminalDefault)
+        let total = crate::details::lay_out(&details, 0, 14, Theme::default())
             .lines
             .len();
         assert!(
@@ -1687,17 +1793,16 @@ mod tests {
         );
         state.ddl.scroll.to_end(total, 5);
 
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
         let buffer = draw_state(40, 20, &state);
-        let reversed = (13..18).any(|y| {
-            buffer
-                .cell((1, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        });
+        let selected =
+            (13..18).any(|y| buffer.cell((1, y)).expect("inside the panel").bg == highlight);
 
         assert!(
-            !reversed,
+            !selected,
             "customer_id scrolled off the top must not still be drawn as the selection"
         );
     }
@@ -1713,31 +1818,29 @@ mod tests {
         // `comment` is the last row and wraps to three lines at this width;
         // scrolling thirteen lines down cuts its first two into view and
         // leaves the third below the fold.
-        let total = crate::details::lay_out(&details, last, 14, Theme::TerminalDefault)
+        let total = crate::details::lay_out(&details, last, 14, Theme::default())
             .lines
             .len();
         for _ in 0..13 {
             state.ddl.scroll.down(total, 5);
         }
 
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
         let buffer = draw_state(40, 20, &state);
-        let reversed = |y: u16| {
-            buffer
-                .cell((1, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        };
+        let selected = |y: u16| buffer.cell((1, y)).expect("inside the panel").bg == highlight;
 
-        assert!(!reversed(13), "this line belongs to the row above comment");
-        assert!(!reversed(14), "this line belongs to the row above comment");
-        assert!(!reversed(15), "this line belongs to the row above comment");
+        assert!(!selected(13), "this line belongs to the row above comment");
+        assert!(!selected(14), "this line belongs to the row above comment");
+        assert!(!selected(15), "this line belongs to the row above comment");
         assert!(
-            reversed(16),
+            selected(16),
             "comment's first visible line stays highlighted"
         );
         assert!(
-            reversed(17),
+            selected(17),
             "comment's second visible line stays highlighted"
         );
     }
@@ -1786,13 +1889,32 @@ mod tests {
 
     #[test]
     fn the_key_columns_are_drawn_in_the_tokens_that_mark_them_as_the_key() {
-        let buffer = draw_state(100, 40, &describing(orders()));
-        let colour = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
+        // The cursor sits on the last row, off the key columns entirely: the
+        // rows under test must read their own token colour, not
+        // `Token::Selected`'s flattened highlight text.
+        let mut state = describing(orders());
+        let details = ddl_details(&state);
+        state
+            .ddl
+            .cursor
+            .go_to(details.row_count() - 1, details.row_count());
 
-        assert_eq!(colour(27), Color::Yellow, "Partition Key");
-        assert_eq!(colour(28), Color::Yellow, "its column");
-        assert_eq!(colour(29), Color::Cyan, "Clustering Key");
-        assert_eq!(colour(30), Color::Cyan, "its column");
+        let buffer = draw_state(100, 40, &state);
+        let colour = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
+        let theme = Theme::default();
+        let partition = theme
+            .style(Token::PartitionKey)
+            .fg
+            .expect("the partition key spends a colour");
+        let clustering = theme
+            .style(Token::ClusteringKey)
+            .fg
+            .expect("the clustering key spends a colour");
+
+        assert_eq!(colour(27), partition, "Partition Key");
+        assert_eq!(colour(28), partition, "its column");
+        assert_eq!(colour(29), clustering, "Clustering Key");
+        assert_eq!(colour(30), clustering, "its column");
         // 32 is the blank row the settings group opens with.
         assert_eq!(
             colour(33),
@@ -1801,7 +1923,7 @@ mod tests {
         );
         assert_eq!(
             colour(34),
-            Theme::TerminalDefault
+            Theme::default()
                 .style(Token::PropertyName)
                 .fg
                 .expect("a property name is highlighted"),
@@ -1849,7 +1971,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                geometry = render(frame, &view_model(state), Theme::TerminalDefault).geometry;
+                geometry = render(frame, &view_model(state), Theme::default()).geometry;
             })
             .expect("TestBackend always draws");
 
@@ -1866,14 +1988,9 @@ mod tests {
         assert_eq!(geometry.height(Panel::Ddl), 5);
         assert_eq!(
             geometry.ddl_lines(),
-            crate::details::lay_out(
-                &ddl_details(&describing(orders())),
-                0,
-                14,
-                Theme::TerminalDefault
-            )
-            .lines
-            .len()
+            crate::details::lay_out(&ddl_details(&describing(orders())), 0, 14, Theme::default())
+                .lines
+                .len()
         );
     }
 
@@ -1923,8 +2040,7 @@ mod tests {
         const HEIGHT: usize = 5;
 
         let state = describing(orders());
-        let all =
-            crate::details::lay_out(&ddl_details(&state), 0, WIDTH, Theme::TerminalDefault).lines;
+        let all = crate::details::lay_out(&ddl_details(&state), 0, WIDTH, Theme::default()).lines;
         assert!(
             all.len() > HEIGHT,
             "the fixture must overflow the panel or this test proves nothing"
@@ -2089,7 +2205,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                map = render(frame, &view_model(state), Theme::TerminalDefault).map;
+                map = render(frame, &view_model(state), Theme::default()).map;
             })
             .expect("TestBackend always draws");
 
@@ -2273,7 +2389,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(state), Theme::TerminalDefault);
+                render(frame, &view_model(state), Theme::default());
             })
             .expect("TestBackend always draws");
 
@@ -2495,7 +2611,7 @@ mod tests {
 
         let buffer = draw_state(80, 24, &state);
         let (fg, bg, modifier) = style_of_first(&buffer, "/ord");
-        let expected = Theme::TerminalDefault.style(Token::Muted);
+        let expected = Theme::default().style(Token::Muted);
 
         assert_eq!(
             fg,
@@ -2650,9 +2766,14 @@ mod tests {
         // Column 9: one past the loader and `bar_split`'s gap, landing on
         // the query's leading space.
         let cell = buffer.cell((9, 23)).expect("inside the bar row");
+        let muted = Theme::default()
+            .style(Token::HintAction)
+            .fg
+            .expect("the hint bar's action spends a colour");
 
-        assert!(
-            cell.modifier.contains(Modifier::DIM),
+        assert_eq!(
+            cell.fg,
+            muted,
             "the query must carry the same token the rest of the bar's text \
              does ({:?} was left bare)",
             cell.symbol()
@@ -2676,7 +2797,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(&state), Theme::TerminalDefault);
+                render(frame, &view_model(&state), Theme::default());
             })
             .expect("TestBackend always draws");
 
@@ -2746,13 +2867,11 @@ mod tests {
         // Row 0 of the list is the `Global` heading, so the opened cursor sits
         // on row 1: one down for the border, one for the heading.
         let selected = y + 2;
-        let styled = |at: u16| {
-            buffer
-                .cell((x + 2, at))
-                .expect("inside the block")
-                .modifier
-                .contains(Modifier::REVERSED)
-        };
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
+        let styled = |at: u16| buffer.cell((x + 2, at)).expect("inside the block").bg == highlight;
 
         assert!(styled(selected), "the cursor's row is marked");
         assert!(!styled(selected + 1), "and only the cursor's row is");
@@ -2909,7 +3028,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                geometry = render(frame, &view_model(&state), Theme::TerminalDefault).geometry;
+                geometry = render(frame, &view_model(&state), Theme::default()).geometry;
             })
             .expect("TestBackend always draws");
 
@@ -2927,7 +3046,7 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                geometry = render(frame, &view_model(&state), Theme::TerminalDefault).geometry;
+                geometry = render(frame, &view_model(&state), Theme::default()).geometry;
             })
             .expect("TestBackend always draws");
 

@@ -25,6 +25,7 @@ use crate::commands::{self, CommandRow};
 use crate::model::DbError;
 use crate::state::{Message, Overlay, Panel, State};
 use crate::style::{Severity, Token};
+use crate::theme::ThemeChoice;
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +40,7 @@ pub struct ViewModel {
     /// Whether the tool is waiting on the cluster, and how far into the
     /// loader's cycle that wait is.
     pub activity: Activity,
+    pub theme: ThemeChoice,
 }
 
 /// What the loader has to say.
@@ -77,6 +79,11 @@ pub enum OverlayView {
     Search {
         query: String,
     },
+    /// The theme picker's rows and where its cursor is.
+    Themes {
+        labels: Vec<&'static str>,
+        selected: usize,
+    },
 }
 
 fn overlay(state: &State) -> Option<OverlayView> {
@@ -94,6 +101,13 @@ fn overlay(state: &State) -> Option<OverlayView> {
         // the palette does (design §1).
         Overlay::Search(prompt) => Some(OverlayView::Search {
             query: prompt.query().to_owned(),
+        }),
+        Overlay::Themes { cursor, .. } => Some(OverlayView::Themes {
+            labels: ThemeChoice::ALL
+                .iter()
+                .map(|choice| choice.label())
+                .collect(),
+            selected: cursor.index(),
         }),
     }
 }
@@ -195,6 +209,7 @@ pub fn view_model(state: &State) -> ViewModel {
         } else {
             Activity::Resting
         },
+        theme: state.theme,
     }
 }
 
@@ -397,6 +412,31 @@ mod tests {
             Some(OverlayView::Commands {
                 rows: crate::commands::rows(),
                 selected: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn an_open_picker_is_projected_as_every_theme_and_the_cursors_position() {
+        let choice = ThemeChoice::CatppuccinMocha;
+        let mut cursor = crate::state::Cursor::default();
+        cursor.go_to(choice.index(), ThemeChoice::ALL.len());
+        let state = State {
+            overlay: Some(Overlay::Themes {
+                cursor,
+                restored: ThemeChoice::default(),
+            }),
+            ..State::default()
+        };
+
+        assert_eq!(
+            view_model(&state).overlay,
+            Some(OverlayView::Themes {
+                labels: ThemeChoice::ALL
+                    .iter()
+                    .map(|choice| choice.label())
+                    .collect(),
+                selected: choice.index(),
             })
         );
     }

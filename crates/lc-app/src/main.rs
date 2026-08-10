@@ -75,10 +75,11 @@ fn contact_point() -> String {
 }
 
 /// Draws a frame and reports what it turned out to be.
-fn draw(terminal: &mut DefaultTerminal, state: &State, theme: Theme) -> Result<Rendered> {
+fn draw(terminal: &mut DefaultTerminal, state: &State) -> Result<Rendered> {
     let mut rendered = Rendered::default();
+    let view = view_model(state);
 
-    terminal.draw(|frame| rendered = lc_inbound::render(frame, &view_model(state), theme))?;
+    terminal.draw(|frame| rendered = lc_inbound::render(frame, &view, Theme::of(view.theme)))?;
 
     Ok(rendered)
 }
@@ -123,14 +124,13 @@ async fn run(mut terminal: DefaultTerminal) -> Result<()> {
     ));
 
     let (mut state, startup) = lc_domain::init(conn);
-    let theme = Theme::default();
     let mut measured: Option<Geometry> = None;
 
     for effect in &startup {
         effects::run(&tx, &cluster, effect);
     }
 
-    let rendered = draw(&mut terminal, &state, theme)?;
+    let rendered = draw(&mut terminal, &state)?;
     let mut map = rendered.map;
     report(&tx, &mut measured, rendered.geometry);
     state.dirty = false;
@@ -149,7 +149,7 @@ async fn run(mut terminal: DefaultTerminal) -> Result<()> {
         }
 
         if state.dirty {
-            let rendered = draw(&mut terminal, &state, theme)?;
+            let rendered = draw(&mut terminal, &state)?;
             map = rendered.map;
             report(&tx, &mut measured, rendered.geometry);
             state.dirty = false;

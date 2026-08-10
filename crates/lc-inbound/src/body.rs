@@ -387,11 +387,7 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
         Marker::Leaf => LEAF,
     };
 
-    let item = ListItem::new(format!("{indent}{marker}{}", row.label));
-    match row.token {
-        Some(token) => item.style(theme.style(token)),
-        None => item,
-    }
+    ListItem::new(format!("{indent}{marker}{}", row.label)).style(theme.style(row.token))
 }
 
 /// One buffer line is one screen row: long lines scroll sideways rather than

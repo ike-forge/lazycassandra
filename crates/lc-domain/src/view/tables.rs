@@ -14,10 +14,10 @@ pub struct TreeRow {
     /// 0 for a keyspace, 1 for a table.
     pub depth: u8,
     pub marker: Marker,
-    /// `Some(Token::Muted)` for the cluster's own keyspaces and their tables.
-    /// A user keyspace spends no token: it is the baseline everything else is
-    /// read against.
-    pub token: Option<Token>,
+    /// [`Token::Muted`] for the cluster's own keyspaces and their tables.
+    /// A user keyspace and a user table are told apart, which is the
+    /// distinction the panel exists for.
+    pub token: Token,
 }
 
 /// Whether a row has children, and whether they are showing.
@@ -77,14 +77,17 @@ fn tree_row(node: &Node<'_>) -> TreeRow {
         Node::Table { keyspace, table } => (*keyspace, table.name.clone(), 1, Marker::Leaf),
     };
 
+    let token = match keyspace.kind() {
+        KeyspaceKind::System => Token::Muted,
+        KeyspaceKind::User if depth == 0 => Token::Keyspace,
+        KeyspaceKind::User => Token::Table,
+    };
+
     TreeRow {
         label,
         depth,
         marker,
-        token: match keyspace.kind() {
-            KeyspaceKind::User => None,
-            KeyspaceKind::System => Some(Token::Muted),
-        },
+        token,
     }
 }
 
@@ -162,8 +165,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["shop", "typezoo", "system_schema"]
         );
-        assert_eq!(rows[0].token, None, "a user keyspace spends no token");
-        assert_eq!(rows[2].token, Some(Token::Muted));
+        assert_eq!(
+            rows[0].token,
+            Token::Keyspace,
+            "a user keyspace is told apart from a user table"
+        );
+        assert_eq!(rows[2].token, Token::Muted);
         assert_eq!(selected, 0);
     }
 
@@ -221,10 +228,10 @@ mod tests {
             panic!("a loaded schema lists its keyspaces");
         };
 
-        assert_eq!(rows[0].token, Some(Token::Muted));
+        assert_eq!(rows[0].token, Token::Muted);
         assert_eq!(
             rows[1].token,
-            Some(Token::Muted),
+            Token::Muted,
             "one rule per row, not two rules that can drift"
         );
     }
@@ -279,5 +286,42 @@ mod tests {
         };
         assert!(text.contains("unauthorized"));
         assert_eq!(token, Some(Token::Severity(Severity::Danger)));
+    }
+
+    #[test]
+    fn a_keyspace_and_a_table_are_told_apart_by_colour() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        let schema = state.schema().cloned().expect("loaded");
+        state.tables.open(&schema);
+
+        let PanelBody::Tree { rows, .. } = tables_body(&state) else {
+            panic!("a loaded schema draws a tree");
+        };
+
+        let keyspace = rows.iter().find(|row| row.depth == 0).expect("a keyspace");
+        let table = rows.iter().find(|row| row.depth == 1).expect("a table");
+
+        assert_eq!(keyspace.token, Token::Keyspace);
+        assert_eq!(table.token, Token::Table);
+        assert_ne!(
+            keyspace.token, table.token,
+            "the panel's whole job is the keyspace/table distinction"
+        );
+    }
+
+    #[test]
+    fn a_cluster_keyspace_stays_quiet() {
+        let mut state = tabled(&[("system_schema", &["tables"])]);
+        let schema = state.schema().cloned().expect("loaded");
+        state.tables.open(&schema);
+
+        let PanelBody::Tree { rows, .. } = tables_body(&state) else {
+            panic!("a loaded schema draws a tree");
+        };
+
+        assert!(
+            rows.iter().all(|row| row.token == Token::Muted),
+            "a system keyspace and its tables are the cluster's, not the user's"
+        );
     }
 }

@@ -299,7 +299,7 @@ mod tests {
             value,
             width,
             Style::new(),
-            Theme::TerminalDefault,
+            Theme::default(),
         ))
     }
 
@@ -369,9 +369,9 @@ mod tests {
             "864000",
             23,
             Style::new(),
-            Theme::TerminalDefault,
+            Theme::default(),
         );
-        let accent = Theme::TerminalDefault.style(Token::PropertyName).fg;
+        let accent = Theme::default().style(Token::PropertyName).fg;
 
         assert!(accent.is_some(), "the token has to spend a colour");
         assert_eq!(one_line[0].spans[0].style.fg, accent);
@@ -386,7 +386,7 @@ mod tests {
             "Order history for one customer.",
             23,
             Style::new(),
-            Theme::TerminalDefault,
+            Theme::default(),
         );
         assert_eq!(wrapped[0].spans[0].style.fg, accent);
         assert_eq!(wrapped[1].spans[0].style.fg, None);
@@ -464,7 +464,7 @@ mod tests {
             ],
         };
 
-        let laid = lay_out(&details, 0, 28, Theme::TerminalDefault);
+        let laid = lay_out(&details, 0, 28, Theme::default());
 
         assert_eq!(
             laid.selection,
@@ -472,12 +472,7 @@ mod tests {
             "heading, blank, section heading, then the first column"
         );
 
-        let laid = lay_out(
-            &details,
-            details.row_count() - 1,
-            28,
-            Theme::TerminalDefault,
-        );
+        let laid = lay_out(&details, details.row_count() - 1, 28, Theme::default());
         assert!(laid.selection.lines > 1, "the comment wraps");
         assert_eq!(
             laid.selection.first + laid.selection.lines,
