@@ -193,24 +193,54 @@ pub(crate) mod tests {
     use super::*;
     use crate::theme::contrast::{BLACK, WHITE, ratio};
 
-    /// Every role a theme can spend on text. `base`, `surface` and
-    /// `highlight` are what text is drawn *on* and are absent by design.
+    /// Every role a theme can spend on text, and the input to both contrast
+    /// tests. `base`, `surface` and `highlight` are what text is drawn *on*.
+    /// `text`, `border` and `highlight_text` are `Option`s a theme may
+    /// decline, so they are answered by the tests that know which ground each
+    /// is drawn against rather than swept here.
+    ///
+    /// Destructured with every field named and no `..`, so a new role cannot
+    /// enter the palette without the compiler asking here whether it is text
+    /// — an uncontrasted role would otherwise arrive silently.
     pub(super) fn foregrounds(palette: &Palette) -> Vec<(&'static str, Color)> {
+        let Palette {
+            base: _,
+            surface: _,
+            text: _,
+            border: _,
+            highlight: _,
+            highlight_text: _,
+            muted,
+            partition,
+            clustering,
+            keyspace,
+            table,
+            property,
+            accent,
+            match_,
+            success,
+            warning,
+            danger,
+            keyword,
+            reference,
+            literal,
+        } = *palette;
+
         vec![
-            ("muted", palette.muted),
-            ("partition", palette.partition),
-            ("clustering", palette.clustering),
-            ("keyspace", palette.keyspace),
-            ("table", palette.table),
-            ("property", palette.property),
-            ("accent", palette.accent),
-            ("match_", palette.match_),
-            ("success", palette.success),
-            ("warning", palette.warning),
-            ("danger", palette.danger),
-            ("keyword", palette.keyword),
-            ("reference", palette.reference),
-            ("literal", palette.literal),
+            ("muted", muted),
+            ("partition", partition),
+            ("clustering", clustering),
+            ("keyspace", keyspace),
+            ("table", table),
+            ("property", property),
+            ("accent", accent),
+            ("match_", match_),
+            ("success", success),
+            ("warning", warning),
+            ("danger", danger),
+            ("keyword", keyword),
+            ("reference", reference),
+            ("literal", literal),
         ]
     }
 
@@ -224,17 +254,27 @@ pub(crate) mod tests {
         assert_eq!(palette.border, None);
     }
 
+    /// Every theme, not only the default: a flavour paints its field once,
+    /// through `ground`, and a token that painted a background of its own
+    /// would put a patch of some other colour over it — which is the same
+    /// defect in a flavour as it is in the theme that leaves the field to the
+    /// terminal (design §2, §3).
     #[test]
     fn the_cursor_row_is_the_only_token_that_paints_a_background() {
-        let theme = Theme::default();
+        for choice in ThemeChoice::ALL {
+            let theme = Theme::of(choice);
 
-        for token in EVERY_TOKEN {
-            let background = theme.style(token).bg;
+            for token in EVERY_TOKEN {
+                let background = theme.style(token).bg;
 
-            if matches!(token, Token::Selected) {
-                assert!(background.is_some(), "the cursor row is a bar");
-            } else {
-                assert_eq!(background, None, "{token:?} painted over the user's field");
+                if matches!(token, Token::Selected) {
+                    assert!(background.is_some(), "{choice:?}: the cursor row is a bar");
+                } else {
+                    assert_eq!(
+                        background, None,
+                        "{choice:?}: {token:?} painted its own field"
+                    );
+                }
             }
         }
     }

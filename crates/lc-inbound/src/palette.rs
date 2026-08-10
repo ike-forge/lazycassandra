@@ -4,7 +4,6 @@ use lc_domain::commands::CommandRow;
 use lc_domain::style::Token;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState};
 
@@ -66,6 +65,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
         .title("Commands");
     let inner = block.inner(area).inner(Margin {
         horizontal: PAD,
@@ -93,7 +93,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     };
 
     if extent.overflows() {
-        crate::render::scrollbar(frame, area, &extent, Style::new(), theme);
+        crate::render::scrollbar(frame, area, &extent, theme.border_style(), theme);
     }
 }
 

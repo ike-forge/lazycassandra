@@ -70,10 +70,10 @@ promise of §2 in the type system rather than in a test comment.
 | `base` | `Option<Color>` | the whole frame's background |
 | `surface` | `Option<Color>` | an overlay's background, after `Clear` |
 | `text` | `Option<Color>` | body text, `Severity::Info` |
-| `border` | `Option<Color>` | panel borders |
+| `border` | `Option<Color>` | panel borders, a scrollbar's track |
 | `highlight` | `Color` | the cursor row's background |
 | `highlight_text` | `Option<Color>` | that row's text — see §3.1 |
-| `muted` | `Color` | system keyspaces, hint actions, nulls, scrollbar track |
+| `muted` | `Color` | system keyspaces, hint actions, nulls, a scrollbar's thumb |
 | `partition` | `Color` | partition key columns, bold |
 | `clustering` | `Color` | clustering key columns |
 | `keyspace` | `Color` | a user keyspace in the Tables tree |

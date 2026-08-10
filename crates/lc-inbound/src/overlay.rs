@@ -24,6 +24,9 @@ pub(crate) fn render(frame: &mut Frame, overlay: &Message, theme: Theme) {
         return;
     };
 
+    // The severity replaces `theme.border_style()` rather than composing with
+    // it. This border is where the message says how bad it is, and that is
+    // the one border on screen that must not read like the others.
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(overlay.title.as_str())
