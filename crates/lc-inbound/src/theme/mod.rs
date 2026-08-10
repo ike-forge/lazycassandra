@@ -65,8 +65,35 @@ impl Default for Theme {
 }
 
 impl Theme {
+    #[cfg(test)]
+    pub(crate) const fn mocha() -> Self {
+        Self {
+            palette: &catppuccin::MOCHA,
+        }
+    }
+
     pub(crate) const fn palette(self) -> &'static Palette {
         self.palette
+    }
+
+    /// The whole frame's ground. Painted before anything else, so a widget
+    /// that sets no colour of its own inherits the theme's rather than the
+    /// terminal's.
+    pub(crate) fn ground(self) -> Style {
+        style_of(self.palette.base, self.palette.text)
+    }
+
+    /// A floating block's ground, so an overlay separates from the field it
+    /// covers.
+    pub(crate) fn overlay_ground(self) -> Style {
+        style_of(self.palette.surface, self.palette.text)
+    }
+
+    /// A panel's border. `Token::Focused` is patched on top of this rather
+    /// than replacing it, so a focused panel is a bold border of the theme's
+    /// colour rather than an uncoloured one.
+    pub(crate) fn border_style(self) -> Style {
+        maybe(self.palette.border)
     }
 
     #[must_use]
@@ -141,6 +168,17 @@ fn maybe(color: Option<Color>) -> Style {
         Some(color) => Style::new().fg(color),
         None => Style::new(),
     }
+}
+
+fn style_of(background: Option<Color>, foreground: Option<Color>) -> Style {
+    let mut style = Style::new();
+    if let Some(color) = background {
+        style = style.bg(color);
+    }
+    if let Some(color) = foreground {
+        style = style.fg(color);
+    }
+    style
 }
 
 #[cfg(test)]

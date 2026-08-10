@@ -48,6 +48,11 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             return Rendered::default();
         }
     };
+    let ground = theme.ground();
+    if ground != Style::new() {
+        let area = frame.area();
+        frame.buffer_mut().set_style(area, ground);
+    }
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
     let mut ddl_selection = DdlSpan::default();
@@ -83,9 +88,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         }
 
         let border = if panel.panel == view.focus {
-            theme.style(Token::Focused)
+            theme.border_style().patch(theme.style(Token::Focused))
         } else {
-            Style::new()
+            theme.border_style()
         };
         block = block.border_style(border);
 
@@ -378,6 +383,55 @@ mod tests {
             .filter_map(|x| buffer.cell((x, y)))
             .map(Cell::symbol)
             .collect()
+    }
+
+    #[test]
+    fn a_flavour_paints_the_field_it_is_drawn_on() {
+        let mut terminal =
+            Terminal::new(TestBackend::new(80, 24)).expect("TestBackend always initialises");
+        let state = State::default();
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::mocha());
+            })
+            .expect("TestBackend always draws");
+
+        let buffer = terminal.backend().buffer();
+        let ground = buffer[(0, 0)].bg;
+
+        assert_eq!(
+            ground,
+            Color::Rgb(0x1e, 0x1e, 0x2e),
+            "a flavour owns the whole frame, corners included"
+        );
+        assert!(
+            buffer.content().iter().all(|cell| cell.bg != Color::Reset),
+            "a cell the flavour missed shows the terminal through it"
+        );
+    }
+
+    #[test]
+    fn the_default_theme_leaves_the_field_alone() {
+        let mut terminal =
+            Terminal::new(TestBackend::new(80, 24)).expect("TestBackend always initialises");
+        let state = State::default();
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::default());
+            })
+            .expect("TestBackend always draws");
+
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .all(|cell| cell.bg == Color::Reset),
+            "the background is the user's (vision.md §4, principle 5)"
+        );
     }
 
     #[test]

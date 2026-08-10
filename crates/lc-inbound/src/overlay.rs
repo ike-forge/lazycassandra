@@ -31,6 +31,7 @@ pub(crate) fn render(frame: &mut Frame, overlay: &Message, theme: Theme) {
     let inner = block.inner(rect);
 
     frame.render_widget(Clear, rect);
+    frame.buffer_mut().set_style(rect, theme.overlay_ground());
     frame.render_widget(block, rect);
     frame.render_widget(
         Paragraph::new(overlay.message.as_str()).wrap(Wrap { trim: true }),

@@ -73,6 +73,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     });
 
     frame.render_widget(Clear, area);
+    frame.buffer_mut().set_style(area, theme.overlay_ground());
     frame.render_widget(block, area);
 
     let gutter = rows.iter().map(keys_width).max().unwrap_or(0);
