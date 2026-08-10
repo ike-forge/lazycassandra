@@ -22,7 +22,7 @@ Hexagonal layout: `lc-domain` (pure core) ← `lc-inbound` (TUI) / `lc-outbound`
 ```
 mise run build   # cargo build --workspace
 mise run test    # fast test tiers
-mise run lint    # clippy, warnings denied
+mise run check   # fmt, clippy with warnings denied, licences and advisories
 mise run ci      # everything CI gates on
 ```
 

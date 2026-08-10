@@ -45,7 +45,7 @@ violate by default. They do not replace that document — read it for the why.
 ```
 mise run build   # cargo build --workspace
 mise run fmt     # cargo fmt --all
-mise run lint    # clippy, warnings denied
+mise run check   # fmt, clippy with warnings denied, licences and advisories
 mise run test    # fast tiers (domain, scenario, render)
 mise run ci      # everything CI gates on — run this before considering work done
 ```
