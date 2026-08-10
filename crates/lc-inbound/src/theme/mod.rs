@@ -11,6 +11,9 @@
 //! structure, severity, write posture — and the two accents below are spent
 //! on things that are marked rather than meant.
 
+#[cfg(test)]
+mod contrast;
+
 use lc_domain::posture::Posture;
 use lc_domain::style::{Severity, Token};
 use ratatui::style::{Color, Modifier, Style};
