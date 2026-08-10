@@ -842,13 +842,9 @@ fn transition(state: &mut State, transition: Transition) {
         return;
     }
 
-    // A filter forces every retained keyspace open (design §4.1), so folding
-    // would change nothing on screen. Swallowed rather than half-honoured:
-    // doc/shortcuts.md §2, a panel that cannot honour a motion swallows it.
-    if state.tables.filter().is_some() {
-        return;
-    }
-
+    // The filter guard lives in TablesPanel::open/close themselves (design
+    // §4.1), so every entry point — this one, and activate's click/Enter/Space
+    // path — inherits it from one place rather than two that must agree.
     let Some((tables, schema)) = state.tables_and_schema() else {
         return;
     };
@@ -1936,6 +1932,70 @@ mod tests {
             row_count(&state),
             3,
             "the fold state from before the filter must survive it untouched"
+        );
+    }
+
+    /// Every entry point that can land on a retained keyspace row — not just
+    /// `h`/`l` — must leave the unfold set alone while a filter is applied.
+    /// `activate` (`Enter`, `Space`, and a click, which routes through it too)
+    /// has no guard of its own; it inherits `TablesPanel::toggle`'s. Remove
+    /// that guard and the `Key::Enter` case here fails: the filter's own
+    /// projection reports `shop` as unfolded, `toggle` reads that as "fold
+    /// it", and the real unfold set loses "shop" even though nothing moved
+    /// on screen.
+    #[test]
+    fn no_tables_entry_point_writes_the_fold_state_under_a_filter() {
+        enum Action {
+            Key(Key),
+            Click,
+        }
+
+        for action in [
+            Action::Key(Key::Char('h')),
+            Action::Key(Key::Char('l')),
+            Action::Key(Key::Enter),
+            Action::Key(Key::Char(' ')),
+            Action::Click,
+        ] {
+            let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+            press(&mut state, Key::Char('l'));
+            assert_eq!(row_count(&state), 3, "shop starts unfolded");
+
+            state.apply_filter(Filtered::Tables, Filter::new("shop"));
+
+            match action {
+                Action::Key(key) => {
+                    press(&mut state, key);
+                }
+                Action::Click => {
+                    click_row(&mut state, Panel::Tables, 0);
+                }
+            }
+
+            state.apply_filter(Filtered::Tables, None);
+
+            assert_eq!(
+                row_count(&state),
+                3,
+                "the fold state from before the filter must survive it untouched"
+            );
+        }
+    }
+
+    /// `Enter` still reads a table under a filter — the guard stops keyspace
+    /// folding, not table activation.
+    #[test]
+    fn enter_still_reads_a_table_under_a_filter() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("orders"));
+        assert_eq!(row_count(&state), 2, "shop and orders both survive");
+
+        state.tables.cursor.go_to(1, row_count(&state));
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            !effects.is_empty(),
+            "Enter on a table row under a filter must still submit a read"
         );
     }
 

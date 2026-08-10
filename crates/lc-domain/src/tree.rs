@@ -132,7 +132,20 @@ impl TablesPanel {
     }
 
     /// Opens a folded keyspace, folds an open one. Does nothing on a table.
+    ///
+    /// Swallowed while a filter is applied: [`Self::filtered`] draws every
+    /// retained keyspace open regardless of the unfold set, so folding would
+    /// change nothing on screen while still writing `unfolded` — the one
+    /// thing design §4.1 promises filtering never does. This is the single
+    /// entry point for that guard, so every caller (keys, a click via
+    /// `activate`) inherits it rather than needing its own; doc/shortcuts.md
+    /// §2's rule that a panel swallows a motion it cannot honour is why the
+    /// key is dropped here instead of half-honoured.
     pub fn toggle(&mut self, schema: &Schema) {
+        if self.filter.is_some() {
+            return;
+        }
+
         let Some(Node::Keyspace { keyspace, unfolded }) = self.selected(schema) else {
             return;
         };
@@ -145,7 +158,17 @@ impl TablesPanel {
     }
 
     /// Opens a folded keyspace; on an open one, steps into its first table.
+    ///
+    /// Swallowed under a filter for the reason [`Self::toggle`] is (design
+    /// §4.1): every retained keyspace is already drawn open, so there is
+    /// nothing left for this to do that stepping onto a table row would not
+    /// already offer, and unfolding a filtered-out keyspace would write a
+    /// fold state the clear has to un-write later.
     pub fn open(&mut self, schema: &Schema) {
+        if self.filter.is_some() {
+            return;
+        }
+
         let Some(Node::Keyspace { keyspace, unfolded }) = self.selected(schema) else {
             return;
         };
@@ -159,7 +182,14 @@ impl TablesPanel {
 
     /// Folds an open keyspace; on a table, steps out to its keyspace without
     /// folding it, so a second press folds.
+    ///
+    /// Swallowed under a filter for the reason [`Self::toggle`] is (design
+    /// §4.1).
     pub fn close(&mut self, schema: &Schema) {
+        if self.filter.is_some() {
+            return;
+        }
+
         match self.selected(schema) {
             Some(Node::Keyspace {
                 keyspace,

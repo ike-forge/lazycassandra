@@ -101,12 +101,15 @@ subsection below.
 
 Reading a table cancels whatever read Contents was waiting on.
 
-`l` and `h` on a keyspace are swallowed while a filter is applied. A
+`l` and `h` on a keyspace are swallowed while a filter is applied — and so
+are `Enter`/`Space` and a click, on a keyspace row, for the same reason. A
 retained keyspace is forced open by the filter itself, so folding it would
 change nothing on screen — the projection puts it right back — and a key
 that looks broken is worse than a key that does nothing (panel search design
 §4.1). This is the existing rule that a panel which cannot honour a motion
-swallows it rather than passing it on (§2).
+swallows it rather than passing it on (§2). `Enter`/`Space` and a click still
+read a table into Contents under a filter; only the fold/unfold path is
+swallowed.
 
 ### Queries panel
 
