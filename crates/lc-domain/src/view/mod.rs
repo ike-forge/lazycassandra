@@ -416,6 +416,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_open_picker_is_projected_as_every_theme_and_the_cursors_position() {
+        let choice = ThemeChoice::CatppuccinMocha;
+        let mut cursor = crate::state::Cursor::default();
+        cursor.go_to(choice.index(), ThemeChoice::ALL.len());
+        let state = State {
+            overlay: Some(Overlay::Themes {
+                cursor,
+                restored: ThemeChoice::default(),
+            }),
+            ..State::default()
+        };
+
+        assert_eq!(
+            view_model(&state).overlay,
+            Some(OverlayView::Themes {
+                labels: ThemeChoice::ALL
+                    .iter()
+                    .map(|choice| choice.label())
+                    .collect(),
+                selected: choice.index(),
+            })
+        );
+    }
+
     /// Every `ContentsState`, because that panel's title is built per frame
     /// and is the one that could drift out of the invariant below.
     fn every_contents_state() -> Vec<State> {
