@@ -936,15 +936,13 @@ mod tests {
         let mut state = browsing(&refs, 0);
         state.tables.scroll.follow(11, 1);
 
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
         let (buffer, _map) = draw_mapped(40, 12, &state);
         let drawn: Vec<String> = (1..6).map(|y| row(&buffer, y)).collect();
-        let reversed = |y: u16| {
-            buffer
-                .cell((1, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        };
+        let selected = |y: u16| buffer.cell((1, y)).expect("inside the panel").bg == highlight;
 
         assert!(
             drawn.iter().any(|line| line.contains("ks11")),
@@ -952,7 +950,7 @@ mod tests {
         );
         for y in 1..6 {
             assert!(
-                !reversed(y),
+                !selected(y),
                 "ks00 is off screen, so nothing drawn is the selection"
             );
         }
@@ -1058,7 +1056,8 @@ mod tests {
         // Row 0 (not selected) and row 1 (the cursor's row) each hold one
         // cell the filter matches and one it does not — the composed case
         // is row 1, where `Token::Match` is drawn under `Token::Selected`'s
-        // REVERSED and still has to be tellable apart from the id beside it.
+        // background bar and still has to be tellable apart from the id
+        // beside it.
         let mut state = showing(page_of(
             &["id", "email"],
             &[
@@ -1075,17 +1074,32 @@ mod tests {
             let cell = buffer.cell((x, y)).expect("inside the panel");
             (cell.fg, cell.bg, cell.modifier)
         };
+        // Gutter, then `id` (one digit, the cursor's cell at column 0), then
+        // `email` (matched): 19 lands on the digit, 22 on `email`'s first
+        // character.
+        let unmatched_id = 19;
+        let matched_email = 22;
 
         assert_ne!(
-            style(20, 2),
-            style(17, 2),
+            style(matched_email, 2),
+            style(unmatched_id, 2),
             "row 0 is not selected: its matched email must still read apart from its unmatched id"
         );
-        assert_ne!(
-            style(20, 3),
-            style(17, 3),
-            "row 1 is the cursor's row: a matched cell must still read apart from an \
-             unmatched one under Selected's REVERSED"
+        assert!(
+            buffer
+                .cell((matched_email, 3))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::BOLD)
+                && !buffer
+                    .cell((unmatched_id, 3))
+                    .expect("inside the panel")
+                    .modifier
+                    .contains(Modifier::BOLD),
+            "row 1 is the cursor's row: its highlight text flattens both cells' colours, so \
+             `BOLD` is what still tells the matched cell apart from the unmatched one \
+             (the unmatched id is also the cell cursor, so it carries its own modifiers \
+             instead — never `BOLD`)"
         );
     }
 
@@ -1119,10 +1133,10 @@ mod tests {
 
     #[test]
     fn a_matched_null_composes_match_with_muted_rather_than_losing_either() {
-        // Design §4.3 (amended): the renderer composes `Token::Match` with
-        // `Token::Muted` rather than one replacing the other, so a matched
-        // null stays tellable apart from a matched cell whose text is
-        // literally the word "null".
+        // Design §4.3 (amended): `Token::Muted` spends `DIM` alongside its
+        // colour precisely so `Style::patch` keeps it under `Token::Match`'s
+        // own colour, and a matched null stays tellable apart from a matched
+        // cell whose text is literally the word "null".
         let mut state = showing(page_of(
             &["id", "value", "note"],
             &[&[CqlValue::Int(1), CqlValue::Null, text("null")]],
@@ -1692,17 +1706,16 @@ mod tests {
         );
         state.ddl.scroll.to_end(total, 5);
 
+        let highlight = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
         let buffer = draw_state(40, 20, &state);
-        let reversed = (13..18).any(|y| {
-            buffer
-                .cell((1, y))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::REVERSED)
-        });
+        let selected =
+            (13..18).any(|y| buffer.cell((1, y)).expect("inside the panel").bg == highlight);
 
         assert!(
-            !reversed,
+            !selected,
             "customer_id scrolled off the top must not still be drawn as the selection"
         );
     }

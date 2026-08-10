@@ -22,7 +22,7 @@ use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
@@ -340,18 +340,7 @@ fn cell_style(cell: &GridCell, theme: Theme) -> Option<Style> {
     }
 
     let matched = theme.style(Token::Match);
-    let composed = base.map_or(matched, |base| base.patch(matched));
-
-    // `Token::Muted` spends only a colour, and `patch` lets `Token::Match`'s
-    // own colour win, so a matched null and a matched cell holding the word
-    // "null" would otherwise draw identically. `DIM` is not a role the
-    // palette owns, so it survives the patch and keeps the null tellable
-    // apart (design §4.3).
-    Some(if cell.token == Some(Token::Muted) {
-        composed.add_modifier(Modifier::DIM)
-    } else {
-        composed
-    })
+    Some(base.map_or(matched, |base| base.patch(matched)))
 }
 
 fn styled(text: &str, token: Option<Token>, width: u16, theme: Theme) -> Cell<'static> {

@@ -87,16 +87,23 @@ impl Theme {
             }
             Token::Severity(Severity::Warning) => fg(palette.warning),
             Token::PropertyName => fg(palette.property),
-            Token::Muted | Token::HintAction => fg(palette.muted),
+            // `DIM` alongside the colour, not the colour alone: `Style::patch`
+            // merges `add_modifier` by insertion rather than overwriting it,
+            // so a muted cell composed with `Token::Match` keeps `DIM` even
+            // though its colour is overwritten — the same distinction the
+            // pre-`Palette` theme drew with `DIM` alone (design §4.3).
+            Token::Muted | Token::HintAction => fg(palette.muted).add_modifier(Modifier::DIM),
             // Bold rather than a colour: focus must not compete with the
             // colours that carry meaning, and it has to read on a panel border
             // the theme may have coloured already.
             Token::Focused | Token::HintKey => Style::new().add_modifier(Modifier::BOLD),
             Token::Shortcut => Style::new().add_modifier(Modifier::UNDERLINED),
             Token::Selected => selected(palette),
-            // `fg` alone, so it survives being patched under the row's
-            // highlight style: the cursor's row can contain matches, and both
-            // must still read.
+            // `fg` and `BOLD` both: where a palette declines
+            // `highlight_text`, the colour survives being patched under the
+            // row's highlight style; where it spends one, that fg overwrites
+            // this one on the cursor's row (`Style::patch`'s `other.fg.or`),
+            // and `BOLD` is what still marks the match there.
             Token::Match => fg(palette.match_).add_modifier(Modifier::BOLD),
             // A modifier rather than a colour, because it has to read
             // *against* the highlighted row whatever colour that row is.
@@ -244,13 +251,15 @@ mod tests {
     fn a_match_is_legible_over_a_selected_row() {
         let theme = Theme::default();
         let matched = theme.style(Token::Match);
+        let selected = theme.style(Token::Selected);
 
-        assert_ne!(matched, theme.style(Token::Selected));
-        assert_eq!(
-            matched.bg, None,
-            "fg alone survives being patched under the row's highlight"
+        assert_ne!(matched, selected);
+        assert!(
+            matched.add_modifier.contains(Modifier::BOLD)
+                && !selected.add_modifier.contains(Modifier::BOLD),
+            "a match must carry something the row's own highlight does not, \
+             so it still reads once patched under it"
         );
-        assert!(matched.fg.is_some());
     }
 
     /// Every token, so a new one cannot be added without deciding what the
