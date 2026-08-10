@@ -398,13 +398,16 @@ mod tests {
             before,
             "contents highlights; it does not filter"
         );
-        assert!(
-            rows.iter().flatten().any(|cell| cell.matched),
-            "the fixture contains a cell whose text holds \"ali\""
-        );
-        assert!(
-            rows.iter().flatten().any(|cell| !cell.matched),
-            "and one that does not"
+        let matched: Vec<Vec<bool>> = rows
+            .iter()
+            .map(|row| row.iter().map(|cell| cell.matched).collect())
+            .collect();
+        assert_eq!(
+            matched,
+            [[false, true], [false, false]],
+            "only the cell whose text holds \"ali\" is flagged — a \
+             case-sensitive `contains` would flag the same cells here, but \
+             nothing else in this fixture would catch it slipping in"
         );
     }
 

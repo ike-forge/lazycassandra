@@ -213,6 +213,19 @@ shrank the body.
 
 Table contents needs neither: it filters nothing (§4.3).
 
+`open_prompt` clears the target's filter the moment the prompt opens, rather
+than leaving the old filter showing until the first keystroke: an empty
+buffer live-applies to no filter, so the panel underneath is the preview from
+frame one, and `Esc` restores it via `previous` (§3.1) exactly as if it had
+never been cleared.
+
+A filter that shrinks the Table DDL body below a scrolled offset draws one
+blank frame before `Msg::Measured` clamps it — the frame between the
+keystroke landing and the remeasure coming back. The no-clamp-at-apply-time
+reasoning above is what causes it, and it is sound; the artifact is one frame
+wide and the loop terminates, so it is a known cost of that reasoning rather
+than a bug.
+
 ---
 
 ## 4. What each panel does with it

@@ -3545,10 +3545,12 @@ mod tests {
     }
 
     #[test]
-    fn escape_prefers_the_filter_to_leaving_the_editor() {
-        // Unreachable today — Queries holds no filter (design §8) — so this
-        // pins the ordering for the vim slice by checking the two lower
-        // rungs still resolve in order.
+    fn escape_leaves_queries_when_nothing_else_claims_it() {
+        // Rung 3 alone (§6): no overlay, no filter (Queries cannot hold one
+        // yet — design §8), so `esc` falls through to leaving the editor.
+        // This does not pin rung 2 before rung 3 — that ordering is
+        // unreachable, and stays so, until the vim slice gives Queries a
+        // filter to prefer.
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         state.focus = Panel::Queries;
 

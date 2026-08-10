@@ -267,17 +267,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unfiltered_empty_schema_still_says_no_keyspaces() {
-        assert_eq!(
-            tables_body(&loaded(&[])),
-            PanelBody::Notice {
-                text: "No keyspaces".to_owned(),
-                token: Some(Token::Muted),
-            }
-        );
-    }
-
-    #[test]
     fn a_schema_that_failed_to_load_carries_the_danger_token() {
         let state = state_with(ConnectionState::Connected(Connection {
             id: ConnId::next(),

@@ -357,14 +357,14 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A keyspace with nothing matching is dropped | `a_keyspace_with_nothing_matching_is_dropped` (`tree.rs`) |
 | A retained keyspace is drawn open whatever its fold state | `a_retained_keyspace_is_drawn_open_whatever_its_fold_state`, `a_keyspace_matching_by_name_is_open_only_when_it_has_tables` (`tree.rs`) |
 | Clearing the filter restores the fold state exactly | `clearing_the_filter_restores_the_fold_state_exactly` (`tree.rs`) |
-| `l`/`h` are swallowed while a filter is applied | `l_and_h_are_swallowed_while_a_filter_is_applied`, `folding_under_a_filter_does_not_disturb_the_fold_state_it_will_return_to`, `l_and_h_still_fold_once_the_filter_is_gone` |
+| `l`/`h`, `Enter`/`Space`, and a click on a keyspace row are all swallowed while a filter is applied | `l_and_h_are_swallowed_while_a_filter_is_applied`, `folding_under_a_filter_does_not_disturb_the_fold_state_it_will_return_to`, `l_and_h_still_fold_once_the_filter_is_gone`, `no_tables_entry_point_writes_the_fold_state_under_a_filter`, `enter_still_reads_a_table_under_a_filter` |
 | The cursor clamps as a filter shrinks the tree | `the_cursor_clamps_as_a_filter_shrinks_the_tree` |
 | A property matches on its name and on its value | `a_property_matches_on_its_name`, `a_property_matches_on_its_value` (`view/details.rs`) |
 | A column matches on its name and on its CQL type | `a_column_matches_on_its_name`, `a_column_matches_on_its_cql_type` (`view/details.rs`) |
 | A section emptied by the filter disappears | `a_section_emptied_by_the_filter_disappears` (`view/details.rs`) |
 | Headings are not matched | `a_heading_is_not_matched` (`view/details.rs`) |
 | Nothing matched gives a muted notice, in Tables and Table DDL | `a_filter_that_matches_nothing_says_so` (`view/tables.rs`), `nothing_matching_says_which_term_found_nothing` (`view/details.rs`) |
-| A filter changes nothing unless one is applied | `an_unfiltered_empty_schema_still_says_no_keyspaces` (`view/tables.rs`), `an_unfiltered_table_keeps_its_existing_behaviour` (`view/details.rs`), `no_filter_flags_nothing` (`view/contents.rs`) |
+| A filter changes nothing unless one is applied | `a_cluster_with_no_keyspaces_says_so_rather_than_listing_nothing` (`view/tables.rs`), `an_unfiltered_table_keeps_its_existing_behaviour` (`view/details.rs`), `no_filter_flags_nothing` (`view/contents.rs`) |
 | Matching cells are flagged and the grid keeps every row | `a_filter_flags_the_cells_that_match_and_keeps_every_row` (`view/contents.rs`) |
 | A matched null is still a null | `a_matched_null_is_still_a_null` (`view/contents.rs`) |
 | `/` opens the prompt in each of the three panels that can hold a filter | `slash_opens_the_prompt_in_every_panel_that_can_hold_a_filter` |
@@ -373,7 +373,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The prompt filters live, per keystroke | `the_prompt_filters_live_per_keystroke`, `backspace_narrows_the_query_and_re_applies_it`, `backspace_on_an_empty_query_is_inert_rather_than_closing` |
 | `Enter` commits and closes; an empty commit clears | `enter_commits_and_closes_leaving_the_filter_applied`, `an_empty_commit_clears_the_filter`, `backspacing_a_query_to_empty_clears_the_filter_live` |
 | `Esc` cancels, restoring the filter that was there | `escape_cancels_the_prompt_restoring_the_filter_that_was_there` |
-| `Esc`'s full precedence chain | `escape_clears_the_focused_panels_filter_when_no_overlay_is_up`, `escape_prefers_the_overlay_to_the_filter`, `escape_prefers_the_filter_to_leaving_the_editor` |
+| `Esc`'s full precedence chain | `escape_clears_the_focused_panels_filter_when_no_overlay_is_up`, `escape_prefers_the_overlay_to_the_filter`, `escape_leaves_queries_when_nothing_else_claims_it` (rung 3 alone — rung 2 before rung 3 is unpinnable until Queries can hold a filter, design §8) |
 | `Tab` is inert while the prompt is up | `tab_is_inert_while_the_prompt_is_up` |
 | A click cancels the prompt | `a_click_cancels_the_prompt` |
 | A filter survives a focus change | `a_filter_survives_a_focus_change` |
