@@ -79,6 +79,11 @@ pub enum OverlayView {
     Search {
         query: String,
     },
+    /// The theme picker's rows and where its cursor is.
+    Themes {
+        labels: Vec<&'static str>,
+        selected: usize,
+    },
 }
 
 fn overlay(state: &State) -> Option<OverlayView> {
@@ -96,6 +101,13 @@ fn overlay(state: &State) -> Option<OverlayView> {
         // the palette does (design §1).
         Overlay::Search(prompt) => Some(OverlayView::Search {
             query: prompt.query().to_owned(),
+        }),
+        Overlay::Themes { cursor, .. } => Some(OverlayView::Themes {
+            labels: ThemeChoice::ALL
+                .iter()
+                .map(|choice| choice.label())
+                .collect(),
+            selected: cursor.index(),
         }),
     }
 }

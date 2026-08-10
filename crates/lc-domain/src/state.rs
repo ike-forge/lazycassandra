@@ -141,6 +141,14 @@ pub enum Overlay {
     /// Drawn on the hint bar row rather than over the panels, and in this
     /// enum for what that buys: a prompt and a palette cannot both be up.
     Search(Prompt),
+    /// The theme picker. `restored` is what `Esc` puts back: the cursor sets
+    /// `State.theme` as it moves, so the frame previews each theme and there
+    /// is nowhere else the previous one survives
+    /// (doc/specs/2026-08-10-themes-design.md §6).
+    Themes {
+        cursor: Cursor,
+        restored: ThemeChoice,
+    },
 }
 
 impl ConnectionState {

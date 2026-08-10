@@ -153,7 +153,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         Some(OverlayView::Search { query }) => {
             render_prompt(frame, hint_bar, query, view, theme);
         }
-        None => {}
+        // Task 9 draws the picker; the domain half only has to project it.
+        Some(OverlayView::Themes { .. }) | None => {}
     }
 
     Rendered {

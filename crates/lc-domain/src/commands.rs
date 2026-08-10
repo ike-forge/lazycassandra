@@ -55,6 +55,10 @@ const GLOBAL: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('u'))],
         action: "focus Queries",
     },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('T'))],
+        action: "choose a theme",
+    },
 ];
 
 /// `/` joins the focused panel's own group, not `GLOBAL`: it does nothing in
