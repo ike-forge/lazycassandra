@@ -1,7 +1,7 @@
 //! Drawing a frame.
 
 use lc_domain::ViewModel;
-use lc_domain::state::{Geometry, Panel};
+use lc_domain::state::{Geometry, Panel, Span as DdlSpan};
 use lc_domain::style::Token;
 use lc_domain::view::OverlayView;
 use ratatui::Frame;
@@ -50,6 +50,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
+    let mut ddl_selection = DdlSpan::default();
     let mut hits = [PanelHit::default(); 4];
 
     for (index, panel) in view.panels.iter().enumerate() {
@@ -86,6 +87,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                 heights[index] = drawn.extent.visible;
                 if panel.panel == Panel::Ddl {
                     ddl_lines = drawn.extent.total;
+                    ddl_selection = drawn.selection;
                 }
                 if drawn.extent.overflows() {
                     scrollbar(frame, area, &drawn.extent, border, theme);
@@ -116,7 +118,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 
     Rendered {
-        geometry: Geometry::new(heights, ddl_lines, command_rows),
+        geometry: Geometry::new(heights, ddl_lines, command_rows).with_ddl_selection(ddl_selection),
         map: FrameMap::new(hits),
     }
 }
@@ -1097,6 +1099,68 @@ mod tests {
         );
     }
 
+    /// Every row inside the Ddl body (100x41, see [`ddl_rows`]) whose first
+    /// content cell carries the reversed modifier [`Theme::TerminalDefault`]
+    /// gives `Token::Selected`.
+    fn highlighted_rows(buffer: &Buffer) -> Vec<u16> {
+        (25..39)
+            .filter(|&y| {
+                buffer
+                    .cell((1, y))
+                    .is_some_and(|cell| cell.modifier.contains(Modifier::REVERSED))
+            })
+            .collect()
+    }
+
+    /// The text a Ddl body row drew, at the same coordinates [`ddl_rows`]
+    /// reads.
+    fn row_text(buffer: &Buffer, row: u16) -> String {
+        (1..24)
+            .filter_map(|x| buffer.cell((x, row)))
+            .map(Cell::symbol)
+            .collect::<String>()
+            .trim_end()
+            .to_owned()
+    }
+
+    #[test]
+    fn every_line_of_a_selected_property_is_highlighted() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        // `bloom_filter_fp_chance` and its value need 26 of the panel's 23
+        // columns, so this row is one cursor stop drawn across two lines.
+        state.ddl.cursor.go_to(4, lc_domain::view::ddl_rows(&state));
+
+        let buffer = draw_state(100, 41, &state);
+        let highlighted = highlighted_rows(&buffer);
+
+        assert!(
+            highlighted.len() > 1,
+            "a wrapped value is one cursor stop, so all of its lines are the selection"
+        );
+        assert!(
+            highlighted.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "the lines of one row are contiguous, got {highlighted:?}"
+        );
+    }
+
+    #[test]
+    fn a_section_heading_is_never_drawn_as_the_selection() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        state.ddl.cursor.to_start();
+
+        let buffer = draw_state(100, 41, &state);
+
+        for row in highlighted_rows(&buffer) {
+            let text = row_text(&buffer, row);
+            assert!(
+                !text.ends_with("Partition Key") && !text.starts_with("Options"),
+                "row {row} is a heading: {text:?}"
+            );
+        }
+    }
+
     #[test]
     fn the_key_columns_are_drawn_in_the_tokens_that_mark_them_as_the_key() {
         let buffer = draw_state(100, 40, &describing(orders()));
@@ -1179,11 +1243,13 @@ mod tests {
         assert_eq!(geometry.height(Panel::Ddl), 5);
         assert_eq!(
             geometry.ddl_lines(),
-            crate::details::lines(
+            crate::details::lay_out(
                 &ddl_details(&describing(orders())),
+                0,
                 14,
                 Theme::TerminalDefault
             )
+            .lines
             .len()
         );
     }
@@ -1220,7 +1286,8 @@ mod tests {
         const HEIGHT: usize = 5;
 
         let state = describing(orders());
-        let all = crate::details::lines(&ddl_details(&state), WIDTH, Theme::TerminalDefault);
+        let all =
+            crate::details::lay_out(&ddl_details(&state), 0, WIDTH, Theme::TerminalDefault).lines;
         assert!(
             all.len() > HEIGHT,
             "the fixture must overflow the panel or this test proves nothing"
