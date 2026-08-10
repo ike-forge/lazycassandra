@@ -81,7 +81,7 @@ pub(super) fn body(state: &State) -> PanelBody {
 fn scrolled(state: &State, details: Details) -> PanelBody {
     PanelBody::Details {
         details,
-        offset: state.ddl.offset(),
+        offset: state.ddl.scroll.offset(),
     }
 }
 
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn the_projection_carries_the_panels_own_offset() {
         let mut state = browsing(orders());
-        state.ddl.to_end(9, 3);
+        state.ddl.scroll.to_end(9, 3);
 
         let PanelBody::Details { offset, .. } = ddl_body(&state) else {
             panic!("a selected table has something to describe");

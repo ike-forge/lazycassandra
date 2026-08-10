@@ -112,7 +112,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     // opens at its top rather than halfway down the last one. Stated once here
     // rather than at each of the four paths that can move the tree selection.
     if described(state) != subject {
-        state.ddl.to_start();
+        state.ddl.scroll.to_start();
     }
 
     clamp_lists(state);
@@ -520,12 +520,12 @@ fn scroll(state: &mut State, motion: Motion) {
         let len = state.geometry.ddl_lines();
 
         match motion {
-            Motion::Down => state.ddl.down(len, height),
-            Motion::Up => state.ddl.up(),
-            Motion::PageDown => state.ddl.page_down(len, height),
-            Motion::PageUp => state.ddl.page_up(height),
-            Motion::Start => state.ddl.to_start(),
-            Motion::End => state.ddl.to_end(len, height),
+            Motion::Down => state.ddl.scroll.down(len, height),
+            Motion::Up => state.ddl.scroll.up(),
+            Motion::PageDown => state.ddl.scroll.page_down(len, height),
+            Motion::PageUp => state.ddl.scroll.page_up(height),
+            Motion::Start => state.ddl.scroll.to_start(),
+            Motion::End => state.ddl.scroll.to_end(len, height),
         }
         return;
     }
@@ -601,12 +601,13 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         }
     }
 
-    let before = state.ddl;
+    let before = state.ddl.scroll;
     state
         .ddl
+        .scroll
         .clamp_to(geometry.ddl_lines(), geometry.height(Panel::Ddl));
 
-    if state.ddl != before {
+    if state.ddl.scroll != before {
         state.mark_dirty();
     }
 
@@ -638,7 +639,7 @@ fn panel_scroll(state: &mut State, panel: Panel) -> Option<&mut Scroll> {
     match panel {
         Panel::Tables => Some(&mut state.tables.scroll),
         Panel::Contents => Some(&mut state.contents.scroll),
-        Panel::Ddl => Some(&mut state.ddl),
+        Panel::Ddl => Some(&mut state.ddl.scroll),
         Panel::Queries => None,
     }
 }
@@ -2222,7 +2223,7 @@ mod tests {
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('j'));
 
-        assert_eq!(state.ddl.offset(), 2);
+        assert_eq!(state.ddl.scroll.offset(), 2);
         assert_eq!(
             state.tables.cursor.index(),
             tree_row,
@@ -2232,7 +2233,7 @@ mod tests {
         press(&mut state, Key::End);
 
         assert_eq!(
-            state.ddl.offset(),
+            state.ddl.scroll.offset(),
             14,
             "End leaves the last line at the bottom of the panel"
         );
@@ -2246,7 +2247,7 @@ mod tests {
         press(&mut state, Key::PageDown);
         press(&mut state, Key::End);
 
-        assert_eq!(state.ddl.offset(), 0);
+        assert_eq!(state.ddl.scroll.offset(), 0);
     }
 
     #[test]
@@ -2258,7 +2259,7 @@ mod tests {
         press(&mut state, Key::End);
 
         assert_eq!(
-            state.ddl.offset(),
+            state.ddl.scroll.offset(),
             0,
             "a panel of unknown height has no page and no end"
         );
@@ -2305,12 +2306,16 @@ mod tests {
         state.focus = Panel::Ddl;
         sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        assert_eq!(state.ddl.scroll.offset(), 34);
 
         state.focus = Panel::Tables;
         press(&mut state, Key::Char('j'));
 
-        assert_eq!(state.ddl.offset(), 0, "users is a document of its own");
+        assert_eq!(
+            state.ddl.scroll.offset(),
+            0,
+            "users is a document of its own"
+        );
     }
 
     #[test]
@@ -2319,13 +2324,13 @@ mod tests {
         state.focus = Panel::Ddl;
         sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        assert_eq!(state.ddl.scroll.offset(), 34);
         state.focus = Panel::Tables;
 
         press(&mut state, Key::Char('l'));
 
         assert_eq!(
-            state.ddl.offset(),
+            state.ddl.scroll.offset(),
             34,
             "shop is still the selected node, so the panel is still on its description"
         );
@@ -2333,7 +2338,7 @@ mod tests {
         // A second `l` steps onto shop's first table, which is a new subject.
         press(&mut state, Key::Char('l'));
 
-        assert_eq!(state.ddl.offset(), 0);
+        assert_eq!(state.ddl.scroll.offset(), 0);
     }
 
     #[test]
@@ -2342,13 +2347,13 @@ mod tests {
         state.focus = Panel::Ddl;
         sized(&mut state, [0, 6, 0, 0], 40);
         press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        assert_eq!(state.ddl.scroll.offset(), 34);
         state.dirty = false;
 
         // The tree cursor moved to a table with far fewer options.
         sized(&mut state, [0, 6, 0, 0], 8);
 
-        assert_eq!(state.ddl.offset(), 2);
+        assert_eq!(state.ddl.scroll.offset(), 2);
         assert!(
             state.dirty,
             "the offset moved, so the frame must be repainted"
@@ -2385,7 +2390,7 @@ mod tests {
         }
 
         sized(&mut state, [3, 3, 3, 3], 40);
-        state.ddl.page_down(40, 3);
+        state.ddl.scroll.page_down(40, 3);
         state.focus = focus;
         state
     }
@@ -2644,7 +2649,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.ddl.offset(), 3);
+        assert_eq!(state.ddl.scroll.offset(), 3);
     }
 
     #[test]
@@ -2693,12 +2698,12 @@ mod tests {
         // Four keyspaces, so three rows a notch would have landed on the
         // last one under the old cursor-moving wheel. Now nothing about the
         // tree selection changes, so `described()` sees no subject change
-        // and `state.ddl` is left alone (design §7).
+        // and `state.ddl.scroll` is left alone (design §7).
         let mut state = browsing(&["a", "b", "c", "d"]);
         state.geometry = Geometry::new([3, 3, 3, 1], 0, 0);
         state.focus = Panel::Queries;
-        state.ddl.down(100, 2);
-        let ddl_before = state.ddl;
+        state.ddl.scroll.down(100, 2);
+        let ddl_before = state.ddl.scroll;
         assert_ne!(ddl_before.offset(), 0, "the fixture must start scrolled");
 
         let effects = point(
@@ -2714,7 +2719,7 @@ mod tests {
         assert_eq!(state.tables.cursor.index(), 0, "the selection did not move");
         assert_eq!(state.focus, Panel::Queries, "the wheel does not move focus");
         assert_eq!(
-            state.ddl, ddl_before,
+            state.ddl.scroll, ddl_before,
             "no selection changed, so nothing new is described"
         );
     }
@@ -2870,14 +2875,14 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["a", "b", "c", "d", "e", "f"])]);
         state.geometry = Geometry::new([3, 3, 3, 1], 40, 0);
         click_row(&mut state, Panel::Tables, 0);
-        state.ddl.page_down(40, 3);
-        let before = state.ddl;
+        state.ddl.scroll.page_down(40, 3);
+        let before = state.ddl.scroll;
         assert_ne!(before.offset(), 0, "the fixture starts scrolled");
 
         roll(&mut state, Panel::Tables, Wheel::Down);
 
         assert_eq!(
-            state.ddl, before,
+            state.ddl.scroll, before,
             "the wheel moved no selection, so nothing is newly described"
         );
     }

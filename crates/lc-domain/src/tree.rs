@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 
 use crate::model::{Keyspace, Schema, Table};
+use crate::search::Filter;
 use crate::state::{Cursor, Scroll};
 
 /// The Tables panel's own state.
@@ -22,6 +23,9 @@ pub struct TablesPanel {
     /// transitions below, so nothing can unfold a keyspace the schema lacks.
     /// Ordered rather than hashed per conventions.md §4.
     unfolded: BTreeSet<String>,
+    /// Narrows [`TablesPanel::rows`]. Public like `cursor` and `scroll`: the
+    /// invariant that mattered is inside [`Filter`] already.
+    pub filter: Option<Filter>,
 }
 
 /// One row of the flattened tree.

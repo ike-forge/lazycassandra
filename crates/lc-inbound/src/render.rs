@@ -1231,7 +1231,7 @@ mod tests {
         );
 
         let mut scrolled = describing(orders());
-        scrolled.ddl.to_end(all.len(), HEIGHT);
+        scrolled.ddl.scroll.to_end(all.len(), HEIGHT);
 
         let before = draw_state(40, 20, &state);
         let after = draw_state(40, 20, &scrolled);
@@ -1340,7 +1340,7 @@ mod tests {
         // (doc/specs/2026-08-09-panel-scrolling-design.md §3).
         let state = describing(orders());
         let mut scrolled = describing(orders());
-        scrolled.ddl.to_end(100, 6);
+        scrolled.ddl.scroll.to_end(100, 6);
 
         assert_eq!(geometry_of(40, 20, &state), geometry_of(40, 20, &scrolled));
     }

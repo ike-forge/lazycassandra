@@ -6,6 +6,7 @@
 //! (architecture.md §11).
 
 use crate::model::{DbError, Page, QueryId};
+use crate::search::Filter;
 use crate::state::{Cursor, Scroll};
 
 /// The Contents panel's own state.
@@ -17,6 +18,8 @@ pub struct ContentsPanel {
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
     state: ContentsState,
+    /// Narrows the rows shown from `state`.
+    pub filter: Option<Filter>,
 }
 
 /// How far along the panel's one request is.

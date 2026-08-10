@@ -8,9 +8,11 @@ use std::collections::BTreeMap;
 
 use crate::commands::CommandsPanel;
 use crate::contents::ContentsPanel;
+use crate::ddl::DdlPanel;
 use crate::editor::Editor;
 use crate::model::{ConnId, DbError, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
+use crate::search::{Filter, Filtered};
 use crate::style::Severity;
 use crate::tree::TablesPanel;
 use crate::view::hints::Binding;
@@ -21,9 +23,7 @@ pub struct State {
     pub focus: Panel,
     pub tables: TablesPanel,
     pub contents: ContentsPanel,
-    /// The Table DDL panel scrolls a viewport rather than a selection: it has
-    /// no row to act on, so there is nothing for a cursor to mean.
-    pub ddl: Scroll,
+    pub ddl: DdlPanel,
     /// The Queries panel's buffer. Not a `QueriesPanel`: the panel is the
     /// editor until the session log arrives.
     pub queries: Editor,
@@ -562,6 +562,29 @@ impl State {
                 ConnectionState::Disconnected | ConnectionState::Failed(_) => false,
             }
     }
+
+    /// The filter applied to `target`, if any.
+    #[must_use]
+    pub const fn filter(&self, target: Filtered) -> Option<&Filter> {
+        match target {
+            Filtered::Tables => self.tables.filter.as_ref(),
+            Filtered::Ddl => self.ddl.filter.as_ref(),
+            Filtered::Contents => self.contents.filter.as_ref(),
+        }
+    }
+
+    /// Applies `filter` to `target` and repairs what it invalidates.
+    ///
+    /// Not a `&mut Option<Filter>` handed out: a caller that sets the filter and
+    /// forgets the repair leaves a cursor pointing past the rows the panel now
+    /// has, and there is no reason for that to be a caller's job (design §3.3).
+    pub fn apply_filter(&mut self, target: Filtered, filter: Option<Filter>) {
+        match target {
+            Filtered::Tables => self.tables.filter = filter,
+            Filtered::Ddl => self.ddl.filter = filter,
+            Filtered::Contents => self.contents.filter = filter,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -569,6 +592,7 @@ mod tests {
     use super::*;
     use crate::model::{ConnId, DbError, Schema};
     use crate::posture::Posture;
+    use crate::search::{Filter, Filtered};
 
     #[test]
     fn all_panels_are_listed_in_reading_order_and_none_is_missing() {
@@ -991,5 +1015,43 @@ mod tests {
         scroll.follow(9, 0);
 
         assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn a_filter_is_read_back_from_the_panel_it_was_applied_to() {
+        let mut state = State::default();
+
+        state.apply_filter(Filtered::Ddl, Filter::new("ttl"));
+
+        assert_eq!(state.filter(Filtered::Ddl).map(Filter::as_str), Some("ttl"));
+        assert_eq!(state.filter(Filtered::Tables), None);
+        assert_eq!(state.filter(Filtered::Contents), None);
+    }
+
+    #[test]
+    fn the_three_filters_are_independent() {
+        let mut state = State::default();
+
+        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+        state.apply_filter(Filtered::Contents, Filter::new("null"));
+
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("ord")
+        );
+        assert_eq!(
+            state.filter(Filtered::Contents).map(Filter::as_str),
+            Some("null")
+        );
+    }
+
+    #[test]
+    fn applying_none_clears_the_one_that_was_there() {
+        let mut state = State::default();
+        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+
+        state.apply_filter(Filtered::Tables, None);
+
+        assert_eq!(state.filter(Filtered::Tables), None);
     }
 }
