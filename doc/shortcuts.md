@@ -368,7 +368,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A second modifier is not a binding | `ctrl_alt_r_does_not_run_the_buffer` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
 | A statement is classified by its first keyword | the `statement.rs` tests |
-| A modifier reaches the label | `a_binding_behind_ctrl_is_named_with_a_caret` (`view/hints.rs`) |
+| A modifier reaches the label | `a_binding_behind_ctrl_is_named_with_a_ctrl_prefix` (`view/hints.rs`) |
 | The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding`, `the_palette_has_a_queries_section` (`commands.rs`) |
 | The bar greys `ctrl-r run` while there is nothing to run | `the_run_hint_is_inert_while_there_is_nothing_to_run`, `the_run_hint_is_live_once_there_is_a_statement`, `nothing_but_the_run_hint_is_ever_inert` (`view/hints.rs`) |
 | A greyed hint is drawn distinctly and keeps its width | `an_inert_hint_is_greyed_rather_than_dropped` (`inbound/hints.rs`) |

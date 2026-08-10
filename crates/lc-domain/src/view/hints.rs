@@ -176,7 +176,7 @@ fn name(press: KeyPress) -> String {
     let key = key_name(press.key);
 
     if press.modifiers.ctrl {
-        format!("^{key}")
+        format!("ctrl-{key}")
     } else {
         key
     }
@@ -223,13 +223,13 @@ mod tests {
     }
 
     #[test]
-    fn a_binding_behind_ctrl_is_named_with_a_caret() {
+    fn a_binding_behind_ctrl_is_named_with_a_ctrl_prefix() {
         assert_eq!(
             label(&[
                 KeyPress::ctrl(Key::Char('e')),
                 KeyPress::ctrl(Key::Char('y')),
             ]),
-            "^e/^y"
+            "ctrl-e/ctrl-y"
         );
         assert_eq!(label(&[KeyPress::new(Key::Char('j'))]), "j");
     }
@@ -357,7 +357,7 @@ mod tests {
 
         assert_eq!(
             panel.first().map(|hint| (hint.keys.as_str(), hint.action)),
-            Some(("^r", "run")),
+            Some(("ctrl-r", "run")),
             "the panel exists to run queries, so the bar says that first"
         );
     }

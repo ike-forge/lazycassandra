@@ -319,9 +319,9 @@ mod tests {
     use super::*;
 
     /// The widest row `MIN_W` in the renderer is derived from
-    /// (doc/specs/2026-08-09-command-palette-design.md §5): a `shift-tab`
+    /// (doc/specs/2026-08-09-command-palette-design.md §5): a `ctrl-e/ctrl-y`
     /// gutter, two columns of gap, and the longest action.
-    const WIDEST_KEYS: usize = 9;
+    const WIDEST_KEYS: usize = 13;
     const WIDEST_ACTION: usize = 20;
 
     fn commands() -> Vec<&'static Binding> {
@@ -349,7 +349,7 @@ mod tests {
     fn the_palette_names_the_run_binding() {
         assert!(
             rows().contains(&CommandRow::Command {
-                keys: "^r".to_owned(),
+                keys: "ctrl-r".to_owned(),
                 action: "run the buffer",
             }),
             "the palette claims to be complete, and ctrl-r is the one binding no key types"

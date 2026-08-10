@@ -18,7 +18,7 @@ const HEIGHT_PERCENT: u16 = 70;
 /// from the catalogue rather than chosen — `commands::tests` is what stops a
 /// longer action being written
 /// (doc/specs/2026-08-09-command-palette-design.md §5).
-const MIN_W: u16 = 35;
+const MIN_W: u16 = 39;
 /// Past this every row is trailing space.
 const MAX_W: u16 = 60;
 /// Two borders, a heading, and enough commands to be worth opening.

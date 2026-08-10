@@ -2052,9 +2052,9 @@ mod tests {
 
     #[test]
     fn the_narrowest_palette_still_fits_its_widest_row() {
-        // 50% of 70 columns lands exactly on MIN_W, the floor a wider action
+        // 50% of 78 columns lands exactly on MIN_W, the floor a wider action
         // would clip against if the margin were counted on one side only.
-        let drawn = buffer_text(&with_palette(70, 40));
+        let drawn = buffer_text(&with_palette(78, 40));
 
         assert!(
             drawn.contains("focus Table contents"),
@@ -2064,10 +2064,10 @@ mod tests {
 
     #[test]
     fn a_frame_that_would_clip_the_widest_row_gets_no_palette() {
-        // 50% of 68 columns is 34 — the old, undercounted MIN_W. A gate that
-        // let this through would draw a palette whose widest row is clipped
-        // by one character rather than refusing it outright.
-        let drawn = buffer_text(&with_palette(68, 40));
+        // 50% of 76 columns is 38, one under MIN_W. A gate that let this
+        // through would draw a palette whose widest row is clipped by one
+        // character rather than refusing it outright.
+        let drawn = buffer_text(&with_palette(76, 40));
 
         assert!(!drawn.contains("Commands"), "the block must not be titled");
         assert!(

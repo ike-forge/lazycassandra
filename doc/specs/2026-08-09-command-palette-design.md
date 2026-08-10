@@ -180,10 +180,10 @@ actually needs.
 const WIDTH_PERCENT: u16 = 50;
 const HEIGHT_PERCENT: u16 = 70;
 /// The widest row the catalogue can produce, plus both borders and both pad
-/// columns: a `shift-tab` gutter (9), two columns of gap, the longest action
-/// (20). Below this a row would be clipped, and the panels underneath are
-/// more use than a truncated table. Same rule the message overlay follows.
-const MIN_W: u16 = 35;
+/// columns: a `ctrl-e/ctrl-y` gutter (13), two columns of gap, the longest
+/// action (20). Below this a row would be clipped, and the panels underneath
+/// are more use than a truncated table. Same rule the message overlay follows.
+const MIN_W: u16 = 39;
 /// Past this a two-column table is mostly whitespace — every row is at most
 /// 31 columns and the rest is trailing space.
 const MAX_W: u16 = 60;
@@ -193,20 +193,20 @@ const MIN_H: u16 = 8;
 
 `MIN_W` is **derived from the catalogue, not chosen**, and that makes it a
 constraint running the other way: no action may exceed 20 characters and no
-keys label 9, or the narrowest palette clips a row. §9 pins it with a test
+keys label 13, or the narrowest palette clips a row. §9 pins it with a test
 rather than leaving it as arithmetic in this document. It is what §6's wordings
 are cut to, and it is why `⏎`'s row says "fold/unfold, or read" rather than
 spelling out both halves.
 
-The consequence worth stating: at `MIN_W` = 35 and a width of half the frame,
-**no palette is drawn below 70 columns.** Nothing between 40 (the shell's own
-floor) and 70 gets one, and `?` is inert there.
+The consequence worth stating: at `MIN_W` = 39 and a width of half the frame,
+**no palette is drawn below 78 columns.** Nothing between 40 (the shell's own
+floor) and 78 gets one, and `?` is inert there.
 
 The width cap is a deliberate departure from "50%". On a 200-column terminal
-half the frame is a hundred columns holding a `shift-tab` and two words; the
-table stops being a table and becomes two distant columns the eye has to track
-between. 60 is where that stops paying, and it is the cap the message overlay
-already uses.
+half the frame is a hundred columns holding a `ctrl-e/ctrl-y` and two words;
+the table stops being a table and becomes two distant columns the eye has to
+track between. 60 is where that stops paying, and it is the cap the message
+overlay already uses.
 
 The height cap is the same argument vertically, and it is why the palette
 usually does not scroll: `min(70% of the frame, rows + 2)` means a terminal
