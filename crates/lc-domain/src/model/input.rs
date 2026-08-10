@@ -51,4 +51,21 @@ impl KeyPress {
             },
         }
     }
+
+    /// `key` with ctrl held.
+    ///
+    /// A binding of its own, never a modifier on the plain key's meaning —
+    /// `handle_key` refuses ctrl wholesale except for the arms that name it
+    /// (shortcuts.md §2).
+    #[must_use]
+    pub const fn ctrl(key: Key) -> Self {
+        Self {
+            key,
+            modifiers: Modifiers {
+                ctrl: true,
+                alt: false,
+                shift: false,
+            },
+        }
+    }
 }

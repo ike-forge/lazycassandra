@@ -3,10 +3,10 @@
 //! The palette claims to be complete, which the hint bar deliberately does not
 //! (doc/specs/2026-08-09-command-palette-design.md §2). `update::tests`'
 //! sweep is what holds that claim up: reusing [`Binding`] means a row names
-//! `Key` values rather than a string, so a row cannot describe a key no arm of
-//! `handle_key` claims.
+//! `KeyPress` values rather than a string, so a row cannot describe a press no
+//! arm of `handle_key` claims.
 
-use crate::model::Key;
+use crate::model::{Key, KeyPress};
 use crate::state::Cursor;
 use crate::view::Binding;
 use crate::view::hints::label;
@@ -20,66 +20,66 @@ pub struct Group {
 
 const GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('q')],
+        keys: &[KeyPress::new(Key::Char('q'))],
         action: "quit",
     },
     Binding {
-        keys: &[Key::Char('?')],
+        keys: &[KeyPress::new(Key::Char('?'))],
         action: "commands",
     },
     Binding {
-        keys: &[Key::Escape],
+        keys: &[KeyPress::new(Key::Escape)],
         action: "dismiss the overlay",
     },
     Binding {
-        keys: &[Key::Tab],
+        keys: &[KeyPress::new(Key::Tab)],
         action: "next panel",
     },
     Binding {
-        keys: &[Key::BackTab],
+        keys: &[KeyPress::new(Key::BackTab)],
         action: "previous panel",
     },
     Binding {
-        keys: &[Key::Char('t')],
+        keys: &[KeyPress::new(Key::Char('t'))],
         action: "focus Tables",
     },
     Binding {
-        keys: &[Key::Char('a')],
+        keys: &[KeyPress::new(Key::Char('a'))],
         action: "focus Table DDL",
     },
     Binding {
-        keys: &[Key::Char('c')],
+        keys: &[KeyPress::new(Key::Char('c'))],
         action: "focus Table contents",
     },
     Binding {
-        keys: &[Key::Char('u')],
+        keys: &[KeyPress::new(Key::Char('u'))],
         action: "focus Queries",
     },
 ];
 
 const MOTION: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Down],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Down)],
         action: "down one row",
     },
     Binding {
-        keys: &[Key::Char('k'), Key::Up],
+        keys: &[KeyPress::new(Key::Char('k')), KeyPress::new(Key::Up)],
         action: "up one row",
     },
     Binding {
-        keys: &[Key::PageDown],
+        keys: &[KeyPress::new(Key::PageDown)],
         action: "down one screen",
     },
     Binding {
-        keys: &[Key::PageUp],
+        keys: &[KeyPress::new(Key::PageUp)],
         action: "up one screen",
     },
     Binding {
-        keys: &[Key::Home],
+        keys: &[KeyPress::new(Key::Home)],
         action: "to the start",
     },
     Binding {
-        keys: &[Key::End],
+        keys: &[KeyPress::new(Key::End)],
         action: "to the end",
     },
 ];
@@ -89,15 +89,15 @@ const MOTION: &[Binding] = &[
 // `Tables`, "read" can only mean a table.
 const TABLES: &[Binding] = &[
     Binding {
-        keys: &[Key::Enter, Key::Char(' ')],
+        keys: &[KeyPress::new(Key::Enter), KeyPress::new(Key::Char(' '))],
         action: "fold/unfold, or read",
     },
     Binding {
-        keys: &[Key::Char('l'), Key::Right],
+        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Right)],
         action: "unfold the keyspace",
     },
     Binding {
-        keys: &[Key::Char('h'), Key::Left],
+        keys: &[KeyPress::new(Key::Char('h')), KeyPress::new(Key::Left)],
         action: "fold, or step out",
     },
 ];

@@ -1220,6 +1220,10 @@ mod tests {
         update(state, Msg::Input(KeyPress::new(key)))
     }
 
+    fn press_binding(state: &mut State, binding: KeyPress) -> Vec<Effect> {
+        update(state, Msg::Input(binding))
+    }
+
     /// A frame big enough for a palette. `browsing` leaves geometry at its
     /// default, whose `command_rows` is zero — which is itself a binding
     /// (`the_palette_does_not_open_where_it_cannot_be_drawn`).
@@ -2469,7 +2473,7 @@ mod tests {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);
 
-                    let effects = press(&mut state, key);
+                    let effects = press_binding(&mut state, key);
 
                     assert!(
                         crate::view::view_model(&state) != before || !effects.is_empty(),
@@ -2509,7 +2513,7 @@ mod tests {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);
 
-                    let effects = press(&mut state, key);
+                    let effects = press_binding(&mut state, key);
 
                     assert!(
                         crate::view::view_model(&state) != before || !effects.is_empty(),
@@ -3069,7 +3073,7 @@ mod tests {
             .iter()
             .flat_map(|group| group.bindings)
             .flat_map(|binding| binding.keys)
-            .copied()
+            .map(|press| press.key)
             .collect()
     }
 

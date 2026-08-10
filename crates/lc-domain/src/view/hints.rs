@@ -1,16 +1,16 @@
 //! What the focused panel responds to, as the bar will say it.
 
-use crate::model::Key;
+use crate::model::{Key, KeyPress};
 use crate::state::{Overlay, State};
 
-/// A binding, keyed by the values `handle_key` actually matches on.
+/// A binding, keyed by the presses `handle_key` actually matches on.
 ///
-/// Not a display string: a string could name a key no arm of `handle_key`
+/// Not a display string: a string could name a press no arm of `handle_key`
 /// claims and nothing would ever catch it, and a bar that lies is worse than
 /// no bar (design §2). `update::tests` presses every one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
-    pub keys: &'static [Key],
+    pub keys: &'static [KeyPress],
     pub action: &'static str,
 }
 
@@ -39,11 +39,11 @@ pub struct HintBar {
 /// and `tab panel` — which teaches only one binding — is the first to go.
 pub(crate) const GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Tab],
+        keys: &[KeyPress::new(Key::Tab)],
         action: "panel",
     },
     Binding {
-        keys: &[Key::Char('?')],
+        keys: &[KeyPress::new(Key::Char('?'))],
         action: "commands",
     },
 ];
@@ -55,7 +55,7 @@ pub(crate) const GLOBAL: &[Binding] = &[
 /// `pub(crate)` so `update`'s "every global hint does something" test can
 /// still reach it now that it has left [`GLOBAL`].
 pub(crate) const QUIT: Binding = Binding {
-    keys: &[Key::Char('q')],
+    keys: &[KeyPress::new(Key::Char('q'))],
     action: "quit",
 };
 
@@ -66,15 +66,15 @@ pub(crate) const QUIT: Binding = Binding {
 /// end is everything left for the bar to say.
 const PALETTE: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "scroll",
     },
     Binding {
-        keys: &[Key::PageDown, Key::PageUp],
+        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
     Binding {
-        keys: &[Key::Home, Key::End],
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
 ];
@@ -86,11 +86,11 @@ const PALETTE: &[Binding] = &[
 /// quitting (design §7) — both close it, so both are named.
 const PALETTE_GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('?'), Key::Escape],
+        keys: &[KeyPress::new(Key::Char('?')), KeyPress::new(Key::Escape)],
         action: "close",
     },
     Binding {
-        keys: &[Key::Char('q')],
+        keys: &[KeyPress::new(Key::Char('q'))],
         action: "quit",
     },
 ];
@@ -110,7 +110,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
     let fits = state.geometry.command_rows() > 0;
     let mut global: Vec<Hint> = GLOBAL
         .iter()
-        .filter(|binding| fits || !binding.keys.contains(&Key::Char('?')))
+        .filter(|binding| fits || !binding.keys.contains(&KeyPress::new(Key::Char('?'))))
         .map(rendered)
         .collect();
     if !state.focus.takes_text() {
@@ -130,14 +130,24 @@ fn rendered(binding: &Binding) -> Hint {
     }
 }
 
-pub(crate) fn label(keys: &[Key]) -> String {
+pub(crate) fn label(keys: &[KeyPress]) -> String {
     keys.iter().copied().map(name).collect::<Vec<_>>().join("/")
+}
+
+fn name(press: KeyPress) -> String {
+    let key = key_name(press.key);
+
+    if press.modifiers.ctrl {
+        format!("^{key}")
+    } else {
+        key
+    }
 }
 
 /// Named rather than drawn, for the keys with no printable form: the arrow
 /// glyphs collide with each other, and a terminal font may draw any of them
 /// as a box (design §3).
-fn name(key: Key) -> String {
+fn key_name(key: Key) -> String {
     match key {
         Key::Char(' ') => "space".to_owned(),
         Key::Char(character) => character.to_string(),
@@ -175,16 +185,37 @@ mod tests {
     }
 
     #[test]
+    fn a_binding_behind_ctrl_is_named_with_a_caret() {
+        assert_eq!(
+            label(&[
+                KeyPress::ctrl(Key::Char('e')),
+                KeyPress::ctrl(Key::Char('y')),
+            ]),
+            "^e/^y"
+        );
+        assert_eq!(label(&[KeyPress::new(Key::Char('j'))]), "j");
+    }
+
+    #[test]
     fn several_keys_for_one_action_join_with_a_slash() {
-        assert_eq!(label(&[Key::Char('j'), Key::Char('k')]), "j/k");
-        assert_eq!(label(&[Key::PageDown, Key::PageUp]), "pgdn/pgup");
+        assert_eq!(
+            label(&[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))]),
+            "j/k"
+        );
+        assert_eq!(
+            label(&[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)]),
+            "pgdn/pgup"
+        );
     }
 
     #[test]
     fn a_key_with_no_printable_form_is_named_rather_than_drawn() {
-        assert_eq!(label(&[Key::Home, Key::End]), "home/end");
-        assert_eq!(label(&[Key::Char(' ')]), "space");
-        assert_eq!(label(&[Key::Tab]), "tab");
+        assert_eq!(
+            label(&[KeyPress::new(Key::Home), KeyPress::new(Key::End)]),
+            "home/end"
+        );
+        assert_eq!(label(&[KeyPress::new(Key::Char(' '))]), "space");
+        assert_eq!(label(&[KeyPress::new(Key::Tab)]), "tab");
     }
 
     #[test]

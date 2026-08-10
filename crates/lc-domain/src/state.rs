@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use crate::commands::CommandsPanel;
 use crate::contents::ContentsPanel;
 use crate::editor::Editor;
-use crate::model::{ConnId, DbError, Key, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::style::Severity;
 use crate::tree::TablesPanel;
@@ -164,61 +164,61 @@ pub enum Panel {
 
 const TABLES_HINTS: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "move",
     },
     Binding {
-        keys: &[Key::Char('l'), Key::Char('h')],
+        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Char('h'))],
         action: "fold",
     },
     // `⏎` on a keyspace folds it and on a table reads it. The bar names the
     // focused panel and nothing finer (design §1), so one label has to cover
     // both — "open" is true of either row, "read" of half of them.
     Binding {
-        keys: &[Key::Enter],
+        keys: &[KeyPress::new(Key::Enter)],
         action: "open",
     },
 ];
 
 const DDL_HINTS: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "scroll",
     },
     Binding {
-        keys: &[Key::PageDown, Key::PageUp],
+        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
     Binding {
-        keys: &[Key::Home, Key::End],
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "move",
     },
     Binding {
-        keys: &[Key::PageDown, Key::PageUp],
+        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
     Binding {
-        keys: &[Key::Home, Key::End],
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
 ];
 
 const QUERIES_HINTS: &[Binding] = &[
     Binding {
-        keys: &[Key::Enter],
+        keys: &[KeyPress::new(Key::Enter)],
         action: "newline",
     },
     // Named here and nowhere else: `Esc` only leaves a panel that takes text,
     // so this is the one bar where saying so is true (hint bar design §3).
     Binding {
-        keys: &[Key::Escape],
+        keys: &[KeyPress::new(Key::Escape)],
         action: "leave",
     },
 ];
