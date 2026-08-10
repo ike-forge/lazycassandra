@@ -18,9 +18,10 @@ pub struct ContentsPanel {
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
     state: ContentsState,
-    /// Narrows the rows shown from `state`. Private for the reason `state`
-    /// is: setting it is going to owe a cursor clamp, and a public field
-    /// would let a caller skip it (design §2.1, §2.2).
+    /// Flags the cells the applied filter matches; the grid keeps every row
+    /// (design §4.3). Private for uniformity with the other two panels'
+    /// filters, not because setting it here owes a repair — Contents filters
+    /// nothing, so there is no clamp to skip.
     filter: Option<Filter>,
 }
 
@@ -79,14 +80,17 @@ impl ContentsPanel {
         &self.state
     }
 
-    /// The filter narrowing the rows shown, if any.
+    /// The filter flagging matching cells, if any. Narrows nothing: every row
+    /// the cluster returned is still drawn (design §4.3).
     #[must_use]
     pub fn filter(&self) -> Option<&Filter> {
         self.filter.as_ref()
     }
 
-    /// Sets the filter. Not public: [`State::apply_filter`](crate::state::State::apply_filter)
-    /// is the one caller, and the cursor clamp a change here owes is its job.
+    /// Sets the filter. Not public, for uniformity with
+    /// [`crate::tree::TablesPanel::set_filter`]: [`State::apply_filter`](crate::state::State::apply_filter)
+    /// is the one caller, and there is no repair this owes — Contents has no
+    /// clamp to keep in step with the filter the way Tables' cursor does.
     pub(crate) fn set_filter(&mut self, filter: Option<Filter>) {
         self.filter = filter;
     }
