@@ -1132,15 +1132,27 @@ mod tests {
         state.ddl.cursor.go_to(4, lc_domain::view::ddl_rows(&state));
 
         let buffer = draw_state(100, 41, &state);
-        let highlighted = highlighted_rows(&buffer);
 
-        assert!(
-            highlighted.len() > 1,
-            "a wrapped value is one cursor stop, so all of its lines are the selection"
+        assert_eq!(
+            highlighted_rows(&buffer),
+            [35, 36],
+            "a wrapped value is one cursor stop, so exactly its own two lines \
+             are the selection — not fewer, and not bleeding into comment below"
         );
-        assert!(
-            highlighted.windows(2).all(|pair| pair[1] == pair[0] + 1),
-            "the lines of one row are contiguous, got {highlighted:?}"
+    }
+
+    #[test]
+    fn a_one_line_property_has_exactly_its_own_line_reversed() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        state.ddl.cursor.go_to(3, lc_domain::view::ddl_rows(&state));
+
+        let buffer = draw_state(100, 41, &state);
+
+        assert_eq!(
+            highlighted_rows(&buffer),
+            [34],
+            "gc_grace_seconds fits one line, so exactly it is the selection"
         );
     }
 
@@ -1151,14 +1163,96 @@ mod tests {
         state.ddl.cursor.to_start();
 
         let buffer = draw_state(100, 41, &state);
+        let highlighted = highlighted_rows(&buffer);
 
-        for row in highlighted_rows(&buffer) {
+        assert!(
+            !highlighted.is_empty(),
+            "the first row must be drawn as the selection"
+        );
+        for row in highlighted {
             let text = row_text(&buffer, row);
             assert!(
                 !text.ends_with("Partition Key") && !text.starts_with("Options"),
                 "row {row} is a heading: {text:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_selected_block_scrolled_fully_out_of_view_is_not_highlighted() {
+        // The Ddl half of `a_selection_scrolled_out_of_view_is_not_highlighted`
+        // and its tree counterpart: `details.rs` argues in prose that
+        // `Paragraph` needs no such guard because it only ever draws the lines
+        // it is scrolled to. This is what checks that argument.
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        let details = ddl_details(&state);
+        state.ddl.cursor.go_to(0, details.row_count());
+
+        // 40x20: a fourteen-column, five-row Ddl body — narrow enough that
+        // `orders()` wraps well past it.
+        let total = crate::details::lay_out(&details, 0, 14, Theme::TerminalDefault)
+            .lines
+            .len();
+        assert!(
+            total > 5,
+            "the fixture must overflow the panel or this test proves nothing"
+        );
+        state.ddl.scroll.to_end(total, 5);
+
+        let buffer = draw_state(40, 20, &state);
+        let reversed = (13..18).any(|y| {
+            buffer
+                .cell((1, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        });
+
+        assert!(
+            !reversed,
+            "customer_id scrolled off the top must not still be drawn as the selection"
+        );
+    }
+
+    #[test]
+    fn a_selected_block_scrolled_partly_out_of_view_keeps_its_visible_lines_highlighted() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        let details = ddl_details(&state);
+        let last = details.row_count() - 1;
+        state.ddl.cursor.go_to(last, details.row_count());
+
+        // `comment` is the last row and wraps to three lines at this width;
+        // scrolling thirteen lines down cuts its first two into view and
+        // leaves the third below the fold.
+        let total = crate::details::lay_out(&details, last, 14, Theme::TerminalDefault)
+            .lines
+            .len();
+        for _ in 0..13 {
+            state.ddl.scroll.down(total, 5);
+        }
+
+        let buffer = draw_state(40, 20, &state);
+        let reversed = |y: u16| {
+            buffer
+                .cell((1, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+
+        assert!(!reversed(13), "this line belongs to the row above comment");
+        assert!(!reversed(14), "this line belongs to the row above comment");
+        assert!(!reversed(15), "this line belongs to the row above comment");
+        assert!(
+            reversed(16),
+            "comment's first visible line stays highlighted"
+        );
+        assert!(
+            reversed(17),
+            "comment's second visible line stays highlighted"
+        );
     }
 
     #[test]

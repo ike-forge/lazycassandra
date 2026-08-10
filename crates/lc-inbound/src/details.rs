@@ -132,16 +132,12 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
 /// it on the spans instead, so the name and value can differ
 /// (`property_lines`). Patching only one of the two would lose the token
 /// colour for whichever row shape uses the other.
-fn patched(line: Line<'static>, style: Style) -> Line<'static> {
-    let base = line.style.patch(style);
-
-    Line::from(
-        line.spans
-            .into_iter()
-            .map(|span| TextSpan::styled(span.content, span.style.patch(style)))
-            .collect::<Vec<_>>(),
-    )
-    .style(base)
+fn patched(mut line: Line<'static>, style: Style) -> Line<'static> {
+    line.style = line.style.patch(style);
+    for span in &mut line.spans {
+        span.style = span.style.patch(style);
+    }
+    line
 }
 
 fn row_lines(row: &DetailRow, width: usize, style: Style, theme: Theme) -> Vec<Line<'static>> {
