@@ -144,7 +144,7 @@ mod tests {
     }
 
     fn drawn(focus: Panel, width: u16) -> String {
-        line(&bar_of(focus), width, Theme::TerminalDefault)
+        line(&bar_of(focus), width, Theme::default())
             .spans
             .iter()
             .map(|span| span.content.as_ref())
@@ -186,12 +186,9 @@ mod tests {
 
         terminal
             .draw(|frame| {
-                geometry = crate::render::render(
-                    frame,
-                    &view_model(&State::default()),
-                    Theme::TerminalDefault,
-                )
-                .geometry;
+                geometry =
+                    crate::render::render(frame, &view_model(&State::default()), Theme::default())
+                        .geometry;
             })
             .expect("TestBackend always draws");
 
@@ -206,7 +203,7 @@ mod tests {
         };
         let bar = view_model(&state).hints;
         let drawn = |width: u16| -> String {
-            line(&bar, width, Theme::TerminalDefault)
+            line(&bar, width, Theme::default())
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -271,7 +268,7 @@ mod tests {
         };
 
         assert_eq!(
-            line(&bar, 15, Theme::TerminalDefault)
+            line(&bar, 15, Theme::default())
                 .spans
                 .iter()
                 .map(|span| span.content.as_ref())
@@ -291,7 +288,7 @@ mod tests {
                 }],
                 global: vec![],
             };
-            line(&bar, 80, Theme::TerminalDefault)
+            line(&bar, 80, Theme::default())
         };
 
         let live = of(Liveness::Live);
@@ -313,21 +310,18 @@ mod tests {
             live.spans[1].style, inert.spans[1].style,
             "an inert key must not read as pressable"
         );
-        assert_eq!(
-            inert.spans[1].style,
-            Theme::TerminalDefault.style(Token::Muted)
-        );
+        assert_eq!(inert.spans[1].style, Theme::default().style(Token::Muted));
     }
 
     #[test]
     fn the_key_and_its_action_are_drawn_differently() {
-        let line = line(&bar_of(Panel::Tables), 80, Theme::TerminalDefault);
+        let line = line(&bar_of(Panel::Tables), 80, Theme::default());
         let keys = line
             .spans
             .iter()
             .find(|span| span.content.as_ref() == "j/k")
             .expect("the first hint's key");
 
-        assert_eq!(keys.style, Theme::TerminalDefault.style(Token::HintKey));
+        assert_eq!(keys.style, Theme::default().style(Token::HintKey));
     }
 }

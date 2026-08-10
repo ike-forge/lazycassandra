@@ -38,6 +38,20 @@ pub enum Token {
     /// where you are, the cell says what a command would act on
     /// (doc/specs/2026-08-10-table-display-design.md §3).
     SelectedCell,
+    /// A keyspace the user made, in the Tables tree.
+    Keyspace,
+    /// A table the user made, in the Tables tree.
+    Table,
+    /// A CQL keyword.
+    ///
+    /// Defined and themed but not yet emitted: there is no highlighter. A
+    /// theme is not complete without it (doc/specs/2026-08-10-themes-design.md
+    /// §3).
+    Keyword,
+    /// A keyspace, table or column name inside a statement.
+    Reference,
+    /// A string or numeric literal inside a statement.
+    Literal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -35,7 +35,7 @@ pub(crate) fn line(activity: Activity) -> Line<'static> {
     };
 
     let mut loader = KittLoader::build(
-        crate::theme::ACCENT,
+        crate::theme::Theme::default().palette().accent,
         usize::from(WIDTH),
         TRAIL,
         HOLD_START,
@@ -103,7 +103,7 @@ mod tests {
         line(activity)
             .spans
             .iter()
-            .position(|span| span.style.fg == Some(crate::theme::ACCENT))
+            .position(|span| span.style.fg == Some(crate::theme::Theme::default().palette().accent))
     }
 
     #[test]
