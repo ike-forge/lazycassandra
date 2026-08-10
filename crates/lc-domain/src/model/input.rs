@@ -40,8 +40,7 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
-    /// Nothing held — what a bare key press carries, and what all but one
-    /// binding declares.
+    /// Nothing held — what a bare key press carries.
     pub const NONE: Self = Self {
         ctrl: false,
         alt: false,
@@ -55,6 +54,22 @@ impl KeyPress {
         Self {
             key,
             modifiers: Modifiers::NONE,
+        }
+    }
+
+    /// `key` with ctrl held.
+    ///
+    /// A binding of its own, never a modifier on the plain key's meaning —
+    /// `handle_key` refuses ctrl wholesale except for the arms that name it
+    /// (shortcuts.md §2).
+    #[must_use]
+    pub const fn ctrl(key: Key) -> Self {
+        Self {
+            key,
+            modifiers: Modifiers {
+                ctrl: true,
+                ..Modifiers::NONE
+            },
         }
     }
 }

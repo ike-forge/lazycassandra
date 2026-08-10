@@ -460,14 +460,14 @@ async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
         table.sections[1].rows,
         [
             DetailRow::Property {
-                name: "comment".to_owned(),
-                value: "The orders table.".to_owned(),
-            },
-            DetailRow::Property {
                 name: "gc_grace_seconds".to_owned(),
                 value: "864000".to_owned(),
             },
+            DetailRow::Property {
+                name: "comment".to_owned(),
+                value: "The orders table.".to_owned(),
+            },
         ],
-        "importance order, not the alphabetical order the map stores"
+        "layout order, not the alphabetical order the map stores"
     );
 }

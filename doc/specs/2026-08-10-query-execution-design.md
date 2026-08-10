@@ -48,6 +48,15 @@ unchanged: **a ctrl key is a binding of its own, never a synonym for the plain
 one.** `ctrl-j` still does nothing. Alt stays refused wholesale, and so does
 ctrl+alt together — a two-modifier chord is a third layer, undesigned.
 
+> **Superseded on merge (2026-08-10).** The layer did not open with one
+> member. The Table DDL cursor slice
+> ([design](2026-08-10-ddl-selection-design.md) §4.1) opened it in parallel
+> with `ctrl-e`/`ctrl-y`, and the merge of the two branches landed a layer of
+> three. The dispatcher is named `ctrl_key`, not `ctrl`. Everything the
+> section argues for `ctrl-r` — the key choice, the shell collision, and the
+> half of the rule that survives — still holds; only "exactly one member" and
+> the function's name do not. `doc/shortcuts.md` §2 carries the current rule.
+
 ## 2. Where it is dispatched
 
 `handle_key`'s early return splits in place. It stays above the palette check
@@ -220,6 +229,22 @@ palette both render `ctrl-r run`. A bool field is rejected for the reason
 conventions.md §1 rejects bools generally, and `Modifiers` is not a new
 vocabulary — it is the one the domain already uses for exactly this.
 
+> **Superseded on merge (2026-08-10).** `Binding` did not grow a `modifiers`
+> field. The Table DDL cursor slice reached the same conclusion from the same
+> premise and answered it by changing `keys` to `&'static [KeyPress]`
+> (master, `refactor(hints): key a binding by a press rather than a key`),
+> which carries the modifier per key rather than per binding. That shape won
+> the merge: it is strictly more expressive, and it needs no `Modifiers` field
+> on a type whose whole job is to name presses. `Modifiers::NONE` survives, as
+> `KeyPress::new`'s body. The label is `^r` rather than `ctrl-r`: `hints::name`
+> prefixes a caret per press, which is master's convention and the one the
+> `^e`/`^y` hints already use. The tests this section named,
+> `a_ctrl_binding_is_labelled_with_its_modifier` and
+> `an_unmodified_binding_is_labelled_bare`, were dropped as duplicates of
+> master's `a_binding_behind_ctrl_is_named_with_a_caret`, which asserts both
+> halves. The sweeps press `binding.keys` directly rather than rebuilding a
+> `KeyPress` from a separate field.
+
 ## 8. Visibility
 
 `QUERIES_HINTS` gains `ctrl-r run`, first in the list: it is what the panel is
@@ -277,8 +302,8 @@ In `update.rs` unless noted.
 | A typed subject titles the panel in one line | `a_typed_subject_collapses_to_one_line` (`contents.rs`) |
 | The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding`, `the_palette_has_a_queries_section` (`commands.rs`) |
 | The bar greys it while the buffer has nothing to run | `the_run_hint_is_inert_while_there_is_nothing_to_run`, `the_run_hint_is_live_once_there_is_a_statement`, `nothing_but_the_run_hint_is_ever_inert` (`view/hints.rs`), `an_inert_hint_is_greyed_rather_than_dropped` (`lc-inbound`'s `hints.rs`) |
-| A modifier reaches the label | `a_ctrl_binding_is_labelled_with_its_modifier`, `an_unmodified_binding_is_labelled_bare` (`view/hints.rs`) |
-| Every binding is pressed as written | the sweeps, pressing `binding.modifiers`: `every_key_the_palette_lists_does_something`, `no_key_does_anything_the_palette_does_not_list`, `every_hint_the_bar_shows_does_something` |
+| A modifier reaches the label | `a_binding_behind_ctrl_is_named_with_a_caret` (`view/hints.rs`) — see §7's note |
+| Every binding is pressed as written | the sweeps, pressing `binding.keys` whole: `every_key_the_palette_lists_does_something`, `no_key_does_anything_the_palette_does_not_list`, `every_hint_the_bar_shows_does_something` |
 | The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
 
 The Queries group of `every_key_the_palette_lists_does_something` is answered

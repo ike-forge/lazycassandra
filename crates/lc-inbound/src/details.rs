@@ -10,14 +10,25 @@
 //! a comment carrying wide characters misaligns by a column, which `ratatui`
 //! clips rather than corrupts, and a `unicode-width` dependency is not worth
 //! that.
+//!
+//! A row's selection spans as many lines as it wrapped to
+//! (doc/specs/2026-08-10-ddl-selection-design.md §5.2), so `lay_out` reports
+//! back where it drew the highlight as a [`Span`] over the wrapped lines,
+//! rather than the row index the cursor carries in. `List` and `Table` need a
+//! guard against a selection scrolled out of view, because a stateful widget
+//! insists on scrolling one it cannot see back into view; `Paragraph` carries
+//! no selection of its own, and only ever draws the lines it is scrolled to,
+//! clipping the rest — so a highlight above or below the offset is simply
+//! never drawn, and there is nothing here to guard.
 
 use lc_domain::model::ClusteringOrder;
+use lc_domain::state::Span;
 use lc_domain::style::Token;
-use lc_domain::view::{DetailRow, Details, Group, Section};
+use lc_domain::view::{DetailRow, Details, Group};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span as TextSpan};
 use ratatui::widgets::Paragraph;
 
 use crate::theme::Theme;
@@ -30,34 +41,53 @@ const INDENT: usize = 2;
 const TYPE_INDENT: usize = 4;
 const ELLIPSIS: char = '…';
 
+/// A body's lines, and where the selected row landed among them.
+pub(crate) struct Laid {
+    pub(crate) lines: Vec<Line<'static>>,
+    pub(crate) selection: Span,
+}
+
 pub(crate) fn render(
     frame: &mut Frame,
     area: Rect,
     details: &Details,
+    selected: usize,
     offset: usize,
     theme: Theme,
-) -> crate::body::Extent {
-    let lines = lines(details, usize::from(area.width), theme);
-    let total = lines.len();
+) -> (crate::body::Extent, Span) {
+    let laid = lay_out(details, selected, usize::from(area.width), theme);
+    let total = laid.lines.len();
     // `Paragraph::scroll` is u16, and a body past 65535 lines is unreachable;
     // the extent keeps the offset itself, so the thumb stays right regardless.
     let scroll = u16::try_from(offset).unwrap_or(u16::MAX);
 
-    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), area);
+    frame.render_widget(Paragraph::new(laid.lines).scroll((scroll, 0)), area);
 
-    crate::body::Extent {
-        position: offset,
-        total,
-        visible: usize::from(area.height),
-    }
+    (
+        crate::body::Extent {
+            position: offset,
+            total,
+            visible: usize::from(area.height),
+        },
+        laid.selection,
+    )
 }
 
-/// Every line the body occupies at `width`.
+/// Every line the body occupies at `width`, with the selected row highlighted
+/// across all of its own.
 ///
-/// Also what the frame reports back as `Geometry::ddl_lines`, so the domain
-/// can bound an offset over text it cannot wrap itself (design §2).
-pub(crate) fn lines(details: &Details, width: usize, theme: Theme) -> Vec<Line<'static>> {
+/// The span is what the frame reports back as `Geometry::ddl_selection`, so
+/// the domain can bound an offset over text it cannot wrap itself
+/// (doc/specs/2026-08-10-ddl-selection-design.md §5.4). It is measured
+/// against every line this function produces, never against the ones a
+/// caller happens to scroll into view — an offset must never feed back into
+/// what is measured, or a redraw could chase its own tail
+/// (architecture.md §3).
+pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: Theme) -> Laid {
     let mut lines = vec![Line::raw(truncate(&details.heading, width)), Line::raw("")];
+    let mut selection = Span::default();
+    let mut row = 0;
+
     for (index, section) in details.sections.iter().enumerate() {
         // The one row spent on separation, and only where it buys the split
         // between what the table is and what it is configured to do. A section
@@ -65,28 +95,49 @@ pub(crate) fn lines(details: &Details, width: usize, theme: Theme) -> Vec<Line<'
         if index > 0 && section.group == Group::Settings {
             lines.push(Line::raw(""));
         }
-        lines.extend(section_lines(section, width, theme));
+
+        let style = section
+            .token
+            .map_or_else(Style::new, |token| theme.style(token));
+
+        lines.push(Line::styled(truncate(&section.heading, width), style));
+
+        for detail in &section.rows {
+            let mut drawn = row_lines(detail, width, style, theme);
+
+            if row == selected {
+                let highlight = theme.style(Token::Selected);
+                drawn = drawn
+                    .into_iter()
+                    .map(|line| patched(line, highlight))
+                    .collect();
+                selection = Span {
+                    first: lines.len(),
+                    lines: drawn.len(),
+                };
+            }
+
+            lines.extend(drawn);
+            row += 1;
+        }
     }
 
-    lines
+    Laid { lines, selection }
 }
 
-/// A heading and its rows, with no blank line of their own: the heading is
-/// unindented and styled, which separates the groups without spending a line
-/// on each in a panel that has few to spare.
-fn section_lines(section: &Section, width: usize, theme: Theme) -> Vec<Line<'static>> {
-    let style = section
-        .token
-        .map_or_else(Style::new, |token| theme.style(token));
-
-    std::iter::once(Line::styled(truncate(&section.heading, width), style))
-        .chain(
-            section
-                .rows
-                .iter()
-                .flat_map(|row| row_lines(row, width, style, theme)),
-        )
-        .collect()
+/// `style` patched onto both the line's own style and each of its spans'.
+///
+/// A column line carries its colour on the [`Line`] itself (`Line::styled`
+/// with an unstyled span), while a property line with a name and a value puts
+/// it on the spans instead, so the name and value can differ
+/// (`property_lines`). Patching only one of the two would lose the token
+/// colour for whichever row shape uses the other.
+fn patched(mut line: Line<'static>, style: Style) -> Line<'static> {
+    line.style = line.style.patch(style);
+    for span in &mut line.spans {
+        span.style = span.style.patch(style);
+    }
+    line
 }
 
 fn row_lines(row: &DetailRow, width: usize, style: Style, theme: Theme) -> Vec<Line<'static>> {
@@ -145,17 +196,17 @@ fn property_lines(
     let label = theme.style(Token::PropertyName);
 
     if value.is_empty() {
-        return vec![Line::from(Span::styled(truncate(name, width), label))];
+        return vec![Line::from(TextSpan::styled(truncate(name, width), label))];
     }
 
     if let Some(gap) = gap(name, value, width) {
         return vec![Line::from(vec![
-            Span::styled(name.to_owned(), label),
-            Span::styled(format!("{}{value}", " ".repeat(gap)), style),
+            TextSpan::styled(name.to_owned(), label),
+            TextSpan::styled(format!("{}{value}", " ".repeat(gap)), style),
         ])];
     }
 
-    std::iter::once(Line::from(Span::styled(truncate(name, width), label)))
+    std::iter::once(Line::from(TextSpan::styled(truncate(name, width), label)))
         .chain(
             wrap(value, width, INDENT)
                 .into_iter()
@@ -233,6 +284,7 @@ fn count(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use lc_domain::style::Token;
+    use lc_domain::view::Section;
 
     use super::*;
 
@@ -381,6 +433,57 @@ mod tests {
     #[test]
     fn a_property_with_an_empty_value_is_just_its_name() {
         assert_eq!(property("comment", "", 23), ["comment"]);
+    }
+
+    #[test]
+    fn lay_out_reports_the_span_of_the_row_it_highlighted() {
+        let details = Details {
+            heading: "shop.orders".to_owned(),
+            sections: vec![
+                Section {
+                    heading: "Partition Key".to_owned(),
+                    group: Group::Shape,
+                    token: Some(Token::PartitionKey),
+                    rows: vec![DetailRow::Column {
+                        name: "customer_id".to_owned(),
+                        order: None,
+                        cql_type: "uuid".to_owned(),
+                    }],
+                },
+                Section {
+                    heading: "Options".to_owned(),
+                    group: Group::Settings,
+                    token: None,
+                    rows: vec![DetailRow::Property {
+                        name: "comment".to_owned(),
+                        value: "Order history for one customer, spanning several \
+                                wrapped lines once it is drawn at this width."
+                            .to_owned(),
+                    }],
+                },
+            ],
+        };
+
+        let laid = lay_out(&details, 0, 28, Theme::TerminalDefault);
+
+        assert_eq!(
+            laid.selection,
+            Span { first: 3, lines: 1 },
+            "heading, blank, section heading, then the first column"
+        );
+
+        let laid = lay_out(
+            &details,
+            details.row_count() - 1,
+            28,
+            Theme::TerminalDefault,
+        );
+        assert!(laid.selection.lines > 1, "the comment wraps");
+        assert_eq!(
+            laid.selection.first + laid.selection.lines,
+            laid.lines.len(),
+            "the last row's span ends where the body does"
+        );
     }
 
     #[test]

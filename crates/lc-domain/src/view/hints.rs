@@ -1,18 +1,16 @@
 //! What the focused panel responds to, as the bar will say it.
 
-use crate::model::{Key, Modifiers};
+use crate::model::{Key, KeyPress};
 use crate::state::{Overlay, State};
 
-/// A binding, keyed by the values `handle_key` actually matches on.
+/// A binding, keyed by the presses `handle_key` actually matches on.
 ///
-/// Not a display string: a string could name a key no arm of `handle_key`
+/// Not a display string: a string could name a press no arm of `handle_key`
 /// claims and nothing would ever catch it, and a bar that lies is worse than
-/// no bar (design §2). `update::tests` presses every one of these, modifier
-/// included — which is why the modifier is here and not implied.
+/// no bar (design §2). `update::tests` presses every one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
-    pub keys: &'static [Key],
-    pub modifiers: Modifiers,
+    pub keys: &'static [KeyPress],
     pub action: &'static str,
 }
 
@@ -53,13 +51,11 @@ pub struct HintBar {
 /// and `tab panel` — which teaches only one binding — is the first to go.
 pub(crate) const GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Tab],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Tab)],
         action: "panel",
     },
     Binding {
-        keys: &[Key::Char('?')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('?'))],
         action: "commands",
     },
 ];
@@ -71,8 +67,7 @@ pub(crate) const GLOBAL: &[Binding] = &[
 /// `pub(crate)` so `update`'s "every global hint does something" test can
 /// still reach it now that it has left [`GLOBAL`].
 pub(crate) const QUIT: Binding = Binding {
-    keys: &[Key::Char('q')],
-    modifiers: Modifiers::NONE,
+    keys: &[KeyPress::new(Key::Char('q'))],
     action: "quit",
 };
 
@@ -83,18 +78,15 @@ pub(crate) const QUIT: Binding = Binding {
 /// end is everything left for the bar to say.
 const PALETTE: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Char('k')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "scroll",
     },
     Binding {
-        keys: &[Key::PageDown, Key::PageUp],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
     Binding {
-        keys: &[Key::Home, Key::End],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
 ];
@@ -106,13 +98,11 @@ const PALETTE: &[Binding] = &[
 /// quitting (design §7) — both close it, so both are named.
 const PALETTE_GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('?'), Key::Escape],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('?')), KeyPress::new(Key::Escape)],
         action: "close",
     },
     Binding {
-        keys: &[Key::Char('q')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('q'))],
         action: "quit",
     },
 ];
@@ -132,7 +122,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
     let fits = state.geometry.command_rows() > 0;
     let mut global: Vec<Hint> = GLOBAL
         .iter()
-        .filter(|binding| fits || !binding.keys.contains(&Key::Char('?')))
+        .filter(|binding| fits || !binding.keys.contains(&KeyPress::new(Key::Char('?'))))
         .map(rendered)
         .collect();
     if !state.focus.takes_text() {
@@ -156,13 +146,13 @@ pub(crate) fn bar(state: &State) -> HintBar {
 /// `ctrl-r` on an empty or whitespace-only buffer submits nothing, silently
 /// (query execution design §3), and an empty buffer is the panel's starting
 /// state — so the hint the panel leads with would otherwise be a lie in the
-/// first frame the user sees. Matched by key rather than by action, for the
+/// first frame the user sees. Matched by press rather than by action, for the
 /// same reason `?` is above.
 ///
 /// Nothing else in the bar is conditional today; the mechanism is general and
 /// this is its one use.
 fn liveness(state: &State, binding: &Binding) -> Liveness {
-    let runs = binding.modifiers.ctrl && binding.keys == [Key::Char('r')];
+    let runs = binding.keys == [KeyPress::ctrl(Key::Char('r'))];
     if runs && state.queries.text().trim().is_empty() {
         Liveness::Inert
     } else {
@@ -172,38 +162,30 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
 
 fn rendered(binding: &Binding) -> Hint {
     Hint {
-        keys: label(binding),
+        keys: label(binding.keys),
         action: binding.action,
         liveness: Liveness::Live,
     }
 }
 
-/// Shift is never consulted: a shifted letter already arrives as a distinct
-/// `Key::Char` and `shift-tab` is `Key::BackTab`, so no binding sets it.
-pub(crate) fn label(binding: &Binding) -> String {
-    let keys = binding
-        .keys
-        .iter()
-        .copied()
-        .map(name)
-        .collect::<Vec<_>>()
-        .join("/");
+pub(crate) fn label(keys: &[KeyPress]) -> String {
+    keys.iter().copied().map(name).collect::<Vec<_>>().join("/")
+}
 
-    let mut label = String::new();
-    if binding.modifiers.ctrl {
-        label.push_str("ctrl-");
+fn name(press: KeyPress) -> String {
+    let key = key_name(press.key);
+
+    if press.modifiers.ctrl {
+        format!("^{key}")
+    } else {
+        key
     }
-    if binding.modifiers.alt {
-        label.push_str("alt-");
-    }
-    label.push_str(&keys);
-    label
 }
 
 /// Named rather than drawn, for the keys with no printable form: the arrow
 /// glyphs collide with each other, and a terminal font may draw any of them
 /// as a box (design §3).
-fn name(key: Key) -> String {
+fn key_name(key: Key) -> String {
     match key {
         Key::Char(' ') => "space".to_owned(),
         Key::Char(character) => character.to_string(),
@@ -240,26 +222,38 @@ mod tests {
         }
     }
 
-    /// An unmodified binding, for tests that only care about the keys.
-    fn bound(keys: &'static [Key]) -> Binding {
-        Binding {
-            keys,
-            modifiers: Modifiers::NONE,
-            action: "",
-        }
+    #[test]
+    fn a_binding_behind_ctrl_is_named_with_a_caret() {
+        assert_eq!(
+            label(&[
+                KeyPress::ctrl(Key::Char('e')),
+                KeyPress::ctrl(Key::Char('y')),
+            ]),
+            "^e/^y"
+        );
+        assert_eq!(label(&[KeyPress::new(Key::Char('j'))]), "j");
     }
 
     #[test]
     fn several_keys_for_one_action_join_with_a_slash() {
-        assert_eq!(label(&bound(&[Key::Char('j'), Key::Char('k')])), "j/k");
-        assert_eq!(label(&bound(&[Key::PageDown, Key::PageUp])), "pgdn/pgup");
+        assert_eq!(
+            label(&[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))]),
+            "j/k"
+        );
+        assert_eq!(
+            label(&[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)]),
+            "pgdn/pgup"
+        );
     }
 
     #[test]
     fn a_key_with_no_printable_form_is_named_rather_than_drawn() {
-        assert_eq!(label(&bound(&[Key::Home, Key::End])), "home/end");
-        assert_eq!(label(&bound(&[Key::Char(' ')])), "space");
-        assert_eq!(label(&bound(&[Key::Tab])), "tab");
+        assert_eq!(
+            label(&[KeyPress::new(Key::Home), KeyPress::new(Key::End)]),
+            "home/end"
+        );
+        assert_eq!(label(&[KeyPress::new(Key::Char(' '))]), "space");
+        assert_eq!(label(&[KeyPress::new(Key::Tab)]), "tab");
     }
 
     #[test]
@@ -355,33 +349,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unmodified_binding_is_labelled_bare() {
-        assert_eq!(
-            label(&Binding {
-                keys: &[Key::Char('j'), Key::Down],
-                modifiers: Modifiers::NONE,
-                action: "move",
-            }),
-            "j/↓"
-        );
-    }
-
-    #[test]
-    fn a_ctrl_binding_is_labelled_with_its_modifier() {
-        assert_eq!(
-            label(&Binding {
-                keys: &[Key::Char('r')],
-                modifiers: Modifiers {
-                    ctrl: true,
-                    ..Modifiers::NONE
-                },
-                action: "run",
-            }),
-            "ctrl-r"
-        );
-    }
-
-    #[test]
     fn the_queries_bar_names_the_run_binding() {
         let mut state = fits();
         state.focus = Panel::Queries;
@@ -390,7 +357,7 @@ mod tests {
 
         assert_eq!(
             panel.first().map(|hint| (hint.keys.as_str(), hint.action)),
-            Some(("ctrl-r", "run")),
+            Some(("^r", "run")),
             "the panel exists to run queries, so the bar says that first"
         );
     }

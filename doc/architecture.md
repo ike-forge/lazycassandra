@@ -324,10 +324,13 @@ in VISION §8.
 - **Does `State` stay one struct?** TEA's single-state model gets unwieldy at
   four panels. Nested per-panel state with message routing is the usual escape
   hatch; `TablesPanel` took it first and `ContentsPanel` followed, each a
-  module of its own. `editor.rs` is a third module, but it is a *buffer*
-  rather than a panel — `State.queries` is an `Editor`, not a `QueriesPanel` —
-  so the question of what routes messages to per-panel state is still open and
-  still answered by `update` dispatching by hand.
+  module of its own. `DdlPanel` took it third, the same `Cursor`-and-`Scroll`
+  shape, but stayed a struct in `state.rs` rather than earning a module of its
+  own — two fields was not enough state to need one. `editor.rs` is a third
+  module, but it is a *buffer* rather than a panel — `State.queries` is an
+  `Editor`, not a `QueriesPanel` — so the question of what routes messages to
+  per-panel state is still open and still answered by `update` dispatching by
+  hand.
 - **Where schema caching lives.** Domain (testable, but the domain starts
   holding a cache invalidation problem) or adapter (simpler domain, but cache
   behaviour becomes untestable at the fast tier).

@@ -112,7 +112,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     // opens at its top rather than halfway down the last one. Stated once here
     // rather than at each of the four paths that can move the tree selection.
     if described(state) != subject {
-        state.ddl.to_start();
+        state.ddl.cursor.to_start();
+        state.ddl.scroll.to_start();
     }
 
     clamp_lists(state);
@@ -279,18 +280,19 @@ enum Motion {
 fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     state.mark_dirty();
 
-    // alt turns a key into a separate binding, refused here rather than
-    // reinterpreted, and so does alt on top of ctrl: a two-modifier chord is a
-    // third layer and no layer is designed. shift is not checked: a shifted
-    // letter already arrives as a different Key::Char, and a shifted arrow is
-    // left as a synonym for the plain one so it stays free for a future
-    // "extend selection" binding.
+    // alt turns a key into a separate binding and none is bound, so it is
+    // refused rather than reinterpreted — including on top of ctrl, where a
+    // two-modifier chord is a third layer and no layer is designed. ctrl is
+    // refused the same way, past the arms `ctrl_key` claims. shift is not
+    // checked: a shifted letter already arrives as a different Key::Char, and
+    // a shifted arrow is left as a synonym for the plain one so it stays free
+    // for a future "extend selection" binding.
     if press.modifiers.alt {
         return Vec::new();
     }
 
     if press.modifiers.ctrl {
-        return ctrl(state, press.key);
+        return ctrl_key(state, press.key);
     }
 
     // An open palette takes the keys it uses
@@ -332,23 +334,6 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     }
 
     Vec::new()
-}
-
-/// The ctrl layer's whole key table
-/// (doc/specs/2026-08-10-query-execution-design.md §1).
-///
-/// Dispatched above the palette check, so it honours that rule itself rather
-/// than inheriting it: routing a modified key into `palette_key`, which
-/// matches on the key alone, would make `ctrl-j` move the palette cursor.
-fn ctrl(state: &mut State, key: Key) -> Vec<Effect> {
-    if matches!(state.overlay, Some(Overlay::Commands(_))) {
-        return Vec::new();
-    }
-
-    match key {
-        Key::Char('r') => run(state),
-        _ => Vec::new(),
-    }
 }
 
 /// Rows a wheel notch moves, in whatever unit the panel scrolls in. One is
@@ -428,8 +413,10 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
             state.contents.cursor.go_to(row, len);
             Vec::new()
         }
-        // Ddl and Queries are both scrolled views with nothing a press can
-        // address — lines, not rows (design §4).
+        // Queries has no rows at all. Ddl has rows now (design §3), but the
+        // hit map this press was resolved against reports lines, not rows, so
+        // a click cannot name one — click-to-select stays out of scope by
+        // design (design §7).
         Panel::Ddl | Panel::Queries => Vec::new(),
     }
 }
@@ -528,30 +515,19 @@ enum Transition {
     Close,
 }
 
-/// Applies `motion` to whatever the focused panel moves: a viewport in Ddl, a
-/// selection elsewhere.
+/// Applies `motion` to the focused panel's selection.
 ///
 /// The focused panel and no other. A wheel names the panel under the pointer
 /// and moves its viewport directly ([`wheel`]), so nothing but a key reaches
 /// here.
+///
+/// In Ddl the height is counted in wrapped lines and the cursor in rows, so a
+/// page overshoots on a run of wrapped values. Accepted rather than corrected:
+/// the fix needs a line-to-row map from the renderer, and `home`/`end` are
+/// exact regardless (design §4).
 fn scroll(state: &mut State, motion: Motion) {
     let panel = state.focus;
     let height = state.geometry.height(panel);
-
-    if panel == Panel::Ddl {
-        let len = state.geometry.ddl_lines();
-
-        match motion {
-            Motion::Down => state.ddl.down(len, height),
-            Motion::Up => state.ddl.up(),
-            Motion::PageDown => state.ddl.page_down(len, height),
-            Motion::PageUp => state.ddl.page_up(height),
-            Motion::Start => state.ddl.to_start(),
-            Motion::End => state.ddl.to_end(len, height),
-        }
-        return;
-    }
-
     let len = row_count(state, panel);
 
     let Some(cursor) = panel_cursor(state, panel) else {
@@ -568,15 +544,61 @@ fn scroll(state: &mut State, motion: Motion) {
     }
 }
 
-/// How many rows `panel`'s *cursor* moves over. Ddl scrolls a viewport rather
-/// than a selection and never reaches here; Queries never arrives here
-/// either — the editor claims the motion keys first (design §3), so this arm
-/// is unreachable in practice and kept for exhaustiveness.
+/// The ctrl layer's whole key table (doc/shortcuts.md §2).
+///
+/// Dispatched above the palette check, so it honours that rule itself rather
+/// than inheriting it: routing a modified key into `palette_key`, which
+/// matches on the key alone, would make `ctrl-j` move the palette cursor.
+/// Each arm gates on its own panel below.
+fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(state.overlay, Some(Overlay::Commands(_))) {
+        return Vec::new();
+    }
+
+    match key {
+        Key::Char('r') => run(state),
+        Key::Char('e') => ddl_scroll(state, Line::Down),
+        Key::Char('y') => ddl_scroll(state, Line::Up),
+        _ => Vec::new(),
+    }
+}
+
+/// Which way `ctrl-e` and `ctrl-y` move the Ddl viewport.
+#[derive(Clone, Copy)]
+enum Line {
+    Down,
+    Up,
+}
+
+/// Table DDL alone has a cursor and a viewport that count in different units,
+/// so it alone can have a selection its viewport has left — and so it alone
+/// needs a way to move one without the other
+/// (doc/specs/2026-08-10-ddl-selection-design.md §4.1).
+fn ddl_scroll(state: &mut State, line: Line) -> Vec<Effect> {
+    if state.focus != Panel::Ddl {
+        return Vec::new();
+    }
+
+    match line {
+        Line::Down => state.ddl.scroll.down(
+            state.geometry.ddl_lines(),
+            state.geometry.height(Panel::Ddl),
+        ),
+        Line::Up => state.ddl.scroll.up(),
+    }
+
+    Vec::new()
+}
+
+/// How many rows `panel`'s *cursor* moves over. Queries never arrives here —
+/// the editor claims the motion keys first (queries editor design §3) — so
+/// its arm is unreachable in practice and kept for exhaustiveness.
 fn row_count(state: &State, panel: Panel) -> usize {
     match panel {
         Panel::Tables => tree_rows(state),
+        Panel::Ddl => crate::view::ddl_rows(state),
         Panel::Contents => state.contents.row_count(),
-        Panel::Ddl | Panel::Queries => 0,
+        Panel::Queries => 0,
     }
 }
 
@@ -586,8 +608,9 @@ fn row_count(state: &State, panel: Panel) -> usize {
 fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
     match panel {
         Panel::Tables => Some(&mut state.tables.cursor),
+        Panel::Ddl => Some(&mut state.ddl.cursor),
         Panel::Contents => Some(&mut state.contents.cursor),
-        Panel::Ddl | Panel::Queries => None,
+        Panel::Queries => None,
     }
 }
 
@@ -623,12 +646,22 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         }
     }
 
-    let before = state.ddl;
+    // Follows here rather than in `update`'s epilogue because the epilogue's
+    // geometry describes the *previous* frame, and so the previously selected
+    // row: there is no correct offset for it to compute (design §5.4).
+    //
+    // Unconditional, and safe from the wheel without a guard: a wheel changes
+    // no height, no wrapped-line count and no span, so `lc-app` sends no
+    // measurement at all. The same covers ctrl-e and ctrl-y.
+    let before = state.ddl.scroll;
+    let height = geometry.height(Panel::Ddl);
     state
         .ddl
-        .clamp_to(geometry.ddl_lines(), geometry.height(Panel::Ddl));
+        .scroll
+        .follow_span(geometry.ddl_selection(), height);
+    state.ddl.scroll.clamp_to(geometry.ddl_lines(), height);
 
-    if state.ddl != before {
+    if state.ddl.scroll != before {
         state.mark_dirty();
     }
 
@@ -651,8 +684,9 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     Vec::new()
 }
 
-/// The panels whose viewport `update` maintains. Ddl keeps its own, moved
-/// directly by the motions that scroll it.
+/// The panels whose viewport `update` follows by index. Ddl keeps its own: its
+/// offset counts wrapped lines rather than rows, so it is followed by span
+/// in `measured` instead (design §5.1).
 const LISTS: [Panel; 2] = [Panel::Tables, Panel::Contents];
 
 /// The viewport `panel` draws through, for the panels that have one.
@@ -660,7 +694,7 @@ fn panel_scroll(state: &mut State, panel: Panel) -> Option<&mut Scroll> {
     match panel {
         Panel::Tables => Some(&mut state.tables.scroll),
         Panel::Contents => Some(&mut state.contents.scroll),
-        Panel::Ddl => Some(&mut state.ddl),
+        Panel::Ddl => Some(&mut state.ddl.scroll),
         Panel::Queries => None,
     }
 }
@@ -679,8 +713,9 @@ fn scroll_len(state: &State, panel: Panel) -> usize {
 fn cursor_index(state: &State, panel: Panel) -> usize {
     match panel {
         Panel::Tables => state.tables.cursor.index(),
+        Panel::Ddl => state.ddl.cursor.index(),
         Panel::Contents => state.contents.cursor.index(),
-        Panel::Ddl | Panel::Queries => 0,
+        Panel::Queries => 0,
     }
 }
 
@@ -709,6 +744,13 @@ fn clamp_lists(state: &mut State) {
             scroll.clamp_to(len, height);
         }
     }
+
+    // Not in the loop above: `LISTS` is the panels whose offsets are followed
+    // by index, and Ddl's offset counts lines while its cursor counts rows
+    // (design §5.1). The clamp is unconditional for the same reason the loop
+    // is — a schema reload that shrinks a table changes no geometry, so no
+    // measurement arrives to clamp against.
+    state.ddl.cursor.clamp_to(crate::view::ddl_rows(state));
 }
 
 /// Pulls the offset of each list whose selection moved, so the selection is
@@ -883,7 +925,7 @@ mod tests {
     use crate::contents::ContentsState;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
-    use crate::state::Connection;
+    use crate::state::{Connection, Span};
     use crate::tree::tests_support::schema_of as tabled_schema;
 
     fn schema_of(names: &[&str]) -> Schema {
@@ -1270,8 +1312,8 @@ mod tests {
         update(state, Msg::Input(KeyPress::new(key)))
     }
 
-    fn press_chord(state: &mut State, key: Key, modifiers: Modifiers) -> Vec<Effect> {
-        update(state, Msg::Input(KeyPress { key, modifiers }))
+    fn press_binding(state: &mut State, binding: KeyPress) -> Vec<Effect> {
+        update(state, Msg::Input(binding))
     }
 
     /// A frame big enough for a palette. `browsing` leaves geometry at its
@@ -1532,6 +1574,62 @@ mod tests {
 
         assert!(state.should_quit);
         assert_eq!(effects, vec![Effect::Quit]);
+    }
+
+    fn ctrl(state: &mut State, key: Key) -> Vec<Effect> {
+        update(state, Msg::Input(KeyPress::ctrl(key)))
+    }
+
+    #[test]
+    fn ctrl_e_and_ctrl_y_scroll_the_ddl_panel_without_moving_its_cursor() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        sized(&mut state, [8, 4, 8, 1], 40);
+
+        ctrl(&mut state, Key::Char('e'));
+
+        assert_eq!(state.ddl.scroll.offset(), 1);
+        assert_eq!(
+            state.ddl.cursor.index(),
+            0,
+            "the viewport moved and the selection did not"
+        );
+
+        ctrl(&mut state, Key::Char('y'));
+
+        assert_eq!(state.ddl.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn ctrl_e_belongs_to_the_ddl_panel_alone() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Tables;
+        sized(&mut state, [8, 4, 8, 1], 40);
+        let selected = state.tables.cursor.index();
+
+        ctrl(&mut state, Key::Char('e'));
+
+        assert_eq!(state.ddl.scroll.offset(), 0);
+        assert_eq!(
+            state.tables.cursor.index(),
+            selected,
+            "ctrl-e outside Ddl is inert, not a Tables binding"
+        );
+    }
+
+    #[test]
+    fn an_open_palette_swallows_ctrl_e() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        // `sized`'s command_rows is always zero, which would leave `?` inert
+        // (`open_palette`'s own guard) — set geometry directly, as `measured`
+        // above does, so the palette this test needs actually opens.
+        state.geometry = Geometry::new([8, 4, 8, 1], 40, 1);
+        press(&mut state, Key::Char('?'));
+
+        ctrl(&mut state, Key::Char('e'));
+
+        assert_eq!(state.ddl.scroll.offset(), 0);
     }
 
     /// A state focused on Queries with `text` typed into it, `\n` meaning
@@ -2158,7 +2256,7 @@ mod tests {
     }
 
     #[test]
-    fn a_panel_with_no_rows_swallows_motion_rather_than_passing_it_on() {
+    fn motion_in_one_panel_never_reaches_another() {
         let mut state = read_shop_orders();
         let tree_row = state.tables.cursor.index();
 
@@ -2167,6 +2265,63 @@ mod tests {
 
         assert_eq!(state.tables.cursor.index(), tree_row);
         assert_eq!(state.contents.cursor.index(), 0);
+    }
+
+    #[test]
+    fn motion_in_the_ddl_panel_walks_the_rows_it_describes() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        let rows = crate::view::ddl_rows(&state);
+        assert!(rows > 2, "the fixture describes a key and some options");
+
+        for _ in 0..rows + 3 {
+            press(&mut state, Key::Char('j'));
+        }
+        assert_eq!(
+            state.ddl.cursor.index(),
+            rows - 1,
+            "j stops on the last row"
+        );
+
+        press(&mut state, Key::Home);
+        assert_eq!(state.ddl.cursor.index(), 0);
+
+        press(&mut state, Key::End);
+        assert_eq!(state.ddl.cursor.index(), rows - 1);
+    }
+
+    #[test]
+    fn describing_another_node_opens_the_ddl_panel_at_its_first_row() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::End);
+        assert!(state.ddl.cursor.index() > 0);
+
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('k'));
+
+        assert_eq!(state.ddl.cursor.index(), 0);
+        assert_eq!(state.ddl.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn a_measurement_pulls_the_viewport_onto_the_selected_row() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 4, 8, 1], 40, 0).with_ddl_selection(Span {
+                first: 20,
+                lines: 2,
+            })),
+        );
+
+        assert_eq!(
+            state.ddl.scroll.offset(),
+            18,
+            "the row measured at lines 20..22 has to be on screen in a four-line panel"
+        );
     }
 
     #[test]
@@ -2258,16 +2413,17 @@ mod tests {
     }
 
     #[test]
-    fn the_ddl_panel_scrolls_a_viewport_rather_than_a_selection() {
+    fn motion_in_the_ddl_panel_moves_its_cursor_not_its_focus() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
         sized(&mut state, [0, 6, 0, 0], 20);
         let tree_row = state.tables.cursor.index();
+        let rows = crate::view::ddl_rows(&state);
 
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('j'));
 
-        assert_eq!(state.ddl.offset(), 2);
+        assert_eq!(state.ddl.cursor.index(), 2.min(rows - 1));
         assert_eq!(
             state.tables.cursor.index(),
             tree_row,
@@ -2276,36 +2432,27 @@ mod tests {
 
         press(&mut state, Key::End);
 
-        assert_eq!(
-            state.ddl.offset(),
-            14,
-            "End leaves the last line at the bottom of the panel"
-        );
+        assert_eq!(state.ddl.cursor.index(), rows - 1);
     }
 
     #[test]
-    fn a_motion_in_the_tree_leaves_the_ddl_viewport_alone() {
-        let mut state = browsing(&["a", "b", "c"]);
-        sized(&mut state, [3, 6, 0, 0], 20);
-
-        press(&mut state, Key::PageDown);
-        press(&mut state, Key::End);
-
-        assert_eq!(state.ddl.offset(), 0);
-    }
-
-    #[test]
-    fn a_motion_before_the_first_measurement_moves_nothing() {
+    fn ddl_motion_still_moves_the_cursor_before_the_first_measurement() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
+        let rows = crate::view::ddl_rows(&state);
+        assert!(
+            rows > 1,
+            "a keyspace's replication must have more than one row, or End \
+             landing on rows - 1 == 0 would hold even if the cursor never moved"
+        );
 
         press(&mut state, Key::PageDown);
         press(&mut state, Key::End);
 
         assert_eq!(
-            state.ddl.offset(),
-            0,
-            "a panel of unknown height has no page and no end"
+            state.ddl.cursor.index(),
+            rows - 1,
+            "the cursor counts rows, not the still-unmeasured panel height"
         );
     }
 
@@ -2340,63 +2487,128 @@ mod tests {
         );
     }
 
-    /// A table scrolled to line 34 and then left must not hand the next table
-    /// its offset: the reader would open mid-document with nothing saying so.
+    /// A table scrolled to its last row and then left must not hand the next
+    /// table its cursor position: the reader would open mid-document with
+    /// nothing saying so.
     #[test]
     fn moving_the_tree_selection_returns_the_ddl_panel_to_the_top() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
         state.focus = Panel::Ddl;
-        sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        assert!(state.ddl.cursor.index() > 0);
 
         state.focus = Panel::Tables;
         press(&mut state, Key::Char('j'));
 
-        assert_eq!(state.ddl.offset(), 0, "users is a document of its own");
+        assert_eq!(
+            state.ddl.cursor.index(),
+            0,
+            "users is a document of its own"
+        );
     }
 
     #[test]
     fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.focus = Panel::Ddl;
-        sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        let end = state.ddl.cursor.index();
+        assert!(end > 0);
         state.focus = Panel::Tables;
 
         press(&mut state, Key::Char('l'));
 
         assert_eq!(
-            state.ddl.offset(),
-            34,
+            state.ddl.cursor.index(),
+            end,
             "shop is still the selected node, so the panel is still on its description"
         );
 
         // A second `l` steps onto shop's first table, which is a new subject.
         press(&mut state, Key::Char('l'));
 
-        assert_eq!(state.ddl.offset(), 0);
+        assert_eq!(state.ddl.cursor.index(), 0);
     }
 
     #[test]
-    fn a_measurement_pulls_a_stale_offset_back_inside_the_panel() {
+    fn a_measurement_pulls_a_stale_scroll_offset_back_inside_the_panel() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
         sized(&mut state, [0, 6, 0, 0], 40);
-        press(&mut state, Key::End);
-        assert_eq!(state.ddl.offset(), 34);
+        state.ddl.scroll.to_end(40, 6);
+        assert_eq!(state.ddl.scroll.offset(), 34);
         state.dirty = false;
 
-        // The tree cursor moved to a table with far fewer options.
+        // The panel shrank to a wrapping of far fewer lines.
         sized(&mut state, [0, 6, 0, 0], 8);
 
-        assert_eq!(state.ddl.offset(), 2);
+        assert_eq!(state.ddl.scroll.offset(), 2);
         assert!(
             state.dirty,
             "the offset moved, so the frame must be repainted"
+        );
+    }
+
+    #[test]
+    fn the_ddl_cursor_clamps_when_the_selected_table_shrinks() {
+        use crate::model::{Column, Keyspace, PrimaryKey, Replication, TableOptions};
+
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let conn = current_conn(&state);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('l'));
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::End);
+        assert!(
+            state.ddl.cursor.index() > 0,
+            "the fixture table has more than one row"
+        );
+
+        // Same keyspace and table name, so `described()` sees no subject
+        // change — the clamp below is the only thing that can pull the
+        // cursor back in.
+        let shrunk = crate::model::Table {
+            name: "orders".to_owned(),
+            primary_key: PrimaryKey {
+                partition: vec![Column {
+                    name: "id".to_owned(),
+                    cql_type: "uuid".to_owned(),
+                }],
+                clustering: Vec::new(),
+            },
+            static_columns: Vec::new(),
+            regular_columns: Vec::new(),
+            options: TableOptions::default(),
+        };
+        let schema = Schema {
+            keyspaces: [(
+                "shop".to_owned(),
+                Keyspace {
+                    name: "shop".to_owned(),
+                    replication: Replication::SimpleStrategy { factor: 1 },
+                    tables: [("orders".to_owned(), shrunk)].into_iter().collect(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema),
+            },
+        );
+
+        let rows = crate::view::ddl_rows(&state);
+        assert_eq!(rows, 1, "one partition column and nothing else");
+        assert_eq!(
+            state.ddl.cursor.index(),
+            0,
+            "the clamp must pull the cursor back even though no measurement arrived"
         );
     }
 
@@ -2404,6 +2616,8 @@ mod tests {
     /// two keyspaces with the second unfolded, a page of rows under the
     /// Contents cursor, and a DDL document longer than its panel. A cursor
     /// resting on 0 would make `k` and `home` inert and fail a correct hint.
+    /// The Ddl viewport is likewise nudged off zero, or `ctrl-y` would find
+    /// nothing to scroll up over.
     fn populated(focus: Panel) -> State {
         let mut state = browsing_tables(&[("alpha", &["a1"]), ("shop", &["orders", "users"])]);
         state.tables.cursor.go_to(1, 2);
@@ -2430,7 +2644,9 @@ mod tests {
         }
 
         sized(&mut state, [3, 3, 3, 3], 40);
-        state.ddl.page_down(40, 3);
+        let ddl_len = crate::view::ddl_rows(&state);
+        state.ddl.cursor.page_down(ddl_len, 3);
+        state.ddl.scroll.down(40, 3);
         state.focus = focus;
 
         state
@@ -2475,12 +2691,12 @@ mod tests {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);
 
-                    let effects = press_chord(&mut state, key, binding.modifiers);
+                    let effects = press_binding(&mut state, key);
 
                     assert!(
                         crate::view::view_model(&state) != before || !effects.is_empty(),
                         "{panel:?} offers '{} {}' and pressing it changes nothing",
-                        crate::view::hints::label(binding),
+                        crate::view::hints::label(binding.keys),
                         binding.action
                     );
                 }
@@ -2516,12 +2732,12 @@ mod tests {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);
 
-                    let effects = press_chord(&mut state, key, binding.modifiers);
+                    let effects = press_binding(&mut state, key);
 
                     assert!(
                         crate::view::view_model(&state) != before || !effects.is_empty(),
                         "'{} {}' does nothing with {panel:?} focused",
-                        crate::view::hints::label(binding),
+                        crate::view::hints::label(binding.keys),
                         binding.action
                     );
                 }
@@ -2723,7 +2939,7 @@ mod tests {
             },
         );
 
-        assert_eq!(state.ddl.offset(), 3);
+        assert_eq!(state.ddl.scroll.offset(), 3);
     }
 
     #[test]
@@ -2776,9 +2992,13 @@ mod tests {
         let mut state = browsing(&["a", "b", "c", "d"]);
         state.geometry = Geometry::new([3, 3, 3, 1], 0, 0);
         state.focus = Panel::Queries;
-        state.ddl.down(100, 2);
+        state.ddl.scroll.down(100, 2);
         let ddl_before = state.ddl;
-        assert_ne!(ddl_before.offset(), 0, "the fixture must start scrolled");
+        assert_ne!(
+            ddl_before.scroll.offset(),
+            0,
+            "the fixture must start scrolled"
+        );
 
         let effects = point(
             &mut state,
@@ -2949,9 +3169,9 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["a", "b", "c", "d", "e", "f"])]);
         state.geometry = Geometry::new([3, 3, 3, 1], 40, 0);
         click_row(&mut state, Panel::Tables, 0);
-        state.ddl.page_down(40, 3);
+        state.ddl.scroll.page_down(40, 3);
         let before = state.ddl;
-        assert_ne!(before.offset(), 0, "the fixture starts scrolled");
+        assert_ne!(before.scroll.offset(), 0, "the fixture starts scrolled");
 
         roll(&mut state, Panel::Tables, Wheel::Down);
 
@@ -3068,16 +3288,27 @@ mod tests {
         .collect()
     }
 
+    /// Every `KeyPress` worth sweeping for the palette's completeness claim.
+    ///
+    /// Unmodified, plus ctrl held: ctrl is the only modifier `handle_key`
+    /// dispatches on (`ctrl_key`) rather than refusing outright, so it is the
+    /// only one that can ever do something the palette fails to list. Alt is
+    /// refused wholesale before any arm sees it and shift never reaches a
+    /// letter — sweeping either would only double the cost of this test for
+    /// no coverage a future binding could fail to have.
+    fn every_press() -> Vec<KeyPress> {
+        every_key()
+            .into_iter()
+            .flat_map(|key| [KeyPress::new(key), KeyPress::ctrl(key)])
+            .collect()
+    }
+
     fn catalogued() -> Vec<KeyPress> {
         CATALOGUE
             .iter()
             .flat_map(|group| group.bindings)
-            .flat_map(|binding| {
-                binding.keys.iter().map(|&key| KeyPress {
-                    key,
-                    modifiers: binding.modifiers,
-                })
-            })
+            .flat_map(|binding| binding.keys)
+            .copied()
             .collect()
     }
 
@@ -3094,7 +3325,9 @@ mod tests {
     /// unbound. `moved`'s keyspaces are childless, so `l` and `→` never
     /// register there either — `covered` is the only fixture that opens a
     /// keyspace with something in it, and so the only one where those two
-    /// keys do anything.
+    /// keys do anything. `elsewhere`'s Ddl scroll starts off zero for the
+    /// same reason `k`/`home` need `moved` off row zero: `ctrl-y` would be a
+    /// no-op at the top of the document.
     fn sweep_fixtures() -> Vec<State> {
         let geometry = Geometry::new([8, 14, 20, 1], 37, 14);
 
@@ -3110,6 +3343,11 @@ mod tests {
         let mut elsewhere = browsing_tables(&[("shop", &["orders"])]);
         elsewhere.geometry = geometry;
         elsewhere.focus = Panel::Ddl;
+        // Off zero, or `ctrl-y` would find nothing to scroll up over here.
+        elsewhere
+            .ddl
+            .scroll
+            .down(geometry.ddl_lines(), geometry.height(Panel::Ddl));
 
         let mut moved = measured(&["a", "b", "c"]);
         press(&mut moved, Key::Char('j'));
@@ -3129,7 +3367,7 @@ mod tests {
     /// is not a binding, whatever it touched on the way through.
     fn does_something(state: &State, press: KeyPress) -> bool {
         let mut after = state.clone();
-        let effects = update(&mut after, Msg::Input(press));
+        let effects = press_binding(&mut after, press);
 
         !effects.is_empty()
             || after.should_quit != state.should_quit
@@ -3141,24 +3379,15 @@ mod tests {
         let catalogued = catalogued();
 
         for state in sweep_fixtures() {
-            for key in every_key() {
-                for modifiers in [
-                    Modifiers::NONE,
-                    Modifiers {
-                        ctrl: true,
-                        ..Modifiers::NONE
-                    },
-                ] {
-                    let press = KeyPress { key, modifiers };
-                    if catalogued.contains(&press) {
-                        continue;
-                    }
-
-                    assert!(
-                        !does_something(&state, press),
-                        "{press:?} does something and doc/shortcuts.md's palette does not list it"
-                    );
+            for press in every_press() {
+                if catalogued.contains(&press) {
+                    continue;
                 }
+
+                assert!(
+                    !does_something(&state, press),
+                    "{press:?} does something and doc/shortcuts.md's palette does not list it"
+                );
             }
         }
     }
@@ -3202,11 +3431,7 @@ mod tests {
             };
 
             for binding in group.bindings {
-                for &key in binding.keys {
-                    let press = KeyPress {
-                        key,
-                        modifiers: binding.modifiers,
-                    };
+                for &press in binding.keys {
                     assert!(
                         fixtures.iter().any(|state| does_something(state, press)),
                         "{} lists {press:?} and no state responds to it",
@@ -3217,17 +3442,9 @@ mod tests {
         }
     }
 
-    /// `ctrl-r`, the one member of the ctrl layer
-    /// (doc/specs/2026-08-10-query-execution-design.md §1).
+    /// `ctrl-r`, the Queries member of the ctrl layer (doc/shortcuts.md §2).
     fn run_query(state: &mut State) -> Vec<Effect> {
-        press_chord(
-            state,
-            Key::Char('r'),
-            Modifiers {
-                ctrl: true,
-                ..Modifiers::NONE
-            },
-        )
+        ctrl(state, Key::Char('r'))
     }
 
     #[test]
@@ -3389,14 +3606,7 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         press(&mut state, Key::Char('l'));
 
-        press_chord(
-            &mut state,
-            Key::Char('j'),
-            Modifiers {
-                ctrl: true,
-                ..Modifiers::NONE
-            },
-        );
+        ctrl(&mut state, Key::Char('j'));
 
         assert_eq!(
             state.tables.cursor.index(),
@@ -3410,12 +3620,14 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         press(&mut state, Key::Char('l'));
 
-        press_chord(
+        press_binding(
             &mut state,
-            Key::Char('j'),
-            Modifiers {
-                alt: true,
-                ..Modifiers::NONE
+            KeyPress {
+                key: Key::Char('j'),
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Modifiers::NONE
+                },
             },
         );
 
@@ -3430,13 +3642,15 @@ mod tests {
     fn ctrl_alt_r_does_not_run_the_buffer() {
         let mut state = editing("SELECT * FROM shop.orders");
 
-        let effects = press_chord(
+        let effects = press_binding(
             &mut state,
-            Key::Char('r'),
-            Modifiers {
-                ctrl: true,
-                alt: true,
-                shift: false,
+            KeyPress {
+                key: Key::Char('r'),
+                modifiers: Modifiers {
+                    ctrl: true,
+                    alt: true,
+                    shift: false,
+                },
             },
         );
 

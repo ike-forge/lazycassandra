@@ -21,6 +21,21 @@ pub struct Details {
     pub sections: Vec<Section>,
 }
 
+impl Details {
+    /// Every row the panel describes, in the order it draws them — which is
+    /// the order the cursor walks. A heading is not a row: it labels the group
+    /// beneath it, and there is nothing a cursor on one could mean
+    /// (doc/specs/2026-08-10-ddl-selection-design.md §3).
+    pub fn rows(&self) -> impl Iterator<Item = &DetailRow> {
+        self.sections.iter().flat_map(|section| section.rows.iter())
+    }
+
+    #[must_use]
+    pub fn row_count(&self) -> usize {
+        self.sections.iter().map(|section| section.rows.len()).sum()
+    }
+}
+
 /// One labelled group of rows.
 ///
 /// Grouping is structural rather than a blank-line marker in a flat list, so
@@ -67,21 +82,28 @@ pub enum DetailRow {
 }
 
 pub(super) fn body(state: &State) -> PanelBody {
-    let Some(schema) = state.schema() else {
-        return PanelBody::Blank;
-    };
-
-    match state.tables.selected(schema) {
-        Some(Node::Table { keyspace, table }) => scrolled(state, of_table(keyspace, table)),
-        Some(Node::Keyspace { keyspace, .. }) => scrolled(state, of_keyspace(keyspace)),
+    match of(state) {
+        Some(details) => scrolled(state, details),
         None => PanelBody::Blank,
     }
+}
+
+/// What the Tables cursor is on, described — or nothing, when it is on
+/// nothing.
+pub(super) fn of(state: &State) -> Option<Details> {
+    let schema = state.schema()?;
+
+    Some(match state.tables.selected(schema)? {
+        Node::Table { keyspace, table } => of_table(keyspace, table),
+        Node::Keyspace { keyspace, .. } => of_keyspace(keyspace),
+    })
 }
 
 fn scrolled(state: &State, details: Details) -> PanelBody {
     PanelBody::Details {
         details,
-        offset: state.ddl.offset(),
+        selected: state.ddl.cursor.index(),
+        offset: state.ddl.scroll.offset(),
     }
 }
 
@@ -358,16 +380,12 @@ mod tests {
     }
 
     #[test]
-    fn options_arrive_in_importance_order_rather_than_alphabetically() {
+    fn the_compact_options_are_listed_before_the_ones_that_wrap() {
         let details = details(&browsing(orders()));
 
         assert_eq!(
             section(&details, "Options").rows,
             [
-                DetailRow::Property {
-                    name: "comment".to_owned(),
-                    value: "Order history.".to_owned(),
-                },
                 DetailRow::Property {
                     name: "gc_grace_seconds".to_owned(),
                     value: "864000".to_owned(),
@@ -375,6 +393,10 @@ mod tests {
                 DetailRow::Property {
                     name: "bloom_filter_fp_chance".to_owned(),
                     value: "0.01".to_owned(),
+                },
+                DetailRow::Property {
+                    name: "comment".to_owned(),
+                    value: "Order history.".to_owned(),
                 },
             ]
         );
@@ -471,13 +493,45 @@ mod tests {
     #[test]
     fn the_projection_carries_the_panels_own_offset() {
         let mut state = browsing(orders());
-        state.ddl.to_end(9, 3);
+        state.ddl.scroll.to_end(9, 3);
 
         let PanelBody::Details { offset, .. } = ddl_body(&state) else {
             panic!("a selected table has something to describe");
         };
 
         assert_eq!(offset, 6);
+    }
+
+    #[test]
+    fn the_rows_the_cursor_walks_are_the_described_ones_and_no_headings() {
+        let details = details(&browsing(orders()));
+
+        assert_eq!(
+            details.row_count(),
+            6,
+            "one partition column, two clustering, three options — and no heading"
+        );
+        assert_eq!(
+            details.rows().nth(1),
+            Some(&DetailRow::Column {
+                name: "order_date".to_owned(),
+                order: Some(ClusteringOrder::Descending),
+                cql_type: "date".to_owned(),
+            }),
+            "down from the last partition column lands on the first clustering one"
+        );
+    }
+
+    #[test]
+    fn the_projection_carries_the_panels_own_selection() {
+        let mut state = browsing(orders());
+        state.ddl.cursor.go_to(3, 6);
+
+        let PanelBody::Details { selected, .. } = ddl_body(&state) else {
+            panic!("a selected table has something to describe");
+        };
+
+        assert_eq!(selected, 3);
     }
 
     #[test]

@@ -236,14 +236,14 @@ mod tests {
 
     #[test]
     fn the_widest_bar_still_fits_the_narrowest_legal_frame() {
-        assert_eq!(drawn(Panel::Ddl, 40), " j/k scroll │ tab panel  q quit");
+        assert_eq!(drawn(Panel::Ddl, 40), " j/k move │ tab panel  q quit");
     }
 
     #[test]
     fn the_editor_names_its_own_keys_and_drops_the_quit_it_no_longer_has() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " ctrl-r run  ⏎ newline  esc leave │ tab panel"
+            " ^r run  ⏎ newline  esc leave │ tab panel"
         );
     }
 
@@ -285,7 +285,7 @@ mod tests {
         let of = |liveness| {
             let bar = HintBar {
                 panel: vec![Hint {
-                    keys: "ctrl-r".to_owned(),
+                    keys: "^r".to_owned(),
                     action: "run",
                     liveness,
                 }],

@@ -3,10 +3,10 @@
 //! The palette claims to be complete, which the hint bar deliberately does not
 //! (doc/specs/2026-08-09-command-palette-design.md §2). `update::tests`'
 //! sweep is what holds that claim up: reusing [`Binding`] means a row names
-//! `Key` values rather than a string, so a row cannot describe a key no arm of
-//! `handle_key` claims.
+//! `KeyPress` values rather than a string, so a row cannot describe a press no
+//! arm of `handle_key` claims.
 
-use crate::model::{Key, Modifiers};
+use crate::model::{Key, KeyPress};
 use crate::state::Cursor;
 use crate::view::Binding;
 use crate::view::hints::label;
@@ -20,81 +20,66 @@ pub struct Group {
 
 const GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('q')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('q'))],
         action: "quit",
     },
     Binding {
-        keys: &[Key::Char('?')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('?'))],
         action: "commands",
     },
     Binding {
-        keys: &[Key::Escape],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Escape)],
         action: "dismiss the overlay",
     },
     Binding {
-        keys: &[Key::Tab],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Tab)],
         action: "next panel",
     },
     Binding {
-        keys: &[Key::BackTab],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::BackTab)],
         action: "previous panel",
     },
     Binding {
-        keys: &[Key::Char('t')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('t'))],
         action: "focus Tables",
     },
     Binding {
-        keys: &[Key::Char('a')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('a'))],
         action: "focus Table DDL",
     },
     Binding {
-        keys: &[Key::Char('c')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('c'))],
         action: "focus Table contents",
     },
     Binding {
-        keys: &[Key::Char('u')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('u'))],
         action: "focus Queries",
     },
 ];
 
 const MOTION: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('j'), Key::Down],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Down)],
         action: "down one row",
     },
     Binding {
-        keys: &[Key::Char('k'), Key::Up],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('k')), KeyPress::new(Key::Up)],
         action: "up one row",
     },
     Binding {
-        keys: &[Key::PageDown],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::PageDown)],
         action: "down one screen",
     },
     Binding {
-        keys: &[Key::PageUp],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::PageUp)],
         action: "up one screen",
     },
     Binding {
-        keys: &[Key::Home],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Home)],
         action: "to the start",
     },
     Binding {
-        keys: &[Key::End],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::End)],
         action: "to the end",
     },
 ];
@@ -104,52 +89,49 @@ const MOTION: &[Binding] = &[
 // `Tables`, "read" can only mean a table.
 const TABLES: &[Binding] = &[
     Binding {
-        keys: &[Key::Enter, Key::Char(' ')],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Enter), KeyPress::new(Key::Char(' '))],
         action: "fold/unfold, or read",
     },
     Binding {
-        keys: &[Key::Char('l'), Key::Right],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Right)],
         action: "unfold the keyspace",
     },
     Binding {
-        keys: &[Key::Char('h'), Key::Left],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Char('h')), KeyPress::new(Key::Left)],
         action: "fold, or step out",
     },
 ];
+
+const DDL: &[Binding] = &[Binding {
+    keys: &[
+        KeyPress::ctrl(Key::Char('e')),
+        KeyPress::ctrl(Key::Char('y')),
+    ],
+    action: "scroll one line",
+}];
 
 // The editor's printable keys are not rows: every one of them types itself,
 // which is the panel's whole rule rather than a list of bindings
 // (doc/shortcuts.md §2). What is listed is what a key does *not* do elsewhere.
 const QUERIES: &[Binding] = &[
     Binding {
-        keys: &[Key::Char('r')],
-        modifiers: Modifiers {
-            ctrl: true,
-            ..Modifiers::NONE
-        },
+        keys: &[KeyPress::ctrl(Key::Char('r'))],
         action: "run the buffer",
     },
     Binding {
-        keys: &[Key::Enter],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Enter)],
         action: "split the line",
     },
     Binding {
-        keys: &[Key::Backspace, Key::Delete],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Backspace), KeyPress::new(Key::Delete)],
         action: "delete a character",
     },
     Binding {
-        keys: &[Key::Home, Key::End],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "line start/end",
     },
     Binding {
-        keys: &[Key::Escape],
-        modifiers: Modifiers::NONE,
+        keys: &[KeyPress::new(Key::Escape)],
         action: "leave the editor",
     },
 ];
@@ -167,6 +149,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Tables",
         bindings: TABLES,
+    },
+    Group {
+        heading: "Table DDL",
+        bindings: DDL,
     },
     Group {
         heading: "Queries",
@@ -192,7 +178,7 @@ pub fn rows() -> Vec<CommandRow> {
         .flat_map(|group| {
             std::iter::once(CommandRow::Heading(group.heading)).chain(group.bindings.iter().map(
                 |binding| CommandRow::Command {
-                    keys: label(binding),
+                    keys: label(binding.keys),
                     action: binding.action,
                 },
             ))
@@ -345,7 +331,7 @@ mod tests {
     #[test]
     fn no_command_row_is_wider_than_the_narrowest_palette() {
         for binding in commands() {
-            let keys = label(binding);
+            let keys = label(binding.keys);
 
             assert!(
                 keys.chars().count() <= WIDEST_KEYS,
@@ -363,7 +349,7 @@ mod tests {
     fn the_palette_names_the_run_binding() {
         assert!(
             rows().contains(&CommandRow::Command {
-                keys: "ctrl-r".to_owned(),
+                keys: "^r".to_owned(),
                 action: "run the buffer",
             }),
             "the palette claims to be complete, and ctrl-r is the one binding no key types"

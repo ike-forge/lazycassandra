@@ -48,9 +48,12 @@ From the table metadata slice (doc/specs/2026-08-09-table-metadata-design.md):
 
 From the panel scrolling slice (doc/specs/2026-08-09-panel-scrolling-design.md):
 
-- `ctrl-d` and `ctrl-u`. The ctrl layer exists now and has one member,
-  `ctrl-r` (doc/specs/2026-08-10-query-execution-design.md); vim's half-page
-  motions still are not in it (design §5).
+- `ctrl-d` and `ctrl-u`. The ctrl layer exists now and has three members:
+  `ctrl-e`/`ctrl-y` in Table DDL
+  (doc/specs/2026-08-10-ddl-selection-design.md §4.1) and `ctrl-r` in Queries
+  (doc/specs/2026-08-10-query-execution-design.md). Vim's half-page motions
+  still are not in it, and want the layer designed rather than a fourth arm
+  added in passing (design §5).
 - A long `Notice` still cannot scroll. One sentence is the assumption; a
   `DbError` carrying a paragraph would break it.
 
@@ -113,7 +116,10 @@ From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9
   stored viewport of its own, the way the list panels do (list viewport
   design), or keeps deriving its offsets from the cursor and stays out of
   reach of the pointer. That is a design question, not a bug, and it is
-  unanswered on purpose.
+  unanswered on purpose. Table DDL shares that `click_at` arm for a plainer
+  reason: it already has a row cursor (ddl selection design), so wiring its
+  click is the same `go_to` call Tables and Contents already make — an
+  unwired binding, not an open question.
 
 From the query execution slice (doc/specs/2026-08-10-query-execution-design.md):
 
