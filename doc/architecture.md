@@ -6,9 +6,10 @@ guessed at.
 
 **Status:** Phase 1 begun — four crates, a running binary, the four-panel TUI
 shell rendering, the driver decided (§8), the first end-to-end query path: a
-keypress becomes an `Effect::Execute` and a driver page becomes a grid, and a
-writable CQL buffer in the Queries panel (`editor.rs`).
-**Last updated:** 2026-08-09
+keypress becomes an `Effect::Execute` and a driver page becomes a grid
+navigable in both axes, and a writable CQL buffer in the Queries panel
+(`editor.rs`).
+**Last updated:** 2026-08-10
 
 ---
 
@@ -59,7 +60,7 @@ A cargo workspace, so the dependency rule is checked by the compiler:
 
 ```
 crates/
-  lc-domain/      # pure core. depends on: std, serde, thiserror, async-trait
+  lc-domain/      # pure core. depends on: std, serde, thiserror, async-trait, unicode-width
   lc-inbound/     # TUI adapter. depends on: lc-domain, ratatui, crossterm, unicode-width
   lc-outbound/    # driver + config + storage adapters. depends on: lc-domain, tokio, <driver>
   lc-app/         # binary: composition root, effect runtime, main loop
@@ -67,6 +68,15 @@ crates/
 
 `lc-inbound` and `lc-outbound` never see each other. Only `lc-app` depends on
 all three, and it is deliberately thin — wiring, not logic.
+
+The domain's list is short on purpose, and the test it has to pass is what it
+names rather than how long it is: no terminal, no runtime, no driver.
+`unicode-width` earns its place by that test — it is a table of character
+widths, and the domain needs one because it computes the Contents grid's column
+widths itself. Those widths are a pure function of the page and they have to be
+where the offsets are, for the reason §3 gives
+(specs/2026-08-10-table-display-design.md §6). A crate that measures a string
+is not a crate that draws one.
 
 ## 3. The loop
 
@@ -103,6 +113,14 @@ measurement that changes nothing draws no frame and produces no further
 measurement. Both rest on one invariant: **`Geometry` is a function of the
 terminal size and the view model alone, never of the offsets it bounds.**
 Measuring anything that varies with an offset closes the loop.
+
+`Geometry` now also carries the character width the Contents grid's body has,
+and that is the invariant holding rather than bending. A width is a function of
+the terminal size; *how many columns fit starting at offset N* is not, and it is
+never measured — the renderer sends the width back, `update` owns the widths and
+does the fitting itself, and nothing offset-dependent crosses into the domain
+(specs/2026-08-10-table-display-design.md §6). One scalar also leaves `Geometry`
+`Copy`, which a `Vec<u16>` of column widths would have cost.
 
 The renderer now reports a second thing, and it is worth not confusing the two:
 a hit map, which resolves a pointer position to a panel and a row

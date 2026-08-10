@@ -1,7 +1,7 @@
 # Table display — design
 
 **Date:** 2026-08-10
-**Status:** designed
+**Status:** implemented
 
 Reading a table lands you in it, the cursor names a cell rather than a row, the
 rows are numbered, and a grid wider than its panel says so.
@@ -261,9 +261,9 @@ View tier: the grid names its selected cell and its first drawn column; the
 gutter numbers the page absolutely; the widths are the capped natural ones.
 
 Render tier: the gutter is drawn muted and pinned and survives a scrolled
-viewport; the cell highlight is drawn over the row tint and only under focus;
-the horizontal bar appears exactly when a column is hidden; a click still
-resolves to the row that was drawn.
+viewport; the cell highlight is drawn over the row tint, whether or not the
+panel has focus (§3); the horizontal bar appears exactly when a column is
+hidden; a click still resolves to the row that was drawn.
 
 doc/shortcuts.md §5 gains a row per binding, which that document requires of
 every binding and is not optional here.
