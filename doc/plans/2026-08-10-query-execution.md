@@ -831,11 +831,33 @@ Append to `mod tests` in `crates/lc-domain/src/update.rs`. `editing` already exi
     }
 
     #[test]
+    fn an_alt_modified_key_is_not_a_binding() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('l'));
+
+        press_chord(
+            &mut state,
+            Key::Char('j'),
+            Modifiers {
+                alt: true,
+                ..Modifiers::NONE
+            },
+        );
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "alt is refused wholesale, not folded into the plain key"
+        );
+    }
+
+    #[test]
     fn an_open_palette_swallows_ctrl_r() {
+        // The palette is opened directly rather than with `?`: leaving the
+        // editor with `Esc` would move focus to Tables, and `run`'s focus gate
+        // would then return empty whether or not the palette guard exists.
         let mut state = editing("SELECT * FROM shop.orders");
-        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
-        press(&mut state, Key::Escape);
-        press(&mut state, Key::Char('?'));
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
 
         let effects = run_query(&mut state);
 
@@ -1328,6 +1350,7 @@ Add these rows:
 | Destructive is refused, unexecuted | `a_destructive_statement_is_refused_until_confirmation_exists` |
 | The posture gate still applies | `a_typed_write_is_refused_on_a_read_only_connection` |
 | Ctrl is still not a synonym | `an_unbound_ctrl_key_does_nothing`, `ctrl_alt_r_does_not_run_the_buffer` |
+| Alt is still refused wholesale | `an_alt_modified_key_is_not_a_binding` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
 | A statement is classified by its first keyword | the `statement.rs` tests |
 | A modifier reaches the label | `an_unmodified_binding_is_labelled_bare`, `a_ctrl_binding_is_labelled_with_its_modifier` (`view/hints.rs`) |
