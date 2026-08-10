@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn the_widest_bar_still_fits_the_narrowest_legal_frame() {
-        assert_eq!(drawn(Panel::Ddl, 40), " j/k scroll │ tab panel  q quit");
+        assert_eq!(drawn(Panel::Ddl, 40), " j/k move │ tab panel  q quit");
     }
 
     #[test]

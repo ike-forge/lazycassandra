@@ -280,13 +280,18 @@ enum Motion {
 fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     state.mark_dirty();
 
-    // ctrl and alt turn a key into a separate binding, refused here rather
-    // than reinterpreted. shift is not checked: a shifted letter already
-    // arrives as a different Key::Char, and a shifted arrow is left as a
-    // synonym for the plain one so it stays free for a future "extend
+    // alt turns a key into a separate binding and none is bound, so it is
+    // refused rather than reinterpreted. ctrl is refused the same way, past
+    // the two arms `ctrl_key` claims. shift is not checked: a shifted letter
+    // already arrives as a different Key::Char, and a shifted arrow is left as
+    // a synonym for the plain one so it stays free for a future "extend
     // selection" binding.
-    if press.modifiers.ctrl || press.modifiers.alt {
+    if press.modifiers.alt {
         return Vec::new();
+    }
+
+    if press.modifiers.ctrl {
+        return ctrl_key(state, press.key);
     }
 
     // An open palette takes the keys it uses
@@ -534,6 +539,28 @@ fn scroll(state: &mut State, motion: Motion) {
         Motion::Start => cursor.to_start(),
         Motion::End => cursor.to_end(len),
     }
+}
+
+/// The bindings behind `ctrl`, which is all of them for one panel.
+///
+/// Table DDL alone has a cursor and a viewport that count in different units,
+/// so it alone can have a selection its viewport has left — and so it alone
+/// needs a way to move one without the other (design §4.1).
+fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if state.focus != Panel::Ddl || matches!(state.overlay, Some(Overlay::Commands(_))) {
+        return Vec::new();
+    }
+
+    let len = state.geometry.ddl_lines();
+    let height = state.geometry.height(Panel::Ddl);
+
+    match key {
+        Key::Char('e') => state.ddl.scroll.down(len, height),
+        Key::Char('y') => state.ddl.scroll.up(),
+        _ => {}
+    }
+
+    Vec::new()
 }
 
 /// How many rows `panel`'s *cursor* moves over. Queries never arrives here —
@@ -1506,6 +1533,62 @@ mod tests {
         );
     }
 
+    fn ctrl(state: &mut State, key: Key) -> Vec<Effect> {
+        update(state, Msg::Input(KeyPress::ctrl(key)))
+    }
+
+    #[test]
+    fn ctrl_e_and_ctrl_y_scroll_the_ddl_panel_without_moving_its_cursor() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        sized(&mut state, [8, 4, 8, 1], 40);
+
+        ctrl(&mut state, Key::Char('e'));
+
+        assert_eq!(state.ddl.scroll.offset(), 1);
+        assert_eq!(
+            state.ddl.cursor.index(),
+            0,
+            "the viewport moved and the selection did not"
+        );
+
+        ctrl(&mut state, Key::Char('y'));
+
+        assert_eq!(state.ddl.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn ctrl_e_belongs_to_the_ddl_panel_alone() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Tables;
+        sized(&mut state, [8, 4, 8, 1], 40);
+        let selected = state.tables.cursor.index();
+
+        ctrl(&mut state, Key::Char('e'));
+
+        assert_eq!(state.ddl.scroll.offset(), 0);
+        assert_eq!(
+            state.tables.cursor.index(),
+            selected,
+            "ctrl-e outside Ddl is inert, not a Tables binding"
+        );
+    }
+
+    #[test]
+    fn an_open_palette_swallows_ctrl_e() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        // `sized`'s command_rows is always zero, which would leave `?` inert
+        // (`open_palette`'s own guard) — set geometry directly, as `measured`
+        // above does, so the palette this test needs actually opens.
+        state.geometry = Geometry::new([8, 4, 8, 1], 40, 1);
+        press(&mut state, Key::Char('?'));
+
+        ctrl(&mut state, Key::Char('e'));
+
+        assert_eq!(state.ddl.scroll.offset(), 0);
+    }
+
     /// A state focused on Queries with `text` typed into it, `\n` meaning
     /// Enter — the same convention `editor.rs`'s own helper uses.
     fn editing(text: &str) -> State {
@@ -2433,6 +2516,8 @@ mod tests {
     /// two keyspaces with the second unfolded, a page of rows under the
     /// Contents cursor, and a DDL document longer than its panel. A cursor
     /// resting on 0 would make `k` and `home` inert and fail a correct hint.
+    /// The Ddl viewport is likewise nudged off zero, or `ctrl-y` would find
+    /// nothing to scroll up over.
     fn populated(focus: Panel) -> State {
         let mut state = browsing_tables(&[("alpha", &["a1"]), ("shop", &["orders", "users"])]);
         state.tables.cursor.go_to(1, 2);
@@ -2461,6 +2546,7 @@ mod tests {
         sized(&mut state, [3, 3, 3, 3], 40);
         let ddl_len = crate::view::ddl_rows(&state);
         state.ddl.cursor.page_down(ddl_len, 3);
+        state.ddl.scroll.down(40, 3);
         state.focus = focus;
         state
     }
@@ -3068,12 +3154,12 @@ mod tests {
         .collect()
     }
 
-    fn catalogued() -> Vec<Key> {
+    fn catalogued() -> Vec<KeyPress> {
         CATALOGUE
             .iter()
             .flat_map(|group| group.bindings)
             .flat_map(|binding| binding.keys)
-            .map(|press| press.key)
+            .copied()
             .collect()
     }
 
@@ -3090,7 +3176,9 @@ mod tests {
     /// unbound. `moved`'s keyspaces are childless, so `l` and `→` never
     /// register there either — `covered` is the only fixture that opens a
     /// keyspace with something in it, and so the only one where those two
-    /// keys do anything.
+    /// keys do anything. `elsewhere`'s Ddl scroll starts off zero for the
+    /// same reason `k`/`home` need `moved` off row zero: `ctrl-y` would be a
+    /// no-op at the top of the document.
     fn sweep_fixtures() -> Vec<State> {
         let geometry = Geometry::new([8, 14, 20, 1], 37, 14);
 
@@ -3106,6 +3194,11 @@ mod tests {
         let mut elsewhere = browsing_tables(&[("shop", &["orders"])]);
         elsewhere.geometry = geometry;
         elsewhere.focus = Panel::Ddl;
+        // Off zero, or `ctrl-y` would find nothing to scroll up over here.
+        elsewhere
+            .ddl
+            .scroll
+            .down(geometry.ddl_lines(), geometry.height(Panel::Ddl));
 
         let mut moved = measured(&["a", "b", "c"]);
         press(&mut moved, Key::Char('j'));
@@ -3123,9 +3216,9 @@ mod tests {
     /// whose `dirty` flag `handle_key` sets on every press. It is also the
     /// better question: a key that changes nothing visible and emits no effect
     /// is not a binding, whatever it touched on the way through.
-    fn does_something(state: &State, key: Key) -> bool {
+    fn does_something(state: &State, press: KeyPress) -> bool {
         let mut after = state.clone();
-        let effects = press(&mut after, key);
+        let effects = press_binding(&mut after, press);
 
         !effects.is_empty()
             || after.should_quit != state.should_quit
@@ -3138,12 +3231,13 @@ mod tests {
 
         for state in sweep_fixtures() {
             for key in every_key() {
-                if catalogued.contains(&key) {
+                let press = KeyPress::new(key);
+                if catalogued.contains(&press) {
                     continue;
                 }
 
                 assert!(
-                    !does_something(&state, key),
+                    !does_something(&state, press),
                     "{key:?} does something and doc/shortcuts.md's palette does not list it"
                 );
             }
@@ -3154,10 +3248,10 @@ mod tests {
     fn every_key_the_palette_lists_does_something() {
         let fixtures = sweep_fixtures();
 
-        for key in catalogued() {
+        for press in catalogued() {
             assert!(
-                fixtures.iter().any(|state| does_something(state, key)),
-                "the palette lists {key:?} and no state responds to it"
+                fixtures.iter().any(|state| does_something(state, press)),
+                "the palette lists {press:?} and no state responds to it"
             );
         }
     }

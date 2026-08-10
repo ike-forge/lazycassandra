@@ -102,6 +102,14 @@ const TABLES: &[Binding] = &[
     },
 ];
 
+const DDL: &[Binding] = &[Binding {
+    keys: &[
+        KeyPress::ctrl(Key::Char('e')),
+        KeyPress::ctrl(Key::Char('y')),
+    ],
+    action: "scroll one line",
+}];
+
 /// Every binding, grouped as the palette lists them.
 pub const CATALOGUE: &[Group] = &[
     Group {
@@ -115,6 +123,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Tables",
         bindings: TABLES,
+    },
+    Group {
+        heading: "Table DDL",
+        bindings: DDL,
     },
 ];
 

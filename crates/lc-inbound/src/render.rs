@@ -319,7 +319,7 @@ mod tests {
             .collect();
 
         assert!(bars[0].contains("l/h fold"), "Tables folds: {:?}", bars[0]);
-        assert!(bars[1].contains("j/k scroll"), "Ddl scrolls: {:?}", bars[1]);
+        assert!(bars[1].contains("j/k move"), "Ddl moves: {:?}", bars[1]);
         assert!(
             bars[2].contains("j/k move"),
             "Contents moves: {:?}",

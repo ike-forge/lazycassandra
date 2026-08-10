@@ -54,12 +54,20 @@ moves a viewport over lines; Queries moves the cursor through its buffer.
 | `PageUp` | Up one panel height. |
 | `Home` | To the start (to the **line**'s start in Queries — §2). |
 | `End` | To the end (to the **line**'s end in Queries — §2). |
+| `ctrl-e` / `ctrl-y` | Table DDL only: scroll the viewport one line, without moving the cursor. |
 
 `End` in Table DDL stops at the last line rather than scrolling past it; in a
 list it lands on the last row. Both are the same `Motion::End`, resolved by the
 focused panel ([panel scrolling design](specs/2026-08-09-panel-scrolling-design.md)).
 Queries never reaches `Motion::End` at all: the editor claims `Home`/`End`
 itself, before the match that would call it (queries editor design §3).
+
+`ctrl-e`/`ctrl-y` belong to Table DDL alone, because it is the one panel where
+a cursor and a viewport count in different units — rows for the cursor,
+wrapped lines for the viewport — and so the one panel where they can disagree.
+Elsewhere the two never diverge, and there is no viewport to move independently
+of the selection
+([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4.1).
 
 ### Tables panel
 
@@ -133,11 +141,16 @@ unbound. Shift is never consulted for letters, and a shifted arrow is left as a
 synonym for the plain one so `Shift-↓` stays free for a future "extend
 selection".
 
-**Ctrl and alt are refused wholesale.** `handle_key` returns early on either
-modifier rather than folding the key into its unmodified meaning: `ctrl-j` is a
-different binding that does not exist yet, not a slower `j`. The ctrl layer gets
-designed as a layer (`ctrl-d`/`ctrl-u` are the first candidates, TODO.md), not
-smuggled in one key at a time.
+**Alt is refused wholesale; ctrl is refused past two arms.** `handle_key`
+returns early on alt rather than folding the key into its unmodified meaning.
+Ctrl is dispatched to its own arm, which claims `ctrl-e`/`ctrl-y` for Table
+DDL and refuses everything else: `ctrl-j` is still a different binding that
+does not exist yet, not a slower `j`, and `ctrl-e` outside Ddl is inert, not a
+binding for whatever panel is focused. The rest of the ctrl layer gets
+designed as a layer (`ctrl-d`/`ctrl-u` are still the first candidates,
+TODO.md), not smuggled in one key at a time — the two arms above are a
+carve-out for one panel's own disagreement between cursor and viewport, not
+the start of that layer.
 
 **Vim and arrows are synonyms, both ways.** `j`/`↓`, `k`/`↑`, `l`/`→`, `h`/`←`.
 Neither set is the real one. Anyone who reaches for arrows should never hit a
@@ -214,6 +227,11 @@ Named keys the domain understands but nothing binds: `Insert` `F1`–`F12`.
 Anything crossterm reports outside that vocabulary is dropped at the edge and
 never reaches the domain. The pointer is not in this budget at all — see §7.
 
+The ctrl namespace is separate from the plain-key budget above, and was
+empty until `ctrl-e`/`ctrl-y` (§1, §2), which are taken in Table DDL only.
+Every other letter behind ctrl is still free, including `e` and `y`
+themselves everywhere but Ddl.
+
 Claim from the free set first. Re-using a taken key means retiring a binding,
 which is a spec-level change.
 
@@ -254,6 +272,9 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Tab`/`Shift-Tab` cycle and wrap | `tab_walks_the_panels_in_reading_order_and_wraps`, `shift_tab_walks_them_the_other_way` |
 | Paging and `Home`/`End` | `page_down_moves_the_tree_by_one_panel_height`, `home_and_end_reach_the_ends_of_the_tree_in_one_key` |
 | Ctrl/alt are not synonyms | `a_modified_key_is_not_a_binding` |
+| `ctrl-e`/`ctrl-y` scroll Table DDL's viewport and leave its cursor alone | `ctrl_e_and_ctrl_y_scroll_the_ddl_panel_without_moving_its_cursor` |
+| The carve-out is Table DDL's alone | `ctrl_e_belongs_to_the_ddl_panel_alone` |
+| An open palette still claims it first | `an_open_palette_swallows_ctrl_e` |
 | Shifted letters stay free | `a_shifted_shortcut_stays_unbound` |
 | Focus letters are distinct and total | `every_panel_has_a_distinct_shortcut`, `a_shortcut_leads_back_to_the_panel_that_claims_it`, `the_shortcuts_are_the_ones_the_design_names` — all in `state.rs` |
 | No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` |

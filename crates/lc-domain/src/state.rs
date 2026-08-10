@@ -183,6 +183,13 @@ const TABLES_HINTS: &[Binding] = &[
 const DDL_HINTS: &[Binding] = &[
     Binding {
         keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
+        action: "move",
+    },
+    Binding {
+        keys: &[
+            KeyPress::ctrl(Key::Char('e')),
+            KeyPress::ctrl(Key::Char('y')),
+        ],
         action: "scroll",
     },
     Binding {
