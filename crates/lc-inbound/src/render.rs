@@ -289,9 +289,13 @@ fn bar(
     border: Style,
     theme: Theme,
 ) {
-    let (track, margin) = match orientation {
+    // The thumb is parameterised with the track: `▐` is a full-height glyph,
+    // which beside a `─` sitting at mid-height reads as a row of vertical bars
+    // rather than as a thicker stretch of the same line.
+    let (track, thumb, margin) = match orientation {
         ScrollbarOrientation::HorizontalBottom | ScrollbarOrientation::HorizontalTop => (
             symbols::line::HORIZONTAL,
+            symbols::line::THICK_HORIZONTAL,
             Margin {
                 horizontal: 1,
                 vertical: 0,
@@ -299,6 +303,7 @@ fn bar(
         ),
         _ => (
             symbols::line::VERTICAL,
+            THUMB,
             Margin {
                 horizontal: 0,
                 vertical: 1,
@@ -315,7 +320,7 @@ fn bar(
             .end_symbol(None)
             .track_symbol(Some(track))
             .track_style(border)
-            .thumb_symbol(THUMB)
+            .thumb_symbol(thumb)
             .thumb_style(theme.style(Token::Muted)),
         area.inner(margin),
         &mut state,
@@ -1251,16 +1256,87 @@ mod tests {
     fn the_selected_cell_is_marked_apart_from_the_rest_of_its_row() {
         let buffer = frame_showing_grid(4, 40, 3);
         let area = block_area(&buffer, "Table contents");
-        // The top border, then the grid's header row, then the first row.
-        let y = area.y + 2;
-        let styles: Vec<_> = (area.x + 1..area.right() - 1)
-            .filter_map(|x| buffer.cell((x, y)))
-            .map(|cell| cell.modifier)
-            .collect();
+        let underlined = |x: u16, y: u16| {
+            buffer
+                .cell((x, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::UNDERLINED)
+        };
+        // The top border, then the grid's header row, then the first row —
+        // the one the cursor is on, at its first column. That column is two
+        // wide and sits past the one-digit gutter and its spacing.
+        let first = area.x + 3;
+        let selected = area.y + 2;
+
+        assert!(underlined(first, selected), "the cell the cursor is on");
+        assert!(underlined(first + 1, selected), "for its whole width");
+        assert!(
+            !underlined(first + 3, selected),
+            "the next column of the same row is not what a command would act on"
+        );
+        assert!(
+            !underlined(first, selected + 1),
+            "nor is the same column of the next row"
+        );
+    }
+
+    #[test]
+    fn the_gutter_is_muted_and_the_values_beside_it_are_not() {
+        let buffer = frame_showing_grid(4, 40, 3);
+        let area = block_area(&buffer, "Table contents");
+        let dim = |x: u16| {
+            buffer
+                .cell((x, area.y + 3))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::DIM)
+        };
+
+        assert!(dim(area.x + 1), "the row number is chrome, not a value");
+        assert!(
+            !dim(area.x + 3),
+            "and the value beside it reads at full weight"
+        );
+    }
+
+    #[test]
+    fn the_grid_is_drawn_from_the_column_the_viewport_names() {
+        let page = sized_page(12, 3);
+        let widths = lc_domain::grid::widths(&page);
+        let mut state = showing(page);
+        // Twelve two-wide columns in a 22-column body, less the one-digit
+        // gutter and its spacing: seven fit, so the ninth cannot be reached
+        // without moving the horizontal viewport.
+        let available = 22 - 1 - lc_domain::grid::COLUMN_SPACING;
+        state.contents.column.go_to(8, widths.len());
+        state.contents.columns.follow(8, &widths, available);
+        assert!(
+            state.contents.columns.first() > 0,
+            "the fixture must have scrolled sideways or this test proves nothing"
+        );
+
+        let buffer = draw_state(40, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let heading = row_text(&buffer, "Table contents", 0);
+        let first = row_text(&buffer, "Table contents", 1);
 
         assert!(
-            styles.windows(2).any(|pair| pair[0] != pair[1]),
-            "the selected row must not be uniformly styled: the cell sits inside it"
+            heading.trim_start().starts_with("c2"),
+            "the drawn window starts at the offset, got {heading:?}"
+        );
+        assert!(
+            first.starts_with('1'),
+            "the gutter is pinned and never scrolls off, got {first:?}"
+        );
+        assert!(
+            buffer
+                .cell((area.right() - 2, area.y + 2))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::UNDERLINED),
+            "the cell cursor is on the last column drawn, which is the one it \
+             scrolled to reach"
         );
     }
 
