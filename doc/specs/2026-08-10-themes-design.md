@@ -72,7 +72,7 @@ promise of §2 in the type system rather than in a test comment.
 | `text` | `Option<Color>` | body text, `Severity::Info` |
 | `border` | `Option<Color>` | panel borders |
 | `highlight` | `Color` | the cursor row's background |
-| `highlight_text` | `Color` | that row's text, where the span has no colour |
+| `highlight_text` | `Option<Color>` | that row's text — see §3.1 |
 | `muted` | `Color` | system keyspaces, hint actions, nulls, scrollbar track |
 | `partition` | `Color` | partition key columns, bold |
 | `clustering` | `Color` | clustering key columns |
@@ -101,6 +101,26 @@ Three reductions against the roles as first listed:
   name. They stay separate fields so a future CQL highlighter can pull them
   apart without touching the flavours.
 
+### 3.1 Why `highlight_text` is optional
+
+ratatui applies a highlight style with `Buffer::set_style`, which *overwrites*
+a cell's foreground rather than filling one in. A row highlight carrying a
+foreground therefore flattens the key-structure colours on the row it lands on;
+one carrying only a background leaves them alone. There is no third option.
+
+So each theme declares which it can afford:
+
+- `highlight_text: None` — the theme owns its whole palette, has verified every
+  role reads against `base`, and lets the cursor row keep its column colours.
+  Every Catppuccin flavour is this.
+- `highlight_text: Some(_)` — the theme cannot know what it is drawn over, so
+  the cursor row forces a legible foreground and gives up its column colours
+  for that one row. The default theme is this, and it is no worse than the
+  `Modifier::REVERSED` it replaces, which flattened the row too.
+
+`Option` rather than a `bool` beside a colour, so "forces a foreground" and
+"which foreground" cannot be said apart (conventions.md §1).
+
 ### New tokens
 
 `lc-domain/src/style.rs` gains `Keyspace`, `Table`, `Keyword`, `Reference` and
@@ -111,30 +131,36 @@ zero-warnings rule would reject.
 
 ## 4. The default palette
 
-Every value is mid-tone by construction, so it reads on `#1e1e2e` and on
-`#fafafa` alike. `base`, `surface`, `text` and `border` are `None`.
+`base`, `surface`, `text` and `border` are `None`.
 
-| Role | Value | |
-|---|---|---|
-| `partition` | `#e5a03c` | amber, bold |
-| `clustering` | `#29a89f` | teal |
-| `keyspace` | `#9a6ce8` | mauve |
-| `table` | `#5b8ef7` | blue |
-| `property` | `#d478a8` | pink |
-| `accent` | `#f0956a` | peach |
-| `match_` | `#8fb04a` | lime |
-| `muted` | `#7c7f93` | grey |
-| `success` | `#48a860` | green |
-| `warning` | `#d4a017` | yellow |
-| `danger` | `#d9534f` | red |
-| `highlight` | `#3f4260` | |
-| `highlight_text` | `#e6e8f0` | |
-| `keyword` | `#9a6ce8` | = `keyspace` |
-| `reference` | `#5b8ef7` | = `table` |
-| `literal` | `#48a860` | = `success` |
+The theme cannot know whether it is drawn on white or on black, so every value
+holds a WCAG contrast ratio of at least 3.0 against **both**. That narrows the
+usable band to a relative luminance of roughly 0.10–0.30, which is why these
+are deeper and more saturated than a scheme designed for one background would
+be. It is a constraint, not a preference, and `the_default_palette_reads_on_
+black_and_on_white` in §8 is what holds it.
 
-This is a first draft to iterate on, not a finished scheme. The contrast test
-in §8 is what stops iteration from producing something unreadable.
+| Role | Value | | vs. white | vs. black |
+|---|---|---|---|---|
+| `partition` | `#c9821f` | amber, bold | 3.1 | 6.7 |
+| `clustering` | `#10847c` | teal | 4.6 | 4.6 |
+| `keyspace` | `#8a4fd4` | mauve | 5.2 | 4.1 |
+| `table` | `#2b6fd8` | blue | 4.9 | 4.4 |
+| `property` | `#b8489a` | magenta | 4.8 | 4.4 |
+| `accent` | `#d1662f` | rust | 3.7 | 5.7 |
+| `match_` | `#5f8f16` | olive | 3.9 | 5.4 |
+| `muted` | `#7a7f8f` | grey | 4.0 | 5.3 |
+| `success` | `#2e8b4f` | green | 4.2 | 4.9 |
+| `warning` | `#a8781a` | ochre | 3.9 | 5.3 |
+| `danger` | `#c8322f` | red | 5.3 | 4.0 |
+| `highlight` | `#45485a` | | — | — |
+| `highlight_text` | `Some(#e8eaf2)` | 7.2 against `highlight` | | |
+| `keyword` | `#8a4fd4` | = `keyspace` | | |
+| `reference` | `#2b6fd8` | = `table` | | |
+| `literal` | `#2e8b4f` | = `success` | | |
+
+This is a first draft to iterate on, not a finished scheme. The tests in §8 are
+what stop iteration from producing something unreadable.
 
 ## 5. The four Catppuccin flavours
 
@@ -148,7 +174,7 @@ flavours cannot drift apart and a fifth costs one table of hex values.
 | `text` | `text` |
 | `border` | `surface1` |
 | `highlight` | `surface1` |
-| `highlight_text` | `text` |
+| `highlight_text` | `None` |
 | `muted` | `overlay1` |
 | `partition` | `yellow`, bold |
 | `clustering` | `teal` |
@@ -168,9 +194,13 @@ flavours cannot drift apart and a fifth costs one table of hex values.
 is a grid column header and its cells, the other a status message — and
 collapsing them keeps the flavour tables short.
 
-Latte is the light flavour, and it is the reason `highlight_text` is a role
-rather than a constant: its `text` is `#4c4f69` against a `#bcc0cc` bar, where
-every dark flavour is the other way round.
+Every flavour takes `highlight_text: None` (§3.1) — each knows its own `base`
+and has its roles verified against it, so the cursor row is a bar of `surface1`
+and the partition key on it stays the partition key's colour.
+
+Latte is the light flavour, and it is where that pays: `text` is `#4c4f69` and
+`surface1` is `#bcc0cc`, the opposite arrangement to every dark flavour, and
+neither the recipe nor the token mapping has to know which it is.
 
 Bases: Latte `#eff1f5`, Frappé `#303446`, Macchiato `#24273a`, Mocha `#1e1e2e`.
 The full ingredient tables are transcribed into `theme/catppuccin.rs` from the
@@ -232,11 +262,12 @@ Overlay precedence is unchanged: the picker follows the rules in
   `Clear`, so an overlay separates from the field it covers. On the dark
   flavours `surface0` sits above `base` and reads as lifted; on Latte it sits
   below and reads as inset. Distinctness is the requirement, not a direction.
-- `body.rs`'s cursor row stops being `Modifier::REVERSED`. Each span is drawn
-  as `highlight_style.patch(span.style)`: the span's own colour wins where it
-  has one, and `highlight_text` fills in where it does not. This is what keeps
-  a partition key legible on the selected row, and it is the same composition
-  `Token::Match` already relies on.
+- `Token::Selected` stops being `Modifier::REVERSED` and becomes
+  `bg(highlight)`, plus `fg` when the palette carries a `highlight_text`
+  (§3.1). Nothing in `body.rs`, `details.rs` or `palette.rs` changes: they
+  already hand the token to ratatui's `highlight_style` / `row_highlight_style`,
+  and a background-only style leaves the row's own colours alone — which is
+  exactly the behaviour the flavours want and the default theme declines.
 - `Token::SelectedCell` keeps a modifier rather than a colour, because it must
   read *against* the highlighted row whatever that row's background is.
 - `loader.rs` takes `accent` from the palette. The module-level `ACCENT`
@@ -248,11 +279,26 @@ Overlay precedence is unchanged: the picker follows the rules in
 
 ## 8. Tests
 
-**Contrast, per flavour.** Every foreground role is checked for a WCAG
-relative-luminance ratio against that flavour's `base`, and `highlight_text`
-against `highlight`. This is the test that earns its keep: a mistyped hex
-becomes a failure rather than an unreadable panel, and it is what makes
-iterating on §4 safe.
+Contrast is where the tests earn their keep: a mistyped hex becomes a failure
+rather than an unreadable panel, and that is what makes iterating on §4 and §5
+safe. It takes three forms, because the themes make three different promises.
+
+**`every_flavour_reads_against_its_own_base`.** For each Catppuccin flavour,
+every foreground role holds a WCAG contrast ratio of at least 3.0 against that
+flavour's `base`. `muted` is exempt at 2.0 — it is *supposed* to recede, and
+holding it to the same floor as `danger` would mean it had stopped receding.
+
+**`the_default_palette_reads_on_black_and_on_white`.** The default theme knows
+neither its background nor its foreground, so every role is checked against
+both `#000000` and `#ffffff` at 3.0. This is the strictest of the three and the
+one that dictated the §4 values.
+
+**`a_highlight_bar_is_distinct_from_its_field`.** `highlight` differs from
+`base` by a relative luminance of at least 0.02 in every flavour, and where
+`highlight_text` is `Some` it holds 4.5 against `highlight`. Not a per-role
+check against `highlight`: Catppuccin Latte's own `blue` on its own `surface1`
+is about 2.4, and a test that failed upstream Catppuccin would be testing our
+taste rather than our transcription.
 
 **`the_default_theme_paints_no_panel_field`** replaces
 `no_token_sets_a_background`. It asserts `base`, `surface`, `text` and `border`
