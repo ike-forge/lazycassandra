@@ -54,20 +54,21 @@ Queries moves the cursor through its buffer.
 | `PageUp` | Up one panel height. |
 | `Home` | To the start (to the **line**'s start in Queries — §2). |
 | `End` | To the end (to the **line**'s end in Queries — §2). |
-| `ctrl-e` / `ctrl-y` | Table DDL only: scroll the viewport one line, without moving the cursor. |
 
-`End` in Table DDL stops at the last line rather than scrolling past it; in a
-list it lands on the last row. Both are the same `Motion::End`, resolved by the
-focused panel ([panel scrolling design](specs/2026-08-09-panel-scrolling-design.md)).
+`End` reaches the last row everywhere it applies, Table DDL included — a list
+has an end, not a document with room to scroll past its last line. Both are
+the same `Motion::End`, resolved by the focused panel
+([panel scrolling design](specs/2026-08-09-panel-scrolling-design.md)). Table
+DDL is the one place paging is not exact: `PageDown`/`PageUp` move the cursor
+by the panel's height counted in wrapped **lines**, while the cursor itself
+counts **rows**, so a page overshoots on a run of wrapped values. `Home` and
+`End` stay exact regardless — landing on index zero or the last row needs no
+counting in either unit. The fix needs a line-to-row map from the renderer,
+and the design accepted the imprecision rather than build one for a panel
+that usually fits on one screen
+([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4).
 Queries never reaches `Motion::End` at all: the editor claims `Home`/`End`
 itself, before the match that would call it (queries editor design §3).
-
-`ctrl-e`/`ctrl-y` belong to Table DDL alone, because it is the one panel where
-a cursor and a viewport count in different units — rows for the cursor,
-wrapped lines for the viewport — and so the one panel where they can disagree.
-Elsewhere the two never diverge, and there is no viewport to move independently
-of the selection
-([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4.1).
 
 ### Tables panel
 
@@ -85,6 +86,23 @@ subsection below.
 | `h` / `←` | Fold it; from a table row, step out to its keyspace first. |
 
 Reading a table cancels whatever read Contents was waiting on.
+
+### Table DDL panel
+
+Accepted anywhere, but a no-op unless Table DDL has focus.
+
+| Key | Action |
+|---|---|
+| `ctrl-e` | Scroll the viewport down one line, leaving the cursor where it is. |
+| `ctrl-y` | Scroll it up one line. |
+
+The only bindings behind `ctrl`, and the only panel that needs them: a table
+option can be taller than the panel, so this is the one place a selection and
+a viewport can genuinely disagree — elsewhere the two never diverge, and there
+is no viewport to move independently of the selection. A selection scrolled
+out of view is not drawn; the next `j` or `k` brings the viewport back to it,
+because motion follows the cursor.
+See [Table DDL selection design](specs/2026-08-10-ddl-selection-design.md) §4.1.
 
 ### Queries panel
 
@@ -387,10 +405,11 @@ scrollbar rather than in the bar
 
 Any further gesture is measured against the narrower rule, not this exception.
 
-**The wheel scrolls; it does not select.** Tables and Contents each hold a
-viewport of their own, so a notch moves the rows and leaves the selection where
-you put it — scroll far enough and the selected row is simply not on screen, and
-the next `j`, or a resize, brings the view back to it.
+**The wheel scrolls; it does not select.** Tables, Contents and Table DDL each
+hold a viewport of their own, so a notch moves the rows (or, in Table DDL,
+the lines) and leaves the selection — the cursor, in Table DDL — where you put
+it. Scroll far enough and the selected row is simply not on screen, and the
+next `j`, or a resize, brings the view back to it.
 
 **One dispatch point, again.** `handle_pointer` in
 [`update.rs`](../crates/lc-domain/src/update.rs) is to a gesture what

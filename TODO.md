@@ -48,10 +48,12 @@ From the table metadata slice (doc/specs/2026-08-09-table-metadata-design.md):
 
 From the panel scrolling slice (doc/specs/2026-08-09-panel-scrolling-design.md):
 
-- `ctrl-d` and `ctrl-u`. `handle_key` refuses every ctrl and alt press, so
-  vim's half-page motions need that guard reworked and the test that pins
-  "a modified key is not a binding" rewritten — worth doing when the ctrl
-  layer is designed, not in passing (design §5).
+- `ctrl-d` and `ctrl-u`. `ctrl_key` now claims `ctrl-e`/`ctrl-y` in Table DDL
+  (doc/specs/2026-08-10-ddl-selection-design.md §4.1); every other ctrl
+  combination, `ctrl-d`/`ctrl-u` included, still falls through its `_ => {}`
+  arm and does nothing. Vim's half-page motions need that arm grown and
+  `a_modified_key_is_not_a_binding` extended to cover the carve-out — worth
+  doing when the ctrl layer is designed, not in passing (design §5).
 - A long `Notice` still cannot scroll. One sentence is the assumption; a
   `DbError` carrying a paragraph would break it.
 
@@ -110,15 +112,19 @@ From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9
   doing only once the panel can show more than one line.
 - The pointer and the editor have not met. A click in the Queries panel
   focuses it but cannot position the text cursor — `click_at` in `update.rs`
-  returns right after setting `state.focus` for `Panel::Ddl | Panel::Queries`
-  — and the wheel does not scroll the buffer: `panel_scroll` has no arm for
-  `Panel::Queries` because the editor stores no scroll offset to hand back,
-  both of its offsets being derived from the cursor and the area per frame
-  (design §5). Both gaps want the same decision: whether the editor gets a
-  stored viewport of its own, the way the list panels do (list viewport
-  design), or keeps deriving its offsets from the cursor and stays out of
-  reach of the pointer. That is a design question, not a bug, and it is
-  unanswered on purpose.
+  returns right after setting `state.focus` for `Panel::Queries` — and the
+  wheel does not scroll the buffer: `panel_scroll` has no arm for it either,
+  because the editor stores no scroll offset to hand back, both of its
+  offsets being derived from the cursor and the area per frame (design §5).
+  Both gaps want the same decision: whether the editor gets a stored viewport
+  of its own, the way the list panels do (list viewport design), or keeps
+  deriving its offsets from the cursor and stays out of reach of the pointer.
+  That is a design question, not a bug, and it is unanswered on purpose.
+  Table DDL sits in the same `click_at` arm as Queries today
+  (`Panel::Ddl | Panel::Queries => Vec::new()`) but for a plainer reason: it
+  already has a row cursor (ddl selection design), so wiring its click is the
+  same `go_to` call Tables and Contents already make — an unwired binding,
+  not an open question.
 From the command palette slice (doc/specs/2026-08-09-command-palette-design.md §10):
 
 - Search. The palette is named Commands and carries a selection precisely so

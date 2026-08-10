@@ -1,6 +1,6 @@
 # Table DDL — a cursor over the described rows
 
-**Status:** design, not yet implemented.
+**Status:** implemented.
 **Date:** 2026-08-10
 
 Companion to [table metadata design](2026-08-09-table-metadata-design.md),
