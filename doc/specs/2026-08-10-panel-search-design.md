@@ -83,19 +83,28 @@ an empty filter is unrepresentable — and "committing an empty query clears the
 filter" is then not a rule anyone has to remember to check. It is what
 `Filter::new("")` returning `None` already means, stored directly.
 
-Matching is **case-insensitive substring**, ASCII-folded, no metacharacters.
-Every keystroke is literal, so no half-typed input is ever a syntax error the
-live prompt has to render, and nothing unbounded sits on the per-keystroke
-path. `as_str` returns the term as typed, because that is what the marker in
-§5.1 shows.
+Matching is **case-insensitive substring**, no metacharacters. Every keystroke
+is literal, so no half-typed input is ever a syntax error the live prompt has
+to render, and nothing unbounded sits on the per-keystroke path. `as_str`
+returns the term as typed, because that is what the marker in §5.1 shows.
+
+Folding is `str::to_lowercase`, not `to_ascii_lowercase`: identifiers are
+ASCII, but the Table contents panel matches against cell values, which are
+whatever the cluster stored.
 
 ### 2.1 Which panels can hold one
 
 ```rust
 pub enum Filtered { Tables, Ddl, Contents }
 
-impl TryFrom<Panel> for Filtered { /* Queries is the only Err */ }
+impl Filtered {
+    pub const fn of(panel: Panel) -> Option<Self>;  // Queries is the only None
+    pub const fn panel(self) -> Panel;
+}
 ```
+
+`Option` rather than `TryFrom`: there is one way to fail and nothing to say
+about it, so an error type would exist only to be discarded.
 
 Queries has no filter this slice. Keying the filter off `Panel` would leave a
 `Panel::Queries => {}` arm in every accessor, unreachable by design and rotting
@@ -104,9 +113,14 @@ until the vim slice arrives. `Filtered` makes
 ```rust
 impl State {
     pub fn filter(&self, target: Filtered) -> Option<&Filter>;
-    pub fn filter_mut(&mut self, target: Filtered) -> &mut Option<Filter>;
+    /// Sets it and repairs what it invalidates (§3.3).
+    pub fn apply_filter(&mut self, target: Filtered, filter: Option<Filter>);
 }
 ```
+
+`apply_filter` rather than a `&mut Option<Filter>` handed out: a caller that
+sets the filter and forgets the clamp leaves a cursor pointing past the rows
+it now has, and there is no reason for that to be a caller's job.
 
 total. When Queries gains search, it gains a variant here and the compiler
 lists the places that must answer for it.
@@ -185,17 +199,19 @@ Every edit to `buffer` writes `Filter::new(&buffer)` straight into the target's
 filter. There is no separate committed-vs-pending copy; the panel underneath
 *is* the preview.
 
-Two things must be re-derived on each of those writes, because a filter shrinks
-what a panel holds:
+A filter shrinks what a panel holds, so `apply_filter` clamps the **Tables
+cursor** to the filtered row count with the existing `Cursor::clamp_to`.
 
-- **Tables:** the cursor clamps to the filtered row count.
-- **Table DDL:** the scroll offset clamps to the filtered line count.
+The **Table DDL** offset is not clamped there, and deliberately. Its length is
+counted in wrapped lines, which only the renderer can produce — the domain
+learns it from `Msg::Measured`, whose handler already clamps `state.ddl` and
+marks dirty when that moved. A filter applied at keystroke *n* is drawn at
+frame *n*, measured, and repaired on the message that comes back. Clamping
+against `geometry.ddl_lines()` at apply time would clamp against the *previous*
+frame's count, which is a guess, and a wrong one exactly when the filter just
+shrank the body.
 
-Table contents needs neither — it filters nothing (§4.3).
-
-Both clamps already exist for the unfiltered case (`Cursor::clamp_to`, the
-scroll clamp `Msg::Measured` drives). Filtering reuses them rather than adding
-a second way to bound a cursor.
+Table contents needs neither: it filters nothing (§4.3).
 
 ---
 
