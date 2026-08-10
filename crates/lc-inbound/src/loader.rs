@@ -6,6 +6,7 @@
 //! the render tier deterministic — no clock is read on this side of the
 //! boundary (doc/specs/2026-08-09-visual-polish-design.md §4.3).
 
+use crate::theme::Theme;
 use lc_domain::view::Activity;
 use ratatui::text::Line;
 use ratatui_opentui_loader::KittLoader;
@@ -28,14 +29,14 @@ const INACTIVE: f64 = 0.25;
 const MIN_FADE: f64 = 0.55;
 
 /// The scanner at `activity`'s phase, `WIDTH` cells wide.
-pub(crate) fn line(activity: Activity) -> Line<'static> {
+pub(crate) fn line(activity: Activity, theme: Theme) -> Line<'static> {
     let frame = match activity {
         Activity::Resting => 0,
         Activity::Working { frame } => frame % PERIOD,
     };
 
     let mut loader = KittLoader::build(
-        crate::theme::Theme::default().palette().accent,
+        theme.palette().accent,
         usize::from(WIDTH),
         TRAIL,
         HOLD_START,
@@ -58,20 +59,20 @@ mod tests {
     use super::*;
 
     fn text(activity: Activity) -> String {
-        line(activity).to_string()
+        line(activity, Theme::default()).to_string()
     }
 
     #[test]
     fn the_cycle_is_the_length_the_domain_is_folded_into() {
-        let start = line(Activity::Working { frame: 0 });
+        let start = line(Activity::Working { frame: 0 }, Theme::default());
 
         assert_eq!(
-            line(Activity::Working { frame: PERIOD }),
+            line(Activity::Working { frame: PERIOD }, Theme::default()),
             start,
             "PERIOD has to be the widget's own cycle, or the fold jumps the animation"
         );
         assert_ne!(
-            line(Activity::Working { frame: PERIOD - 1 }),
+            line(Activity::Working { frame: PERIOD - 1 }, Theme::default()),
             start,
             "and it has to be the shortest such length"
         );
@@ -80,8 +81,8 @@ mod tests {
     #[test]
     fn resting_is_the_first_frame_of_the_cycle() {
         assert_eq!(
-            line(Activity::Resting),
-            line(Activity::Working { frame: 0 })
+            line(Activity::Resting, Theme::default()),
+            line(Activity::Working { frame: 0 }, Theme::default())
         );
     }
 
@@ -100,10 +101,12 @@ mod tests {
     /// dissolve the trail entirely, which is the animation resting rather than
     /// a frame with nothing in it.
     fn head(activity: Activity) -> Option<usize> {
-        line(activity)
+        let accent = Theme::default().palette().accent;
+
+        line(activity, Theme::default())
             .spans
             .iter()
-            .position(|span| span.style.fg == Some(crate::theme::Theme::default().palette().accent))
+            .position(|span| span.style.fg == Some(accent))
     }
 
     #[test]

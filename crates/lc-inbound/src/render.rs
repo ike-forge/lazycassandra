@@ -131,7 +131,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 
     let bar = rects.bar();
     let (loader, hint_bar) = bar_split(bar);
-    frame.render_widget(crate::loader::line(view.activity), loader);
+    frame.render_widget(crate::loader::line(view.activity, theme), loader);
     frame.render_widget(
         crate::hints::line(&view.hints, hint_bar.width, theme),
         hint_bar,
