@@ -1843,6 +1843,24 @@ mod tests {
     }
 
     #[test]
+    fn folding_under_a_filter_does_not_disturb_the_fold_state_it_will_return_to() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        assert_eq!(row_count(&state), 3, "shop starts unfolded");
+
+        state.apply_filter(Filtered::Tables, Filter::new("shop"));
+        press(&mut state, Key::Char('h'));
+        press(&mut state, Key::Char('l'));
+        state.apply_filter(Filtered::Tables, None);
+
+        assert_eq!(
+            row_count(&state),
+            3,
+            "the fold state from before the filter must survive it untouched"
+        );
+    }
+
+    #[test]
     fn l_and_h_still_fold_once_the_filter_is_gone() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
 
