@@ -72,13 +72,16 @@ pub enum OverlayView {
 }
 
 fn overlay(state: &State) -> Option<OverlayView> {
-    Some(match state.overlay.as_ref()? {
-        Overlay::Message(message) => OverlayView::Message(message.clone()),
-        Overlay::Commands(panel) => OverlayView::Commands {
+    match state.overlay.as_ref()? {
+        Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
+        Overlay::Commands(panel) => Some(OverlayView::Commands {
             rows: commands::rows(),
             selected: panel.selected(),
-        },
-    })
+        }),
+        // Drawn on the hint bar row (Task 9), not through the modal path the
+        // other two overlays use, so it has no `OverlayView` of its own here.
+        Overlay::Search(_) => None,
+    }
 }
 
 /// One panel, described without reference to how it is drawn.

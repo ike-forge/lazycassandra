@@ -55,6 +55,10 @@ const GLOBAL: &[Binding] = &[
         keys: &[Key::Char('u')],
         action: "focus Queries",
     },
+    Binding {
+        keys: &[Key::Char('/')],
+        action: "search",
+    },
 ];
 
 const MOTION: &[Binding] = &[

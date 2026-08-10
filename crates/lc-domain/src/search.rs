@@ -79,6 +79,65 @@ impl Filtered {
     }
 }
 
+/// An open search prompt.
+///
+/// Lives in [`crate::state::Overlay`] rather than beside it, so "a palette and
+/// a prompt at once" cannot be written down — the argument that enum's own doc
+/// comment already makes about a message and a palette (design §1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prompt {
+    target: Filtered,
+    query: String,
+    /// What was applied before this prompt opened, and what `esc` restores.
+    /// Live filtering overwrites the target's filter on every keystroke, so
+    /// cancelling needs something to put back (design §3).
+    previous: Option<Filter>,
+}
+
+impl Prompt {
+    /// Opens over `target`, remembering the filter it is about to overwrite.
+    #[must_use]
+    pub fn opened(target: Filtered, previous: Option<Filter>) -> Self {
+        Self {
+            target,
+            query: String::new(),
+            previous,
+        }
+    }
+
+    /// Captured at open, not re-read per keystroke: `tab` is inert while a
+    /// prompt is up, so the panel being filtered cannot change under a live
+    /// query (design §3.2).
+    #[must_use]
+    pub const fn target(&self) -> Filtered {
+        self.target
+    }
+
+    #[must_use]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    #[must_use]
+    pub const fn previous(&self) -> Option<&Filter> {
+        self.previous.as_ref()
+    }
+
+    /// What the query now means, for a caller that must apply it.
+    #[must_use]
+    pub fn filter(&self) -> Option<Filter> {
+        Filter::new(&self.query)
+    }
+
+    pub fn push(&mut self, character: char) {
+        self.query.push(character);
+    }
+
+    pub fn pop(&mut self) {
+        self.query.pop();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,7 +12,7 @@ use crate::ddl::DdlPanel;
 use crate::editor::Editor;
 use crate::model::{ConnId, DbError, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::search::{Filter, Filtered};
+use crate::search::{Filter, Filtered, Prompt};
 use crate::style::Severity;
 use crate::tree::TablesPanel;
 use crate::view::hints::Binding;
@@ -118,16 +118,26 @@ pub struct Message {
     pub severity: Severity,
 }
 
-/// What is drawn over the panels, at most one at a time.
+/// What outranks focus, at most one at a time.
 ///
 /// An enum rather than a second `Option` field beside the message: two fields
 /// would make "a failure and the palette, simultaneously" representable, and
 /// the renderer would then need a precedence rule the domain never stated
-/// (conventions.md §1).
+/// (conventions.md §1). `Search` repeats the argument rather than testing it
+/// again: a prompt beside the palette would make "a palette and a prompt at
+/// once" representable the same way (panel search design §1).
+///
+/// Membership no longer means "drawn over the panels" — `Search` is drawn on
+/// the hint bar row instead — but every other consequence of being an overlay
+/// still holds: it claims keys before focus is consulted, `esc` dismisses it,
+/// and a click spends itself on it rather than on whatever is underneath.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Overlay {
     Message(Message),
     Commands(CommandsPanel),
+    /// Drawn on the hint bar row rather than over the panels, and in this
+    /// enum for what that buys: a prompt and a palette cannot both be up.
+    Search(Prompt),
 }
 
 impl ConnectionState {

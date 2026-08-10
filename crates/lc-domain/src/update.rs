@@ -9,6 +9,7 @@ use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
+use crate::search::{Filtered, Prompt};
 use crate::state::{
     ConnectionState, Cursor, Geometry, Message, Overlay, Panel, SchemaState, Scroll, State,
 };
@@ -294,6 +295,12 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return palette_key(state, press.key);
     }
 
+    // A prompt takes text, so it claims every printable key — the
+    // panel-that-takes-text rule, applied to an overlay (design §1.1).
+    if matches!(state.overlay, Some(Overlay::Search(_))) {
+        return search_key(state, press.key);
+    }
+
     // Focus is the mode. A panel that takes text claims every printable key
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
@@ -317,6 +324,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Enter | Key::Char(' ') => return activate(state),
         Key::Char('l') | Key::Right => transition(state, Transition::Open),
         Key::Char('h') | Key::Left => transition(state, Transition::Close),
+        Key::Char('/') => open_prompt(state),
         // Last, so every binding above keeps precedence over a panel key.
         Key::Char(key) => {
             if let Some(panel) = Panel::from_shortcut(key) {
@@ -344,10 +352,13 @@ fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect> {
     state.mark_dirty();
 
     // The overlay is modal: it spends the click that dismisses it rather than
-    // letting it act on a row it was covering (design §2).
+    // letting it act on a row it was covering (design §2). Routed through
+    // `escape` rather than a bare `state.overlay = None`, so a click on an
+    // open prompt restores `previous` instead of dropping it; with any other
+    // overlay up, `escape` only dismisses it, so nothing else changes.
     if state.overlay.is_some() {
         if matches!(pointer, Pointer::Click(_)) {
-            state.overlay = None;
+            escape(state);
         }
         return Vec::new();
     }
@@ -439,11 +450,79 @@ fn edit(state: &mut State, key: Key) -> bool {
     true
 }
 
-/// `Esc` dismisses the overlay when there is one, and otherwise leaves a panel
-/// that takes text — the one key that restores every letter binding at once
-/// (design §3). One press does one of the two, never both.
+/// `/` opens a prompt over the focused panel. Refused where the panel holds no
+/// filter, which is Queries — unreachable, since the editor claims `/` as text
+/// first (panel search design §8), and stated here rather than assumed.
+///
+/// Clears the target's filter immediately rather than leaving `previous`
+/// showing until the first keystroke: the buffer opens empty, and live
+/// filtering (design §3.3) means the panel underneath is the preview of
+/// whatever the buffer holds, from the first frame the prompt is up.
+fn open_prompt(state: &mut State) {
+    let Some(target) = Filtered::of(state.focus) else {
+        return;
+    };
+
+    let previous = state.filter(target).cloned();
+    state.overlay = Some(Overlay::Search(Prompt::opened(target, previous)));
+    state.apply_filter(target, None);
+}
+
+/// What an open prompt responds to.
+///
+/// Every printable key is a character, so `q` types a `q` — the opposite of
+/// the palette, which leaves `q` quitting. The two differ because the palette
+/// takes motion and this takes text (panel search design §1.1, §3.1).
+///
+/// `Enter` and `Escape` are decided before the prompt's mutable borrow is
+/// taken, rather than inside the match that holds it: both close the overlay,
+/// which needs `&mut state.overlay` while `prompt` is still live from the
+/// `let Some(...) = &mut state.overlay` above it, so folding the close into
+/// that match cannot borrow-check.
+fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(key, Key::Escape) {
+        escape(state);
+        return Vec::new();
+    }
+
+    let Some(Overlay::Search(prompt)) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char(character) => prompt.push(character),
+        Key::Backspace => prompt.pop(),
+        Key::Enter => {
+            state.overlay = None;
+            return Vec::new();
+        }
+        _ => return Vec::new(),
+    }
+
+    let (target, filter) = (prompt.target(), prompt.filter());
+    state.apply_filter(target, filter);
+
+    Vec::new()
+}
+
+/// `Esc` resolves in one order, first hit wins: the overlay, then the focused
+/// panel's filter, then leaving a panel that takes text. One press does one of
+/// the three, never two — the thing most recently put on screen comes off
+/// first (panel search design §6).
 fn escape(state: &mut State) {
-    if state.overlay.take().is_some() {
+    match state.overlay.take() {
+        Some(Overlay::Search(prompt)) => {
+            state.apply_filter(prompt.target(), prompt.previous().cloned());
+            return;
+        }
+        Some(Overlay::Message(_) | Overlay::Commands(_)) => return,
+        None => {}
+    }
+
+    if let Some(target) = Filtered::of(state.focus)
+        && state.filter(target).is_some()
+    {
+        state.apply_filter(target, None);
         return;
     }
 
@@ -831,7 +910,7 @@ mod tests {
     use crate::commands::{CATALOGUE, CommandsPanel};
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
-    use crate::search::{Filter, Filtered};
+    use crate::search::{Filter, Filtered, Prompt};
     use crate::state::Connection;
     use crate::tree::tests_support::schema_of as tabled_schema;
 
@@ -1231,7 +1310,7 @@ mod tests {
     fn palette(state: &State) -> Option<&CommandsPanel> {
         match state.overlay.as_ref()? {
             Overlay::Commands(panel) => Some(panel),
-            Overlay::Message(_) => None,
+            Overlay::Message(_) | Overlay::Search(_) => None,
         }
     }
 
@@ -3154,5 +3233,226 @@ mod tests {
                 "the palette lists {key:?} and no state responds to it"
             );
         }
+    }
+
+    fn searching(state: &State) -> Option<&Prompt> {
+        match &state.overlay {
+            Some(Overlay::Search(prompt)) => Some(prompt),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn slash_opens_the_prompt_in_every_panel_that_can_hold_a_filter() {
+        for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
+            let mut state = browsing_tables(&[("shop", &["orders"])]);
+            state.focus = panel;
+
+            press(&mut state, Key::Char('/'));
+
+            assert_eq!(
+                searching(&state).map(Prompt::target),
+                Filtered::of(panel),
+                "{panel:?} must reach a prompt"
+            );
+        }
+    }
+
+    #[test]
+    fn slash_is_text_in_queries_and_opens_nothing() {
+        let mut state = State {
+            focus: Panel::Queries,
+            ..State::default()
+        };
+
+        press(&mut state, Key::Char('/'));
+
+        assert!(state.overlay.is_none(), "the editor claims it first");
+        assert_eq!(state.queries.text(), "/");
+    }
+
+    #[test]
+    fn q_and_the_question_mark_type_themselves_in_the_prompt() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('/'));
+
+        press(&mut state, Key::Char('q'));
+        press(&mut state, Key::Char('?'));
+
+        assert!(!state.should_quit, "q is text while a prompt is up");
+        assert_eq!(searching(&state).map(Prompt::query), Some("q?"));
+    }
+
+    #[test]
+    fn the_prompt_filters_live_per_keystroke() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('/'));
+
+        press(&mut state, Key::Char('u'));
+
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("u"),
+            "the panel underneath is the preview"
+        );
+    }
+
+    #[test]
+    fn backspace_narrows_the_query_and_re_applies_it() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('o'));
+        press(&mut state, Key::Char('z'));
+
+        press(&mut state, Key::Backspace);
+
+        assert_eq!(searching(&state).map(Prompt::query), Some("o"));
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("o")
+        );
+    }
+
+    #[test]
+    fn backspace_on_an_empty_query_is_inert_rather_than_closing() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('/'));
+
+        press(&mut state, Key::Backspace);
+
+        assert_eq!(searching(&state).map(Prompt::query), Some(""));
+    }
+
+    #[test]
+    fn enter_commits_and_closes_leaving_the_filter_applied() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('o'));
+
+        press(&mut state, Key::Enter);
+
+        assert!(state.overlay.is_none());
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("o")
+        );
+    }
+
+    #[test]
+    fn an_empty_commit_clears_the_filter() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("o"));
+        press(&mut state, Key::Char('/'));
+
+        press(&mut state, Key::Enter);
+
+        assert!(state.overlay.is_none());
+        assert_eq!(state.filter(Filtered::Tables), None);
+    }
+
+    #[test]
+    fn escape_cancels_the_prompt_restoring_the_filter_that_was_there() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("orders"));
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('u'));
+
+        press(&mut state, Key::Escape);
+
+        assert!(state.overlay.is_none());
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("orders"),
+            "an abandoned prompt leaves the panel as it was found"
+        );
+    }
+
+    #[test]
+    fn escape_clears_the_focused_panels_filter_when_no_overlay_is_up() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Contents;
+        state.apply_filter(Filtered::Contents, Filter::new("o"));
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(state.filter(Filtered::Contents), None);
+    }
+
+    #[test]
+    fn escape_prefers_the_overlay_to_the_filter() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("o"));
+        state.overlay = Some(Overlay::Message(Message {
+            title: "t".to_owned(),
+            message: "m".to_owned(),
+            severity: Severity::Info,
+        }));
+
+        press(&mut state, Key::Escape);
+
+        assert!(state.overlay.is_none());
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("o"),
+            "one press does one thing"
+        );
+    }
+
+    #[test]
+    fn escape_prefers_the_filter_to_leaving_the_editor() {
+        // Unreachable today — Queries holds no filter (design §8) — so this
+        // pins the ordering for the vim slice by checking the two lower
+        // rungs still resolve in order.
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Queries;
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(state.focus, Panel::Tables);
+    }
+
+    #[test]
+    fn tab_is_inert_while_the_prompt_is_up() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('/'));
+
+        press(&mut state, Key::Tab);
+        press(&mut state, Key::BackTab);
+
+        assert_eq!(state.focus, Panel::Tables);
+        assert!(searching(&state).is_some(), "and the prompt survives");
+    }
+
+    #[test]
+    fn a_click_cancels_the_prompt() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("orders"));
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('u'));
+
+        point(&mut state, Pointer::Click(Click::Panel(Panel::Tables)));
+
+        assert!(state.overlay.is_none());
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("orders"),
+            "a click that lands somewhere unexpected must not leave state behind"
+        );
+    }
+
+    #[test]
+    fn a_filter_survives_a_focus_change() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('o'));
+        press(&mut state, Key::Enter);
+
+        press(&mut state, Key::Tab);
+        press(&mut state, Key::Char('t'));
+
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("o")
+        );
     }
 }
