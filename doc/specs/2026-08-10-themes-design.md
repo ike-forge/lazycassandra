@@ -284,9 +284,20 @@ rather than an unreadable panel, and that is what makes iterating on §4 and §5
 safe. It takes three forms, because the themes make three different promises.
 
 **`every_flavour_reads_against_its_own_base`.** For each Catppuccin flavour,
-every foreground role holds a WCAG contrast ratio of at least 3.0 against that
-flavour's `base`. `muted` is exempt at 2.0 — it is *supposed* to recede, and
-holding it to the same floor as `danger` would mean it had stopped receding.
+every foreground role holds a WCAG contrast ratio against that flavour's `base`
+of at least **2.3**, and `muted` at least 2.0 — it is *supposed* to recede, and
+holding it to `danger`'s floor would mean it had stopped receding.
+
+2.3 rather than the 3.0 this section first named. Catppuccin Latte's own
+accents do not clear 3.0 against Catppuccin Latte's own base: upstream's yellow
+is 2.31, pink 2.34, peach and flamingo 2.64, green 2.96. Seven of its fourteen
+roles fail, and the three dark flavours pass every role. The choice was between
+a Latte that is not Catppuccin Latte and a floor that admits upstream's, and
+the flavour exists to *be* the upstream flavour — someone who picks it by name
+has seen it elsewhere. So the floor is set where upstream sits, and its job is
+stated honestly: it catches a mistyped hex, not upstream's taste. The default
+theme in §4 is where the strict rule lives, and it is the light-terminal answer
+that owes nobody a resemblance.
 
 **`the_default_palette_reads_on_black_and_on_white`.** The default theme knows
 neither its background nor its foreground, so every role is checked against
