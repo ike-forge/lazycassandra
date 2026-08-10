@@ -373,7 +373,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Esc`'s full precedence chain | `escape_clears_the_focused_panels_filter_when_no_overlay_is_up`, `escape_prefers_the_overlay_to_the_filter`, `escape_prefers_the_filter_to_leaving_the_editor` |
 | `Tab` is inert while the prompt is up | `tab_is_inert_while_the_prompt_is_up` |
 | A click cancels the prompt | `a_click_cancels_the_prompt` |
-| A filter survives a focus change, read back from the panel it was applied to | `a_filter_survives_a_focus_change`, `a_filter_is_read_back_from_the_panel_it_was_applied_to` (`state.rs`) |
+| A filter survives a focus change | `a_filter_survives_a_focus_change` |
+| A filter is read back from the panel it was applied to | `a_filter_is_read_back_from_the_panel_it_was_applied_to` (`state.rs`) |
 | The three filters are independent | `the_three_filters_are_independent` (`state.rs`) |
 | A panel is projected carrying the filter applied to it | `a_panel_carries_the_filter_applied_to_it` (`view/mod.rs`) |
 | An open prompt is projected as its query | `an_open_prompt_is_projected_as_its_query` (`view/mod.rs`) |
