@@ -1211,6 +1211,10 @@ mod tests {
         update(state, Msg::Input(KeyPress::new(key)))
     }
 
+    fn press_chord(state: &mut State, key: Key, modifiers: Modifiers) -> Vec<Effect> {
+        update(state, Msg::Input(KeyPress { key, modifiers }))
+    }
+
     /// A frame big enough for a palette. `browsing` leaves geometry at its
     /// default, whose `command_rows` is zero — which is itself a binding
     /// (`the_palette_does_not_open_where_it_cannot_be_drawn`).
@@ -2399,11 +2403,12 @@ mod tests {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);
 
-                    let effects = press(&mut state, key);
+                    let effects = press_chord(&mut state, key, binding.modifiers);
 
                     assert!(
                         crate::view::view_model(&state) != before || !effects.is_empty(),
-                        "{panel:?} offers '{key:?} {}' and pressing it changes nothing",
+                        "{panel:?} offers '{} {}' and pressing it changes nothing",
+                        crate::view::hints::label(binding),
                         binding.action
                     );
                 }
@@ -2439,11 +2444,12 @@ mod tests {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);
 
-                    let effects = press(&mut state, key);
+                    let effects = press_chord(&mut state, key, binding.modifiers);
 
                     assert!(
                         crate::view::view_model(&state) != before || !effects.is_empty(),
-                        "'{key:?} {}' does nothing with {panel:?} focused",
+                        "'{} {}' does nothing with {panel:?} focused",
+                        crate::view::hints::label(binding),
                         binding.action
                     );
                 }

@@ -6,7 +6,7 @@
 //! `Key` values rather than a string, so a row cannot describe a key no arm of
 //! `handle_key` claims.
 
-use crate::model::Key;
+use crate::model::{Key, Modifiers};
 use crate::state::Cursor;
 use crate::view::Binding;
 use crate::view::hints::label;
@@ -21,38 +21,47 @@ pub struct Group {
 const GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Key::Char('q')],
+        modifiers: Modifiers::NONE,
         action: "quit",
     },
     Binding {
         keys: &[Key::Char('?')],
+        modifiers: Modifiers::NONE,
         action: "commands",
     },
     Binding {
         keys: &[Key::Escape],
+        modifiers: Modifiers::NONE,
         action: "dismiss the overlay",
     },
     Binding {
         keys: &[Key::Tab],
+        modifiers: Modifiers::NONE,
         action: "next panel",
     },
     Binding {
         keys: &[Key::BackTab],
+        modifiers: Modifiers::NONE,
         action: "previous panel",
     },
     Binding {
         keys: &[Key::Char('t')],
+        modifiers: Modifiers::NONE,
         action: "focus Tables",
     },
     Binding {
         keys: &[Key::Char('a')],
+        modifiers: Modifiers::NONE,
         action: "focus Table DDL",
     },
     Binding {
         keys: &[Key::Char('c')],
+        modifiers: Modifiers::NONE,
         action: "focus Table contents",
     },
     Binding {
         keys: &[Key::Char('u')],
+        modifiers: Modifiers::NONE,
         action: "focus Queries",
     },
 ];
@@ -60,26 +69,32 @@ const GLOBAL: &[Binding] = &[
 const MOTION: &[Binding] = &[
     Binding {
         keys: &[Key::Char('j'), Key::Down],
+        modifiers: Modifiers::NONE,
         action: "down one row",
     },
     Binding {
         keys: &[Key::Char('k'), Key::Up],
+        modifiers: Modifiers::NONE,
         action: "up one row",
     },
     Binding {
         keys: &[Key::PageDown],
+        modifiers: Modifiers::NONE,
         action: "down one screen",
     },
     Binding {
         keys: &[Key::PageUp],
+        modifiers: Modifiers::NONE,
         action: "up one screen",
     },
     Binding {
         keys: &[Key::Home],
+        modifiers: Modifiers::NONE,
         action: "to the start",
     },
     Binding {
         keys: &[Key::End],
+        modifiers: Modifiers::NONE,
         action: "to the end",
     },
 ];
@@ -90,14 +105,17 @@ const MOTION: &[Binding] = &[
 const TABLES: &[Binding] = &[
     Binding {
         keys: &[Key::Enter, Key::Char(' ')],
+        modifiers: Modifiers::NONE,
         action: "fold/unfold, or read",
     },
     Binding {
         keys: &[Key::Char('l'), Key::Right],
+        modifiers: Modifiers::NONE,
         action: "unfold the keyspace",
     },
     Binding {
         keys: &[Key::Char('h'), Key::Left],
+        modifiers: Modifiers::NONE,
         action: "fold, or step out",
     },
 ];
@@ -136,7 +154,7 @@ pub fn rows() -> Vec<CommandRow> {
         .flat_map(|group| {
             std::iter::once(CommandRow::Heading(group.heading)).chain(group.bindings.iter().map(
                 |binding| CommandRow::Command {
-                    keys: label(binding.keys),
+                    keys: label(binding),
                     action: binding.action,
                 },
             ))
@@ -289,7 +307,7 @@ mod tests {
     #[test]
     fn no_command_row_is_wider_than_the_narrowest_palette() {
         for binding in commands() {
-            let keys = label(binding.keys);
+            let keys = label(binding);
 
             assert!(
                 keys.chars().count() <= WIDEST_KEYS,

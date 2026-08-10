@@ -39,6 +39,16 @@ pub struct Modifiers {
     pub shift: bool,
 }
 
+impl Modifiers {
+    /// Nothing held — what a bare key press carries, and what all but one
+    /// binding declares.
+    pub const NONE: Self = Self {
+        ctrl: false,
+        alt: false,
+        shift: false,
+    };
+}
+
 impl KeyPress {
     #[must_use]
     pub const fn new(key: Key) -> Self {

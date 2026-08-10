@@ -1,16 +1,18 @@
 //! What the focused panel responds to, as the bar will say it.
 
-use crate::model::Key;
+use crate::model::{Key, Modifiers};
 use crate::state::{Overlay, State};
 
 /// A binding, keyed by the values `handle_key` actually matches on.
 ///
 /// Not a display string: a string could name a key no arm of `handle_key`
 /// claims and nothing would ever catch it, and a bar that lies is worse than
-/// no bar (design §2). `update::tests` presses every one of these.
+/// no bar (design §2). `update::tests` presses every one of these, modifier
+/// included — which is why the modifier is here and not implied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
     pub keys: &'static [Key],
+    pub modifiers: Modifiers,
     pub action: &'static str,
 }
 
@@ -40,10 +42,12 @@ pub struct HintBar {
 pub(crate) const GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Key::Tab],
+        modifiers: Modifiers::NONE,
         action: "panel",
     },
     Binding {
         keys: &[Key::Char('?')],
+        modifiers: Modifiers::NONE,
         action: "commands",
     },
 ];
@@ -56,6 +60,7 @@ pub(crate) const GLOBAL: &[Binding] = &[
 /// still reach it now that it has left [`GLOBAL`].
 pub(crate) const QUIT: Binding = Binding {
     keys: &[Key::Char('q')],
+    modifiers: Modifiers::NONE,
     action: "quit",
 };
 
@@ -67,14 +72,17 @@ pub(crate) const QUIT: Binding = Binding {
 const PALETTE: &[Binding] = &[
     Binding {
         keys: &[Key::Char('j'), Key::Char('k')],
+        modifiers: Modifiers::NONE,
         action: "scroll",
     },
     Binding {
         keys: &[Key::PageDown, Key::PageUp],
+        modifiers: Modifiers::NONE,
         action: "page",
     },
     Binding {
         keys: &[Key::Home, Key::End],
+        modifiers: Modifiers::NONE,
         action: "ends",
     },
 ];
@@ -87,10 +95,12 @@ const PALETTE: &[Binding] = &[
 const PALETTE_GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Key::Char('?'), Key::Escape],
+        modifiers: Modifiers::NONE,
         action: "close",
     },
     Binding {
         keys: &[Key::Char('q')],
+        modifiers: Modifiers::NONE,
         action: "quit",
     },
 ];
@@ -125,13 +135,31 @@ pub(crate) fn bar(state: &State) -> HintBar {
 
 fn rendered(binding: &Binding) -> Hint {
     Hint {
-        keys: label(binding.keys),
+        keys: label(binding),
         action: binding.action,
     }
 }
 
-pub(crate) fn label(keys: &[Key]) -> String {
-    keys.iter().copied().map(name).collect::<Vec<_>>().join("/")
+/// Shift is never consulted: a shifted letter already arrives as a distinct
+/// `Key::Char` and `shift-tab` is `Key::BackTab`, so no binding sets it.
+pub(crate) fn label(binding: &Binding) -> String {
+    let keys = binding
+        .keys
+        .iter()
+        .copied()
+        .map(name)
+        .collect::<Vec<_>>()
+        .join("/");
+
+    let mut label = String::new();
+    if binding.modifiers.ctrl {
+        label.push_str("ctrl-");
+    }
+    if binding.modifiers.alt {
+        label.push_str("alt-");
+    }
+    label.push_str(&keys);
+    label
 }
 
 /// Named rather than drawn, for the keys with no printable form: the arrow
@@ -174,17 +202,26 @@ mod tests {
         }
     }
 
+    /// An unmodified binding, for tests that only care about the keys.
+    fn bound(keys: &'static [Key]) -> Binding {
+        Binding {
+            keys,
+            modifiers: Modifiers::NONE,
+            action: "",
+        }
+    }
+
     #[test]
     fn several_keys_for_one_action_join_with_a_slash() {
-        assert_eq!(label(&[Key::Char('j'), Key::Char('k')]), "j/k");
-        assert_eq!(label(&[Key::PageDown, Key::PageUp]), "pgdn/pgup");
+        assert_eq!(label(&bound(&[Key::Char('j'), Key::Char('k')])), "j/k");
+        assert_eq!(label(&bound(&[Key::PageDown, Key::PageUp])), "pgdn/pgup");
     }
 
     #[test]
     fn a_key_with_no_printable_form_is_named_rather_than_drawn() {
-        assert_eq!(label(&[Key::Home, Key::End]), "home/end");
-        assert_eq!(label(&[Key::Char(' ')]), "space");
-        assert_eq!(label(&[Key::Tab]), "tab");
+        assert_eq!(label(&bound(&[Key::Home, Key::End])), "home/end");
+        assert_eq!(label(&bound(&[Key::Char(' ')])), "space");
+        assert_eq!(label(&bound(&[Key::Tab])), "tab");
     }
 
     #[test]
@@ -277,5 +314,32 @@ mod tests {
         assert_eq!(bar.global[0].keys, "?/esc");
         assert_eq!(bar.global[0].action, "close");
         assert_eq!(bar.global.last().expect("q is last").action, "quit");
+    }
+
+    #[test]
+    fn an_unmodified_binding_is_labelled_bare() {
+        assert_eq!(
+            label(&Binding {
+                keys: &[Key::Char('j'), Key::Down],
+                modifiers: Modifiers::NONE,
+                action: "move",
+            }),
+            "j/↓"
+        );
+    }
+
+    #[test]
+    fn a_ctrl_binding_is_labelled_with_its_modifier() {
+        assert_eq!(
+            label(&Binding {
+                keys: &[Key::Char('r')],
+                modifiers: Modifiers {
+                    ctrl: true,
+                    ..Modifiers::NONE
+                },
+                action: "run",
+            }),
+            "ctrl-r"
+        );
     }
 }
