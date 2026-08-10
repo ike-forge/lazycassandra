@@ -112,7 +112,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         Some(OverlayView::Commands { rows, selected }) => {
             crate::palette::render(frame, rows, *selected, theme);
         }
-        None => {}
+        // Drawn on the hint bar row, not here — Task 9. `Some` still spends
+        // the cursor guard above, which is the only thing this slice needs
+        // (panel search design §1).
+        Some(OverlayView::Search { .. }) | None => {}
     }
 
     Rendered {
@@ -201,7 +204,7 @@ mod tests {
     };
     use lc_domain::pointer::Click;
     use lc_domain::posture::Posture;
-    use lc_domain::search::{Filter, Filtered};
+    use lc_domain::search::{Filter, Filtered, Prompt};
     use lc_domain::state::{
         Connection, ConnectionState, Geometry, Message, Overlay, Panel, SchemaState,
     };
@@ -1752,6 +1755,22 @@ mod tests {
         assert_eq!(
             cursor, None,
             "an overlay owns the frame; a cursor beneath it would blink over the modal at a position that means nothing there"
+        );
+    }
+
+    #[test]
+    fn an_open_prompt_hides_the_cursor_even_when_the_editor_is_focused() {
+        let state = State {
+            overlay: Some(Overlay::Search(Prompt::opened(Filtered::Tables, None))),
+            ..with_query("SELECT", Panel::Queries)
+        };
+
+        let (_, cursor) = drawn_with_cursor(80, 24, &state);
+
+        assert_eq!(
+            cursor, None,
+            "a prompt outranks focus exactly as a message or the palette does; \
+             a cursor blinking beneath it would say the editor still had the keys"
         );
     }
 

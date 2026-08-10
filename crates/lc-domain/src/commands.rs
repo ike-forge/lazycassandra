@@ -55,11 +55,16 @@ const GLOBAL: &[Binding] = &[
         keys: &[Key::Char('u')],
         action: "focus Queries",
     },
-    Binding {
-        keys: &[Key::Char('/')],
-        action: "search",
-    },
 ];
+
+/// `/` joins the focused panel's own group, not `GLOBAL`: it does nothing in
+/// Queries, where the editor claims it as text before this binding is ever
+/// consulted (panel search design §5.3, §8). `GLOBAL` would assert it works
+/// everywhere, which is false there.
+const SEARCH: &[Binding] = &[Binding {
+    keys: &[Key::Char('/')],
+    action: "search this panel",
+}];
 
 const MOTION: &[Binding] = &[
     Binding {
@@ -119,6 +124,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Tables",
         bindings: TABLES,
+    },
+    Group {
+        heading: "Search",
+        bindings: SEARCH,
     },
 ];
 

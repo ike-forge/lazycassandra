@@ -3350,6 +3350,32 @@ mod tests {
         assert_eq!(state.filter(Filtered::Tables), None);
     }
 
+    /// The design's own mechanism for an empty commit: `Filter::new("")` is
+    /// `None`, so backspacing a live query back to nothing already clears the
+    /// filter before `Enter` is ever pressed — unlike
+    /// `an_empty_commit_clears_the_filter` above, whose buffer is empty
+    /// because nothing was ever typed into it.
+    #[test]
+    fn backspacing_a_query_to_empty_clears_the_filter_live() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("o"));
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('o'));
+
+        press(&mut state, Key::Backspace);
+
+        assert_eq!(
+            state.filter(Filtered::Tables),
+            None,
+            "the buffer is empty, so the live preview already has no filter"
+        );
+
+        press(&mut state, Key::Enter);
+
+        assert!(state.overlay.is_none());
+        assert_eq!(state.filter(Filtered::Tables), None);
+    }
+
     #[test]
     fn escape_cancels_the_prompt_restoring_the_filter_that_was_there() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);

@@ -69,6 +69,14 @@ pub enum OverlayView {
         rows: Vec<CommandRow>,
         selected: usize,
     },
+    /// Carries only the query: `Prompt::target` is what the renderer needs to
+    /// find the panel it is drawn against, but that panel is already
+    /// `view.focus` — `target` is captured focus, and cannot be anything
+    /// else while the prompt is up (design §3.2) — so restating it here would
+    /// be a second name for the same fact.
+    Search {
+        query: String,
+    },
 }
 
 fn overlay(state: &State) -> Option<OverlayView> {
@@ -78,9 +86,15 @@ fn overlay(state: &State) -> Option<OverlayView> {
             rows: commands::rows(),
             selected: panel.selected(),
         }),
-        // Drawn on the hint bar row (Task 9), not through the modal path the
-        // other two overlays use, so it has no `OverlayView` of its own here.
-        Overlay::Search(_) => None,
+        // `Some`, not drawn through the modal path the other two overlays
+        // use — Task 9 draws it on the hint bar row instead. Still `Some`
+        // rather than `None`: `view.overlay.is_none()` is what
+        // `lc-inbound::render` reads to decide whether a panel may show its
+        // own cursor, and a prompt outranks focus exactly as a message or
+        // the palette does (design §1).
+        Overlay::Search(prompt) => Some(OverlayView::Search {
+            query: prompt.query().to_owned(),
+        }),
     }
 }
 
@@ -309,6 +323,24 @@ mod tests {
         assert_eq!(
             view_model(&state).overlay,
             Some(OverlayView::Message(message))
+        );
+    }
+
+    #[test]
+    fn an_open_prompt_is_projected_as_its_query() {
+        let mut prompt = crate::search::Prompt::opened(crate::search::Filtered::Tables, None);
+        prompt.push('o');
+        prompt.push('r');
+        let state = State {
+            overlay: Some(Overlay::Search(prompt)),
+            ..State::default()
+        };
+
+        assert_eq!(
+            view_model(&state).overlay,
+            Some(OverlayView::Search {
+                query: "or".to_owned()
+            })
         );
     }
 
