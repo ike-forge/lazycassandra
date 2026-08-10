@@ -221,6 +221,16 @@ const CONTENTS_HINTS: &[Binding] = &[
 ];
 
 const QUERIES_HINTS: &[Binding] = &[
+    // First: it is what the panel is for. `⏎ newline` and `esc leave` are what
+    // it does on the way there.
+    Binding {
+        keys: &[Key::Char('r')],
+        modifiers: Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        },
+        action: "run",
+    },
     Binding {
         keys: &[Key::Enter],
         modifiers: Modifiers::NONE,

@@ -2433,7 +2433,32 @@ mod tests {
         sized(&mut state, [3, 3, 3, 3], 40);
         state.ddl.page_down(40, 3);
         state.focus = focus;
+
+        // `ctrl-r` needs a buffer to run: an empty one is a mistake with no
+        // consequence (`an_empty_buffer_runs_nothing`), which would make the
+        // hint's own binding look unbound.
+        if focus == Panel::Queries {
+            type_into(&mut state, "SELECT * FROM shop.orders");
+        }
+
         state
+    }
+
+    #[test]
+    fn the_editing_keys_do_nothing_outside_a_panel_that_takes_text() {
+        for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
+            for key in [Key::Backspace, Key::Delete] {
+                let mut state = populated(panel);
+                let before = crate::view::view_model(&state);
+
+                let effects = press(&mut state, key);
+
+                assert!(
+                    effects.is_empty() && crate::view::view_model(&state) == before,
+                    "{key:?} belongs to the editor and {panel:?} does not take text"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3037,12 +3062,16 @@ mod tests {
         .collect()
     }
 
-    fn catalogued() -> Vec<Key> {
+    fn catalogued() -> Vec<KeyPress> {
         CATALOGUE
             .iter()
             .flat_map(|group| group.bindings)
-            .flat_map(|binding| binding.keys)
-            .copied()
+            .flat_map(|binding| {
+                binding.keys.iter().map(|&key| KeyPress {
+                    key,
+                    modifiers: binding.modifiers,
+                })
+            })
             .collect()
     }
 
@@ -3092,9 +3121,9 @@ mod tests {
     /// whose `dirty` flag `handle_key` sets on every press. It is also the
     /// better question: a key that changes nothing visible and emits no effect
     /// is not a binding, whatever it touched on the way through.
-    fn does_something(state: &State, key: Key) -> bool {
+    fn does_something(state: &State, press: KeyPress) -> bool {
         let mut after = state.clone();
-        let effects = press(&mut after, key);
+        let effects = update(&mut after, Msg::Input(press));
 
         !effects.is_empty()
             || after.should_quit != state.should_quit
@@ -3107,26 +3136,53 @@ mod tests {
 
         for state in sweep_fixtures() {
             for key in every_key() {
-                if catalogued.contains(&key) {
-                    continue;
-                }
+                for modifiers in [
+                    Modifiers::NONE,
+                    Modifiers {
+                        ctrl: true,
+                        ..Modifiers::NONE
+                    },
+                ] {
+                    let press = KeyPress { key, modifiers };
+                    if catalogued.contains(&press) {
+                        continue;
+                    }
 
-                assert!(
-                    !does_something(&state, key),
-                    "{key:?} does something and doc/shortcuts.md's palette does not list it"
-                );
+                    assert!(
+                        !does_something(&state, press),
+                        "{press:?} does something and doc/shortcuts.md's palette does not list it"
+                    );
+                }
             }
         }
     }
 
+    /// `sweep_fixtures` plus an editing state. Only this sweep gets it: in a
+    /// panel that takes text every printable key does something, so it would
+    /// tell `no_key_does_anything_the_palette_does_not_list` that the palette
+    /// is missing the alphabet. What is true there instead is pinned by
+    /// `a_letter_typed_in_queries_is_text_not_a_shortcut`.
+    fn sweep_fixtures_with_editor() -> Vec<State> {
+        let mut fixtures = sweep_fixtures();
+        let mut editor = editing("SELECT * FROM shop.orders");
+        editor.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+        // One step off the buffer's end: `Delete` has nothing to remove
+        // sitting exactly there (`delete_at_the_end_of_the_buffer_does_nothing`
+        // in editor.rs), and `End` from the end is a no-op. Off by one, `Home`,
+        // `End`, and `Delete` all have somewhere to move from.
+        editor.queries.left();
+        fixtures.push(editor);
+        fixtures
+    }
+
     #[test]
     fn every_key_the_palette_lists_does_something() {
-        let fixtures = sweep_fixtures();
+        let fixtures = sweep_fixtures_with_editor();
 
-        for key in catalogued() {
+        for press in catalogued() {
             assert!(
-                fixtures.iter().any(|state| does_something(state, key)),
-                "the palette lists {key:?} and no state responds to it"
+                fixtures.iter().any(|state| does_something(state, press)),
+                "the palette lists {press:?} and no state responds to it"
             );
         }
     }

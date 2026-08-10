@@ -262,7 +262,7 @@ mod tests {
 
         let bar = bar(&state);
 
-        assert_eq!(bar.panel[0].action, "newline");
+        assert_eq!(bar.panel[0].action, "run");
         assert!(
             bar.global.iter().all(|hint| hint.action != "quit"),
             "q types a q in the editor, and a bar that lies is worse than no bar"
@@ -340,6 +340,20 @@ mod tests {
                 action: "run",
             }),
             "ctrl-r"
+        );
+    }
+
+    #[test]
+    fn the_queries_bar_names_the_run_binding() {
+        let mut state = fits();
+        state.focus = Panel::Queries;
+
+        let panel = bar(&state).panel;
+
+        assert_eq!(
+            panel.first().map(|hint| (hint.keys.as_str(), hint.action)),
+            Some(("ctrl-r", "run")),
+            "the panel exists to run queries, so the bar says that first"
         );
     }
 }

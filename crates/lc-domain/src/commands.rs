@@ -120,6 +120,40 @@ const TABLES: &[Binding] = &[
     },
 ];
 
+// The editor's printable keys are not rows: every one of them types itself,
+// which is the panel's whole rule rather than a list of bindings
+// (doc/shortcuts.md §2). What is listed is what a key does *not* do elsewhere.
+const QUERIES: &[Binding] = &[
+    Binding {
+        keys: &[Key::Char('r')],
+        modifiers: Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        },
+        action: "run the buffer",
+    },
+    Binding {
+        keys: &[Key::Enter],
+        modifiers: Modifiers::NONE,
+        action: "split the line",
+    },
+    Binding {
+        keys: &[Key::Backspace, Key::Delete],
+        modifiers: Modifiers::NONE,
+        action: "delete a character",
+    },
+    Binding {
+        keys: &[Key::Home, Key::End],
+        modifiers: Modifiers::NONE,
+        action: "line start/end",
+    },
+    Binding {
+        keys: &[Key::Escape],
+        modifiers: Modifiers::NONE,
+        action: "leave the editor",
+    },
+];
+
 /// Every binding, grouped as the palette lists them.
 pub const CATALOGUE: &[Group] = &[
     Group {
@@ -133,6 +167,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Tables",
         bindings: TABLES,
+    },
+    Group {
+        heading: "Queries",
+        bindings: QUERIES,
     },
 ];
 
@@ -319,6 +357,25 @@ mod tests {
                 binding.action
             );
         }
+    }
+
+    #[test]
+    fn the_palette_names_the_run_binding() {
+        assert!(
+            rows().contains(&CommandRow::Command {
+                keys: "ctrl-r".to_owned(),
+                action: "run the buffer",
+            }),
+            "the palette claims to be complete, and ctrl-r is the one binding no key types"
+        );
+    }
+
+    #[test]
+    fn the_palette_has_a_queries_section() {
+        assert!(
+            CATALOGUE.iter().any(|group| group.heading == "Queries"),
+            "a panel that takes text still has bindings, and the palette lists every binding"
+        );
     }
 
     #[test]

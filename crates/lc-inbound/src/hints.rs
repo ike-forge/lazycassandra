@@ -232,7 +232,7 @@ mod tests {
     fn the_editor_names_its_own_keys_and_drops_the_quit_it_no_longer_has() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " ⏎ newline  esc leave │ tab panel"
+            " ctrl-r run  ⏎ newline  esc leave │ tab panel"
         );
     }
 
