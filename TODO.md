@@ -165,10 +165,6 @@ From the table display slice (doc/specs/2026-08-10-table-display-design.md §11)
 - Column widths that survive a restart. They are recomputed from each page, so
   resizing one is not a thing to do — a preference needs a config system to hold
   it, and there is none.
-- `lc_domain::grid::available(width, gutter)`. The width the grid body has after
-  the gutter is spelled out in `update::grid_columns`, in `body::grid`, and again
-  in two render tests. Four copies of one expression across two crates, agreeing
-  by convention rather than by type.
 - The horizontal thumb glyph has never been looked at on a real terminal. The
   bottom bar reuses the vertical bar's machinery with `━`; it is pinned by
   position, not by appearance.
