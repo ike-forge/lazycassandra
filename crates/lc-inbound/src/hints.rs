@@ -155,7 +155,7 @@ mod tests {
     fn a_wide_frame_shows_every_hint() {
         assert_eq!(
             drawn(Panel::Tables, 80),
-            " j/k move  l/h fold  ⏎ open │ tab panel  q quit"
+            " j/k move  l/h fold  ⏎ open  / search │ tab panel  q quit"
         );
     }
 
@@ -215,7 +215,7 @@ mod tests {
 
         assert_eq!(
             drawn(80),
-            " j/k move  l/h fold  ⏎ open │ tab panel  ? commands  q quit"
+            " j/k move  l/h fold  ⏎ open  / search │ tab panel  ? commands  q quit"
         );
         assert_eq!(
             drawn(46),

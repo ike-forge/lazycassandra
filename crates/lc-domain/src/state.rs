@@ -8,9 +8,11 @@ use std::collections::BTreeMap;
 
 use crate::commands::CommandsPanel;
 use crate::contents::ContentsPanel;
+use crate::ddl::DdlPanel;
 use crate::editor::Editor;
 use crate::model::{ConnId, DbError, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
+use crate::search::{Filter, Filtered, Prompt};
 use crate::style::Severity;
 use crate::tree::TablesPanel;
 use crate::view::hints::Binding;
@@ -21,7 +23,6 @@ pub struct State {
     pub focus: Panel,
     pub tables: TablesPanel,
     pub contents: ContentsPanel,
-    /// The Table DDL panel's cursor and viewport.
     pub ddl: DdlPanel,
     /// The Queries panel's buffer. Not a `QueriesPanel`: the panel is the
     /// editor until the session log arrives.
@@ -117,16 +118,26 @@ pub struct Message {
     pub severity: Severity,
 }
 
-/// What is drawn over the panels, at most one at a time.
+/// What outranks focus, at most one at a time.
 ///
 /// An enum rather than a second `Option` field beside the message: two fields
 /// would make "a failure and the palette, simultaneously" representable, and
 /// the renderer would then need a precedence rule the domain never stated
-/// (conventions.md §1).
+/// (conventions.md §1). `Search` repeats the argument rather than testing it
+/// again: a prompt beside the palette would make "a palette and a prompt at
+/// once" representable the same way (panel search design §1).
+///
+/// Membership no longer means "drawn over the panels" — `Search` is drawn on
+/// the hint bar row instead — but every other consequence of being an overlay
+/// still holds: it claims keys before focus is consulted, `esc` dismisses it,
+/// and a click spends itself on it rather than on whatever is underneath.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Overlay {
     Message(Message),
     Commands(CommandsPanel),
+    /// Drawn on the hint bar row rather than over the panels, and in this
+    /// enum for what that buys: a prompt and a palette cannot both be up.
+    Search(Prompt),
 }
 
 impl ConnectionState {
@@ -178,6 +189,12 @@ const TABLES_HINTS: &[Binding] = &[
         keys: &[KeyPress::new(Key::Enter)],
         action: "open",
     },
+    // Not global: it does nothing in Queries, where `/` is text (panel
+    // search design §5.3).
+    Binding {
+        keys: &[KeyPress::new(Key::Char('/'))],
+        action: "search",
+    },
 ];
 
 const DDL_HINTS: &[Binding] = &[
@@ -200,6 +217,10 @@ const DDL_HINTS: &[Binding] = &[
         keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('/'))],
+        action: "search",
+    },
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
@@ -214,6 +235,10 @@ const CONTENTS_HINTS: &[Binding] = &[
     Binding {
         keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('/'))],
+        action: "search",
     },
 ];
 
@@ -484,17 +509,6 @@ impl Scroll {
     }
 }
 
-/// The Table DDL panel: a cursor over the rows it describes, and a viewport
-/// over the lines they wrapped to.
-///
-/// The two count in different units — see [`Span`] — which is why this panel
-/// is not in `update`'s `LISTS` and follows a span rather than an index.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DdlPanel {
-    pub cursor: Cursor,
-    pub scroll: Scroll,
-}
-
 /// What the last frame turned out to be.
 ///
 /// The renderer's one report back into the domain
@@ -649,6 +663,46 @@ impl State {
                 ConnectionState::Disconnected | ConnectionState::Failed(_) => false,
             }
     }
+
+    /// The filter applied to `target`, if any.
+    #[must_use]
+    pub fn filter(&self, target: Filtered) -> Option<&Filter> {
+        match target {
+            Filtered::Tables => self.tables.filter(),
+            Filtered::Ddl => self.ddl.filter(),
+            Filtered::Contents => self.contents.filter(),
+        }
+    }
+
+    /// Applies `filter` to `target`, and repairs what it invalidates.
+    ///
+    /// Not a `&mut Option<Filter>` handed out: repairing what a filter
+    /// invalidates — a cursor left pointing past the rows the panel now has —
+    /// belongs here rather than to every caller that sets one. The Tables
+    /// cursor clamp lands with the filtered tree it needs.
+    pub fn apply_filter(&mut self, target: Filtered, filter: Option<Filter>) {
+        match target {
+            Filtered::Tables => {
+                self.tables.set_filter(filter);
+                let rows = self.schema().map(|schema| self.tables.rows(schema).len());
+                if let Some(rows) = rows {
+                    self.tables.cursor.clamp_to(rows);
+                }
+            }
+            // No repair here, and the two halves of the panel are repaired
+            // elsewhere for different reasons (design §3.3). Its offset is
+            // counted in wrapped lines, a width-dependent count only the
+            // renderer can produce, so `Msg::Measured` clamps it against a real
+            // count; clamping here would clamp against the previous frame's,
+            // which is wrong exactly when the filter just shrank the body. Its
+            // cursor counts rows, and `update`'s epilogue clamps it on every
+            // message against `view::ddl_rows`, which counts the *filtered*
+            // rows — so the clamp lands on the same keystroke that applied the
+            // filter, with no line count involved.
+            Filtered::Ddl => self.ddl.set_filter(filter),
+            Filtered::Contents => self.contents.set_filter(filter),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -656,6 +710,7 @@ mod tests {
     use super::*;
     use crate::model::{ConnId, DbError, Schema};
     use crate::posture::Posture;
+    use crate::search::{Filter, Filtered};
 
     #[test]
     fn all_panels_are_listed_in_reading_order_and_none_is_missing() {
@@ -1078,6 +1133,44 @@ mod tests {
         scroll.follow(9, 0);
 
         assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn a_filter_is_read_back_from_the_panel_it_was_applied_to() {
+        let mut state = State::default();
+
+        state.apply_filter(Filtered::Ddl, Filter::new("ttl"));
+
+        assert_eq!(state.filter(Filtered::Ddl).map(Filter::as_str), Some("ttl"));
+        assert_eq!(state.filter(Filtered::Tables), None);
+        assert_eq!(state.filter(Filtered::Contents), None);
+    }
+
+    #[test]
+    fn the_three_filters_are_independent() {
+        let mut state = State::default();
+
+        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+        state.apply_filter(Filtered::Contents, Filter::new("null"));
+
+        assert_eq!(
+            state.filter(Filtered::Tables).map(Filter::as_str),
+            Some("ord")
+        );
+        assert_eq!(
+            state.filter(Filtered::Contents).map(Filter::as_str),
+            Some("null")
+        );
+    }
+
+    #[test]
+    fn applying_none_clears_the_one_that_was_there() {
+        let mut state = State::default();
+        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+
+        state.apply_filter(Filtered::Tables, None);
+
+        assert_eq!(state.filter(Filtered::Tables), None);
     }
 
     #[test]

@@ -57,6 +57,15 @@ const GLOBAL: &[Binding] = &[
     },
 ];
 
+/// `/` joins the focused panel's own group, not `GLOBAL`: it does nothing in
+/// Queries, where the editor claims it as text before this binding is ever
+/// consulted (panel search design §5.3, §8). `GLOBAL` would assert it works
+/// everywhere, which is false there.
+const SEARCH: &[Binding] = &[Binding {
+    keys: &[KeyPress::new(Key::Char('/'))],
+    action: "search this panel",
+}];
+
 const MOTION: &[Binding] = &[
     Binding {
         keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Down)],
@@ -149,6 +158,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Tables",
         bindings: TABLES,
+    },
+    Group {
+        heading: "Search",
+        bindings: SEARCH,
     },
     Group {
         heading: "Table DDL",
@@ -396,6 +409,16 @@ mod tests {
             }
         );
         assert_eq!(rows.len(), row_count());
+    }
+
+    #[test]
+    fn the_catalogue_lists_search() {
+        assert!(
+            commands()
+                .iter()
+                .any(|binding| binding.keys.contains(&KeyPress::new(Key::Char('/')))),
+            "no row binds /"
+        );
     }
 
     #[test]

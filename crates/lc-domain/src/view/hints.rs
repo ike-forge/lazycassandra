@@ -1,6 +1,7 @@
 //! What the focused panel responds to, as the bar will say it.
 
 use crate::model::{Key, KeyPress};
+use crate::search::Filtered;
 use crate::state::{Overlay, State};
 
 /// A binding, keyed by the presses `handle_key` actually matches on.
@@ -107,11 +108,40 @@ const PALETTE_GLOBAL: &[Binding] = &[
     },
 ];
 
+/// What the bar names while a prompt is up. The panel group is empty: the
+/// focused panel responds to nothing, and naming its bindings would be the
+/// lie design §2 exists to prevent (panel search design §5.2).
+const SEARCH_GLOBAL: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Enter)],
+        action: "apply",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Escape)],
+        action: "cancel",
+    },
+];
+
+/// `esc` is named only where pressing it unconditionally does something
+/// (hint bar design §3). With a filter applied, it clears one — which is
+/// what keeps clearing discoverable (panel search design §5.3).
+const CLEAR: Binding = Binding {
+    keys: &[KeyPress::new(Key::Escape)],
+    action: "clear",
+};
+
 pub(crate) fn bar(state: &State) -> HintBar {
     if matches!(state.overlay, Some(Overlay::Commands(_))) {
         return HintBar {
             panel: PALETTE.iter().map(rendered).collect(),
             global: PALETTE_GLOBAL.iter().map(rendered).collect(),
+        };
+    }
+
+    if matches!(state.overlay, Some(Overlay::Search(_))) {
+        return HintBar {
+            panel: Vec::new(),
+            global: SEARCH_GLOBAL.iter().map(rendered).collect(),
         };
     }
 
@@ -129,18 +159,20 @@ pub(crate) fn bar(state: &State) -> HintBar {
         global.push(rendered(&QUIT));
     }
 
-    HintBar {
-        panel: state
-            .focus
-            .hints()
-            .iter()
-            .map(|binding| Hint {
-                liveness: liveness(state, binding),
-                ..rendered(binding)
-            })
-            .collect(),
-        global,
+    let mut panel: Vec<Hint> = state
+        .focus
+        .hints()
+        .iter()
+        .map(|binding| Hint {
+            liveness: liveness(state, binding),
+            ..rendered(binding)
+        })
+        .collect();
+    if Filtered::of(state.focus).is_some_and(|target| state.filter(target).is_some()) {
+        panel.push(rendered(&CLEAR));
     }
+
+    HintBar { panel, global }
 }
 
 /// `ctrl-r` on an empty or whitespace-only buffer submits nothing, silently
@@ -212,6 +244,7 @@ fn key_name(key: Key) -> String {
 mod tests {
     use super::*;
     use crate::commands::CommandsPanel;
+    use crate::search::{Filter, Filtered, Prompt};
     use crate::state::{Geometry, Overlay, Panel, State};
 
     /// A frame big enough for a palette to draw in.
@@ -346,6 +379,70 @@ mod tests {
         assert_eq!(bar.global[0].keys, "?/esc");
         assert_eq!(bar.global[0].action, "close");
         assert_eq!(bar.global.last().expect("q is last").action, "quit");
+    }
+
+    #[test]
+    fn the_bar_names_search_in_every_panel_that_can_hold_a_filter() {
+        for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
+            let state = State {
+                focus: panel,
+                ..fits()
+            };
+
+            assert!(
+                bar(&state).panel.iter().any(|hint| hint.keys == "/"),
+                "{panel:?} responds to / and must say so"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bar_does_not_name_search_in_queries() {
+        let state = State {
+            focus: Panel::Queries,
+            ..fits()
+        };
+
+        assert!(bar(&state).panel.iter().all(|hint| hint.keys != "/"));
+    }
+
+    #[test]
+    fn the_bar_names_esc_clear_only_where_a_filter_is_applied() {
+        let mut state = State {
+            focus: Panel::Tables,
+            ..fits()
+        };
+        assert!(bar(&state).panel.iter().all(|hint| hint.action != "clear"));
+
+        state.apply_filter(Filtered::Tables, Filter::new("o"));
+
+        assert!(
+            bar(&state)
+                .panel
+                .iter()
+                .any(|hint| hint.keys == "esc" && hint.action == "clear"),
+            "in this frame pressing esc unconditionally does something"
+        );
+    }
+
+    #[test]
+    fn the_bar_names_what_the_prompt_responds_to() {
+        let mut state = fits();
+        state.overlay = Some(Overlay::Search(Prompt::opened(Filtered::Tables, None)));
+
+        let bar = bar(&state);
+
+        assert!(
+            bar.panel.is_empty(),
+            "the panel underneath responds to nothing"
+        );
+        assert_eq!(
+            bar.global
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .collect::<Vec<_>>(),
+            [("⏎", "apply"), ("esc", "cancel")]
+        );
     }
 
     #[test]

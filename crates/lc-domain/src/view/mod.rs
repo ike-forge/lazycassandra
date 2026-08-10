@@ -69,16 +69,33 @@ pub enum OverlayView {
         rows: Vec<CommandRow>,
         selected: usize,
     },
+    /// Carries only the query: `Prompt::target` is what the renderer needs to
+    /// find the panel it is drawn against, but that panel is already
+    /// `view.focus` — `target` is captured focus, and cannot be anything
+    /// else while the prompt is up (design §3.2) — so restating it here would
+    /// be a second name for the same fact.
+    Search {
+        query: String,
+    },
 }
 
 fn overlay(state: &State) -> Option<OverlayView> {
-    Some(match state.overlay.as_ref()? {
-        Overlay::Message(message) => OverlayView::Message(message.clone()),
-        Overlay::Commands(panel) => OverlayView::Commands {
+    match state.overlay.as_ref()? {
+        Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
+        Overlay::Commands(panel) => Some(OverlayView::Commands {
             rows: commands::rows(),
             selected: panel.selected(),
-        },
-    })
+        }),
+        // `Some`, not drawn through the modal path the other two overlays
+        // use — Task 9 draws it on the hint bar row instead. Still `Some`
+        // rather than `None`: `view.overlay.is_none()` is what
+        // `lc-inbound::render` reads to decide whether a panel may show its
+        // own cursor, and a prompt outranks focus exactly as a message or
+        // the palette does (design §1).
+        Overlay::Search(prompt) => Some(OverlayView::Search {
+            query: prompt.query().to_owned(),
+        }),
+    }
 }
 
 /// One panel, described without reference to how it is drawn.
@@ -87,6 +104,11 @@ pub struct PanelView {
     pub panel: Panel,
     pub title: PanelTitle,
     pub body: PanelBody,
+    /// The applied filter's term, as typed. Drawn on the panel's own top
+    /// border, focused or not: a filter that survives a focus change has to
+    /// say so from the panel it is applied to, not from the bar, which only
+    /// ever describes the focused panel (panel search design §5.1).
+    pub filter: Option<String>,
 }
 
 /// What a panel has to show.
@@ -155,6 +177,9 @@ pub fn view_model(state: &State) -> ViewModel {
             panel,
             title: PanelTitle::marking(title(state, panel), panel.shortcut()),
             body: body(state, panel),
+            filter: crate::search::Filtered::of(panel)
+                .and_then(|target| state.filter(target))
+                .map(|filter| filter.as_str().to_owned()),
         }),
         focus: state.focus,
         hints: hints::bar(state),
@@ -320,6 +345,39 @@ mod tests {
         assert_eq!(
             view_model(&state).overlay,
             Some(OverlayView::Message(message))
+        );
+    }
+
+    #[test]
+    fn a_panel_carries_the_filter_applied_to_it() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.apply_filter(
+            crate::search::Filtered::Contents,
+            crate::search::Filter::new("ORD"),
+        );
+
+        let view = view_model(&state);
+
+        assert_eq!(view.panels[2].filter.as_deref(), Some("ORD"), "as typed");
+        assert_eq!(view.panels[0].filter, None);
+        assert_eq!(view.panels[3].filter, None, "Queries holds none");
+    }
+
+    #[test]
+    fn an_open_prompt_is_projected_as_its_query() {
+        let mut prompt = crate::search::Prompt::opened(crate::search::Filtered::Tables, None);
+        prompt.push('o');
+        prompt.push('r');
+        let state = State {
+            overlay: Some(Overlay::Search(prompt)),
+            ..State::default()
+        };
+
+        assert_eq!(
+            view_model(&state).overlay,
+            Some(OverlayView::Search {
+                query: "or".to_owned()
+            })
         );
     }
 

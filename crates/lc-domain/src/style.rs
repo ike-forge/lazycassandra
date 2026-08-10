@@ -29,6 +29,11 @@ pub enum Token {
     HintAction,
     /// The row the cursor is on.
     Selected,
+    /// A cell whose text answered the applied filter.
+    ///
+    /// Named for what it marks, like [`Token::PropertyName`]: the domain
+    /// still names no colour (architecture.md §6).
+    Match,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -6,6 +6,7 @@
 //! (architecture.md §11).
 
 use crate::model::{DbError, Page, QueryId};
+use crate::search::Filter;
 use crate::state::{Cursor, Scroll};
 
 /// The Contents panel's own state.
@@ -17,6 +18,11 @@ pub struct ContentsPanel {
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
     state: ContentsState,
+    /// Flags the cells the applied filter matches; the grid keeps every row
+    /// (design §4.3). Private for uniformity with the other two panels'
+    /// filters, not because setting it here owes a repair — Contents filters
+    /// nothing, so there is no clamp to skip.
+    filter: Option<Filter>,
 }
 
 /// How far along the panel's one request is.
@@ -108,6 +114,21 @@ impl ContentsPanel {
     #[must_use]
     pub const fn state(&self) -> &ContentsState {
         &self.state
+    }
+
+    /// The filter flagging matching cells, if any. Narrows nothing: every row
+    /// the cluster returned is still drawn (design §4.3).
+    #[must_use]
+    pub fn filter(&self) -> Option<&Filter> {
+        self.filter.as_ref()
+    }
+
+    /// Sets the filter. Not public, for uniformity with
+    /// [`crate::tree::TablesPanel::set_filter`]: [`State::apply_filter`](crate::state::State::apply_filter)
+    /// is the one caller, and there is no repair this owes — Contents has no
+    /// clamp to keep in step with the filter the way Tables' cursor does.
+    pub(crate) fn set_filter(&mut self, filter: Option<Filter>) {
+        self.filter = filter;
     }
 
     /// The query this panel is waiting on, if any.

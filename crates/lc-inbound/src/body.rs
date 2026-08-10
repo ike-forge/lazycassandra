@@ -20,6 +20,7 @@ use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
@@ -237,7 +238,7 @@ fn grid(
             cells
                 .iter()
                 .zip(widths)
-                .map(|(cell, width)| styled(&cell.text, cell.token, *width, theme)),
+                .map(|(cell, width)| styled_cell(&cell.text, cell_style(cell, theme), *width)),
         )
     });
 
@@ -304,11 +305,32 @@ fn widths(columns: &[GridColumn], rows: &[Vec<GridCell>], available: u16) -> Vec
         .collect()
 }
 
+/// A matched cell composes `Token::Match` onto whatever `token` already
+/// draws, rather than replacing it: `token` is what keeps a null apart from a
+/// text cell holding the word `"null"` (design §4.3), and overwriting it
+/// would lose that distinction for exactly the cells the user just went
+/// looking for. `Style::patch` is the same composition idiom the selected
+/// row already relies on, via `row_highlight_style`.
+fn cell_style(cell: &GridCell, theme: Theme) -> Option<Style> {
+    let base = cell.token.map(|token| theme.style(token));
+
+    if !cell.matched {
+        return base;
+    }
+
+    let matched = theme.style(Token::Match);
+    Some(base.map_or(matched, |base| base.patch(matched)))
+}
+
 fn styled(text: &str, token: Option<Token>, width: u16, theme: Theme) -> Cell<'static> {
+    styled_cell(text, token.map(|token| theme.style(token)), width)
+}
+
+fn styled_cell(text: &str, style: Option<Style>, width: u16) -> Cell<'static> {
     let cell = Cell::from(Text::raw(truncated(text, width)));
 
-    match token {
-        Some(token) => cell.style(theme.style(token)),
+    match style {
+        Some(style) => cell.style(style),
         None => cell,
     }
 }
