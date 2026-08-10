@@ -625,11 +625,11 @@ horizontally, change nothing about what a press means
 ([table display design](specs/2026-08-10-table-display-design.md) §8).
 
 Chrome is a border, a title, a grid's header, a notice, the Ddl body, the
-Queries panel, and the blank space past the last row. A row number is not chrome:
-a header is chrome because pressing it means nothing, and a row number is part of
-its row. Every other gesture —
-right and middle buttons, drags, releases, horizontal wheels, and anything with
-a modifier held — is dropped at the edge.
+Queries panel, and the blank space past the last row. A row number is not
+chrome: a header is chrome because pressing it means nothing, and a row number
+is part of its row. Every other gesture — right and middle buttons, drags,
+releases, horizontal wheels, and anything with a modifier held — is dropped at
+the edge.
 
 **The hint bar wins over the overlay.** A press on the bar is dropped before
 anything else sees it, including a dismissible overlay, so it never dismisses
