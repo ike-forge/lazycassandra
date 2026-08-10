@@ -7,11 +7,12 @@
 //! (doc/specs/2026-08-09-table-metadata-design.md §1).
 
 use crate::model::{ClusteringOrder, Keyspace, Replication, Table};
+use crate::search::Filter;
 use crate::state::State;
 use crate::style::Token;
 use crate::tree::Node;
 
-use super::PanelBody;
+use super::{PanelBody, waiting};
 
 /// A heading and the groups beneath it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,10 +79,47 @@ pub(super) fn body(state: &State) -> PanelBody {
     }
 }
 
-fn scrolled(state: &State, details: Details) -> PanelBody {
+fn scrolled(state: &State, mut details: Details) -> PanelBody {
+    let Some(filter) = state.ddl.filter() else {
+        return PanelBody::Details {
+            details,
+            offset: state.ddl.scroll.offset(),
+        };
+    };
+
+    details.retain(filter);
+
+    if details.sections.is_empty() {
+        return waiting(&format!("No property matches \"{}\"", filter.as_str()));
+    }
+
     PanelBody::Details {
         details,
         offset: state.ddl.scroll.offset(),
+    }
+}
+
+impl Details {
+    /// Drops the rows that miss, then the groups that emptied.
+    ///
+    /// Headings are not matched: the search is over properties and values, and
+    /// a heading match would resurrect a whole group whose rows all missed
+    /// (design §4.2).
+    fn retain(&mut self, filter: &Filter) {
+        for section in &mut self.sections {
+            section.rows.retain(|row| row.matches(filter));
+        }
+
+        self.sections.retain(|section| !section.rows.is_empty());
+    }
+}
+
+impl DetailRow {
+    fn matches(&self, filter: &Filter) -> bool {
+        match self {
+            Self::Column { name, cql_type, .. } => filter.matches(name) || filter.matches(cql_type),
+            Self::Property { name, value } => filter.matches(name) || filter.matches(value),
+        }
     }
 }
 
@@ -192,6 +230,7 @@ mod tests {
     use crate::model::{
         ClusteringColumn, Column, ConnId, DbError, PrimaryKey, Replication, Schema, TableOptions,
     };
+    use crate::search::{Filter, Filtered};
     use crate::state::{Connection, ConnectionState, SchemaState, State};
     use crate::tree::tests_support::{options, schema_of};
 
@@ -478,6 +517,126 @@ mod tests {
         };
 
         assert_eq!(offset, 6);
+    }
+
+    fn filtered_ddl(term: &str) -> State {
+        let mut state = browsing(orders());
+        state.apply_filter(Filtered::Ddl, Filter::new(term));
+        state
+    }
+
+    #[test]
+    fn a_property_matches_on_its_name() {
+        let details = details(&filtered_ddl("gc_grace"));
+
+        assert_eq!(
+            section(&details, "Options").rows,
+            [DetailRow::Property {
+                name: "gc_grace_seconds".to_owned(),
+                value: "864000".to_owned(),
+            }],
+            "gc_grace_seconds survives; comment and bloom_filter_fp_chance must be gone"
+        );
+    }
+
+    #[test]
+    fn a_property_matches_on_its_value() {
+        // "Order history" is the comment's value; the property's name does not
+        // contain the term.
+        let details = details(&filtered_ddl("Order history"));
+
+        assert_eq!(
+            section(&details, "Options").rows,
+            [DetailRow::Property {
+                name: "comment".to_owned(),
+                value: "Order history.".to_owned(),
+            }],
+            "only the comment property carries the term, in its value"
+        );
+    }
+
+    #[test]
+    fn a_column_matches_on_its_name() {
+        let details = details(&filtered_ddl("customer_id"));
+
+        assert_eq!(
+            headings(&details),
+            ["Partition Key"],
+            "Clustering Key and Options emptied out and must be absent"
+        );
+        assert_eq!(
+            section(&details, "Partition Key").rows,
+            [DetailRow::Column {
+                name: "customer_id".to_owned(),
+                order: None,
+                cql_type: "uuid".to_owned(),
+            }],
+            "customer_id survives; order_date, order_id and status must be gone"
+        );
+    }
+
+    #[test]
+    fn a_column_matches_on_its_cql_type() {
+        let details = details(&filtered_ddl("timeuuid"));
+
+        assert_eq!(
+            headings(&details),
+            ["Clustering Key"],
+            "Partition Key and Options carry no timeuuid and must be absent"
+        );
+        assert_eq!(
+            section(&details, "Clustering Key").rows,
+            [DetailRow::Column {
+                name: "order_id".to_owned(),
+                order: Some(ClusteringOrder::Ascending),
+                cql_type: "timeuuid".to_owned(),
+            }],
+            "only order_id's type contains timeuuid; order_date must be gone"
+        );
+    }
+
+    #[test]
+    fn a_section_emptied_by_the_filter_disappears() {
+        let details = details(&filtered_ddl("customer_id"));
+
+        assert_eq!(
+            headings(&details),
+            ["Partition Key"],
+            "Clustering Key and Options emptied out and must be absent, per Section's own doc"
+        );
+    }
+
+    #[test]
+    fn a_heading_is_not_matched() {
+        // "Partition Key" is a heading; no row in that section carries the word.
+        assert_eq!(
+            ddl_body(&filtered_ddl("Partition")),
+            PanelBody::Notice {
+                text: "No property matches \"Partition\"".to_owned(),
+                token: Some(Token::Muted),
+            },
+            "matching a heading would resurrect a group whose rows all missed"
+        );
+    }
+
+    #[test]
+    fn nothing_matching_says_which_term_found_nothing() {
+        assert_eq!(
+            ddl_body(&filtered_ddl("zzz")),
+            PanelBody::Notice {
+                text: "No property matches \"zzz\"".to_owned(),
+                token: Some(Token::Muted),
+            }
+        );
+    }
+
+    #[test]
+    fn an_unfiltered_table_keeps_its_existing_behaviour() {
+        assert_eq!(
+            headings(&details(&browsing(orders()))),
+            ["Partition Key", "Clustering Key", "Options"],
+            "no filter applied means nothing is retained away"
+        );
     }
 
     #[test]
