@@ -201,6 +201,7 @@ mod tests {
     };
     use lc_domain::pointer::Click;
     use lc_domain::posture::Posture;
+    use lc_domain::search::{Filter, Filtered};
     use lc_domain::state::{
         Connection, ConnectionState, Geometry, Message, Overlay, Panel, SchemaState,
     };
@@ -914,6 +915,42 @@ mod tests {
             header(20).fg,
             Color::Reset,
             "a regular column spends no colour — it is the baseline"
+        );
+    }
+
+    #[test]
+    fn a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row() {
+        // Row 0 (not selected) and row 1 (the cursor's row) each hold one
+        // cell the filter matches and one it does not — the composed case
+        // is row 1, where `Token::Match` is drawn under `Token::Selected`'s
+        // REVERSED and still has to be tellable apart from the id beside it.
+        let mut state = showing(page_of(
+            &["id", "email"],
+            &[
+                &[CqlValue::Int(1), text("ali@example.com")],
+                &[CqlValue::Int(2), text("alice@example.com")],
+            ],
+        ));
+        state.contents.cursor.go_to(1, 2);
+        state.contents.scroll.follow(1, 5);
+        state.apply_filter(Filtered::Contents, Filter::new("ali"));
+
+        let buffer = draw_state(60, 12, &state);
+        let style = |x: u16, y: u16| {
+            let cell = buffer.cell((x, y)).expect("inside the panel");
+            (cell.fg, cell.bg, cell.modifier)
+        };
+
+        assert_ne!(
+            style(20, 2),
+            style(17, 2),
+            "row 0 is not selected: its matched email must still read apart from its unmatched id"
+        );
+        assert_ne!(
+            style(20, 3),
+            style(17, 3),
+            "row 1 is the cursor's row: a matched cell must still read apart from an \
+             unmatched one under Selected's REVERSED"
         );
     }
 
