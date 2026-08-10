@@ -194,13 +194,17 @@ fn marker_fits(width: u16, title: &str, marker: &str) -> bool {
 /// right of what it leaves — composed rather than drawn over the hints, which
 /// `render` already put on `hint_bar` before this runs.
 fn render_prompt(frame: &mut Frame, hint_bar: Rect, query: &str, view: &ViewModel, theme: Theme) {
-    let line = Line::from(format!(" /{query}"));
+    let line = Line::styled(format!(" /{query}"), theme.style(Token::HintAction));
     let taken = u16::try_from(line.width()).unwrap_or(hint_bar.width);
     let (left, right) = split_left(hint_bar, taken);
 
     frame.render_widget(line, left);
     frame.render_widget(crate::hints::line(&view.hints, right.width, theme), right);
-    frame.set_cursor_position((left.x + left.width, left.y));
+    // `split_left` already clamps `left` to the bar's own bounds; a query
+    // wide enough to fill it would otherwise place the cursor one column
+    // past the frame's right edge.
+    let cursor_x = (left.x + left.width).min(hint_bar.right().saturating_sub(1));
+    frame.set_cursor_position((cursor_x, left.y));
 }
 
 /// Over the block's right border, so it spends no content width — and only
@@ -2040,6 +2044,49 @@ mod tests {
             cursor,
             Some(ratatui::layout::Position::new(13, 23)),
             "one cell past the last character typed"
+        );
+    }
+
+    #[test]
+    fn the_prompts_cursor_stays_inside_the_frame_when_the_query_fills_the_bar() {
+        let mut prompt = Prompt::opened(Filtered::Tables, None);
+        for c in "a query long enough to overrun a narrow terminal's hint bar".chars() {
+            prompt.push(c);
+        }
+        let state = State {
+            overlay: Some(Overlay::Search(prompt)),
+            ..State::default()
+        };
+
+        let (_, cursor) = drawn_with_cursor(40, 24, &state);
+        let cursor = cursor.expect("the prompt draws a cursor");
+
+        assert!(
+            cursor.x < 40,
+            "a query wide enough to fill the bar must not push the cursor \
+             past the frame's right edge: {cursor:?}"
+        );
+    }
+
+    #[test]
+    fn the_prompts_query_carries_a_theme_token() {
+        let mut prompt = Prompt::opened(Filtered::Tables, None);
+        prompt.push('o');
+        let state = State {
+            overlay: Some(Overlay::Search(prompt)),
+            ..State::default()
+        };
+
+        let buffer = draw_state(80, 24, &state);
+        // Column 9: one past the loader and `bar_split`'s gap, landing on
+        // the query's leading space.
+        let cell = buffer.cell((9, 23)).expect("inside the bar row");
+
+        assert!(
+            cell.modifier.contains(Modifier::DIM),
+            "the query must carry the same token the rest of the bar's text \
+             does ({:?} was left bare)",
+            cell.symbol()
         );
     }
 
