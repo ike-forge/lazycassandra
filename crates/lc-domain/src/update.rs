@@ -510,11 +510,10 @@ fn open_prompt(state: &mut State) {
 /// the palette, which leaves `q` quitting. The two differ because the palette
 /// takes motion and this takes text (panel search design §1.1, §3.1).
 ///
-/// `Enter` and `Escape` are decided before the prompt's mutable borrow is
-/// taken, rather than inside the match that holds it: both close the overlay,
-/// which needs `&mut state.overlay` while `prompt` is still live from the
-/// `let Some(...) = &mut state.overlay` above it, so folding the close into
-/// that match cannot borrow-check.
+/// `Escape` is decided before the prompt's mutable borrow is taken: it defers
+/// to [`escape`], which needs `&mut State` whole, and no reborrow of it can
+/// coexist with `prompt`. `Enter` stays inside the match because it only needs
+/// `&mut state.overlay`, and `prompt` is dead in that arm.
 fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
     if matches!(key, Key::Escape) {
         escape(state);

@@ -185,8 +185,13 @@ true: the ctrl layer landed in another slice, and `handle_key` routes a
 ctrl-modified key into `ctrl_key` *above* the palette and therefore above this
 prompt (doc/shortcuts.md §2). So `ctrl-e` and `ctrl-y` still scroll the Table
 DDL viewport with a prompt open over it, and `ctrl-r` would run the Queries
-buffer if a prompt could be open while Queries had focus — it cannot, since
-Queries holds no filter to open one over.
+buffer if a prompt could be open while Queries had focus — it cannot, and that
+takes two halves. Queries holds no filter, so no prompt can be opened *over*
+it; and focus cannot move *to* it under a live prompt, since the prompt
+swallows `tab`/`shift-tab` (§3.2), types the panel-shortcut letters as text
+(§1.1), and a click is spent dismissing the prompt rather than reaching the
+panel beneath it (§3.2). Both halves are needed: the first alone leaves
+`ctrl-r` one focus change away from firing under a live query.
 
 The prompt is inert to the rest, and being reachable-past is right rather than
 merely tolerable. Ctrl is a layer of its own, designed as a layer and not

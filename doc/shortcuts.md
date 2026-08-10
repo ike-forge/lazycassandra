@@ -62,8 +62,12 @@ to everything it does not use itself: ctrl is dispatched above every overlay
 (§2), so a chord reaches `ctrl_key` before the prompt is consulted. With a
 prompt open over Table DDL, `ctrl-e` and `ctrl-y` still scroll that panel's
 viewport. `ctrl-r` is reachable the same way and inert for a reason of its
-own — it runs the buffer only from Queries, and Queries holds no filter, so
-no prompt can be open while it has focus.
+own — it runs the buffer only from Queries, and no prompt can be open while
+Queries has focus. That takes two halves: Queries holds no filter, so no
+prompt can be opened *over* it; and focus cannot move *to* it under a live
+prompt, since the prompt swallows `Tab`/`Shift-Tab`, types the shortcut
+letters as text rather than acting on them, and a click is spent dismissing
+the prompt (§7).
 
 That is safe rather than merely tolerated. Ctrl is a layer of its own,
 decided in another slice; a member moves no focus and changes no `target`,

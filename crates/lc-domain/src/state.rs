@@ -689,11 +689,16 @@ impl State {
                     self.tables.cursor.clamp_to(rows);
                 }
             }
-            // The Table DDL offset is counted in wrapped lines, a width-dependent
-            // count only the renderer can produce. `Msg::Measured` already
-            // clamps it against a real count; clamping here would clamp against
-            // the previous frame's count, which is wrong exactly when the
-            // filter just shrank the body (design §3.3).
+            // No repair here, and the two halves of the panel are repaired
+            // elsewhere for different reasons (design §3.3). Its offset is
+            // counted in wrapped lines, a width-dependent count only the
+            // renderer can produce, so `Msg::Measured` clamps it against a real
+            // count; clamping here would clamp against the previous frame's,
+            // which is wrong exactly when the filter just shrank the body. Its
+            // cursor counts rows, and `update`'s epilogue clamps it on every
+            // message against `view::ddl_rows`, which counts the *filtered*
+            // rows — so the clamp lands on the same keystroke that applied the
+            // filter, with no line count involved.
             Filtered::Ddl => self.ddl.set_filter(filter),
             Filtered::Contents => self.contents.set_filter(filter),
         }
