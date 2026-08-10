@@ -1300,17 +1300,40 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_grid_is_drawn_from_the_column_the_viewport_names() {
+    /// A twelve-column page whose column cursor visited `path` in order, with
+    /// the horizontal viewport following it the way `update` does.
+    ///
+    /// Twelve two-wide columns in the 22-column body a 40x12 frame gives the
+    /// Contents panel, less the one-digit gutter and its spacing: seven fit, so
+    /// anything past the seventh has to be reached by scrolling.
+    fn showing_column_path(path: &[usize]) -> State {
         let page = sized_page(12, 3);
         let widths = lc_domain::grid::widths(&page);
         let mut state = showing(page);
-        // Twelve two-wide columns in a 22-column body, less the one-digit
-        // gutter and its spacing: seven fit, so the ninth cannot be reached
-        // without moving the horizontal viewport.
         let available = 22 - 1 - lc_domain::grid::COLUMN_SPACING;
-        state.contents.column.go_to(8, widths.len());
-        state.contents.columns.follow(8, &widths, available);
+
+        for column in path {
+            state.contents.column.go_to(*column, widths.len());
+            state.contents.columns.follow(*column, &widths, available);
+        }
+
+        state
+    }
+
+    /// The x of the `index`th drawn column's first cell: the one-digit gutter,
+    /// a spacing column, then two-wide columns each followed by a spacing one.
+    const fn drawn_column(area: Rect, index: u16) -> u16 {
+        area.x + 3 + index * 3
+    }
+
+    #[test]
+    fn the_grid_is_drawn_from_the_column_the_viewport_names() {
+        // Out to c8, which forces the scroll, and back to c5 — which the
+        // viewport already shows, so it stays where it is. The cursor then
+        // sits in the middle of the drawn window rather than against its
+        // right edge, where an index that ignored the offset would land on
+        // the same cell and be indistinguishable.
+        let state = showing_column_path(&[8, 5]);
         assert!(
             state.contents.columns.first() > 0,
             "the fixture must have scrolled sideways or this test proves nothing"
@@ -1320,6 +1343,13 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let heading = row_text(&buffer, "Table contents", 0);
         let first = row_text(&buffer, "Table contents", 1);
+        let underlined = |x: u16| {
+            buffer
+                .cell((x, area.y + 2))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::UNDERLINED)
+        };
 
         assert!(
             heading.trim_start().starts_with("c2"),
@@ -1329,14 +1359,51 @@ mod tests {
             first.starts_with('1'),
             "the gutter is pinned and never scrolls off, got {first:?}"
         );
+        // c2 is drawn first, so the cursor's c5 is the fourth column drawn.
         assert!(
-            buffer
-                .cell((area.right() - 2, area.y + 2))
-                .expect("inside the panel")
-                .modifier
-                .contains(Modifier::UNDERLINED),
-            "the cell cursor is on the last column drawn, which is the one it \
-             scrolled to reach"
+            underlined(drawn_column(area, 3)) && underlined(drawn_column(area, 3) + 1),
+            "the cell cursor is on c5, counted from the drawn window rather \
+             than from the page: {heading:?}"
+        );
+        assert!(
+            !underlined(drawn_column(area, 4)),
+            "and not on the column beside it"
+        );
+        assert!(
+            !underlined(drawn_column(area, 6)),
+            "nor on the last column drawn, where an index blind to the offset \
+             would land"
+        );
+    }
+
+    /// The Contents panel's bottom border at 40x12, between its corners.
+    fn contents_bottom(buffer: &Buffer) -> String {
+        let area = block_area(buffer, "Table contents");
+
+        (area.x + 1..area.right() - 1)
+            .filter_map(|x| buffer.cell((x, area.bottom() - 1)))
+            .map(Cell::symbol)
+            .collect()
+    }
+
+    #[test]
+    fn the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on() {
+        let left = contents_bottom(&draw_state(40, 12, &showing_column_path(&[0])));
+        let right = contents_bottom(&draw_state(40, 12, &showing_column_path(&[11])));
+
+        assert!(
+            left.starts_with(symbols::line::THICK_HORIZONTAL),
+            "the first column is on screen, so the thumb belongs at the left: {left:?}"
+        );
+        assert!(
+            right.ends_with(symbols::line::THICK_HORIZONTAL),
+            "the last column is on screen, so the thumb belongs at the right: {right:?}"
+        );
+        assert!(
+            !left.ends_with(symbols::line::THICK_HORIZONTAL)
+                && !right.starts_with(symbols::line::THICK_HORIZONTAL),
+            "a thumb spanning the whole track would say nothing about where the \
+             viewport is: {left:?} {right:?}"
         );
     }
 
