@@ -194,7 +194,7 @@ pub(crate) fn scrollbar(
 #[cfg(test)]
 mod tests {
     use lc_domain::commands::CommandsPanel;
-    use lc_domain::contents::TableRef;
+    use lc_domain::contents::{Subject, TableRef};
     use lc_domain::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
@@ -694,7 +694,7 @@ mod tests {
         let query = QueryId::next();
         state
             .contents
-            .requested(query, TableRef::new("shop", "orders"));
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
         state.contents.page_ready(query, page);
         state
     }

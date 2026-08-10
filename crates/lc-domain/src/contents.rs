@@ -29,14 +29,14 @@ pub enum ContentsState {
     Empty,
     Loading {
         query: QueryId,
-        table: TableRef,
+        subject: Subject,
     },
     Loaded {
-        table: TableRef,
+        subject: Subject,
         page: Page,
     },
     Failed {
-        table: TableRef,
+        subject: Subject,
         error: DbError,
     },
 }
@@ -68,6 +68,42 @@ impl TableRef {
     }
 }
 
+/// What a page in the Contents panel is about.
+///
+/// The panel shows one grid whichever way the request was made — the tree's
+/// `Enter`, or `ctrl-r` over the editor
+/// (doc/specs/2026-08-10-query-execution-design.md §6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Subject {
+    Table(TableRef),
+    Typed(String),
+}
+
+impl Subject {
+    /// What the panel's title says it is showing.
+    ///
+    /// Every run of whitespace in a typed statement collapses to one space,
+    /// newlines included, so a buffer written over four lines still titles the
+    /// panel in one. Clipping to the frame is the renderer's job.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Table(table) => table.qualified(),
+            Self::Typed(cql) => cql.split_whitespace().collect::<Vec<_>>().join(" "),
+        }
+    }
+
+    /// The table whose layout a page's columns can be checked against —
+    /// `None` for a typed statement, whose columns belong to no one table.
+    #[must_use]
+    pub const fn table(&self) -> Option<&TableRef> {
+        match self {
+            Self::Table(table) => Some(table),
+            Self::Typed(_) => None,
+        }
+    }
+}
+
 impl ContentsPanel {
     #[must_use]
     pub const fn state(&self) -> &ContentsState {
@@ -84,36 +120,36 @@ impl ContentsPanel {
     }
 
     /// Starts waiting on `query`, discarding whatever was showing.
-    pub fn requested(&mut self, query: QueryId, table: TableRef) {
-        self.state = ContentsState::Loading { query, table };
+    pub fn requested(&mut self, query: QueryId, subject: Subject) {
+        self.state = ContentsState::Loading { query, subject };
         self.cursor = Cursor::default();
         self.scroll = Scroll::default();
     }
 
     /// Applies a page, if it is the one being waited on.
     pub fn page_ready(&mut self, query: QueryId, page: Page) {
-        let Some(table) = self.awaited(query) else {
+        let Some(subject) = self.awaited(query) else {
             return;
         };
 
-        self.state = ContentsState::Loaded { table, page };
+        self.state = ContentsState::Loaded { subject, page };
     }
 
     /// Records a request that never became a query, because the domain
     /// refused it before it could.
-    pub fn refused(&mut self, table: TableRef, error: DbError) {
-        self.state = ContentsState::Failed { table, error };
+    pub fn refused(&mut self, subject: Subject, error: DbError) {
+        self.state = ContentsState::Failed { subject, error };
         self.cursor = Cursor::default();
         self.scroll = Scroll::default();
     }
 
     /// Records a failure, if it belongs to the query being waited on.
     pub fn failed(&mut self, query: QueryId, error: DbError) {
-        let Some(table) = self.awaited(query) else {
+        let Some(subject) = self.awaited(query) else {
             return;
         };
 
-        self.state = ContentsState::Failed { table, error };
+        self.state = ContentsState::Failed { subject, error };
     }
 
     /// The rows on screen, for a cursor that must not run past them.
@@ -125,13 +161,13 @@ impl ContentsPanel {
         }
     }
 
-    /// The table `query` was about, when it is the outstanding one.
-    fn awaited(&self, query: QueryId) -> Option<TableRef> {
+    /// What `query` was about, when it is the outstanding one.
+    fn awaited(&self, query: QueryId) -> Option<Subject> {
         match &self.state {
             ContentsState::Loading {
                 query: outstanding,
-                table,
-            } if *outstanding == query => Some(table.clone()),
+                subject,
+            } if *outstanding == query => Some(subject.clone()),
             _ => None,
         }
     }
@@ -157,7 +193,7 @@ mod tests {
     fn loading() -> (ContentsPanel, QueryId) {
         let mut panel = ContentsPanel::default();
         let query = QueryId::next();
-        panel.requested(query, TableRef::new("shop", "orders"));
+        panel.requested(query, Subject::Table(TableRef::new("shop", "orders")));
         (panel, query)
     }
 
@@ -204,15 +240,18 @@ mod tests {
     #[test]
     fn a_page_arriving_after_the_panel_moved_on_is_not_applied() {
         let (mut panel, first) = loading();
-        panel.requested(QueryId::next(), TableRef::new("shop", "users"));
+        panel.requested(
+            QueryId::next(),
+            Subject::Table(TableRef::new("shop", "users")),
+        );
 
         panel.page_ready(first, page(3));
 
         assert_eq!(panel.row_count(), 0);
-        let ContentsState::Loading { table, .. } = panel.state() else {
+        let ContentsState::Loading { subject, .. } = panel.state() else {
             panic!("still waiting on the second request");
         };
-        assert_eq!(table.table, "users");
+        assert_eq!(subject.table(), Some(&TableRef::new("shop", "users")));
     }
 
     #[test]
@@ -221,10 +260,10 @@ mod tests {
 
         panel.failed(query, DbError::Timeout);
 
-        let ContentsState::Failed { table, error } = panel.state() else {
+        let ContentsState::Failed { subject, error } = panel.state() else {
             panic!("the failure is showing");
         };
-        assert_eq!(table.qualified(), "shop.orders");
+        assert_eq!(subject.label(), "shop.orders");
         assert_eq!(*error, DbError::Timeout);
     }
 
@@ -244,7 +283,7 @@ mod tests {
         panel.cursor.down(5);
 
         let next = QueryId::next();
-        panel.requested(next, TableRef::new("shop", "users"));
+        panel.requested(next, Subject::Table(TableRef::new("shop", "users")));
 
         assert_eq!(
             panel.cursor.index(),
@@ -266,12 +305,15 @@ mod tests {
     fn a_refused_request_shows_against_the_table_it_was_about() {
         let mut panel = ContentsPanel::default();
 
-        panel.refused(TableRef::new("shop", "orders"), DbError::ReadOnly);
+        panel.refused(
+            Subject::Table(TableRef::new("shop", "orders")),
+            DbError::ReadOnly,
+        );
 
-        let ContentsState::Failed { table, error } = panel.state() else {
+        let ContentsState::Failed { subject, error } = panel.state() else {
             panic!("the refusal is showing");
         };
-        assert_eq!(table.qualified(), "shop.orders");
+        assert_eq!(subject.label(), "shop.orders");
         assert_eq!(*error, DbError::ReadOnly);
         assert_eq!(
             panel.outstanding(),
@@ -291,7 +333,10 @@ mod tests {
         panel.scroll.follow(40, 5);
         panel.cursor.go_to(40, 60);
 
-        panel.requested(QueryId::next(), TableRef::new("shop", "orders"));
+        panel.requested(
+            QueryId::next(),
+            Subject::Table(TableRef::new("shop", "orders")),
+        );
 
         assert_eq!(panel.scroll.offset(), 0, "a second table opens at its top");
         assert_eq!(panel.cursor.index(), 0);
@@ -303,9 +348,49 @@ mod tests {
         panel.scroll.follow(40, 5);
         panel.cursor.go_to(40, 60);
 
-        panel.refused(TableRef::new("shop", "orders"), DbError::ReadOnly);
+        panel.refused(
+            Subject::Table(TableRef::new("shop", "orders")),
+            DbError::ReadOnly,
+        );
 
         assert_eq!(panel.scroll.offset(), 0);
         assert_eq!(panel.cursor.index(), 0);
+    }
+
+    #[test]
+    fn a_table_subject_is_labelled_by_its_qualified_name() {
+        assert_eq!(
+            Subject::Table(TableRef::new("shop", "orders")).label(),
+            "shop.orders"
+        );
+    }
+
+    #[test]
+    fn a_typed_subject_collapses_to_one_line() {
+        assert_eq!(
+            Subject::Typed("SELECT *\n  FROM shop.orders\nLIMIT 10".to_owned()).label(),
+            "SELECT * FROM shop.orders LIMIT 10"
+        );
+    }
+
+    #[test]
+    fn only_a_table_subject_names_a_table() {
+        assert_eq!(
+            Subject::Table(TableRef::new("shop", "orders")).table(),
+            Some(&TableRef::new("shop", "orders"))
+        );
+        assert_eq!(Subject::Typed("SELECT 1".to_owned()).table(), None);
+    }
+
+    #[test]
+    fn a_typed_subject_travels_the_same_road_a_table_does() {
+        let mut panel = ContentsPanel::default();
+        let query = QueryId::next();
+        panel.requested(query, Subject::Typed("SELECT 1".to_owned()));
+
+        panel.page_ready(query, page(3));
+
+        assert_eq!(panel.row_count(), 3);
+        assert_eq!(panel.outstanding(), None, "the wait is over");
     }
 }

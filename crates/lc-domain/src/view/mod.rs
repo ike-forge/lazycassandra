@@ -246,7 +246,7 @@ mod tests {
     use super::tests_support::{loaded, tabled};
     use super::*;
     use crate::commands::CommandsPanel;
-    use crate::contents::TableRef;
+    use crate::contents::{Subject, TableRef};
     use crate::model::{DbError, Page, QueryId};
     use crate::state::{Message, Overlay};
 
@@ -332,7 +332,7 @@ mod tests {
         let mut loading = tabled(&[("shop", &["orders"])]);
         loading
             .contents
-            .requested(query, TableRef::new("shop", "orders"));
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
 
         let mut loaded = loading.clone();
         loaded.contents.page_ready(query, Page::default());

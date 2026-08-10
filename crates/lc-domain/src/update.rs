@@ -5,7 +5,7 @@
 //! open one with (architecture.md §3).
 
 use crate::commands::CommandsPanel;
-use crate::contents::TableRef;
+use crate::contents::{Subject, TableRef};
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
@@ -746,12 +746,13 @@ fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
     }
 
     let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
+    let subject = Subject::Table(table);
     match submit(state, stmt) {
         Ok((query, submitted)) => {
-            state.contents.requested(query, table);
+            state.contents.requested(query, subject);
             effects.extend(submitted);
         }
-        Err(error) => state.contents.refused(table, error),
+        Err(error) => state.contents.refused(subject, error),
     }
 
     effects
@@ -2464,7 +2465,7 @@ mod tests {
         let query = QueryId::next();
         state
             .contents
-            .requested(query, TableRef::new("shop", "orders"));
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
         state.contents.page_ready(
             query,
             Page {
