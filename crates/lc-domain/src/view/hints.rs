@@ -108,6 +108,42 @@ const PALETTE_GLOBAL: &[Binding] = &[
     },
 ];
 
+/// What the bar names in place of the focused panel's group while the picker
+/// is open. Moving is the whole panel group, and it is named "preview"
+/// because that is what the press does — the cursor writes `State.theme` on
+/// every step (themes design §6). `pgup`/`pgdn` are left out because the
+/// picker leaves them inert (doc/shortcuts.md §1), and a bar that lies is
+/// worse than no bar.
+pub(crate) const THEMES: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
+        action: "preview",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
+        action: "ends",
+    },
+];
+
+/// The two ways out are named apart, because they differ in what they leave
+/// behind: `⏎` keeps the previewed theme and `esc` puts back the one the
+/// picker opened on (themes design §6). `q` is named for the reason
+/// [`PALETTE_GLOBAL`] names it — the picker leaves quitting alone.
+pub(crate) const THEMES_GLOBAL: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Enter)],
+        action: "keep",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Escape)],
+        action: "cancel",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('q'))],
+        action: "quit",
+    },
+];
+
 /// What the bar names while a prompt is up. The panel group is empty: the
 /// focused panel responds to nothing, and naming its bindings would be the
 /// lie design §2 exists to prevent (panel search design §5.2).
@@ -135,6 +171,13 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: PALETTE.iter().map(rendered).collect(),
             global: PALETTE_GLOBAL.iter().map(rendered).collect(),
+        };
+    }
+
+    if matches!(state.overlay, Some(Overlay::Themes { .. })) {
+        return HintBar {
+            panel: THEMES.iter().map(rendered).collect(),
+            global: THEMES_GLOBAL.iter().map(rendered).collect(),
         };
     }
 
@@ -245,7 +288,8 @@ mod tests {
     use super::*;
     use crate::commands::CommandsPanel;
     use crate::search::{Filter, Filtered, Prompt};
-    use crate::state::{Geometry, Overlay, Panel, State};
+    use crate::state::{Cursor, Geometry, Overlay, Panel, State};
+    use crate::theme::ThemeChoice;
 
     /// A frame big enough for a palette to draw in.
     fn fits() -> State {
@@ -379,6 +423,35 @@ mod tests {
         assert_eq!(bar.global[0].keys, "?/esc");
         assert_eq!(bar.global[0].action, "close");
         assert_eq!(bar.global.last().expect("q is last").action, "quit");
+    }
+
+    #[test]
+    fn the_bar_names_what_the_picker_responds_to() {
+        let state = State {
+            overlay: Some(Overlay::Themes {
+                cursor: Cursor::default(),
+                restored: ThemeChoice::default(),
+            }),
+            ..State::default()
+        };
+
+        let bar = bar(&state);
+
+        assert_eq!(
+            bar.panel
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .collect::<Vec<_>>(),
+            [("j/k", "preview"), ("home/end", "ends")],
+            "the focused panel responds to nothing while the picker is up"
+        );
+        assert_eq!(
+            bar.global
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .collect::<Vec<_>>(),
+            [("⏎", "keep"), ("esc", "cancel"), ("q", "quit")]
+        );
     }
 
     #[test]

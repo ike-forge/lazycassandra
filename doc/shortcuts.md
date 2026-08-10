@@ -94,8 +94,15 @@ reachable from the palette itself, which carries a row for it.
 | Key | Effect |
 |---|---|
 | `j` / `k`, `Down` / `Up` | Moves the cursor, **and sets `State.theme`** — the frame repaints in that theme immediately. |
+| `Home` / `End` | Moves the cursor to the first or last theme, previewing it like any other move. |
 | `Enter` | Closes, keeping whatever theme is set. |
 | `Esc` | Sets `State.theme` back to the theme the picker opened on, then closes. |
+| `q` | Quits, as everywhere else. The picker takes motion, not text, so it leaves `q` alone — the palette's rule (§2). |
+
+`PageUp`/`PageDown` are deliberately inert here, and the hint bar does not
+name them. The list is every theme there is and always shorter than the block
+drawing it, so a screen *is* the whole list: paging would be a second name for
+what `Home`/`End` already do in one press.
 
 Live preview is why the picker restores rather than merely reverts: a message
 arriving over an open picker, or a frame shrinking below it, unwinds the
@@ -503,6 +510,11 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Enter` keeps the previewed theme | `enter_keeps_the_previewed_theme` |
 | `Esc` restores the theme the picker opened on | `escape_restores_the_theme_the_picker_opened_on` |
 | The picker cursor stops at either end of the list | `the_picker_cursor_cannot_run_off_the_list` |
+| `Home`/`End` reach the ends of the theme list, previewing | `home_and_end_reach_the_ends_of_the_theme_list` |
+| `q` still quits with the picker open | `q_still_quits_with_the_picker_open` |
+| Paging is inert in the picker | `paging_the_picker_does_nothing` |
+| Moving the picker cursor asks for a repaint | `moving_the_picker_cursor_asks_for_a_repaint` |
+| The bar names what the picker responds to, and nothing else | `the_bar_names_what_the_picker_responds_to` (`view/hints.rs`) |
 | The picker is refused where it cannot be drawn | `a_frame_too_small_for_a_list_refuses_the_picker` |
 | A shrink below the picker closes it and restores the theme | `a_frame_that_shrinks_below_the_picker_closes_it_and_restores_the_theme` |
 | A message over an open picker restores the theme | `a_message_arriving_over_an_open_picker_restores_the_theme` |

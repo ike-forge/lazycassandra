@@ -28,6 +28,10 @@ const GLOBAL: &[Binding] = &[
         action: "commands",
     },
     Binding {
+        keys: &[KeyPress::new(Key::Char('T'))],
+        action: "choose a theme",
+    },
+    Binding {
         keys: &[KeyPress::new(Key::Escape)],
         action: "dismiss the overlay",
     },
@@ -54,10 +58,6 @@ const GLOBAL: &[Binding] = &[
     Binding {
         keys: &[KeyPress::new(Key::Char('u'))],
         action: "focus Queries",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('T'))],
-        action: "choose a theme",
     },
 ];
 

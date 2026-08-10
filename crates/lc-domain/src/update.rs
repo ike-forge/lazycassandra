@@ -497,6 +497,13 @@ fn edit(state: &mut State, key: Key) -> bool {
 /// arrives on connect, before a prompt can be open, and `run` gates on Queries
 /// having focus, which no prompt can coexist with. Design §8 anticipates
 /// Queries gaining a filter, at which point a prompt over it is constructible.
+///
+/// A live theme picker is unwound for the same reason and by the same rule:
+/// its cursor writes `State.theme` as it moves, so replacing it outright
+/// would strand the frame in a half-previewed theme with nothing left saying
+/// which one the user had chosen (themes design §6). [`restore_theme`] is
+/// what puts it back, and — unlike the prompt above — a message *can* arrive
+/// over an open picker today, since the picker outlives no focus condition.
 fn raise(state: &mut State, message: Message) {
     if let Some(Overlay::Search(prompt)) = &state.overlay {
         state.apply_filter(prompt.target(), prompt.previous().cloned());
@@ -506,9 +513,10 @@ fn raise(state: &mut State, message: Message) {
 }
 
 /// Puts back the theme a live picker opened on, if the overlay is that
-/// picker. Otherwise a no-op. Shared by every site that unwinds a preview
-/// without going through [`escape`] itself — [`raise`] and the resize-shrink
-/// close below — so a fifth site cannot copy the check and diverge.
+/// picker. Otherwise a no-op. Three sites unwind a preview: [`escape`], which
+/// does it while taking the overlay apart, and [`raise`] and the
+/// resize-shrink close in [`measured`], which share this one — so the second
+/// of those two cannot copy the check and diverge from the first.
 fn restore_theme(state: &mut State) {
     if let Some(Overlay::Themes { restored, .. }) = state.overlay {
         state.theme = restored;
@@ -672,6 +680,12 @@ fn open_themes(state: &mut State) {
 /// Moving the cursor sets the theme, so the frame underneath is the preview —
 /// the same live-as-you-type rule the search prompt follows (panel search
 /// design §1).
+///
+/// `q` still quits, for the reason [`palette_key`] gives. `PageUp`/`PageDown`
+/// are deliberately inert rather than aliases for `Home`/`End`: the list is
+/// every theme there is and always shorter than the block drawing it, so a
+/// screen is the whole list and paging would be a second name for a motion
+/// that already lands in one press (doc/shortcuts.md §1).
 fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char('q') => return quit(state),
@@ -1897,6 +1911,115 @@ mod tests {
         }
         assert_eq!(state.theme, ThemeChoice::ALL[0]);
         assert_eq!(theme_picker(&state), Some(0));
+    }
+
+    #[test]
+    fn home_and_end_reach_the_ends_of_the_theme_list() {
+        let mut state = measured(&["a"]);
+
+        press(&mut state, Key::Char('T'));
+        press(&mut state, Key::End);
+
+        assert_eq!(theme_picker(&state), Some(ThemeChoice::ALL.len() - 1));
+        assert_eq!(
+            state.theme,
+            ThemeChoice::ALL[ThemeChoice::ALL.len() - 1],
+            "an end is a move, and every move previews"
+        );
+
+        press(&mut state, Key::Home);
+
+        assert_eq!(theme_picker(&state), Some(0));
+        assert_eq!(state.theme, ThemeChoice::ALL[0]);
+    }
+
+    #[test]
+    fn q_still_quits_with_the_picker_open() {
+        let mut state = measured(&["a"]);
+
+        press(&mut state, Key::Char('T'));
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(
+            state.should_quit,
+            "a key that means quit everywhere but one overlay is not one anyone can trust"
+        );
+        assert!(!effects.is_empty(), "quitting cancels what is in flight");
+    }
+
+    #[test]
+    fn paging_the_picker_does_nothing() {
+        for key in [Key::PageDown, Key::PageUp] {
+            let mut state = measured(&["a"]);
+            press(&mut state, Key::Char('T'));
+            press(&mut state, Key::Char('j'));
+            let before = crate::view::view_model(&state);
+
+            press(&mut state, key);
+
+            assert_eq!(
+                crate::view::view_model(&state),
+                before,
+                "{key:?} is inert in the picker by design, and the bar does not name it"
+            );
+        }
+    }
+
+    /// The panel guards above sweep states with no overlay, so an overlay's
+    /// own bar needs its own sweep — the picker's is the only bar in the
+    /// program whose keys none of them reach.
+    #[test]
+    fn every_hint_the_pickers_bar_shows_does_something() {
+        // Mid-list, so every direction and both ends have somewhere to go.
+        let seated = || {
+            let mut state = measured(&["a"]);
+            press(&mut state, Key::Char('T'));
+            press(&mut state, Key::Char('j'));
+            press(&mut state, Key::Char('j'));
+            state
+        };
+
+        let shown = crate::view::hints::bar(&seated());
+        let claimed = crate::view::hints::THEMES
+            .iter()
+            .chain(crate::view::hints::THEMES_GLOBAL);
+
+        assert_eq!(
+            shown.panel.len() + shown.global.len(),
+            crate::view::hints::THEMES.len() + crate::view::hints::THEMES_GLOBAL.len()
+        );
+
+        for binding in claimed {
+            for &key in binding.keys {
+                let mut state = seated();
+                let before = crate::view::view_model(&state);
+
+                let effects = press_binding(&mut state, key);
+
+                assert!(
+                    crate::view::view_model(&state) != before
+                        || !effects.is_empty()
+                        || state.should_quit,
+                    "the picker's bar offers '{} {}' and pressing it changes nothing",
+                    crate::view::hints::label(binding.keys),
+                    binding.action
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn moving_the_picker_cursor_asks_for_a_repaint() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('T'));
+        state.dirty = false;
+
+        press(&mut state, Key::Char('j'));
+
+        assert!(
+            state.dirty,
+            "the preview is the frame underneath, which nothing else redraws"
+        );
     }
 
     #[test]
@@ -4245,9 +4368,10 @@ mod tests {
     /// dismiss, an unfolded keyspace to fold, and the tree at its first row;
     /// one focused somewhere other than Tables so the focus letters differ;
     /// one with the tree folded and moved off its first row, so `k`, `pgup`
-    /// and `home` all have somewhere to go; and one with the palette open,
-    /// the one state that captures keys rather than passing them to a panel
-    /// — a sweep that never opens it cannot see what it captures.
+    /// and `home` all have somewhere to go; and one with the palette open and
+    /// one with the theme picker open, the states that capture keys rather
+    /// than passing them to a panel — a sweep that never opens one cannot see
+    /// what it captures.
     ///
     /// The unfold in `covered` matters: with every keyspace already folded,
     /// `h` and `←` would be a no-op in all four and the sweep would call them
@@ -4285,7 +4409,12 @@ mod tests {
         let mut palette_open = measured(&["a", "b", "c"]);
         press(&mut palette_open, Key::Char('?'));
 
-        vec![covered, elsewhere, moved, palette_open]
+        // Off the first row, so `k` and `home` have somewhere to go here too.
+        let mut picker_open = measured(&["a", "b", "c"]);
+        press(&mut picker_open, Key::Char('T'));
+        press(&mut picker_open, Key::Char('j'));
+
+        vec![covered, elsewhere, moved, palette_open, picker_open]
     }
 
     /// Whether pressing `key` changes anything a user could observe.
