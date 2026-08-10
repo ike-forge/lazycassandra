@@ -1034,6 +1034,42 @@ mod tests {
     }
 
     #[test]
+    fn a_matched_null_composes_match_with_muted_rather_than_losing_either() {
+        // Design §4.3 (amended): the renderer composes `Token::Match` with
+        // `Token::Muted` rather than one replacing the other, so a matched
+        // null stays tellable apart from a matched cell whose text is
+        // literally the word "null".
+        let mut state = showing(page_of(
+            &["id", "value", "note"],
+            &[&[CqlValue::Int(1), CqlValue::Null, text("null")]],
+        ));
+        state.apply_filter(Filtered::Contents, Filter::new("null"));
+
+        let buffer = draw_state(70, 12, &state);
+        let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
+        let null_cell = cell(21);
+        let word_cell = cell(27);
+
+        assert!(
+            null_cell.modifier.contains(Modifier::DIM),
+            "the matched null must still read as a null"
+        );
+        assert_eq!(
+            null_cell.fg, word_cell.fg,
+            "both are matches, so they carry the same match colour"
+        );
+        assert!(
+            !word_cell.modifier.contains(Modifier::DIM),
+            "the matched word is not a null and must not be dimmed"
+        );
+        assert_ne!(
+            (null_cell.fg, null_cell.modifier),
+            (word_cell.fg, word_cell.modifier),
+            "a matched null must still draw differently from a matched non-null cell"
+        );
+    }
+
+    #[test]
     fn the_selected_row_of_the_grid_is_the_one_the_cursor_is_on() {
         let mut state = showing(page_of(
             &["id"],

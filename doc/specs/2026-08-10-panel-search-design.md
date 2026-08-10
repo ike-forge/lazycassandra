@@ -287,7 +287,12 @@ A **separate field, not a second meaning for `token`**. `token` carries
 column whose value is the word "null"; overwriting it on a match would lose
 that distinction for exactly the cells the user just went looking for.
 
-The renderer paints a matched cell with a new `Token::Match` (§5.4).
+The renderer paints a matched cell with a new `Token::Match` (§5.4). Where a
+cell is both — a matched null — the renderer **composes** `Token::Match` with
+`Token::Muted` rather than letting one replace the other: `Match` is fg-only
+amber and `Muted` is `DIM`, so the two combine (`Style::patch`, the idiom
+`body.rs` already uses for the selected row) into a style that reads as a
+match and still reads as a null.
 
 **Cell-level, not span-level.** A wide value is truncated at the panel edge, so
 a span highlight would silently fail to show that a cell matched whenever the
