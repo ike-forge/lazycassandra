@@ -1197,19 +1197,32 @@ Expected: FAIL — no horizontal scrollbar, no row numbers.
 In `crates/lc-inbound/src/body.rs`: delete `widths()` and `fitting()`, delete the `MAX_COLUMN_WIDTH` and `COLUMN_SPACING` constants, and add `use lc_domain::grid::{COLUMN_SPACING, fitting};` — the arithmetic lives there now, and a second copy of it here is exactly the drift `hit.rs`'s module doc warns about. Then rewrite `grid`:
 
 ```rust
-#[expect(clippy::too_many_arguments, reason = "one grid, described by the view model")]
-fn grid(
-    frame: &mut Frame,
-    area: Rect,
-    columns: &[GridColumn],
-    rows: &[Vec<GridCell>],
+/// The view model's grid, as the renderer reads it.
+///
+/// A struct rather than seven more parameters: the fields arrive together
+/// from one `PanelBody::Grid` and mean nothing apart.
+#[derive(Clone, Copy)]
+struct GridView<'a> {
+    columns: &'a [GridColumn],
+    rows: &'a [Vec<GridCell>],
     selected: usize,
     offset: usize,
     first_column: usize,
     column: usize,
     gutter: u16,
-    theme: Theme,
-) -> (Extent, Extent) {
+}
+
+fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent, Extent) {
+    let GridView {
+        columns,
+        rows,
+        selected,
+        offset,
+        first_column,
+        column,
+        gutter,
+    } = *view;
+
     let height = usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS));
 
     let widths: Vec<u16> = columns.iter().map(|column| column.width).collect();
@@ -1290,7 +1303,41 @@ pub(crate) struct Body {
 }
 ```
 
-Every other `Body` construction in the file gets `columns: None`.
+Every other `Body` construction in the file gets `columns: None`. The `Grid`
+arm of `render` — the one Task 4 left with `first_column: _` — becomes:
+
+```rust
+        PanelBody::Grid {
+            columns,
+            rows,
+            selected,
+            offset,
+            first_column,
+            column,
+            gutter,
+        } => {
+            let (extent, horizontal) = grid(
+                frame,
+                area,
+                &GridView {
+                    columns,
+                    rows,
+                    selected: *selected,
+                    offset: *offset,
+                    first_column: *first_column,
+                    column: *column,
+                    gutter: *gutter,
+                },
+                theme,
+            );
+
+            Some(Body {
+                extent,
+                columns: Some(horizontal),
+                unit: Unit::Rows { header: HEADER_ROWS },
+            })
+        }
+```
 
 - [ ] **Step 5: Draw the horizontal bar**
 
