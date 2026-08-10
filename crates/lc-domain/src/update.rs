@@ -465,12 +465,20 @@ fn edit(state: &mut State, key: Key) -> bool {
     true
 }
 
-/// Installs a message overlay, cancelling a live search prompt first rather
-/// than overwriting it. An overlay message currently only ever arrives on the
-/// initial connect, before a prompt can be open — but the moment a reconnect
-/// or a schema-reload path exists, this is reachable, and the alternative
-/// silently drops `previous` (panel search design §3.1) and strands the
-/// filter the half-typed query had applied.
+/// The way a message overlay is installed. Every site goes through here —
+/// `ConnectFailed`, `SchemaFailed`, and `run`'s destructive-statement refusal.
+///
+/// A direct `state.overlay = Some(Overlay::Message(_))` replaces a live search
+/// prompt without restoring its `previous`, stranding the target under
+/// whatever the half-typed query had applied and losing the only copy of what
+/// was there before (panel search design §3.1). Cancelling the prompt first is
+/// the same guarantee `Esc` gives, and it belongs to the installation rather
+/// than to each caller's memory of it.
+///
+/// That no current site can *observe* the difference is incidental: a message
+/// arrives on connect, before a prompt can be open, and `run` gates on Queries
+/// having focus, which no prompt can coexist with. Design §8 anticipates
+/// Queries gaining a filter, at which point a prompt over it is constructible.
 fn raise(state: &mut State, message: Message) {
     if let Some(Overlay::Search(prompt)) = &state.overlay {
         state.apply_filter(prompt.target(), prompt.previous().cloned());
@@ -920,13 +928,16 @@ fn run(state: &mut State) -> Vec<Effect> {
     // confirmation the condition on these running at all, and the flow that
     // asks for it is unbuilt. This call site becomes the prompt (design §5).
     if stmt.kind.is_destructive() {
-        state.overlay = Some(Overlay::Message(Message {
-            title: "Not run".to_owned(),
-            message:
-                "Dropping and truncating wait on a typed confirmation, which is not built yet."
-                    .to_owned(),
-            severity: Severity::Danger,
-        }));
+        raise(
+            state,
+            Message {
+                title: "Not run".to_owned(),
+                message:
+                    "Dropping and truncating wait on a typed confirmation, which is not built yet."
+                        .to_owned(),
+                severity: Severity::Danger,
+            },
+        );
         return Vec::new();
     }
 
