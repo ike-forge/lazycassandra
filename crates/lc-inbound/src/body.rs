@@ -1,8 +1,9 @@
 //! Drawing what a panel contains.
 //!
 //! Two scroll regimes meet here. Tables, Contents and Ddl carry a scroll
-//! offset as domain state that arrives in the [`PanelBody`]; what lives here
-//! is the arithmetic that needs a width or a height — which columns fit, and
+//! offset as domain state that arrives in the [`PanelBody`] — the Contents
+//! grid a horizontal one besides — and what lives here is the arithmetic that
+//! needs the area: how many of the domain's column widths fit in it, and
 //! whether the selection falls inside the rows drawn
 //! (doc/specs/2026-08-09-list-viewport-design.md §2). Queries stores no
 //! offset at all: both its vertical and horizontal offsets are derived from
@@ -15,6 +16,7 @@
 //! several wrapped lines, which only the renderer that wrapped them can
 //! measure (doc/specs/2026-08-10-ddl-selection-design.md §5.4).
 
+use lc_domain::grid::{COLUMN_SPACING, available, fitting};
 use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
@@ -34,18 +36,6 @@ const UNFOLDED: &str = "▾ ";
 const LEAF: &str = "  ";
 
 const INDENT: &str = "  ";
-
-/// How wide a grid column may grow before it is truncated.
-///
-/// A uuid is 36 columns and a blob is unbounded; letting either take its full
-/// width pushes every other column off the panel. Horizontal navigation and
-/// column priority are a later slice — this is the cap that keeps the grid
-/// readable until then.
-const MAX_COLUMN_WIDTH: u16 = 24;
-
-/// Cells in a row are separated by one column. Stated rather than left to
-/// ratatui's default because [`fitting`] has to do the same arithmetic.
-const COLUMN_SPACING: u16 = 1;
 
 const ELLIPSIS: char = '…';
 
@@ -68,6 +58,9 @@ impl Extent {
 /// What a panel's body turned out to be: how far it scrolled, and in what.
 pub(crate) struct Body {
     pub(crate) extent: Extent,
+    /// The horizontal extent, for the bodies that scroll sideways. Only a
+    /// grid does.
+    pub(crate) columns: Option<Extent>,
     pub(crate) unit: Unit,
     /// Where the body drew its selection, in the unit [`Extent`] counts in.
     ///
@@ -114,6 +107,7 @@ pub(crate) fn render(
             offset,
         } => Some(Body {
             extent: tree(frame, area, rows, *selected, *offset, theme),
+            columns: None,
             unit: Unit::Rows { header: 0 },
             selection: Span::default(),
         }),
@@ -126,12 +120,14 @@ pub(crate) fn render(
                 crate::details::render(frame, area, details, *selected, *offset, theme);
             Some(Body {
                 extent,
+                columns: None,
                 unit: Unit::Lines,
                 selection,
             })
         }
         PanelBody::Editor { lines, cursor } => Some(Body {
             extent: editor(frame, area, lines, *cursor, focused),
+            columns: None,
             unit: Unit::Lines,
             selection: Span::default(),
         }),
@@ -140,13 +136,34 @@ pub(crate) fn render(
             rows,
             selected,
             offset,
-        } => Some(Body {
-            extent: grid(frame, area, columns, rows, *selected, *offset, theme),
-            unit: Unit::Rows {
-                header: HEADER_ROWS,
-            },
-            selection: Span::default(),
-        }),
+            first_column,
+            column,
+            gutter,
+        } => {
+            let (extent, horizontal) = grid(
+                frame,
+                area,
+                &GridView {
+                    columns,
+                    rows,
+                    selected: *selected,
+                    offset: *offset,
+                    first_column: *first_column,
+                    column: *column,
+                    gutter: *gutter,
+                },
+                theme,
+            );
+
+            Some(Body {
+                extent,
+                columns: Some(horizontal),
+                unit: Unit::Rows {
+                    header: HEADER_ROWS,
+                },
+                selection: Span::default(),
+            })
+        }
     }
 }
 
@@ -201,108 +218,112 @@ fn tree(
     }
 }
 
-/// Column widths are computed here rather than in the domain because only the
-/// renderer knows how wide the panel is. Columns whose width runs past the
-/// right edge are simply not drawn — horizontal navigation is a later slice.
-fn grid(
-    frame: &mut Frame,
-    area: Rect,
-    columns: &[GridColumn],
-    rows: &[Vec<GridCell>],
+/// The view model's grid, as the renderer reads it.
+///
+/// A struct rather than seven more parameters: the fields arrive together
+/// from one `PanelBody::Grid` and mean nothing apart.
+#[derive(Clone, Copy)]
+struct GridView<'a> {
+    columns: &'a [GridColumn],
+    rows: &'a [Vec<GridCell>],
     selected: usize,
     offset: usize,
-    theme: Theme,
-) -> Extent {
-    // Only the columns that fit are handed to the widget. `Constraint::Length`
-    // is a request, not a floor: given more of them than the area can hold,
-    // ratatui shrinks every column to fit rather than letting the last one run
-    // off the edge — which truncates values with no ellipsis to say so.
-    let widths = widths(columns, rows, area.width);
-    let shown = fitting(&widths, area.width);
-    let widths = &widths[..shown];
+    first_column: usize,
+    column: usize,
+    gutter: u16,
+}
+
+fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent, Extent) {
+    let GridView {
+        columns,
+        rows,
+        selected,
+        offset,
+        first_column,
+        column,
+        gutter,
+    } = *view;
+
     // Both the window `visible` judges against and the extent the scrollbar is
     // drawn from. Two copies of this subtraction can disagree by a row, and a
     // selection wrongly called visible makes the widget scroll away from the
     // stored offset.
     let height = usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS));
 
+    let widths: Vec<u16> = columns.iter().map(|column| column.width).collect();
+    let available = available(area.width, gutter);
+    let first_column = first_column.min(columns.len());
+    let shown = fitting(&widths, first_column, available);
+    let drawn = first_column..first_column + shown;
+    // `lc_domain::grid::widths` caps a column at its own maximum and not at
+    // this panel, so one column can be wider than the room there is.
+    // `Constraint::Length` is a request rather than a floor: handed more than
+    // the area can hold, ratatui shrinks every column — the gutter included —
+    // and truncates each value with no ellipsis to say it did.
+    let drawn_widths: Vec<u16> = widths[drawn.clone()]
+        .iter()
+        .map(|width| (*width).min(available))
+        .collect();
+
+    let constraints = std::iter::once(Constraint::Length(gutter))
+        .chain(drawn_widths.iter().copied().map(Constraint::Length));
+
     let header = Row::new(
-        columns
-            .iter()
-            .zip(widths)
-            .map(|(column, width)| styled(&column.name, column.token, *width, theme)),
+        std::iter::once(Cell::from(Text::raw(" ".repeat(usize::from(gutter))))).chain(
+            columns[drawn.clone()]
+                .iter()
+                .zip(&drawn_widths)
+                .map(|(column, width)| styled(&column.name, column.token, *width, theme)),
+        ),
     );
 
-    let body = rows.iter().map(|cells| {
+    let body = rows.iter().enumerate().map(|(index, cells)| {
         Row::new(
-            cells
-                .iter()
-                .zip(widths)
-                .map(|(cell, width)| styled_cell(&cell.text, cell_style(cell, theme), *width)),
+            std::iter::once(number(index, gutter, theme)).chain(
+                cells
+                    .get(drawn.clone())
+                    .unwrap_or_default()
+                    .iter()
+                    .zip(&drawn_widths)
+                    .map(|(cell, width)| styled_cell(&cell.text, cell_style(cell, theme), *width)),
+            ),
         )
     });
 
-    let table = Table::new(body, widths.iter().copied().map(Constraint::Length))
+    let table = Table::new(body, constraints)
         .header(header)
         .column_spacing(COLUMN_SPACING)
-        .row_highlight_style(theme.style(Token::Selected));
+        .row_highlight_style(theme.style(Token::Selected))
+        .cell_highlight_style(theme.style(Token::SelectedCell));
+    // The gutter is a column of the widget but not of the page, so the
+    // selected column is one further right than the domain's index.
+    let cell =
+        visible(selected, offset, height).map(|row| (row, column.saturating_sub(first_column) + 1));
     let mut state = TableState::default()
         .with_offset(offset)
-        .with_selected(visible(selected, offset, height));
+        .with_selected_cell(cell);
 
     frame.render_stateful_widget(table, area, &mut state);
 
-    Extent {
-        position: state.offset(),
-        total: rows.len(),
-        visible: height,
-    }
+    (
+        Extent {
+            position: state.offset(),
+            total: rows.len(),
+            visible: height,
+        },
+        Extent {
+            position: first_column,
+            total: columns.len(),
+            visible: shown,
+        },
+    )
 }
 
-/// How many of `widths` fit before the right edge.
-///
-/// Always at least one: a panel too narrow for even the first column still
-/// shows what it can of it, which is more use than an empty panel.
-fn fitting(widths: &[u16], available: u16) -> usize {
-    let mut used = 0;
-    let mut count = 0;
+/// A row's number, right-aligned in the gutter.
+fn number(index: usize, gutter: u16, theme: Theme) -> Cell<'static> {
+    let text = format!("{:>width$}", index + 1, width = usize::from(gutter));
 
-    for (index, width) in widths.iter().enumerate() {
-        let spacing = if index == 0 { 0 } else { COLUMN_SPACING };
-        let next = used + spacing + width;
-
-        if next > available && count > 0 {
-            break;
-        }
-
-        used = next;
-        count += 1;
-    }
-
-    count
-}
-
-/// Each column takes the widest thing in it, capped — and never wider than
-/// the panel, so the first column is ellipsised rather than squeezed when even
-/// it does not fit.
-fn widths(columns: &[GridColumn], rows: &[Vec<GridCell>], available: u16) -> Vec<u16> {
-    let cap = MAX_COLUMN_WIDTH.min(available.max(1));
-
-    columns
-        .iter()
-        .enumerate()
-        .map(|(index, column)| {
-            let widest = rows
-                .iter()
-                .filter_map(|cells| cells.get(index))
-                .map(|cell| cell.text.width())
-                .chain(std::iter::once(column.name.width()))
-                .max()
-                .unwrap_or(1);
-
-            u16::try_from(widest).unwrap_or(cap).clamp(1, cap)
-        })
-        .collect()
+    Cell::from(Text::raw(text)).style(theme.style(Token::Muted))
 }
 
 /// A matched cell composes `Token::Match` onto whatever `token` already

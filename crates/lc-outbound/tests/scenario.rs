@@ -11,6 +11,7 @@ use lc_domain::model::{
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
+use lc_domain::state::Panel;
 use lc_domain::style::Token;
 use lc_domain::update::ROW_LIMIT;
 use lc_domain::view::{DetailRow, Details, Marker, OverlayView, PanelBody};
@@ -338,7 +339,7 @@ async fn a_table_that_cannot_be_read_says_so_in_the_panel_alone() {
 }
 
 #[tokio::test]
-async fn tab_moves_focus_and_j_then_walks_the_grid_rather_than_the_tree() {
+async fn reading_a_table_lands_focus_in_contents_and_j_walks_the_grid_rather_than_the_tree() {
     let cluster = FakeCluster::new(
         tabled_schema_of(&[("shop", &["orders"])]),
         Posture::ReadOnly,
@@ -353,9 +354,7 @@ async fn tab_moves_focus_and_j_then_walks_the_grid_rather_than_the_tree() {
     };
     let tree_row = *selected;
 
-    // Tables → Ddl → Contents.
-    press(&mut state, Key::Tab);
-    press(&mut state, Key::Tab);
+    // Enter already took focus to Contents (design §1); `j` walks the grid.
     press(&mut state, Key::Char('j'));
 
     let view = view_model(&state);
@@ -382,6 +381,7 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
     // Deliberately not run yet: the first read has to still be outstanding
     // when the second is issued.
     let first = press(&mut state, Key::Enter);
+    state.focus = Panel::Tables;
     press(&mut state, Key::Char('j'));
     let second = press(&mut state, Key::Enter);
 

@@ -31,8 +31,6 @@ From the table-contents slice (doc/specs/2026-08-09-table-contents-design.md §9
 - `Effect::Cancel` is still inert: the `Cluster` port has no cancel, so a
   superseded read runs to completion on the cluster. Only the `in_flight` drop
   protects the state.
-- Grid columns are capped at 24 and anything past the right edge is not drawn.
-  Horizontal navigation and column priority are unbuilt (vision.md §8).
 
 From the table metadata slice (doc/specs/2026-08-09-table-metadata-design.md):
 
@@ -140,8 +138,10 @@ From the command palette slice (doc/specs/2026-08-09-command-palette-design.md �
 - Execution. `⏎` selects a row that cannot be run, because a `Binding` is keys
   and a label. Making it runnable means feeding a synthesised `KeyPress` back
   through `handle_key` rather than growing a second dispatch point.
-- Contextual ordering. The palette shows the same three groups whatever has
-  focus; vision.md §4 principle 1 promises a *contextual* map.
+- Contextual ordering. The palette shows the same groups whatever has focus;
+  vision.md §4 principle 1 promises a *contextual* map. It now lists `l`/`h`
+  twice, once under each panel that resolves them, which is the honest shape for
+  a flat catalogue and exactly the duplication a contextual one would collapse.
 
 From the panel search slice (doc/specs/2026-08-10-panel-search-design.md §8):
 
@@ -153,3 +153,18 @@ From the panel search slice (doc/specs/2026-08-10-panel-search-design.md §8):
   panel* rule is for. The route in is `esc` then `/`, once Queries has a
   vim-style normal mode — that slice's decision, not this one's, since it also
   has to invent how one leaves the panel once `esc` no longer does that.
+
+From the table display slice (doc/specs/2026-08-10-table-display-design.md §11):
+
+- Expanded-cell inspection. `MAX_COLUMN_WIDTH` is 24 and horizontal scrolling
+  reaches columns, not the tails of values, so a 36-character uuid is still
+  ellipsised and nothing shows it in full. The cell cursor is the target such a
+  view needs, and it now exists; the view itself wants a design of its own.
+- Pinned key columns. Useful the moment a table is wide enough to scroll, and
+  blocked on a rule for what happens when the pinned block alone does not fit.
+- Column widths that survive a restart. They are recomputed from each page, so
+  resizing one is not a thing to do — a preference needs a config system to hold
+  it, and there is none.
+- The horizontal thumb glyph has never been looked at on a real terminal. The
+  bottom bar reuses the vertical bar's machinery with `━`; it is pinned by
+  position, not by appearance.

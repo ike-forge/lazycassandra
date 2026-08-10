@@ -92,6 +92,8 @@ Queries moves the cursor through its buffer.
 |---|---|
 | `j` / `↓` | Down one row (in Queries, `↓` only — `j` is text). |
 | `k` / `↑` | Up one (in Queries, `↑` only — `k` is text). |
+| `l` / `→` | Right one column in Contents; unfold the selected keyspace in Tables. |
+| `h` / `←` | Left one column in Contents; fold it in Tables, stepping out from a table row first. |
 | `PageDown` | Down one panel height. |
 | `PageUp` | Up one panel height. |
 | `Home` | To the start (to the **line**'s start in Queries — §2). |
@@ -112,22 +114,33 @@ that usually fits on one screen
 Queries never reaches `Motion::End` at all: the editor claims `Home`/`End`
 itself, before the match that would call it (queries editor design §3).
 
+The Contents grid has two axes, and only `h`/`l`/`←`/`→` reach the second one.
+`Home`, `End`, `PageUp` and `PageDown` move the **row** cursor there, as they do
+everywhere else; the column cursor moves one column at a time or not at all, and
+§4 says why ([table display design](specs/2026-08-10-table-display-design.md) §2).
+The column offset follows the cell the way the row offset follows the row, and
+the panel's bottom border grows a scrollbar exactly when a column is off screen.
+
 ### Tables panel
 
 Accepted anywhere, but a no-op unless Tables has focus — except in Queries,
-which takes text: there `Enter` inserts a newline, `Space`, `l` and `h` type
-themselves, and `→`/`←` move the cursor instead. None of them is a no-op,
-but Queries is where `l`/`→` and `h`/`←` stop being the synonyms this table
-pairs them into — §2's rewritten vim/arrows rule. See the Queries
-subsection below.
+which takes text: there `Enter` inserts a newline and `Space` types itself.
+Neither is a no-op; see the Queries subsection below.
 
 | Key | Action |
 |---|---|
-| `Enter` / `Space` | On a keyspace: fold/unfold. On a table: read it into Contents. |
-| `l` / `→` | Unfold the selected keyspace. |
-| `h` / `←` | Fold it; from a table row, step out to its keyspace first. |
+| `Enter` / `Space` | On a keyspace: fold/unfold. On a table: read it into Contents and focus that panel. |
 
-Reading a table cancels whatever read Contents was waiting on.
+`l`/`h` and `→`/`←` are motion, not tree keys, and the Motion table above is
+where they live: unfolding is what *move right* means in a tree, and the same
+key means the next column in a grid — §2.
+
+Reading a table cancels whatever read Contents was waiting on, and moves focus
+to Contents immediately rather than when the page lands: focus is a consequence
+of the keypress, not of the network
+([table display design](specs/2026-08-10-table-display-design.md) §1). A refused
+read moves it too — the panel is where the refusal is narrated. Returning is
+`Tab` or `t`, and the tree selection is where you left it.
 
 `l` and `h` on a keyspace are swallowed while a filter is applied — and so
 are `Enter`/`Space` and a click, on a keyspace row, for the same reason. A
@@ -251,12 +264,34 @@ The pairing breaks in Queries, and only there: a panel that takes text claims
 arrows still move the cursor. This is the vim-key half of the same exception
 §3's key budget note makes for every letter.
 
+Giving the Contents grid a column cursor cost the pairing nothing, which is why
+it was preferred to the two alternatives — arrows-only in the grid, or a fresh
+pair from §3's free set. `l` and `→` reach the same action in every panel, and
+so do `h` and `←`.
+
 **The same key means the same thing in every panel.** `j` moves down in
 Tables, Contents and Table DDL — the panels that treat it as motion — or is
 inert; it never means something else there. A panel that cannot honour a
 motion swallows it rather than passing it on. Queries is the exception: it
 takes text, so `j` types itself, along with `k`/`l`/`h` — the vim/arrows rule
 above.
+
+The horizontal four are the same rule rather than an exception to it. `h`/`←`
+mean **move left** and `l`/`→` mean **move right**, and each panel resolves that
+in its own vocabulary:
+
+| Panel | `h` / `←` | `l` / `→` |
+|---|---|---|
+| Tables | Fold — step out | Unfold — step in |
+| Contents | Previous column | Next column |
+| Table DDL | Inert | Inert |
+| Queries | Cursor left, in text | Cursor right, in text |
+
+That is the shape `j`/`k` have had since the first list: "down one row" is a
+tree row, a grid row or a wrapped line depending on what the panel is showing,
+and is inert where it is showing nothing. Reading the horizontal keys as "fold"
+and "unfold" was a description of the only panel that had claimed them, not a
+rule ([table display design](specs/2026-08-10-table-display-design.md) §2).
 
 `Home` and `End` are a second exception. Everywhere else they reach the ends
 of the document; in the editor they reach the ends of the line, because that
@@ -295,6 +330,15 @@ conditional binding gets; it is not a licence to name a key and grey it rather
 than think about whether it belongs on the bar. `esc` is still omitted from the
 other three bars rather than greyed there: it would be grey in most frames, and
 a permanently grey hint teaches nothing.
+
+The palette is the half of that pair with no discretion. The bar picks what a
+panel's hints teach; the palette claims to be complete, so it may not omit a key
+that does something ([command palette design](specs/2026-08-09-command-palette-design.md)
+§2). Column motion is the case that proved it: `l`/`h` were already listed under
+`Tables` as fold and unfold, which is a true row about a different panel, so the
+sweep in §5 saw a key it already knew and the grid's meaning went unlisted. The
+catalogue now carries a `Table contents` group, and the same keys appear under
+both headings — the honest shape for a key each panel resolves for itself.
 
 **Focus is the mode, and an overlay outranks focus.** A panel either takes
 text or it does not, and `Panel::takes_text` is the one exhaustive answer. In a
@@ -370,7 +414,9 @@ which is a spec-level change.
 | `T` `A` `C` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. |
 | `ctrl-d` / `ctrl-u` | The ctrl layer exists now but these two are not in it yet; see §2. |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
-| Horizontal motion | The grid caps at 24 columns and draws nothing past the right edge. Column navigation is unbuilt (vision.md §8). |
+| `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
+| Horizontal wheel | Dropped at the edge, and this slice did not pick it up. A notch moves the row viewport; columns are reached with the keys §1 names. |
+| An expand-cell key | Horizontal scrolling reaches columns, not the tails of values, so a 36-character uuid is still ellipsised. Showing one in full is a view with a design of its own, and a cell cursor is what it was waiting for (TODO.md). |
 | User-defined bindings | vision.md §7 Phase 5. |
 
 ---
@@ -389,6 +435,22 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `l`/`h` and arrows agree | `l_and_right_open_a_keyspace`, `h_and_left_close_a_keyspace` |
 | `h` steps out before folding | `h_from_a_table_steps_out_to_its_keyspace_before_folding` |
 | Tree keys are Tables-only | `a_tree_transition_belongs_to_the_focused_panel_only`, `enter_outside_the_tree_reads_nothing` |
+| `l`/`h` walk the grid's columns | `l_and_right_move_the_grid_cursor_one_column`, `h_and_left_move_the_grid_cursor_back_one_column` |
+| The cell cursor stops at either edge | `the_grid_cursor_cannot_run_off_either_edge_of_a_page`, `a_grid_with_no_page_swallows_horizontal_motion` |
+| Horizontal motion is the focused panel's only | `horizontal_motion_belongs_to_the_focused_panel_only` |
+| `Home`/`End` keep the row axis in a grid | `home_and_end_still_reach_the_ends_of_the_row_list` |
+| A read returns the cell cursor to the first cell | `a_request_returns_the_cell_cursor_to_the_first_cell`, `a_refusal_returns_the_cell_cursor_to_the_first_cell`, `a_fresh_panel_has_no_columns_to_move_over`, `a_loaded_page_reports_its_columns` (`contents.rs`) |
+| The column viewport follows the cell cursor | `the_column_viewport_follows_the_cell_cursor`, `a_narrower_frame_pulls_the_column_viewport_back_to_the_cursor`; `ColumnScroll` itself by `a_visible_column_moves_the_viewport_nowhere`, `the_viewport_moves_the_shortest_distance_that_shows_a_column_to_the_right`, `the_viewport_follows_a_column_to_the_left`, `a_column_too_wide_for_the_panel_is_shown_from_its_own_start`, `following_a_column_that_is_gone_clamps_the_viewport` (`grid.rs`) |
+| A column is as wide as the widest thing in it, capped | `a_column_is_as_wide_as_the_widest_thing_in_it`, `a_heading_wider_than_every_value_sets_the_width`, `a_column_is_capped`, `a_column_with_no_rows_is_still_as_wide_as_its_heading` (`grid.rs`) |
+| Only whole columns are drawn | `only_the_columns_that_fit_are_counted`, `fitting_counts_from_the_offset`, `a_panel_too_narrow_for_one_column_still_draws_it`, `fitting_past_the_last_column_is_nothing` (`grid.rs`) |
+| The grid names its cell, its first column and its widths | `a_grid_carries_the_width_of_every_column`, `a_grid_names_the_selected_cell_and_the_first_column_drawn`, `the_gutter_is_as_wide_as_the_last_row_number` (`view/contents.rs`, and the same name in `grid.rs` for the arithmetic under it) |
+| A read lands focus in Contents, by key or by click | `reading_a_table_lands_focus_in_contents`, `a_click_on_a_table_lands_focus_in_contents_too`, `focus_moves_before_the_page_arrives`, `a_refused_read_still_lands_focus_in_contents` |
+| Unfolding does not move focus, and a read leaves the tree alone | `unfolding_a_keyspace_leaves_focus_in_tables`, `reading_a_table_leaves_the_tree_selection_where_it_was`, `reading_a_table_lands_focus_in_contents_and_j_walks_the_grid_rather_than_the_tree` (`lc-outbound/tests/scenario.rs`) |
+| The cell is drawn over its row, and the gutter numbers the page | `the_selected_cell_is_marked_apart_from_the_rest_of_its_row`, `the_gutter_is_muted_and_the_values_beside_it_are_not`, `rows_are_numbered_from_one`, `the_row_number_is_the_pages_own_index_after_a_scroll` (`inbound/render.rs`) |
+| The cell highlight reads against the row's without a colour | `a_selected_cell_reads_against_the_selected_row_without_spending_a_colour` (`inbound/theme.rs`) |
+| The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render.rs`) |
+| A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
+| The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something` |
 | `q` quits and cancels | `q_quits`, `quitting_cancels_everything_still_in_flight` |
 | `Esc` clears the overlay | `escape_dismisses_the_overlay` |
 | `Tab`/`Shift-Tab` cycle and wrap | `tab_walks_the_panels_in_reading_order_and_wraps`, `shift_tab_walks_them_the_other_way` |
@@ -534,7 +596,7 @@ Bound, and spending nothing from §3's budget. See the
 | Gesture | Lands on | Action |
 |---|---|---|
 | Left click | A keyspace | Focus Tables, select it, fold/unfold |
-| Left click | A table | Focus Tables, select it, read it into Contents |
+| Left click | A table | Select it, read it into Contents, and focus **Contents** |
 | Left click | A Contents row | Focus Contents, select it |
 | Left click | Chrome | Focus that panel |
 | Left click | Anywhere, overlay up | Dismiss the overlay |
@@ -551,10 +613,23 @@ has no arm for `Panel::Queries` — the editor derives both offsets from the
 cursor and the area every frame and stores none for a notch to move. Whether
 it should get a stored viewport of its own is an open question (TODO.md).
 
+A table is the one target whose click leaves focus somewhere other than where
+the press landed, and it does that because the key does: `Enter`, `Space` and
+the click all reach the same state — the rule stated below, held rather than
+bent.
+
+A click on a row's number is a click on that row. `click_at` resolves on the `y`
+axis alone — a press inside a panel's body maps to a row and never consults `x`
+— so the gutter and the column offset, which move only where a row's cells start
+horizontally, change nothing about what a press means
+([table display design](specs/2026-08-10-table-display-design.md) §8).
+
 Chrome is a border, a title, a grid's header, a notice, the Ddl body, the
-Queries panel, and the blank space past the last row. Every other gesture —
-right and middle buttons, drags, releases, horizontal wheels, and anything with
-a modifier held — is dropped at the edge.
+Queries panel, and the blank space past the last row. A row number is not
+chrome: a header is chrome because pressing it means nothing, and a row number
+is part of its row. Every other gesture — right and middle buttons, drags,
+releases, horizontal wheels, and anything with a modifier held — is dropped at
+the edge.
 
 **The hint bar wins over the overlay.** A press on the bar is dropped before
 anything else sees it, including a dismissible overlay, so it never dismisses

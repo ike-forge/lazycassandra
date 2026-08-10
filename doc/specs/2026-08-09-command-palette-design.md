@@ -262,7 +262,7 @@ follows, and for the same reason: the measure/redraw loop has to terminate.
 
 ## 6. The catalogue
 
-Three groups. Everything doc/shortcuts.md §1 lists, plus `?`.
+A group per vocabulary. Everything doc/shortcuts.md §1 lists, plus `?`.
 
 | Group | Keys | Action |
 |---|---|---|
@@ -284,6 +284,8 @@ Three groups. Everything doc/shortcuts.md §1 lists, plus `?`.
 | Tables | `⏎`/`space` | fold/unfold, or read |
 | | `l`/`→` | unfold the keyspace |
 | | `h`/`←` | fold, or step out |
+| Table contents | `l`/`→` | next column |
+| | `h`/`←` | previous column |
 
 Every action is at most 20 characters, because §5 derives `MIN_W` from the
 longest one and a longer action would either clip or push the palette out of
@@ -294,7 +296,23 @@ to (hint bar design §1) — a column buys enough room for "fold/unfold, or read
 even though it does not buy enough for a sentence. The group heading supplies
 the noun the action drops: under `Tables`, "read" can only mean a table.
 
-**There is no fourth group for the palette's own bindings.** `esc`, `j`, `k` and
+**`l` and `h` are listed twice on purpose**, once under each panel that
+resolves them. The four horizontal keys mean *move left* and *move right*, and
+each panel answers that in its own vocabulary — fold and unfold in a tree, the
+previous and next column in a grid (doc/shortcuts.md §2). One row cannot say
+both: the heading is what supplies the noun, so "unfold the keyspace" under
+`Tables` is a true row about a different panel, and a catalogue carrying only it
+omits what the keys do in the grid. That is the one thing §2 forbids — the
+palette may not omit a key that does something. The keys are what may not
+drift; the wording is per-group, and here it has to be.
+
+This is also why the catalogue is not derived from `Panel::hints()` and `GLOBAL`,
+and why the sweep in §9 did not catch the omission on its own: it compares keys,
+and both keys were already present. A catalogue whose rows named a panel as well
+as a key would make that sweep exhaustive, and is the same modelling change
+contextual ordering (§10) needs. Neither is built.
+
+**There is no group for the palette's own bindings.** `esc`, `j`, `k` and
 the paging keys are already in the table above, doing the same thing they do
 everywhere, and the bar names them while the palette is up (§7). A group that
 restated them would be the palette's only self-referential content and would
@@ -494,12 +512,16 @@ dispatch point (forbidden) or a synthesised `KeyPress` fed back through
 `handle_key` (not forbidden, and probably the answer — but it is a design, not
 a detail).
 
-**Contextual ordering.** The palette shows the same three groups regardless of
-which panel has focus. vision.md §4 principle 1 promises `?` gives "the full
-contextual map"; this is the full map without the contextual part. Floating the
-focused panel's group to the top is a small change and a real question about
-whether a list that reorders itself is still learnable — the same jitter
-argument the hint bar design §1 made about cursor-aware hints.
+**Contextual ordering.** The palette shows the same groups in the same order
+regardless of which panel has focus. vision.md §4 principle 1 promises `?` gives
+"the full contextual map"; this is the full map without the contextual part.
+Floating the focused panel's group to the top is a small change and a real
+question about whether a list that reorders itself is still learnable — the same
+jitter argument the hint bar design §1 made about cursor-aware hints. §6's
+duplicated `l`/`h` is what raises the stakes: a contextual palette would show
+the row for the panel you are in and collapse the other, which is the same
+`(Key, Panel)` modelling that would make §9's sweep exhaustive. One decision
+buys both.
 
 **A scrollbar that is usually absent.** Height caps at the content, so on any
 terminal tall enough the palette does not scroll at all and the scrollbar never

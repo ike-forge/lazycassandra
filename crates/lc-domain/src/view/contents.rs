@@ -5,8 +5,8 @@
 //! 8).
 
 use crate::cell;
-use crate::contents::{ContentsState, Subject, TableRef};
-use crate::model::{CqlValue, Page, Schema};
+use crate::contents::{ContentsState, GridPage, Subject, TableRef};
+use crate::model::{CqlValue, Schema};
 use crate::search::Filter;
 use crate::state::State;
 use crate::style::Token;
@@ -22,6 +22,11 @@ pub struct GridColumn {
     /// [`Token::RegularColumn`]. `None` when the schema no longer has the
     /// table, so no claim about its shape can be checked.
     pub token: Option<Token>,
+    /// Character columns it is drawn in, capped by
+    /// [`crate::grid::MAX_COLUMN_WIDTH`]. Computed here rather than in the
+    /// renderer so the fitting arithmetic can live beside the offsets it
+    /// bounds (doc/specs/2026-08-10-table-display-design.md §6).
+    pub width: u16,
 }
 
 /// One value, already rendered.
@@ -48,7 +53,11 @@ pub(super) fn title(state: &State) -> String {
             format!("{BASE} — {}", subject.label())
         }
         ContentsState::Loaded { subject, page } => {
-            format!("{BASE} — {} ({})", subject.label(), rows(page.rows.len()))
+            format!(
+                "{BASE} — {} ({})",
+                subject.label(),
+                rows(page.page().rows.len())
+            )
         }
     }
 }
@@ -72,7 +81,9 @@ pub(super) fn body(state: &State) -> PanelBody {
     }
 }
 
-fn grid(state: &State, subject: &Subject, page: &Page) -> PanelBody {
+fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
+    let page = grid_page.page();
+
     if page.rows.is_empty() {
         return waiting("No rows");
     }
@@ -81,9 +92,11 @@ fn grid(state: &State, subject: &Subject, page: &Page) -> PanelBody {
         columns: page
             .columns
             .iter()
-            .map(|name| GridColumn {
+            .zip(grid_page.widths())
+            .map(|(name, width)| GridColumn {
                 name: name.clone(),
                 token: column_token(state.schema(), subject.table(), name),
+                width: *width,
             })
             .collect(),
         rows: page
@@ -98,6 +111,9 @@ fn grid(state: &State, subject: &Subject, page: &Page) -> PanelBody {
             .collect(),
         selected: state.contents.cursor.index(),
         offset: state.contents.scroll.offset(),
+        first_column: state.contents.columns.first(),
+        column: state.contents.column.index(),
+        gutter: crate::grid::gutter(page.rows.len()),
     }
 }
 
@@ -140,7 +156,7 @@ fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str)
 #[cfg(test)]
 mod tests {
     use crate::model::{
-        ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, QueryId, Row, Schema,
+        ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Page, QueryId, Row, Schema,
     };
     use crate::posture::Posture;
     use crate::search::{Filter, Filtered};
@@ -475,5 +491,58 @@ mod tests {
             panic!("a loaded page draws a grid");
         };
         assert_eq!(selected, 1);
+    }
+
+    #[test]
+    fn a_grid_carries_the_width_of_every_column() {
+        let state = showing(page_of(
+            &["id", "name"],
+            &[&[CqlValue::Int(1), CqlValue::Text("alice".to_owned())]],
+        ));
+
+        let PanelBody::Grid { columns, .. } = contents_body(&state) else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(
+            columns.iter().map(|c| c.width).collect::<Vec<_>>(),
+            vec![2, 5]
+        );
+    }
+
+    #[test]
+    fn a_grid_names_the_selected_cell_and_the_first_column_drawn() {
+        let mut state = showing(page_of(
+            &["id", "name"],
+            &[&[CqlValue::Int(1), CqlValue::Text("alice".to_owned())]],
+        ));
+        state.contents.column.go_to(1, 2);
+
+        let PanelBody::Grid {
+            column,
+            first_column,
+            selected,
+            ..
+        } = contents_body(&state)
+        else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(column, 1);
+        assert_eq!(first_column, 0);
+        assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn the_gutter_is_as_wide_as_the_last_row_number() {
+        let rows: Vec<Vec<CqlValue>> = (0..12).map(|i| vec![CqlValue::Int(i)]).collect();
+        let borrowed: Vec<&[CqlValue]> = rows.iter().map(Vec::as_slice).collect();
+        let state = showing(page_of(&["id"], &borrowed));
+
+        let PanelBody::Grid { gutter, .. } = contents_body(&state) else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(gutter, 2, "twelve rows need two digits");
     }
 }

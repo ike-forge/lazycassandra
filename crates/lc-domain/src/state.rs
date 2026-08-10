@@ -229,6 +229,10 @@ const CONTENTS_HINTS: &[Binding] = &[
         action: "move",
     },
     Binding {
+        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Char('h'))],
+        action: "column",
+    },
+    Binding {
         keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
         action: "page",
     },
@@ -519,6 +523,10 @@ pub struct Geometry {
     ddl_lines: usize,
     ddl_selection: Span,
     command_rows: usize,
+    /// Character columns the Contents grid's body has, gutter included. A
+    /// function of the terminal size alone, which is what keeps §3's
+    /// measurement loop open (doc/specs/2026-08-10-table-display-design.md §6).
+    grid_width: usize,
 }
 
 impl Geometry {
@@ -532,6 +540,7 @@ impl Geometry {
             ddl_lines,
             ddl_selection: Span { first: 0, lines: 0 },
             command_rows,
+            grid_width: 0,
         }
     }
 
@@ -557,6 +566,12 @@ impl Geometry {
         self.ddl_lines
     }
 
+    /// Character columns the Contents grid can draw into.
+    #[must_use]
+    pub const fn grid_width(self) -> usize {
+        self.grid_width
+    }
+
     /// Rows the command palette would show at this frame size, whether or not
     /// one is open.
     ///
@@ -576,11 +591,19 @@ impl Geometry {
     #[must_use]
     pub const fn with_ddl_selection(self, ddl_selection: Span) -> Self {
         Self {
-            heights: self.heights,
-            ddl_lines: self.ddl_lines,
             ddl_selection,
-            command_rows: self.command_rows,
+            ..self
         }
+    }
+
+    /// How wide the frame drew the Contents grid's body.
+    ///
+    /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason: a
+    /// test that is not about the grid's width has nothing to say here, and a
+    /// positional zero at each of them says nothing either.
+    #[must_use]
+    pub const fn with_grid_width(self, grid_width: usize) -> Self {
+        Self { grid_width, ..self }
     }
 
     /// Where the Ddl panel drew its selected row.

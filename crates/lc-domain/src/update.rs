@@ -5,7 +5,8 @@
 //! open one with (architecture.md §3).
 
 use crate::commands::CommandsPanel;
-use crate::contents::{Subject, TableRef};
+use crate::contents::{ContentsState, Subject, TableRef};
+use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
@@ -106,6 +107,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     let subject = described(state);
     let cursors = cursor_indices(state);
     let scrolls = (state.tables.scroll, state.contents.scroll);
+    let columns = state.contents.columns;
 
     let effects = apply(state, msg);
 
@@ -118,11 +120,19 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     }
 
     clamp_lists(state);
+    // Before the viewport follows it, so a page that lost columns cannot
+    // strand either.
+    state
+        .contents
+        .column
+        .clamp_to(state.contents.column_count());
     follow_moved_cursors(state, cursors);
+    follow_grid_columns(state);
 
     // `Msg::Measured` marks nothing dirty by itself, so a clamp it provoked
     // would otherwise not be drawn until the next unrelated keypress.
-    if (state.tables.scroll, state.contents.scroll) != scrolls {
+    if (state.tables.scroll, state.contents.scroll) != scrolls || state.contents.columns != columns
+    {
         state.mark_dirty();
     }
 
@@ -335,8 +345,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Home => scroll(state, Motion::Start),
         Key::End => scroll(state, Motion::End),
         Key::Enter | Key::Char(' ') => return activate(state),
-        Key::Char('l') | Key::Right => transition(state, Transition::Open),
-        Key::Char('h') | Key::Left => transition(state, Transition::Close),
+        Key::Char('l') | Key::Right => go_right(state),
+        Key::Char('h') | Key::Left => go_left(state),
         Key::Char('/') => open_prompt(state),
         // Last, so every binding above keeps precedence over a panel key.
         Key::Char(key) => {
@@ -903,8 +913,16 @@ fn activate(state: &mut State) -> Vec<Effect> {
     read(state, table)
 }
 
-/// Replaces whatever the Contents panel is showing with a read of `table`.
+/// Replaces whatever the Contents panel is showing with a read of `table`,
+/// and takes focus there.
+///
+/// Focus moves now rather than when the page lands: it is a consequence of the
+/// keypress, and a focus change that waits on the network happens at a time
+/// the user cannot predict
+/// (doc/specs/2026-08-10-table-display-design.md §1).
 fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
+    state.focus = Panel::Contents;
+
     let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
     submit_into_contents(state, Subject::Table(table), stmt)
 }
@@ -945,6 +963,11 @@ fn run(state: &mut State) -> Vec<Effect> {
 
 /// Puts `stmt`'s result in the Contents panel, cancelling whatever it was
 /// waiting on. One grid, one outstanding query, whichever way it was asked for.
+///
+/// Focus is deliberately not touched here. Reading from the tree moves it
+/// ([`read`]); `ctrl-r` does not, because the user is composing in a panel
+/// that takes text and pulling focus out of it would turn their next
+/// keystrokes into bindings (doc/specs/2026-08-10-table-display-design.md §1).
 fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) -> Vec<Effect> {
     let mut effects = Vec::new();
 
@@ -964,6 +987,71 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
     }
 
     effects
+}
+
+/// `l` and `→`: into the tree, or on to the next column.
+///
+/// The four horizontal keys mean *move left* and *move right*, and each panel
+/// resolves that in its own vocabulary — the shape `j`/`k` already have
+/// (doc/shortcuts.md §2, doc/specs/2026-08-10-table-display-design.md §2).
+fn go_right(state: &mut State) {
+    match state.focus {
+        Panel::Tables => transition(state, Transition::Open),
+        Panel::Contents => {
+            let len = state.contents.column_count();
+            state.contents.column.down(len);
+        }
+        Panel::Ddl | Panel::Queries => {}
+    }
+}
+
+fn go_left(state: &mut State) {
+    match state.focus {
+        Panel::Tables => transition(state, Transition::Close),
+        Panel::Contents => state.contents.column.up(),
+        Panel::Ddl | Panel::Queries => {}
+    }
+}
+
+/// The columns the grid is drawing over, and the width they have.
+///
+/// `None` when there is no page: nothing to fit, and nothing to follow.
+fn grid_columns(state: &State) -> Option<(&[u16], u16)> {
+    let ContentsState::Loaded { page, .. } = state.contents.state() else {
+        return None;
+    };
+
+    let gutter = grid::gutter(page.page().rows.len());
+    let width = u16::try_from(state.geometry.grid_width()).unwrap_or(u16::MAX);
+
+    Some((page.widths(), grid::available(width, gutter)))
+}
+
+/// Pulls the column viewport over the selected cell, and back inside a page
+/// that narrowed or a panel that grew.
+///
+/// Unconditional, for [`clamp_lists`]'s reason: a new page changes no
+/// geometry, so no [`Msg::Measured`] arrives to clamp against.
+fn follow_grid_columns(state: &mut State) {
+    let column = state.contents.column.index();
+
+    let Some((widths, available)) = grid_columns(state) else {
+        state.contents.columns = ColumnScroll::default();
+        return;
+    };
+
+    // Moved out and back so the widths can stay borrowed from the page they
+    // were measured with rather than be copied per tick.
+    let mut columns = state.contents.columns;
+    // Clamp first, follow second, mirroring `clamp_lists` before
+    // `follow_moved_cursors` on the row axis: the clamp answers "is the
+    // offset too far right for this page and this width", which can leave the
+    // cursor off screen, and the follow is what puts it back. The other order
+    // would let the clamp undo the follow and hide the selected cell.
+    columns.clamp_to(widths, available);
+    columns.follow(column, widths, available);
+
+    state.contents.columns = columns;
 }
 
 fn transition(state: &mut State, transition: Transition) {
@@ -1039,6 +1127,7 @@ mod tests {
     use crate::search::{Filter, Filtered, Prompt};
     use crate::state::{Connection, Span};
     use crate::tree::tests_support::schema_of as tabled_schema;
+    use crate::view::tests_support::tabled;
 
     fn schema_of(names: &[&str]) -> Schema {
         tabled_schema(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
@@ -2072,6 +2161,217 @@ mod tests {
         assert_eq!(row_count(&state), 3, "stepping out must not fold");
     }
 
+    /// A state focused on Contents, showing a page of `columns` columns each
+    /// two characters wide, in a grid `width` characters across.
+    fn grid_of(columns: usize, width: usize) -> State {
+        grid_of_rows(columns, 1, width)
+    }
+
+    fn grid_of_rows(columns: usize, rows: usize, width: usize) -> State {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: (0..columns).map(|i| format!("c{i}")).collect(),
+                rows: (0..rows)
+                    .map(|_| Row {
+                        values: (0..columns).map(|_| CqlValue::Int(1)).collect(),
+                    })
+                    .collect(),
+                next: None,
+            },
+        );
+        state.focus = Panel::Contents;
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(width)),
+        );
+        state
+    }
+
+    #[test]
+    fn l_and_right_move_the_grid_cursor_one_column() {
+        for key in [Key::Char('l'), Key::Right] {
+            let mut state = grid_of(4, 80);
+
+            press(&mut state, key);
+
+            assert_eq!(state.contents.column.index(), 1, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn h_and_left_move_the_grid_cursor_back_one_column() {
+        for key in [Key::Char('h'), Key::Left] {
+            let mut state = grid_of(4, 80);
+            press(&mut state, Key::Char('l'));
+
+            press(&mut state, key);
+
+            assert_eq!(state.contents.column.index(), 0, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn the_grid_cursor_cannot_run_off_either_edge_of_a_page() {
+        let mut state = grid_of(2, 80);
+
+        for _ in 0..5 {
+            press(&mut state, Key::Char('l'));
+        }
+        assert_eq!(state.contents.column.index(), 1, "stops on the last column");
+
+        for _ in 0..5 {
+            press(&mut state, Key::Char('h'));
+        }
+        assert_eq!(state.contents.column.index(), 0, "stops on the first");
+    }
+
+    #[test]
+    fn a_grid_with_no_page_swallows_horizontal_motion() {
+        let mut state = State {
+            focus: Panel::Contents,
+            ..State::default()
+        };
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(state.contents.column.index(), 0);
+        assert_eq!(state.contents.columns.first(), 0);
+    }
+
+    #[test]
+    fn horizontal_motion_belongs_to_the_focused_panel_only() {
+        let mut state = grid_of(4, 80);
+        state.focus = Panel::Ddl;
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(state.contents.column.index(), 0);
+    }
+
+    #[test]
+    fn the_column_viewport_follows_the_cell_cursor() {
+        // Four columns of width 2 ("c0" and a one-digit value) with one space
+        // between: 2+1+2 = 5 fits two columns in a grid 7 wide once the
+        // one-digit gutter and its spacing are taken off.
+        let mut state = grid_of(4, 7);
+
+        press(&mut state, Key::Char('l'));
+        assert_eq!(
+            state.contents.columns.first(),
+            0,
+            "column 1 is already drawn"
+        );
+
+        press(&mut state, Key::Char('l'));
+        assert_eq!(
+            state.contents.columns.first(),
+            1,
+            "the shortest move that draws column 2"
+        );
+    }
+
+    #[test]
+    fn a_narrower_frame_pulls_the_column_viewport_back_to_the_cursor() {
+        let mut state = grid_of(4, 80);
+        for _ in 0..3 {
+            press(&mut state, Key::Char('l'));
+        }
+        assert_eq!(state.contents.columns.first(), 0, "all four fit at 80");
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(7)),
+        );
+
+        assert_eq!(
+            state.contents.columns.first(),
+            2,
+            "the selected column must stay drawn after a resize"
+        );
+    }
+
+    #[test]
+    fn a_panel_that_grew_pulls_the_column_viewport_back() {
+        let mut state = grid_of(4, 7);
+        for _ in 0..3 {
+            press(&mut state, Key::Char('l'));
+        }
+        assert_eq!(state.contents.columns.first(), 2, "two of four fit at 7");
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
+        );
+
+        assert_eq!(
+            state.contents.columns.first(),
+            0,
+            "all four fit again, so none may be left hidden behind the offset"
+        );
+    }
+
+    #[test]
+    fn a_frame_too_small_to_draw_does_not_strand_the_column_viewport() {
+        let mut state = grid_of(4, 80);
+        for _ in 0..3 {
+            press(&mut state, Key::Char('l'));
+        }
+
+        // What `render` reports when the terminal is below its minimum size:
+        // nothing was drawn, so the grid has no width at all.
+        update(&mut state, Msg::Measured(Geometry::default()));
+        assert_eq!(
+            state.contents.columns.first(),
+            3,
+            "with no room, the cursor's column is the only one worth drawing"
+        );
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
+        );
+
+        assert_eq!(
+            state.contents.columns.first(),
+            0,
+            "restoring the size undoes it, without the user pressing h"
+        );
+    }
+
+    #[test]
+    fn home_and_end_still_reach_the_ends_of_the_row_list() {
+        let mut state = grid_of_rows(4, 12, 80);
+        press(&mut state, Key::Char('l'));
+
+        press(&mut state, Key::End);
+
+        assert_eq!(
+            state.contents.cursor.index(),
+            11,
+            "End reaches the ends of the document, which in a grid is the rows"
+        );
+        assert_eq!(
+            state.contents.column.index(),
+            1,
+            "and says nothing about the column axis"
+        );
+
+        press(&mut state, Key::Home);
+
+        assert_eq!(state.contents.cursor.index(), 0, "and Home the other end");
+        assert_eq!(
+            state.contents.column.index(),
+            1,
+            "still on the column it was on"
+        );
+    }
+
     #[test]
     fn enter_on_a_table_leaves_the_tree_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
@@ -2404,6 +2704,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let first = state.contents.outstanding().expect("the panel is waiting");
+        state.focus = Panel::Tables;
         press(&mut state, Key::Char('j'));
 
         let effects = press(&mut state, Key::Enter);
@@ -2419,6 +2720,89 @@ mod tests {
         );
         let second = state.contents.outstanding().expect("waiting on the second");
         assert_ne!(second, first);
+    }
+
+    #[test]
+    fn reading_a_table_lands_focus_in_contents() {
+        for key in [Key::Enter, Key::Char(' ')] {
+            let mut state = tabled(&[("shop", &["orders"])]);
+            state.focus = Panel::Tables;
+            press(&mut state, Key::Char('l'));
+            press(&mut state, Key::Char('j'));
+
+            press(&mut state, key);
+
+            assert_eq!(state.focus, Panel::Contents, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_table_lands_focus_in_contents_too() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('l'));
+
+        click_row(&mut state, Panel::Tables, 1);
+
+        assert_eq!(state.focus, Panel::Contents);
+    }
+
+    #[test]
+    fn focus_moves_before_the_page_arrives() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Enter);
+
+        assert!(
+            matches!(state.contents.state(), ContentsState::Loading { .. }),
+            "focus is a consequence of the keypress, not of the network"
+        );
+        assert_eq!(state.focus, Panel::Contents);
+    }
+
+    #[test]
+    fn a_refused_read_still_lands_focus_in_contents() {
+        // No connection, so `submit` refuses before a query is made. `read`
+        // is called directly because the tree can only select a table when
+        // its schema is loaded, which itself requires a connection — the two
+        // cannot be pulled apart through key presses.
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.connection = ConnectionState::Disconnected;
+        state.focus = Panel::Tables;
+
+        read(&mut state, TableRef::new("shop", "orders"));
+
+        assert_eq!(state.focus, Panel::Contents);
+    }
+
+    #[test]
+    fn unfolding_a_keyspace_leaves_focus_in_tables() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(
+            state.focus,
+            Panel::Tables,
+            "a fold is not a read and moves nothing"
+        );
+    }
+
+    #[test]
+    fn reading_a_table_leaves_the_tree_selection_where_it_was() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+        let selected = state.tables.cursor.index();
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(state.tables.cursor.index(), selected);
     }
 
     #[test]
@@ -2443,6 +2827,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let first = state.contents.outstanding().expect("the panel is waiting");
+        state.focus = Panel::Tables;
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Enter);
 
@@ -2892,9 +3277,9 @@ mod tests {
     /// A state where every motion has somewhere to go in both directions:
     /// two keyspaces with the second unfolded, a page of rows under the
     /// Contents cursor, and a DDL document longer than its panel. A cursor
-    /// resting on 0 would make `k` and `home` inert and fail a correct hint.
-    /// The Ddl viewport is likewise nudged off zero, or `ctrl-y` would find
-    /// nothing to scroll up over.
+    /// resting on 0 would make `k`/`h` and `home` inert and fail a correct
+    /// hint. The Ddl viewport is likewise nudged off zero, or `ctrl-y` would
+    /// find nothing to scroll up over.
     fn populated(focus: Panel) -> State {
         let mut state = browsing_tables(&[("alpha", &["a1"]), ("shop", &["orders", "users"])]);
         state.tables.cursor.go_to(1, 2);
@@ -2910,14 +3295,27 @@ mod tests {
                 .contents
                 .outstanding()
                 .expect("pressing enter on a table issues a read");
+            // Three columns, not `page_of`'s one: `h`/`l` need a middle
+            // column to move away from in both directions for their hint to
+            // be exercised.
             update(
                 &mut state,
                 Msg::PageReady {
                     query,
-                    page: Box::new(page_of(20)),
+                    page: Box::new(Page {
+                        columns: vec!["id".to_owned(), "name".to_owned(), "email".to_owned()],
+                        rows: vec![
+                            Row {
+                                values: vec![CqlValue::Null, CqlValue::Null, CqlValue::Null],
+                            };
+                            20
+                        ],
+                        next: None,
+                    }),
                 },
             );
             state.contents.cursor.go_to(5, 20);
+            state.contents.column.go_to(1, 3);
         }
 
         sized(&mut state, [3, 3, 3, 3], 40);

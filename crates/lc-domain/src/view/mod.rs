@@ -157,15 +157,19 @@ pub enum PanelBody {
         cursor: Position,
     },
     /// A result set: one header per column, one row per row.
-    ///
-    /// Carries no widths. Sizing columns needs to know how wide the panel is,
-    /// which is the renderer's business for the same reason scrolling is.
     Grid {
         columns: Vec<GridColumn>,
         rows: Vec<Vec<GridCell>>,
         selected: usize,
         /// The first row drawn, as [`PanelBody::Tree::offset`].
         offset: usize,
+        /// The leftmost column drawn.
+        first_column: usize,
+        /// The selected column, an index into `columns`.
+        column: usize,
+        /// Character columns the row-number gutter takes, or zero for a grid
+        /// with no rows.
+        gutter: u16,
     },
 }
 
