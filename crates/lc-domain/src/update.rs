@@ -4018,6 +4018,118 @@ mod tests {
         );
     }
 
+    /// The empty end of the same clamp: a panel with no rows left has nothing
+    /// for its cursor to be on, and motion over it is the swallow every other
+    /// empty list gets rather than an index that drifts past zero.
+    #[test]
+    fn a_filter_that_empties_table_ddl_leaves_its_cursor_at_rest() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        sized(&mut state, [8, 4, 8, 1], 40);
+        press(&mut state, Key::End);
+
+        state.apply_filter(Filtered::Ddl, Filter::new("no such property"));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(crate::view::ddl_rows(&state), 0);
+        assert_eq!(state.ddl.cursor.index(), 0);
+
+        press(&mut state, Key::End);
+
+        assert_eq!(state.ddl.cursor.index(), 0, "End over nothing goes nowhere");
+    }
+
+    /// Clearing keeps the index rather than mapping it back onto the full
+    /// list. There is no row identity to carry across — the rows that survived
+    /// are a different sequence — and a clamp is owed only where the list
+    /// shrinks under the cursor (panel search design §3.3).
+    #[test]
+    fn clearing_a_ddl_filter_leaves_the_cursor_on_the_index_it_held() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        sized(&mut state, [8, 4, 8, 1], 40);
+
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('a'));
+        press(&mut state, Key::Enter);
+        press(&mut state, Key::End);
+        let deep = state.ddl.cursor.index();
+        assert!(
+            deep > 0,
+            "the filter must leave more than one row for the cursor to be deep in"
+        );
+
+        press(&mut state, Key::Escape);
+
+        assert!(state.filter(Filtered::Ddl).is_none());
+        assert_eq!(state.ddl.cursor.index(), deep);
+        assert!(
+            deep + 1 < crate::view::ddl_rows(&state),
+            "and it now names a row of the full list that it was never on"
+        );
+    }
+
+    /// The blank frame design §3.3 accepts, carried to its repair: the offset
+    /// a chord produced from pre-filter geometry is out of range for the body
+    /// the filter left, and the next measurement pulls it back. One frame
+    /// wide, and the loop terminates.
+    #[test]
+    fn the_measurement_after_a_filter_pulls_a_stale_ddl_offset_back_inside() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        sized(&mut state, [8, 4, 8, 1], 40);
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('t'));
+
+        for _ in 0..20 {
+            ctrl(&mut state, Key::Char('e'));
+        }
+        assert_eq!(
+            state.ddl.scroll.offset(),
+            20,
+            "the chord bounds itself against the pre-filter line count"
+        );
+
+        // The frame the filter produced: nine wrapped lines in a four-line
+        // panel, so no offset past five is drawable.
+        sized(&mut state, [8, 4, 8, 1], 9);
+
+        assert_eq!(state.ddl.scroll.offset(), 5);
+    }
+
+    /// The Ddl half of the `esc` chain's second step. Its viewport is followed
+    /// by span rather than by index (design §5.1 of the Ddl selection slice),
+    /// so clearing a filter that moved what the cursor names is repaired on
+    /// the measurement that follows, not in `escape` itself.
+    #[test]
+    fn escape_clearing_a_ddl_filter_re_follows_the_selection() {
+        let mut state = read_shop_orders();
+        state.focus = Panel::Ddl;
+        sized(&mut state, [8, 4, 8, 1], 40);
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('a'));
+        press(&mut state, Key::Enter);
+        press(&mut state, Key::End);
+
+        press(&mut state, Key::Escape);
+
+        assert!(state.filter(Filtered::Ddl).is_none());
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 4, 8, 1], 40, 0).with_ddl_selection(Span {
+                first: 22,
+                lines: 3,
+            })),
+        );
+
+        assert_eq!(
+            state.ddl.scroll.offset(),
+            21,
+            "lines 21..25 put the whole of the row measured at 22..25 on screen"
+        );
+    }
+
     #[test]
     fn a_filter_survives_a_focus_change() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);

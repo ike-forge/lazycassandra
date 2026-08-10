@@ -250,6 +250,14 @@ runs in `update`'s epilogue on every message and clamps the cursor against it,
 so a filter that empties a section pulls the cursor back on the same keystroke
 that applied it, with no line count involved.
 
+**Clearing** a Ddl filter leaves the cursor on the index it held, which now
+names a row of the full list rather than the one it was on. That is deliberate.
+There is no row identity to carry across a filter change — the surviving rows
+are a different sequence, not a subset with holes the cursor could be mapped
+through — and a "nearest equivalent row" rule would be guessing at an intent
+the user never expressed. A clamp is owed only when the list *shrinks* under
+the cursor; a list that grows strands nothing, so nothing is repaired.
+
 Table contents needs neither: it filters nothing (§4.3).
 
 `open_prompt` clears the target's filter the moment the prompt opens, rather
@@ -560,6 +568,11 @@ Until then, `esc` in Queries leaves the editor, exactly as
 | `tab` is inert while the prompt is up | `update.rs` |
 | The ctrl layer reaches past the prompt; an unclaimed chord is still not text | `update.rs` |
 | A filter that shrinks Table DDL pulls its cursor back | `update.rs` |
+| A filter that empties Table DDL leaves its cursor at rest | `update.rs` |
+| Clearing a Table DDL filter keeps the cursor's index | `update.rs` |
+| The measurement after a filter pulls a stale offset back inside | `update.rs` |
+| `esc` clearing a Table DDL filter re-follows the selection | `update.rs` |
+| The reported selection span indexes the filtered rows | `inbound/render.rs` |
 | A click cancels the prompt | `update.rs` |
 | A filter survives a focus change | `update.rs` |
 | The three filters are independent | `update.rs` |

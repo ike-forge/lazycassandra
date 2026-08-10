@@ -1391,6 +1391,48 @@ mod tests {
         );
     }
 
+    /// The cursor counts the rows the filter *left*, and the span the frame
+    /// reports has to index the same sequence — `details::of` retains before
+    /// it returns, so one projection feeds both the body drawn here and the
+    /// clamp in the domain. Pulling the retain back out would move the two
+    /// apart with nothing else complaining.
+    #[test]
+    fn the_reported_span_indexes_the_rows_a_filter_left() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        // `order_date`, `order_id` by name and `comment` by its value; the
+        // partition key's row misses, so that whole section goes with it.
+        state.apply_filter(Filtered::Ddl, Filter::new("or"));
+        let rows = lc_domain::view::ddl_rows(&state);
+        // Index 2 is `comment`, the last of the three — spelt out rather than
+        // taken from `rows`, so a `rows` that stopped counting the filtered
+        // sequence moves the assertions below instead of the cursor.
+        state.ddl.cursor.go_to(2, rows);
+
+        let span = geometry_of(100, 41, &state).ddl_selection();
+        let buffer = draw_state(100, 41, &state);
+
+        // The body's first line is drawn at row 25 (see `ddl_rows`), and the
+        // panel is not scrolled, so a span index is a row offset from there.
+        let row = 25 + u16::try_from(span.first).expect("a short body");
+
+        assert_eq!(span.lines, 1, "comment fits one line at this width");
+        assert_eq!(
+            row_text(&buffer, row),
+            "comment  Order history.",
+            "the last surviving row, not the third row of the unfiltered list"
+        );
+        assert_eq!(
+            highlighted_rows(&buffer),
+            [row],
+            "and it is the row the frame actually highlighted"
+        );
+        assert_eq!(
+            rows, 3,
+            "and the count the domain clamps against is the same sequence"
+        );
+    }
+
     #[test]
     fn the_key_columns_are_drawn_in_the_tokens_that_mark_them_as_the_key() {
         let buffer = draw_state(100, 40, &describing(orders()));

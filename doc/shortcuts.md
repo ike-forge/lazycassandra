@@ -466,6 +466,11 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A click cancels the prompt | `a_click_cancels_the_prompt` |
 | The ctrl layer outranks an open prompt, and an unclaimed chord is still not text | `the_ctrl_layer_reaches_past_an_open_prompt`, `an_unclaimed_ctrl_chord_is_not_text_in_the_prompt` |
 | A filter that shrinks Table DDL pulls its cursor back | `a_ddl_filter_that_shrinks_the_panel_pulls_its_cursor_back` |
+| A filter that empties Table DDL leaves its cursor at rest | `a_filter_that_empties_table_ddl_leaves_its_cursor_at_rest` |
+| Clearing a Table DDL filter keeps the cursor's index | `clearing_a_ddl_filter_leaves_the_cursor_on_the_index_it_held` |
+| The measurement after a filter pulls a stale Table DDL offset back inside | `the_measurement_after_a_filter_pulls_a_stale_ddl_offset_back_inside` |
+| `esc` clearing a Table DDL filter re-follows the selection | `escape_clearing_a_ddl_filter_re_follows_the_selection` |
+| The span the frame reports indexes the rows the filter left | `the_reported_span_indexes_the_rows_a_filter_left` (`inbound/render.rs`) |
 | A filter survives a focus change | `a_filter_survives_a_focus_change` |
 | A filter is read back from the panel it was applied to | `a_filter_is_read_back_from_the_panel_it_was_applied_to` (`state.rs`) |
 | The three filters are independent | `the_three_filters_are_independent` (`state.rs`) |
