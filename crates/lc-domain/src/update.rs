@@ -501,10 +501,18 @@ fn raise(state: &mut State, message: Message) {
     if let Some(Overlay::Search(prompt)) = &state.overlay {
         state.apply_filter(prompt.target(), prompt.previous().cloned());
     }
-    if let Some(Overlay::Themes { restored, .. }) = &state.overlay {
-        state.theme = *restored;
-    }
+    restore_theme(state);
     state.overlay = Some(Overlay::Message(message));
+}
+
+/// Puts back the theme a live picker opened on, if the overlay is that
+/// picker. Otherwise a no-op. Shared by every site that unwinds a preview
+/// without going through [`escape`] itself — [`raise`] and the resize-shrink
+/// close below — so a fifth site cannot copy the check and diverge.
+fn restore_theme(state: &mut State) {
+    if let Some(Overlay::Themes { restored, .. }) = state.overlay {
+        state.theme = restored;
+    }
 }
 
 /// `/` opens a prompt over the focused panel. Refused where the panel holds no
@@ -672,10 +680,7 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
             return Vec::new();
         }
         Key::Escape => {
-            if let Some(Overlay::Themes { restored, .. }) = state.overlay {
-                state.theme = restored;
-            }
-            state.overlay = None;
+            escape(state);
             return Vec::new();
         }
         _ => {}
@@ -876,9 +881,7 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     // shares this closing too — and restores the theme it opened on, the
     // same as `Esc`, rather than stranding the preview.
     if geometry.command_rows() == 0 {
-        if let Some(Overlay::Themes { restored, .. }) = state.overlay {
-            state.theme = restored;
-        }
+        restore_theme(state);
         if matches!(
             state.overlay,
             Some(Overlay::Commands(_) | Overlay::Themes { .. })
@@ -1883,11 +1886,17 @@ mod tests {
             press(&mut state, Key::Char('j'));
         }
         assert_eq!(state.theme, ThemeChoice::ALL[ThemeChoice::ALL.len() - 1]);
+        assert_eq!(
+            theme_picker(&state),
+            Some(ThemeChoice::ALL.len() - 1),
+            "the cursor itself must stop at the last row, not merely the theme it read out"
+        );
 
         for _ in 0..ThemeChoice::ALL.len() * 2 {
             press(&mut state, Key::Char('k'));
         }
         assert_eq!(state.theme, ThemeChoice::ALL[0]);
+        assert_eq!(theme_picker(&state), Some(0));
     }
 
     #[test]
@@ -1900,6 +1909,76 @@ mod tests {
             state.overlay.is_none(),
             "a mode with nothing on screen saying so is worse than no mode"
         );
+    }
+
+    #[test]
+    fn a_frame_that_shrinks_below_the_picker_closes_it_and_restores_the_theme() {
+        let mut state = measured(&["a"]);
+        state.theme = ThemeChoice::CatppuccinMocha;
+
+        press(&mut state, Key::Char('T'));
+        press(&mut state, Key::Char('k'));
+        assert_ne!(
+            state.theme,
+            ThemeChoice::CatppuccinMocha,
+            "previewing a different theme before the frame shrinks"
+        );
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 0)),
+        );
+
+        assert!(
+            state.overlay.is_none(),
+            "a picker nothing can draw must not still capture keys"
+        );
+        assert_eq!(
+            state.theme,
+            ThemeChoice::CatppuccinMocha,
+            "the preview must not strand itself when its own room disappears"
+        );
+    }
+
+    #[test]
+    fn a_message_arriving_over_an_open_picker_restores_the_theme() {
+        let mut state = measured(&["a"]);
+        state.theme = ThemeChoice::CatppuccinMocha;
+
+        press(&mut state, Key::Char('T'));
+        press(&mut state, Key::Char('k'));
+        assert_ne!(state.theme, ThemeChoice::CatppuccinMocha);
+
+        raise(
+            &mut state,
+            Message {
+                title: "Cannot connect".to_owned(),
+                message: "no route to host".to_owned(),
+                severity: Severity::Danger,
+            },
+        );
+
+        assert_eq!(
+            state.theme,
+            ThemeChoice::CatppuccinMocha,
+            "the half-previewed theme must not strand itself under the failure"
+        );
+        assert!(matches!(state.overlay, Some(Overlay::Message(_))));
+    }
+
+    #[test]
+    fn a_click_dismisses_the_picker_and_restores_the_theme() {
+        let mut state = measured(&["a"]);
+        state.theme = ThemeChoice::CatppuccinMocha;
+
+        press(&mut state, Key::Char('T'));
+        press(&mut state, Key::Char('k'));
+        assert_ne!(state.theme, ThemeChoice::CatppuccinMocha);
+
+        point(&mut state, Pointer::Click(Click::Panel(Panel::Tables)));
+
+        assert!(state.overlay.is_none());
+        assert_eq!(state.theme, ThemeChoice::CatppuccinMocha);
     }
 
     #[test]
