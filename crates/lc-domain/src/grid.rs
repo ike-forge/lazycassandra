@@ -114,6 +114,25 @@ impl ColumnScroll {
         self.first
     }
 
+    /// Pulls a stale offset back over a panel that grew or a page that
+    /// narrowed, so the drawn window ends no later than the last column.
+    ///
+    /// [`crate::state::Scroll::clamp_to`] over columns, and needed for the
+    /// same reason: [`Self::follow`] only ever moves towards the cursor, so
+    /// without this a panel that shrank and grew again draws one column beside
+    /// a screen of dead space until the user presses `h` (design §5).
+    ///
+    /// Runs before `follow`, never after: it stops at the leftmost offset that
+    /// still fills the panel, which can be left of the cursor, and `follow` is
+    /// what puts the cursor back on screen from there.
+    pub fn clamp_to(&mut self, widths: &[u16], available: u16) {
+        while self.first > 0
+            && (self.first - 1) + fitting(widths, self.first - 1, available) >= widths.len()
+        {
+            self.first -= 1;
+        }
+    }
+
     /// Moves the shortest distance that puts `column` on screen.
     pub fn follow(&mut self, column: usize, widths: &[u16], available: u16) {
         self.first = self.first.min(column);
@@ -263,6 +282,56 @@ mod tests {
         scroll.follow(1, &[5, 40], 10);
 
         assert_eq!(scroll.first(), 1);
+    }
+
+    /// Twelve columns of five: three fit in 17, one in 5, eleven in 65.
+    const TWELVE: [u16; 12] = [5; 12];
+
+    #[test]
+    fn a_panel_that_grew_pulls_the_column_viewport_back() {
+        let mut scroll = ColumnScroll::default();
+        scroll.follow(11, &TWELVE, 5);
+        assert_eq!(scroll.first(), 11, "only the last column fits in 5");
+
+        scroll.clamp_to(&TWELVE, 65);
+
+        assert_eq!(
+            scroll.first(),
+            1,
+            "eleven columns fit in 65, so the window ends on the last one \
+             rather than beside a screen of dead space"
+        );
+    }
+
+    #[test]
+    fn a_viewport_already_filling_the_panel_is_left_where_it_is() {
+        let mut scroll = ColumnScroll::default();
+        scroll.follow(11, &TWELVE, 17);
+        assert_eq!(scroll.first(), 9);
+
+        scroll.clamp_to(&TWELVE, 17);
+
+        assert_eq!(scroll.first(), 9, "there is no dead space to reclaim");
+    }
+
+    #[test]
+    fn clamping_over_a_page_that_lost_columns_returns_to_the_start() {
+        let mut scroll = ColumnScroll::default();
+        scroll.follow(11, &TWELVE, 5);
+
+        scroll.clamp_to(&[5, 5], 17);
+
+        assert_eq!(scroll.first(), 0);
+    }
+
+    #[test]
+    fn clamping_over_a_page_with_no_columns_returns_to_the_start() {
+        let mut scroll = ColumnScroll::default();
+        scroll.follow(11, &TWELVE, 5);
+
+        scroll.clamp_to(&[], 17);
+
+        assert_eq!(scroll.first(), 0);
     }
 
     #[test]

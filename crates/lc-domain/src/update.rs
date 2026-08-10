@@ -1040,6 +1040,12 @@ fn follow_grid_columns(state: &mut State) {
         return;
     };
 
+    // Clamp first, follow second, mirroring `clamp_lists` before
+    // `follow_moved_cursors` on the row axis: the clamp answers "is the
+    // offset too far right for this page and this width", which can leave the
+    // cursor off screen, and the follow is what puts it back. The other order
+    // would let the clamp undo the follow and hide the selected cell.
+    state.contents.columns.clamp_to(&widths, available);
     state.contents.columns.follow(column, &widths, available);
 }
 
@@ -2276,6 +2282,54 @@ mod tests {
             state.contents.columns.first(),
             2,
             "the selected column must stay drawn after a resize"
+        );
+    }
+
+    #[test]
+    fn a_panel_that_grew_pulls_the_column_viewport_back() {
+        let mut state = grid_of(4, 7);
+        for _ in 0..3 {
+            press(&mut state, Key::Char('l'));
+        }
+        assert_eq!(state.contents.columns.first(), 2, "two of four fit at 7");
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0, 80)),
+        );
+
+        assert_eq!(
+            state.contents.columns.first(),
+            0,
+            "all four fit again, so none may be left hidden behind the offset"
+        );
+    }
+
+    #[test]
+    fn a_frame_too_small_to_draw_does_not_strand_the_column_viewport() {
+        let mut state = grid_of(4, 80);
+        for _ in 0..3 {
+            press(&mut state, Key::Char('l'));
+        }
+
+        // What `render` reports when the terminal is below its minimum size:
+        // nothing was drawn, so the grid has no width at all.
+        update(&mut state, Msg::Measured(Geometry::default()));
+        assert_eq!(
+            state.contents.columns.first(),
+            3,
+            "with no room, the cursor's column is the only one worth drawing"
+        );
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0, 80)),
+        );
+
+        assert_eq!(
+            state.contents.columns.first(),
+            0,
+            "restoring the size undoes it, without the user pressing h"
         );
     }
 
