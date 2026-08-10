@@ -15,6 +15,7 @@ pub mod input;
 pub mod layout;
 mod loader;
 mod overlay;
+mod palette;
 pub mod render;
 pub mod theme;
 mod too_small;

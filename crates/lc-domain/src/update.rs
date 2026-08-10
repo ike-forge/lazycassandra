@@ -4,11 +4,14 @@
 //! what should happen next; it cannot open a socket because it has nothing to
 //! open one with (architecture.md §3).
 
+use crate::commands::CommandsPanel;
 use crate::contents::TableRef;
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
-use crate::state::{ConnectionState, Cursor, Geometry, Overlay, Panel, SchemaState, Scroll, State};
+use crate::state::{
+    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, SchemaState, Scroll, State,
+};
 use crate::style::Severity;
 use crate::tree::Node;
 
@@ -185,11 +188,11 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             if !state.connection.is_current(conn) {
                 return Vec::new();
             }
-            state.overlay = Some(Overlay {
+            state.overlay = Some(Overlay::Message(Message {
                 title: "Connection failed".to_owned(),
                 message: error.to_string(),
                 severity: Severity::Danger,
-            });
+            }));
             state.connection = ConnectionState::Failed(error);
             state.mark_dirty();
             Vec::new()
@@ -204,11 +207,11 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                 _ => false,
             };
             if applied {
-                state.overlay = Some(Overlay {
+                state.overlay = Some(Overlay::Message(Message {
                     title: "Schema unavailable".to_owned(),
                     message: error.to_string(),
                     severity: Severity::Danger,
-                });
+                }));
                 state.mark_dirty();
             }
             Vec::new()
@@ -285,6 +288,12 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return Vec::new();
     }
 
+    // An open palette takes the keys it uses
+    // (doc/specs/2026-08-09-command-palette-design.md §7).
+    if matches!(state.overlay, Some(Overlay::Commands(_))) {
+        return palette_key(state, press.key);
+    }
+
     // Focus is the mode. A panel that takes text claims every printable key
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
@@ -295,6 +304,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
 
     match press.key {
         Key::Char('q') => return quit(state),
+        Key::Char('?') => open_palette(state),
         Key::Escape => escape(state),
         Key::Tab => state.focus = state.focus.next(),
         Key::BackTab => state.focus = state.focus.previous(),
@@ -442,6 +452,54 @@ fn escape(state: &mut State) {
     }
 }
 
+/// `?` opens the palette, replacing whatever overlay was up.
+///
+/// Refused where the frame cannot draw one: opening a palette nothing draws
+/// leaves the user in a mode with nothing on screen saying so, wondering why
+/// `j` stopped moving the tree (design §5.1).
+fn open_palette(state: &mut State) {
+    if state.geometry.command_rows() == 0 {
+        return;
+    }
+
+    state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
+}
+
+/// What an open palette responds to.
+///
+/// `q` still quits, because a key that means "quit" everywhere except in one
+/// overlay is not a key anyone can trust without looking. Everything the
+/// palette does not use is inert rather than dismissing, so no letter means
+/// "close" in one frame and something else in the next (design §7).
+fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
+    let height = state.geometry.command_rows();
+
+    match key {
+        Key::Char('q') => return quit(state),
+        Key::Char('?') | Key::Escape => {
+            state.overlay = None;
+            return Vec::new();
+        }
+        _ => {}
+    }
+
+    let Some(Overlay::Commands(panel)) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char('j') | Key::Down => panel.down(),
+        Key::Char('k') | Key::Up => panel.up(),
+        Key::PageDown => panel.page_down(height),
+        Key::PageUp => panel.page_up(height),
+        Key::Home => panel.to_start(),
+        Key::End => panel.to_end(),
+        _ => {}
+    }
+
+    Vec::new()
+}
+
 #[derive(Clone, Copy)]
 enum Transition {
     Open,
@@ -551,6 +609,23 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     if state.ddl != before {
         state.mark_dirty();
     }
+
+    // The bar's `? commands` hint is a function of `command_rows`
+    // (view/hints.rs): a resize that flips it between zero and
+    // non-zero changes the view model just as surely as the ddl
+    // clamp above does, and owes it the same repaint.
+    if geometry.command_rows() != previous.command_rows() {
+        state.mark_dirty();
+    }
+
+    // A palette the frame shrank past cannot stay open: nothing would
+    // draw it, and it would still be capturing every key
+    // (design §5.1).
+    if geometry.command_rows() == 0 && matches!(state.overlay, Some(Overlay::Commands(_))) {
+        state.overlay = None;
+        state.mark_dirty();
+    }
+
     Vec::new()
 }
 
@@ -745,6 +820,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::{CATALOGUE, CommandsPanel};
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::state::Connection;
@@ -1052,7 +1128,9 @@ mod tests {
 
         assert!(effects.is_empty());
         assert!(matches!(state.connection, ConnectionState::Failed(_)));
-        let overlay = state.overlay.expect("a failure is shown");
+        let Some(Overlay::Message(overlay)) = state.overlay else {
+            panic!("a failure is shown");
+        };
         assert_eq!(overlay.severity, Severity::Danger);
         assert!(overlay.message.contains("no route"));
     }
@@ -1132,6 +1210,192 @@ mod tests {
         update(state, Msg::Input(KeyPress::new(key)))
     }
 
+    /// A frame big enough for a palette. `browsing` leaves geometry at its
+    /// default, whose `command_rows` is zero — which is itself a binding
+    /// (`the_palette_does_not_open_where_it_cannot_be_drawn`).
+    fn measured(keyspaces: &[&str]) -> State {
+        let mut state = browsing(keyspaces);
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+        state
+    }
+
+    fn palette(state: &State) -> Option<&CommandsPanel> {
+        match state.overlay.as_ref()? {
+            Overlay::Commands(panel) => Some(panel),
+            Overlay::Message(_) => None,
+        }
+    }
+
+    #[test]
+    fn question_mark_opens_the_palette_and_closes_it() {
+        let mut state = measured(&["a"]);
+
+        press(&mut state, Key::Char('?'));
+        assert!(palette(&state).is_some());
+
+        press(&mut state, Key::Char('?'));
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn escape_closes_the_palette() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+
+        press(&mut state, Key::Escape);
+
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn opening_the_palette_replaces_the_message_it_covers() {
+        let mut state = measured(&["a"]);
+        state.overlay = Some(Overlay::Message(Message {
+            title: "Schema unavailable".to_owned(),
+            message: "boom".to_owned(),
+            severity: Severity::Danger,
+        }));
+
+        press(&mut state, Key::Char('?'));
+        assert!(palette(&state).is_some());
+
+        press(&mut state, Key::Escape);
+        assert!(
+            state.overlay.is_none(),
+            "esc leaves nothing rather than peeling back to the message"
+        );
+    }
+
+    #[test]
+    fn the_palette_does_not_open_where_it_cannot_be_drawn() {
+        let mut state = browsing(&["a"]);
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 0);
+
+        press(&mut state, Key::Char('?'));
+
+        assert!(
+            state.overlay.is_none(),
+            "a mode with nothing on screen saying so is worse than an inert key"
+        );
+    }
+
+    #[test]
+    fn an_open_palette_takes_the_motion_the_panel_would_have() {
+        let mut state = measured(&["a", "b", "c"]);
+        press(&mut state, Key::Char('?'));
+
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "the tree did not move behind the palette"
+        );
+        assert_eq!(palette(&state).expect("still open").selected(), 2);
+
+        press(&mut state, Key::Char('k'));
+        assert_eq!(palette(&state).expect("still open").selected(), 1);
+
+        press(&mut state, Key::End);
+        assert_eq!(
+            palette(&state).expect("still open").selected(),
+            crate::commands::row_count() - 1
+        );
+
+        press(&mut state, Key::Home);
+        assert_eq!(palette(&state).expect("still open").selected(), 1);
+
+        press(&mut state, Key::PageDown);
+        assert_eq!(
+            palette(&state).expect("still open").selected(),
+            15,
+            "paging is routed at the handle_key layer, same as j/k"
+        );
+
+        press(&mut state, Key::PageUp);
+        assert_eq!(palette(&state).expect("still open").selected(), 1);
+    }
+
+    #[test]
+    fn q_quits_from_inside_the_palette() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+
+        press(&mut state, Key::Char('q'));
+
+        assert!(state.should_quit);
+    }
+
+    #[test]
+    fn an_open_palette_swallows_the_keys_it_does_not_use() {
+        // Each starting focus is chosen so a leaked key would be observable:
+        // `t`/`Tab` need a focus their leak would actually move away from,
+        // `Enter`/`Space` need `Tables` on a keyspace with a table, since
+        // folding a childless one leaves no visible trace at all.
+        let cases = [
+            (Key::Char('t'), Panel::Contents),
+            (Key::Tab, Panel::Contents),
+            (Key::Enter, Panel::Tables),
+            (Key::Char(' '), Panel::Tables),
+        ];
+
+        for (key, focus) in cases {
+            let mut state = browsing_tables(&[("a", &["t1"])]);
+            state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+            state.focus = focus;
+            press(&mut state, Key::Char('?'));
+            let before = crate::view::view_model(&state);
+
+            let effects = press(&mut state, key);
+
+            assert!(palette(&state).is_some(), "{key:?} dismissed the palette");
+            assert_eq!(
+                crate::view::view_model(&state),
+                before,
+                "{key:?} reached past the palette"
+            );
+            assert!(effects.is_empty(), "{key:?} issued {effects:?}");
+        }
+    }
+
+    #[test]
+    fn a_frame_that_shrinks_below_the_palette_closes_it() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+        assert!(palette(&state).is_some());
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 0)),
+        );
+
+        assert!(
+            state.overlay.is_none(),
+            "a palette nothing can draw must not still capture keys"
+        );
+    }
+
+    #[test]
+    fn a_frame_that_makes_room_for_the_palette_repaints_the_bar() {
+        let mut state = State::default();
+        assert_eq!(
+            state.geometry.command_rows(),
+            0,
+            "the default geometry is where `?` starts out inert"
+        );
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 14)),
+        );
+
+        assert!(
+            state.dirty,
+            "command_rows went from zero to non-zero, so the bar's `? commands` \
+             hint just appeared and nothing scheduled the repaint that shows it"
+        );
+    }
+
     #[test]
     fn j_and_k_walk_the_keyspace_list() {
         let mut state = browsing(&["a", "b", "c"]);
@@ -1185,11 +1449,11 @@ mod tests {
     #[test]
     fn escape_dismisses_the_overlay() {
         let mut state = browsing(&["a"]);
-        state.overlay = Some(Overlay {
+        state.overlay = Some(Overlay::Message(Message {
             title: "Schema unavailable".to_owned(),
             message: "boom".to_owned(),
             severity: Severity::Danger,
-        });
+        }));
 
         press(&mut state, Key::Escape);
 
@@ -1256,6 +1520,42 @@ mod tests {
         assert_eq!(state.queries.text(), "tacujkhlq");
     }
 
+    /// `?` is a CQL bind marker before it is a shortcut, so the editor has to
+    /// win it. Neither parent of the merge that brought the palette and the
+    /// editor together could test this: each was the only mode in its branch.
+    #[test]
+    fn a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette() {
+        let mut state = measured(&["a"]);
+        state.focus = Panel::Queries;
+
+        press(&mut state, Key::Char('?'));
+
+        assert!(
+            state.overlay.is_none(),
+            "the editor claimed it before the palette could open"
+        );
+        assert_eq!(state.queries.text(), "?");
+    }
+
+    /// The two mode guards in `handle_key`, in the order they are written: an
+    /// overlay the user opened deliberately outranks the focused panel's claim
+    /// on printable keys (doc/shortcuts.md §2).
+    #[test]
+    fn an_open_palette_outranks_a_panel_that_takes_text() {
+        let mut state = measured(&["a", "b", "c"]);
+        press(&mut state, Key::Char('?'));
+        state.focus = Panel::Queries;
+
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.queries.text(),
+            "",
+            "the palette took the key rather than the editor"
+        );
+        assert!(state.overlay.is_some(), "and it is still open");
+    }
+
     #[test]
     fn q_does_not_quit_while_the_editor_has_focus() {
         let mut state = browsing(&["a"]);
@@ -1281,11 +1581,11 @@ mod tests {
     #[test]
     fn escape_dismisses_the_overlay_before_it_leaves_the_editor() {
         let mut state = editing("SELECT");
-        state.overlay = Some(Overlay {
+        state.overlay = Some(Overlay::Message(Message {
             title: "Schema unavailable".to_owned(),
             message: "boom".to_owned(),
             severity: Severity::Danger,
-        });
+        }));
 
         press(&mut state, Key::Escape);
 
@@ -1860,14 +2160,14 @@ mod tests {
         );
     }
 
-    fn measured(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
-        update(state, Msg::Measured(Geometry::new(heights, ddl_lines)));
+    fn sized(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
+        update(state, Msg::Measured(Geometry::new(heights, ddl_lines, 0)));
     }
 
     #[test]
     fn page_down_moves_the_tree_by_one_panel_height() {
         let mut state = browsing(&["a", "b", "c", "d", "e", "f", "g", "h"]);
-        measured(&mut state, [3, 0, 0, 0], 0);
+        sized(&mut state, [3, 0, 0, 0], 0);
 
         press(&mut state, Key::PageDown);
 
@@ -1881,7 +2181,7 @@ mod tests {
     #[test]
     fn home_and_end_reach_the_ends_of_the_tree_in_one_key() {
         let mut state = browsing(&["a", "b", "c", "d"]);
-        measured(&mut state, [3, 0, 0, 0], 0);
+        sized(&mut state, [3, 0, 0, 0], 0);
 
         press(&mut state, Key::End);
 
@@ -1905,7 +2205,7 @@ mod tests {
             },
         );
         state.focus = Panel::Contents;
-        measured(&mut state, [0, 0, 8, 0], 0);
+        sized(&mut state, [0, 0, 8, 0], 0);
 
         press(&mut state, Key::PageDown);
 
@@ -1916,7 +2216,7 @@ mod tests {
     fn the_ddl_panel_scrolls_a_viewport_rather_than_a_selection() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
-        measured(&mut state, [0, 6, 0, 0], 20);
+        sized(&mut state, [0, 6, 0, 0], 20);
         let tree_row = state.tables.cursor.index();
 
         press(&mut state, Key::Char('j'));
@@ -1941,7 +2241,7 @@ mod tests {
     #[test]
     fn a_motion_in_the_tree_leaves_the_ddl_viewport_alone() {
         let mut state = browsing(&["a", "b", "c"]);
-        measured(&mut state, [3, 6, 0, 0], 20);
+        sized(&mut state, [3, 6, 0, 0], 20);
 
         press(&mut state, Key::PageDown);
         press(&mut state, Key::End);
@@ -1968,7 +2268,7 @@ mod tests {
     fn the_new_motions_emit_no_effects() {
         for key in [Key::PageDown, Key::PageUp, Key::Home, Key::End] {
             let mut state = browsing(&["a", "b", "c"]);
-            measured(&mut state, [3, 6, 6, 1], 20);
+            sized(&mut state, [3, 6, 6, 1], 20);
 
             let effects = press(&mut state, key);
 
@@ -1982,7 +2282,7 @@ mod tests {
     #[test]
     fn a_measurement_that_changes_nothing_leaves_the_state_clean() {
         let mut state = browsing(&["a", "b", "c"]);
-        let geometry = Geometry::new([3, 6, 6, 1], 20);
+        let geometry = Geometry::new([3, 6, 6, 1], 20, 0);
         update(&mut state, Msg::Measured(geometry));
         state.dirty = false;
 
@@ -2003,7 +2303,7 @@ mod tests {
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
         state.focus = Panel::Ddl;
-        measured(&mut state, [3, 6, 0, 0], 40);
+        sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
         assert_eq!(state.ddl.offset(), 34);
 
@@ -2017,7 +2317,7 @@ mod tests {
     fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.focus = Panel::Ddl;
-        measured(&mut state, [3, 6, 0, 0], 40);
+        sized(&mut state, [3, 6, 0, 0], 40);
         press(&mut state, Key::End);
         assert_eq!(state.ddl.offset(), 34);
         state.focus = Panel::Tables;
@@ -2040,13 +2340,13 @@ mod tests {
     fn a_measurement_pulls_a_stale_offset_back_inside_the_panel() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
-        measured(&mut state, [0, 6, 0, 0], 40);
+        sized(&mut state, [0, 6, 0, 0], 40);
         press(&mut state, Key::End);
         assert_eq!(state.ddl.offset(), 34);
         state.dirty = false;
 
         // The tree cursor moved to a table with far fewer options.
-        measured(&mut state, [0, 6, 0, 0], 8);
+        sized(&mut state, [0, 6, 0, 0], 8);
 
         assert_eq!(state.ddl.offset(), 2);
         assert!(
@@ -2084,7 +2384,7 @@ mod tests {
             state.contents.cursor.go_to(5, 20);
         }
 
-        measured(&mut state, [3, 3, 3, 3], 40);
+        sized(&mut state, [3, 3, 3, 3], 40);
         state.ddl.page_down(40, 3);
         state.focus = focus;
         state
@@ -2112,15 +2412,28 @@ mod tests {
 
     #[test]
     fn every_global_hint_does_something_in_every_panel() {
+        // `?` is filtered by `hints::bar` itself once a binding's effect
+        // depends on more than focus (design §5.1) — the sweep is over what
+        // the bar actually shows for this state, which is what it promises.
         for panel in Panel::ALL {
+            let shown: Vec<&str> = crate::view::hints::bar(&populated(panel))
+                .global
+                .iter()
+                .map(|hint| hint.action)
+                .collect();
+
             // `q` left GLOBAL because the bar stops naming it in a panel that
-            // takes text. It is still a binding in the other three, and this
-            // is still where that is checked.
+            // takes text, and `?` is dropped where no palette would fit. Both
+            // are conditions on the bar rather than on the binding set, so the
+            // sweep asks the bar what it is showing.
             let claimed = crate::view::hints::GLOBAL
                 .iter()
                 .chain((!panel.takes_text()).then_some(&crate::view::hints::QUIT));
 
             for binding in claimed {
+                if !shown.contains(&binding.action) {
+                    continue;
+                }
                 for &key in binding.keys {
                     let mut state = populated(panel);
                     let before = crate::view::view_model(&state);
@@ -2170,11 +2483,11 @@ mod tests {
     }
 
     fn failure() -> Overlay {
-        Overlay {
+        Overlay::Message(Message {
             title: "Cannot connect".to_owned(),
             message: "no route to host".to_owned(),
             severity: Severity::Danger,
-        }
+        })
     }
 
     #[test]
@@ -2276,7 +2589,7 @@ mod tests {
     #[test]
     fn a_wheel_scrolls_the_panel_under_it_without_focusing_it() {
         let mut state = showing_rows(20);
-        state.geometry = Geometry::new([8, 8, 8, 1], 0);
+        state.geometry = Geometry::new([8, 8, 8, 1], 0, 0);
         state.focus = Panel::Tables;
 
         point(
@@ -2299,7 +2612,7 @@ mod tests {
     #[test]
     fn a_wheel_up_walks_back_the_way_it_came() {
         let mut state = showing_rows(20);
-        state.geometry = Geometry::new([8, 8, 8, 1], 0);
+        state.geometry = Geometry::new([8, 8, 8, 1], 0, 0);
         let down = Pointer::Wheel {
             panel: Panel::Contents,
             direction: Wheel::Down,
@@ -2321,7 +2634,7 @@ mod tests {
     #[test]
     fn a_wheel_over_the_ddl_panel_scrolls_its_lines() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.geometry = Geometry::new([8, 8, 8, 1], 40);
+        state.geometry = Geometry::new([8, 8, 8, 1], 40, 0);
 
         point(
             &mut state,
@@ -2382,7 +2695,7 @@ mod tests {
         // tree selection changes, so `described()` sees no subject change
         // and `state.ddl` is left alone (design §7).
         let mut state = browsing(&["a", "b", "c", "d"]);
-        state.geometry = Geometry::new([3, 3, 3, 1], 0);
+        state.geometry = Geometry::new([3, 3, 3, 1], 0, 0);
         state.focus = Panel::Queries;
         state.ddl.down(100, 2);
         let ddl_before = state.ddl;
@@ -2409,7 +2722,7 @@ mod tests {
     #[test]
     fn a_wheel_does_not_dismiss_the_overlay() {
         let mut state = showing_rows(20);
-        state.geometry = Geometry::new([8, 8, 8, 1], 0);
+        state.geometry = Geometry::new([8, 8, 8, 1], 0, 0);
         state.overlay = Some(failure());
 
         point(
@@ -2427,7 +2740,7 @@ mod tests {
     /// A Contents panel showing `count` rows in a five-row viewport.
     fn scrolling_rows(count: usize) -> State {
         let mut state = showing_rows(count);
-        state.geometry = Geometry::new([5, 5, 5, 1], 0);
+        state.geometry = Geometry::new([5, 5, 5, 1], 0, 0);
         state
     }
 
@@ -2538,7 +2851,7 @@ mod tests {
     #[test]
     fn a_list_that_shrank_pulls_its_offset_back() {
         let mut state = browsing_tables(&[("shop", &["a", "b", "c", "d", "e", "f"])]);
-        state.geometry = Geometry::new([3, 3, 3, 1], 0);
+        state.geometry = Geometry::new([3, 3, 3, 1], 0, 0);
         click_row(&mut state, Panel::Tables, 0);
         for _ in 0..3 {
             roll(&mut state, Panel::Tables, Wheel::Down);
@@ -2555,7 +2868,7 @@ mod tests {
     #[test]
     fn a_wheel_over_tables_no_longer_scrolls_the_ddl_panel_back() {
         let mut state = browsing_tables(&[("shop", &["a", "b", "c", "d", "e", "f"])]);
-        state.geometry = Geometry::new([3, 3, 3, 1], 40);
+        state.geometry = Geometry::new([3, 3, 3, 1], 40, 0);
         click_row(&mut state, Panel::Tables, 0);
         state.ddl.page_down(40, 3);
         let before = state.ddl;
@@ -2579,7 +2892,7 @@ mod tests {
         assert_eq!(state.contents.cursor.index(), 6);
         assert_eq!(state.contents.scroll.offset(), 2, "on the last drawn row");
 
-        update(&mut state, Msg::Measured(Geometry::new([2, 2, 2, 1], 0)));
+        update(&mut state, Msg::Measured(Geometry::new([2, 2, 2, 1], 0, 0)));
 
         assert_eq!(
             state.contents.scroll.offset(),
@@ -2597,7 +2910,7 @@ mod tests {
         let scrolled = state.contents.scroll.offset();
         assert_eq!(scrolled, 15);
 
-        update(&mut state, Msg::Measured(Geometry::new([5, 5, 5, 1], 0)));
+        update(&mut state, Msg::Measured(Geometry::new([5, 5, 5, 1], 0, 0)));
 
         assert_eq!(
             state.contents.scroll.offset(),
@@ -2617,7 +2930,7 @@ mod tests {
         state.dirty = false;
 
         // Eight rows in an eight-row panel leave nothing to scroll.
-        update(&mut state, Msg::Measured(Geometry::new([8, 8, 8, 1], 0)));
+        update(&mut state, Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0)));
 
         assert_eq!(state.contents.scroll.offset(), 0);
         assert!(
@@ -2625,5 +2938,148 @@ mod tests {
             "a measurement marks nothing dirty by itself, so an offset it \
              moved would otherwise not be drawn until the next keypress"
         );
+    }
+
+    /// Every `Key` the domain understands.
+    ///
+    /// The `match` is dead weight at runtime and load-bearing at compile time:
+    /// a variant added to `Key` without a line here fails to compile, so the
+    /// sweep below cannot quietly stop sweeping.
+    fn every_key() -> Vec<Key> {
+        match Key::Enter {
+            Key::Char(_)
+            | Key::Enter
+            | Key::Escape
+            | Key::Backspace
+            | Key::Tab
+            | Key::BackTab
+            | Key::Delete
+            | Key::Insert
+            | Key::Home
+            | Key::End
+            | Key::PageUp
+            | Key::PageDown
+            | Key::Up
+            | Key::Down
+            | Key::Left
+            | Key::Right
+            | Key::F(_) => {}
+        }
+
+        [
+            Key::Enter,
+            Key::Escape,
+            Key::Backspace,
+            Key::Tab,
+            Key::BackTab,
+            Key::Delete,
+            Key::Insert,
+            Key::Home,
+            Key::End,
+            Key::PageUp,
+            Key::PageDown,
+            Key::Up,
+            Key::Down,
+            Key::Left,
+            Key::Right,
+        ]
+        .into_iter()
+        .chain((1..=12).map(Key::F))
+        .chain((0x20..=0x7e_u8).map(|byte| Key::Char(char::from(byte))))
+        .collect()
+    }
+
+    fn catalogued() -> Vec<Key> {
+        CATALOGUE
+            .iter()
+            .flat_map(|group| group.bindings)
+            .flat_map(|binding| binding.keys)
+            .copied()
+            .collect()
+    }
+
+    /// States that between them exercise every binding: one with an overlay to
+    /// dismiss, an unfolded keyspace to fold, and the tree at its first row;
+    /// one focused somewhere other than Tables so the focus letters differ;
+    /// one with the tree folded and moved off its first row, so `k`, `pgup`
+    /// and `home` all have somewhere to go; and one with the palette open,
+    /// the one state that captures keys rather than passing them to a panel
+    /// — a sweep that never opens it cannot see what it captures.
+    ///
+    /// The unfold in `covered` matters: with every keyspace already folded,
+    /// `h` and `←` would be a no-op in all four and the sweep would call them
+    /// unbound. `moved`'s keyspaces are childless, so `l` and `→` never
+    /// register there either — `covered` is the only fixture that opens a
+    /// keyspace with something in it, and so the only one where those two
+    /// keys do anything.
+    fn sweep_fixtures() -> Vec<State> {
+        let geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+
+        let mut covered = browsing_tables(&[("shop", &["orders"])]);
+        covered.geometry = geometry;
+        press(&mut covered, Key::Char('l'));
+        covered.overlay = Some(Overlay::Message(Message {
+            title: "Schema unavailable".to_owned(),
+            message: "boom".to_owned(),
+            severity: Severity::Danger,
+        }));
+
+        let mut elsewhere = browsing_tables(&[("shop", &["orders"])]);
+        elsewhere.geometry = geometry;
+        elsewhere.focus = Panel::Ddl;
+
+        let mut moved = measured(&["a", "b", "c"]);
+        press(&mut moved, Key::Char('j'));
+        press(&mut moved, Key::Char('j'));
+
+        let mut palette_open = measured(&["a", "b", "c"]);
+        press(&mut palette_open, Key::Char('?'));
+
+        vec![covered, elsewhere, moved, palette_open]
+    }
+
+    /// Whether pressing `key` changes anything a user could observe.
+    ///
+    /// The view model rather than the `State`, which is not `PartialEq` and
+    /// whose `dirty` flag `handle_key` sets on every press. It is also the
+    /// better question: a key that changes nothing visible and emits no effect
+    /// is not a binding, whatever it touched on the way through.
+    fn does_something(state: &State, key: Key) -> bool {
+        let mut after = state.clone();
+        let effects = press(&mut after, key);
+
+        !effects.is_empty()
+            || after.should_quit != state.should_quit
+            || crate::view::view_model(&after) != crate::view::view_model(state)
+    }
+
+    #[test]
+    fn no_key_does_anything_the_palette_does_not_list() {
+        let catalogued = catalogued();
+
+        for state in sweep_fixtures() {
+            for key in every_key() {
+                if catalogued.contains(&key) {
+                    continue;
+                }
+
+                assert!(
+                    !does_something(&state, key),
+                    "{key:?} does something and doc/shortcuts.md's palette does not list it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_key_the_palette_lists_does_something() {
+        let fixtures = sweep_fixtures();
+
+        for key in catalogued() {
+            assert!(
+                fixtures.iter().any(|state| does_something(state, key)),
+                "the palette lists {key:?} and no state responds to it"
+            );
+        }
     }
 }

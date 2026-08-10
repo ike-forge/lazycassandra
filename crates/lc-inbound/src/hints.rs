@@ -117,8 +117,10 @@ fn push_joined(spans: &mut Vec<Span<'static>>, segments: &[Segment], theme: Them
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::Panel;
+    use lc_domain::state::{Geometry, Panel};
     use lc_domain::{State, view_model};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     use super::*;
 
@@ -149,7 +151,9 @@ mod tests {
     #[test]
     fn hints_are_dropped_whole_and_lowest_value_first() {
         // The thresholds are the widths at which the previous bar stops
-        // fitting (design §6).
+        // fitting (design §6). `?` never joins this fixture's bar — these
+        // states never carry a geometry a palette would fit (design §5.1) —
+        // so the thresholds are exactly what they were before `?` existed.
         assert_eq!(
             drawn(Panel::Tables, 46),
             " j/k move  l/h fold │ tab panel  q quit"
@@ -158,6 +162,65 @@ mod tests {
         assert_eq!(drawn(Panel::Tables, 28), " j/k move │ q quit");
         assert_eq!(drawn(Panel::Tables, 17), " q quit");
         assert_eq!(drawn(Panel::Tables, 6), "");
+    }
+
+    /// The `Geometry` a real 100x24 frame produces — the same frame
+    /// `render::tests::the_frame_reports_how_many_rows_a_palette_would_show`
+    /// pins at `command_rows() == 14` — rather than a width/height
+    /// combination no terminal actually produces (design §5.1).
+    fn fitting_geometry() -> Geometry {
+        let mut terminal =
+            Terminal::new(TestBackend::new(100, 24)).expect("TestBackend always initialises");
+        let mut geometry = Geometry::default();
+
+        terminal
+            .draw(|frame| {
+                geometry = crate::render::render(
+                    frame,
+                    &view_model(&State::default()),
+                    Theme::TerminalDefault,
+                )
+                .geometry;
+            })
+            .expect("TestBackend always draws");
+
+        geometry
+    }
+
+    #[test]
+    fn a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel() {
+        let state = State {
+            geometry: fitting_geometry(),
+            ..State::default()
+        };
+        let bar = view_model(&state).hints;
+        let drawn = |width: u16| -> String {
+            line(&bar, width, Theme::TerminalDefault)
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        };
+
+        assert_eq!(
+            drawn(80),
+            " j/k move  l/h fold  ⏎ open │ tab panel  ? commands  q quit"
+        );
+        assert_eq!(
+            drawn(46),
+            " j/k move │ tab panel  ? commands  q quit",
+            "tab panel is still here alongside ? commands"
+        );
+        assert_eq!(
+            drawn(40),
+            " j/k move │ ? commands  q quit",
+            "tab panel goes first as the frame narrows"
+        );
+        assert_eq!(
+            drawn(28),
+            " j/k move │ q quit",
+            "? commands goes next; q quit is still the last one out"
+        );
     }
 
     #[test]

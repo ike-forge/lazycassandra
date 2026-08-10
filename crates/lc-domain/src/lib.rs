@@ -4,6 +4,7 @@
 //! anything else. No I/O, no runtime, no terminal — see architecture.md §2.
 
 pub mod cell;
+pub mod commands;
 pub mod contents;
 pub mod editor;
 pub mod model;
@@ -19,4 +20,4 @@ pub mod view;
 pub use posture::Posture;
 pub use state::State;
 pub use update::{Effect, Msg, init, update};
-pub use view::{PanelView, ViewModel, view_model};
+pub use view::{OverlayView, PanelView, ViewModel, view_model};

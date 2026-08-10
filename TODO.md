@@ -119,3 +119,12 @@ From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9
   design), or keeps deriving its offsets from the cursor and stays out of
   reach of the pointer. That is a design question, not a bug, and it is
   unanswered on purpose.
+From the command palette slice (doc/specs/2026-08-09-command-palette-design.md §10):
+
+- Search. The palette is named Commands and carries a selection precisely so
+  this can land; it needs text input, which needs the mode design §7 defers.
+- Execution. `⏎` selects a row that cannot be run, because a `Binding` is keys
+  and a label. Making it runnable means feeding a synthesised `KeyPress` back
+  through `handle_key` rather than growing a second dispatch point.
+- Contextual ordering. The palette shows the same three groups whatever has
+  focus; vision.md §4 principle 1 promises a *contextual* map.

@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::commands::CommandsPanel;
 use crate::contents::ContentsPanel;
 use crate::editor::Editor;
 use crate::model::{ConnId, DbError, Key, QueryId, Schema, Statement};
@@ -29,7 +30,8 @@ pub struct State {
     /// What the last frame turned out to be, so a motion knows how far a page
     /// is and where the end is.
     pub geometry: Geometry,
-    /// A message drawn over the panels until it is dismissed.
+    /// A message or the command palette, drawn over the panels until it is
+    /// dismissed.
     pub overlay: Option<Overlay>,
     /// Queries issued and not yet resolved. A result whose id is absent here
     /// was cancelled, and is dropped rather than applied.
@@ -110,10 +112,22 @@ pub enum SchemaState {
 
 /// A message drawn over the panels, dismissed with `Esc`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Overlay {
+pub struct Message {
     pub title: String,
     pub message: String,
     pub severity: Severity,
+}
+
+/// What is drawn over the panels, at most one at a time.
+///
+/// An enum rather than a second `Option` field beside the message: two fields
+/// would make "a failure and the palette, simultaneously" representable, and
+/// the renderer would then need a precedence rule the domain never stated
+/// (conventions.md §1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Overlay {
+    Message(Message),
+    Commands(CommandsPanel),
 }
 
 impl ConnectionState {
@@ -428,6 +442,7 @@ impl Scroll {
 pub struct Geometry {
     heights: [usize; 4],
     ddl_lines: usize,
+    command_rows: usize,
 }
 
 impl Geometry {
@@ -435,8 +450,12 @@ impl Geometry {
     /// scrolls in — tree rows, grid rows, or wrapped lines — and net of what
     /// the panel spends on chrome, such as the grid's header row.
     #[must_use]
-    pub const fn new(heights: [usize; 4], ddl_lines: usize) -> Self {
-        Self { heights, ddl_lines }
+    pub const fn new(heights: [usize; 4], ddl_lines: usize, command_rows: usize) -> Self {
+        Self {
+            heights,
+            ddl_lines,
+            command_rows,
+        }
     }
 
     /// Rows of content `panel` can show.
@@ -459,6 +478,17 @@ impl Geometry {
     #[must_use]
     pub const fn ddl_lines(self) -> usize {
         self.ddl_lines
+    }
+
+    /// Rows the command palette would show at this frame size, whether or not
+    /// one is open.
+    ///
+    /// Zero means it does not fit, which is what makes `?` inert rather than
+    /// opening a palette nothing draws
+    /// (doc/specs/2026-08-09-command-palette-design.md §5.1).
+    #[must_use]
+    pub const fn command_rows(self) -> usize {
+        self.command_rows
     }
 }
 
@@ -820,7 +850,7 @@ mod tests {
 
     #[test]
     fn geometry_reports_each_panels_own_height() {
-        let geometry = Geometry::new([8, 14, 20, 1], 37);
+        let geometry = Geometry::new([8, 14, 20, 1], 37, 0);
 
         assert_eq!(geometry.height(Panel::Tables), 8);
         assert_eq!(geometry.height(Panel::Ddl), 14);

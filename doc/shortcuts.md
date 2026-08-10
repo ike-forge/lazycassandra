@@ -16,12 +16,13 @@ key does something, it does it there.
 
 Reachable from every panel that does not take text, in every connection
 state. `Esc`, `Tab` and `Shift-Tab` are the exceptions that really are
-unconditional; the five marked rows are text instead, inside the one panel
+unconditional; the six marked rows are text instead, inside the one panel
 that takes text — see the Queries subsection below.
 
 | Key | Action |
 |---|---|
 | `q`¹ | Quit. Cancels every in-flight query. |
+| `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `Esc` | Dismiss the overlay. |
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
@@ -115,10 +116,13 @@ Every key is dispatched unconditionally and a panel-specific action checks
 program responds to, at the cost of a guard per action — the trade is deliberate
 and is revisited when the CQL editor lands.
 
-This now has one exception, and only one: a panel that takes text claims the
-printable and editing keys before the table is consulted. Everything it does
-not claim is still dispatched globally and still refused by panels that have
-nothing to do with it.
+This now has two exceptions, in that order of precedence. An open command
+palette claims every key before anything else is consulted, because it is drawn
+over the panels and the panel underneath is not what the user is looking at.
+Failing that, a panel that takes text claims the printable and editing keys
+before the table is reached. Everything neither of them claims is still
+dispatched globally and still refused by panels that have nothing to do with
+it.
 
 **Match order is precedence.** The panel-focus arm is last, so it can only claim
 letters no earlier arm took. Adding an arm above it can silently steal a focus
@@ -165,23 +169,31 @@ The rule's own enforcement test was renamed for this — §5.
 ambient. The focus letters are underlined in their titles; the hint bar along
 the bottom row names each focused panel's principal bindings, not its full
 surface — the bar has never claimed to be the complete list
-([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` is named in the one
-bar where it is unconditionally true that pressing it does something —
-Queries, where it leaves the editor for Tables — and stays out of the other
-three, where it still only does something when an overlay is up, and naming
-it there would still be a lie in most frames (design §3); `Shift-Tab` is
-`Tab`'s inverse, and Tables' `PageDown`/`PageUp`/`Home`/`End` are increments on
-a move the bar already names as `j/k move` — neither teaches something the
-bar's existing hints don't. A binding that is none of those and shows up in
-neither a title nor the bar is a binding only this file knows about.
+([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` is named in the two
+bars where it is unconditionally true that pressing it does something —
+Queries, where it leaves the editor for Tables, and an open palette, where it
+closes it — and stays out of the other three, where it still only does
+something when an overlay is up, and naming it there would still be a lie in
+most frames (design §3); `Shift-Tab` is `Tab`'s inverse, and Tables'
+`PageDown`/`PageUp`/`Home`/`End` are increments on a move the bar already names
+as `j/k move` — neither teaches something the bar's existing hints don't. A
+binding that is in none of a title, the bar, or the palette is a binding only
+this file knows about.
 
-**Focus is the mode.** A panel either takes text or it does not, and
-`Panel::takes_text` is the one exhaustive answer. In a panel that takes text
-every printable key is a character; everywhere else every printable key is a
-binding. There is no state within a panel that changes what a key means, so
-the regime is always the focused border — which is on screen and already
-means something. This replaces the older "no modes" rule, which held only
-until the Queries panel took text.
+**Focus is the mode, and an overlay outranks focus.** A panel either takes
+text or it does not, and `Panel::takes_text` is the one exhaustive answer. In a
+panel that takes text every printable key is a character; everywhere else every
+printable key is a binding. There is no state within a panel that changes what
+a key means, so the regime is always the focused border — which is on screen
+and already means something. This replaces the older "no modes" rule, which
+held only until the Queries panel took text.
+
+The command palette sits above that. It is opened deliberately with `?`, closes
+with either `?` or `esc` — both named on its bar
+([design](specs/2026-08-09-command-palette-design.md) §7) — and while it is up it
+takes motion, leaves `q` quitting, and makes every other key inert rather than
+dismissing. A key that means "close" in one frame and something else in the
+next is the ambiguity both halves of this rule exist to prevent.
 
 **No key without a test.** Every binding above is pinned by name in §5.
 
@@ -189,7 +201,7 @@ until the Queries panel took text.
 
 ## 3. The key budget
 
-Taken, lowercase: `a` `c` `h` `j` `k` `l` `q` `t` `u`, plus `Space`.
+Taken, lowercase: `a` `c` `h` `j` `k` `l` `q` `t` `u`, plus `Space` and `?`.
 
 Free, lowercase: `b` `d` `e` `f` `g` `i` `m` `n` `o` `p` `r` `s` `v` `w` `x`
 `y` `z`, every digit, and every uppercase letter.
@@ -214,7 +226,6 @@ which is a spec-level change.
 
 | Not bound | Why |
 |---|---|
-| `?` help | vision.md §7 Phase 0 promises a contextual map. It is its own slice and this set does not anticipate its shape. |
 | `1`–`4` focus | Superseded by `t`/`a`/`c`/`u`, which the panel can show in its own title; a digit cannot. |
 | `T` `A` `C` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. |
 | `ctrl-d` / `ctrl-u` | Wants the ctrl layer designed first; see §2. |
@@ -261,6 +272,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The map resolves to the row that was drawn | `the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it`, `the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn`, `the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn` (`inbound/render.rs`) |
 | Chrome is not a row | `a_grids_header_is_chrome_rather_than_its_first_row`, `a_press_on_the_chrome_of_a_panel_names_that_panel`, `the_hint_bar_and_a_frame_below_the_minimum_are_not_clickable` (`inbound/render.rs`) |
 | Letters are text in the editor | `a_letter_typed_in_queries_is_text_not_a_shortcut` |
+| `?` is a bind marker in the editor, not the palette | `a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette` |
+| An open palette outranks a panel that takes text | `an_open_palette_outranks_a_panel_that_takes_text` |
 | Quitting is not reachable from the editor | `q_does_not_quit_while_the_editor_has_focus` |
 | `Esc` prefers the overlay, then leaves | `escape_dismisses_the_overlay_before_it_leaves_the_editor`, `escape_leaves_the_editor_for_tables` |
 | `Tab` still leaves | `tab_still_leaves_the_editor` |
@@ -269,6 +282,17 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Home`/`End` take the line's ends | `home_and_end_reach_the_ends_of_the_line_in_the_editor` |
 | Other panels keep their letters | `typing_outside_queries_still_focuses_a_panel` |
 | The buffer's own behaviour | the `editor.rs` tests |
+| `?` opens and closes the palette | `question_mark_opens_the_palette_and_closes_it`, `escape_closes_the_palette` |
+| It replaces a message rather than stacking | `opening_the_palette_replaces_the_message_it_covers` |
+| It does not open where it cannot be drawn | `the_palette_does_not_open_where_it_cannot_be_drawn` |
+| A resize that leaves it undrawable closes it too | `a_frame_that_shrinks_below_the_palette_closes_it` |
+| An open palette takes motion and swallows the rest | `an_open_palette_takes_the_motion_the_panel_would_have`, `an_open_palette_swallows_the_keys_it_does_not_use`, `q_quits_from_inside_the_palette` |
+| The cursor never lands on a heading | `the_palette_cursor_steps_over_a_heading`, `paging_settles_on_a_command_rather_than_a_heading` (`commands.rs`) |
+| No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` (`commands.rs`) |
+| The bar names `?`, and the palette's own keys | `the_bar_names_the_palette_between_panel_and_quit`, `the_bar_names_what_the_palette_responds_to` (`view/hints.rs`) |
+| The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update.rs`) |
+| `?` earns its place in the width-fitting bar, and goes before `q quit` but after `tab panel` | `a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel` (`inbound/hints.rs`) |
+| The palette is drawn, centred, capped and scrollable | `the_palette_lists_the_catalogue`, `the_palette_is_centred`, `a_wide_frame_does_not_get_a_wide_palette`, `a_tall_frame_does_not_get_a_palette_full_of_blank_rows`, `a_frame_too_small_for_a_palette_does_not_get_one` (`inbound/render.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an
