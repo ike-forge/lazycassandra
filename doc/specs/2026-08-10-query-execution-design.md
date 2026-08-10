@@ -236,12 +236,21 @@ That has a consequence for the two catalogue sweeps in `update.rs`. Both share
 `sweep_fixtures()`, and none of its four states focuses Queries — deliberately,
 because `no_key_does_anything_the_palette_does_not_list` asks a question with no
 meaning in a panel where every printable key is text. So the fixtures split:
-that sweep keeps the four it has, and
-`every_key_the_palette_lists_does_something` runs over those four plus an
-editing state, which is the only one where `bksp`, `del` and `ctrl-r` can
-answer. The keys that leave the "not listed" sweep's reach — `bksp` and `del`,
-newly catalogued — get a test of their own saying they do nothing outside a
-panel that takes text.
+that sweep keeps the four it has, and `every_key_the_palette_lists_does_something`
+answers the Queries group from an editing state — the only one where `bksp`,
+`del` and `ctrl-r` can answer — and every other group from the four. Each
+group gets the state it describes and no other. The keys that leave the "not
+listed" sweep's reach — `bksp` and `del`, newly catalogued — get a test of
+their own saying they do nothing outside a panel that takes text.
+
+`ctrl-r run` leads the Queries bar, and on an empty or whitespace-only buffer
+it runs nothing (§3). The hint is greyed rather than hidden in that frame: a
+`Hint` carries a `Liveness`, `hints::bar` marks the run hint `Inert` while
+`state.queries.text().trim()` is empty, and `lc-inbound` draws an inert hint
+with `Token::Muted` for both spans — same place, same width, without the bold
+a live key carries. `every_hint_the_bar_shows_does_something` sweeps the live
+hints only, which is the honest form of what the bar claims
+(`doc/shortcuts.md` §2).
 
 `doc/shortcuts.md` changes in the same commit: §1's Queries table gains the
 row, §2's ctrl rule is rewritten as §1 above describes, §3 gains a ctrl line to
@@ -254,22 +263,29 @@ In `update.rs` unless noted.
 
 | Guarantee | Test |
 |---|---|
-| The buffer runs | `ctrl_r_runs_the_query_buffer` |
+| The buffer runs, and a typed read survives a read-only connection | `ctrl_r_runs_the_query_buffer` |
 | It runs only from Queries | `ctrl_r_outside_queries_runs_nothing` |
-| An empty buffer is inert | `an_empty_buffer_runs_nothing`, `a_whitespace_only_buffer_runs_nothing` |
-| The result lands in Contents | `a_run_query_loads_its_page_into_contents` |
+| An empty or whitespace-only buffer is inert | `an_empty_buffer_runs_nothing` |
+| The result lands in Contents | `a_run_query_titles_the_panel_with_what_was_typed` |
 | Either path cancels the other | `running_a_query_cancels_a_pending_table_read`, `reading_a_table_cancels_a_pending_query` |
-| Destructive is refused, unexecuted | `a_destructive_statement_is_refused_until_confirmation_exists`, `a_refused_destructive_statement_submits_nothing` |
-| The posture gate still applies | `a_typed_write_is_refused_on_a_read_only_connection`, `a_typed_read_survives_a_read_only_connection` |
-| Ctrl is still not a synonym | `an_unbound_ctrl_key_does_nothing`, `ctrl_j_does_not_move_a_selection` |
+| Destructive is refused, unexecuted | `a_destructive_statement_is_refused_until_confirmation_exists` |
+| The posture gate still applies | `a_typed_write_is_refused_on_a_read_only_connection` |
+| Ctrl is still not a synonym | `an_unbound_ctrl_key_does_nothing` |
 | Alt is still refused wholesale | `an_alt_modified_key_is_not_a_binding`, `ctrl_alt_r_does_not_run_the_buffer` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
-| Classification | the `statement.rs` tests: `select_is_a_read`, `an_unknown_verb_is_treated_as_mutating`, `case_does_not_change_a_statements_kind`, `drop_and_truncate_are_destructive` |
-| A typed subject titles the panel | `a_typed_statement_titles_the_panel_with_its_first_line`, `a_multi_line_statement_collapses_to_one_title_line` (`view/contents.rs`) |
-| The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding` (`commands.rs`) |
+| Classification | the `model/statement.rs` tests: `selecting_is_a_read`, `an_unknown_verb_is_treated_as_mutating`, `case_and_leading_space_do_not_change_a_kind`, `dropping_and_truncating_are_destructive`, `creating_and_altering_are_schema_changes`, `the_cql_is_kept_verbatim` |
+| A typed subject titles the panel in one line | `a_typed_subject_collapses_to_one_line` (`contents.rs`) |
+| The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding`, `the_palette_has_a_queries_section` (`commands.rs`) |
+| The bar greys it while the buffer has nothing to run | `the_run_hint_is_inert_while_there_is_nothing_to_run`, `the_run_hint_is_live_once_there_is_a_statement`, `nothing_but_the_run_hint_is_ever_inert` (`view/hints.rs`), `an_inert_hint_is_greyed_rather_than_dropped` (`lc-inbound`'s `hints.rs`) |
 | A modifier reaches the label | `a_ctrl_binding_is_labelled_with_its_modifier`, `an_unmodified_binding_is_labelled_bare` (`view/hints.rs`) |
-| Every binding is pressed as written | the existing sweeps, now pressing `binding.modifiers` |
+| Every binding is pressed as written | the sweeps, pressing `binding.modifiers`: `every_key_the_palette_lists_does_something`, `no_key_does_anything_the_palette_does_not_list`, `every_hint_the_bar_shows_does_something` |
 | The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
+
+The Queries group of `every_key_the_palette_lists_does_something` is answered
+by the editor fixture *alone*, not by that fixture alongside the other four:
+`⏎`, `esc` and `home`/`end` all do something in a non-editor state too, so a
+sweep that accepts any fixture's answer would let the editor stop claiming
+them and stay green.
 
 The existing `a_modified_key_is_not_a_binding` is narrowed rather than deleted:
 it asserted that *any* ctrl key is inert, which stops being true. It becomes

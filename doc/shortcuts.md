@@ -118,13 +118,16 @@ Every key is dispatched unconditionally and a panel-specific action checks
 program responds to, at the cost of a guard per action — the trade is deliberate
 and is revisited when the CQL editor lands.
 
-This now has two exceptions, in that order of precedence. An open command
-palette claims every key before anything else is consulted, because it is drawn
-over the panels and the panel underneath is not what the user is looking at.
-Failing that, a panel that takes text claims the printable and editing keys
-before the table is reached. Everything neither of them claims is still
-dispatched globally and still refused by panels that have nothing to do with
-it.
+This now has three exceptions, in that order of precedence. First, a modifier:
+`handle_key` returns on alt and routes ctrl into `ctrl`, the layer's own key
+table, before either check below — so `ctrl-r` is never a plain `r`, in the
+editor or in the palette (`ctrl` repeats the palette guard itself, for exactly
+that reason). Then an open command palette claims every unmodified key before
+anything else is consulted, because it is drawn over the panels and the panel
+underneath is not what the user is looking at. Failing that, a panel that takes
+text claims the printable and editing keys before the table is reached.
+Everything none of the three claims is still dispatched globally and still
+refused by panels that have nothing to do with it.
 
 **Match order is precedence.** The panel-focus arm is last, so it can only claim
 letters no earlier arm took. Adding an arm above it can silently steal a focus

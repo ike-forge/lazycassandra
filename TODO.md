@@ -114,6 +114,7 @@ From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9
   design), or keeps deriving its offsets from the cursor and stays out of
   reach of the pointer. That is a design question, not a bug, and it is
   unanswered on purpose.
+
 From the query execution slice (doc/specs/2026-08-10-query-execution-design.md):
 
 - Running the buffer sends all of it as one statement. Splitting on statement
