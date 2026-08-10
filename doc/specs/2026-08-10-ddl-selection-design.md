@@ -149,16 +149,22 @@ have. This is the third panel to take architecture.md §11's nested-per-panel
 escape hatch, and it takes it the same way as the other two rather than
 inventing a third arrangement.
 
-`panel_scroll` and `panel_cursor` gain their `Panel::Ddl` arms, and `LISTS`
-grows to include it so that a resize re-follows its cursor rather than leaving
-it off screen until the next keypress.
+`panel_cursor` gains its `Panel::Ddl` arm, so the motion keys move it like any
+other cursor.
 
-Ddl differs from the other two in *what* is followed, and the difference is
-load-bearing: Tables and Contents follow a row index, because a row is a line
-there. Ddl follows the line span of §5.4 — a resize rewraps the body, so the
-span the same cursor occupies changes with the height, and following the index
-would follow an item number against a line offset. The `LISTS` loop therefore
-resolves what to follow per panel rather than assuming an index.
+**`LISTS` does not grow.** That constant names the panels whose offset is
+followed *by index*, and every one of the three loops over it — `clamp_lists`,
+`follow_moved_cursors`, and the resize pass in `measured` — assumes a row is a
+line. Ddl breaks that assumption in both directions: its offset counts lines
+while its cursor counts rows, and `scroll_len` already returns a different
+quantity for it than `row_count` does. Adding it to `LISTS` would mean
+branching inside all three loops, which is a worse statement of the same thing.
+Ddl gets its own arm in the epilogue instead, following the span of §5.4.
+
+Its cursor is clamped in the epilogue, unconditionally and beside
+`clamp_lists`, for that function's own stated reason: a schema reload that
+shrinks a table changes no geometry, so no measurement arrives to clamp
+against.
 
 ### 5.2 The projection
 
@@ -190,10 +196,27 @@ offset that puts item 7 on screen.
 
 `Geometry` gains one field: the line span of the **selected** item as drawn,
 `(first_line, lines)`, recorded by the renderer as it draws that item and
-reported with the rest of the measurement. `update` feeds it to `Scroll`, whose
-`follow` generalises from an index to a span — pull the viewport the shortest
-distance that puts the span inside it, and when the span is taller than the
-panel, put its first line at the top rather than its last at the bottom.
+reported with the rest of the measurement. `Scroll` gains `follow_span`
+alongside `follow` — pull the viewport the shortest distance that puts the span
+inside it, and when the span is taller than the panel, put its first line at
+the top rather than its last at the bottom.
+
+**The follow happens in `measured`, not in `update`'s epilogue**, and this is
+forced rather than chosen. When `j` moves the cursor from row 5 to row 6, the
+geometry in hand still describes row *5* — it was measured from the previous
+frame. There is no correct offset for the epilogue to compute. So the epilogue
+moves the cursor and stops; the frame draws; the measurement comes back
+describing row 6; `measured` follows it and marks dirty. One frame late, by
+construction.
+
+The wheel is safe from this without a guard, and the reason is worth stating
+because it is not obvious. `measured` follows unconditionally, so a wheel
+scrolling the cursor off screen looks like it should be undone at the next
+measurement — but a wheel changes no height, no wrapped-line count, and no
+span, so the geometry is identical and `lc-app` sends no measurement at all.
+The same argument covers `Ctrl-e`/`Ctrl-y`. Only something that changes the
+frame's shape can reach `measured`, and everything that changes the frame's
+shape *should* re-follow.
 
 **Why this is safe under the §3 loop guard.** architecture.md §3 requires that
 `Geometry` be a function of the terminal size and the view model alone, never
