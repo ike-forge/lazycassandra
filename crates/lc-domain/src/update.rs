@@ -1028,7 +1028,7 @@ fn grid_columns(state: &State) -> Option<(&[u16], u16)> {
 }
 
 /// Pulls the column viewport over the selected cell, and back inside a page
-/// that narrowed.
+/// that narrowed or a panel that grew.
 ///
 /// Unconditional, for [`clamp_lists`]'s reason: a new page changes no
 /// geometry, so no [`Msg::Measured`] arrives to clamp against.
