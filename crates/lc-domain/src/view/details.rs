@@ -358,16 +358,12 @@ mod tests {
     }
 
     #[test]
-    fn options_arrive_in_importance_order_rather_than_alphabetically() {
+    fn the_compact_options_are_listed_before_the_ones_that_wrap() {
         let details = details(&browsing(orders()));
 
         assert_eq!(
             section(&details, "Options").rows,
             [
-                DetailRow::Property {
-                    name: "comment".to_owned(),
-                    value: "Order history.".to_owned(),
-                },
                 DetailRow::Property {
                     name: "gc_grace_seconds".to_owned(),
                     value: "864000".to_owned(),
@@ -375,6 +371,10 @@ mod tests {
                 DetailRow::Property {
                     name: "bloom_filter_fp_chance".to_owned(),
                     value: "0.01".to_owned(),
+                },
+                DetailRow::Property {
+                    name: "comment".to_owned(),
+                    value: "Order history.".to_owned(),
                 },
             ]
         );

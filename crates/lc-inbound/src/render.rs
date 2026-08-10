@@ -1083,13 +1083,14 @@ mod tests {
                 // is configured to do.
                 "",
                 "Options",
-                // Short enough for one line each; `bloom_filter_fp_chance` and
-                // its value need 26 of the panel's 23, so it keeps the
-                // wrapped shape.
-                "comment  Order history.",
                 "gc_grace_seconds 864000",
+                // `bloom_filter_fp_chance` and its value need 26 of the
+                // panel's 23, so it keeps the wrapped shape.
                 "bloom_filter_fp_chance",
                 "  0.01",
+                // `comment` is bulky, so it sorts last even though it fits
+                // on one line here.
+                "comment  Order history.",
                 // The row the shorter body leaves unfilled.
                 "",
             ]
