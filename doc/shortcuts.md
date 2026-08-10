@@ -16,7 +16,7 @@ key does something, it does it there.
 
 Reachable from every panel that does not take text, in every connection
 state. `Esc`, `Tab` and `Shift-Tab` are the exceptions that really are
-unconditional; the seven marked rows are text instead, inside the one panel
+unconditional; the eight marked rows are text instead, inside the one panel
 that takes text — see the Queries subsection below.
 
 | Key | Action |
@@ -393,7 +393,10 @@ The theme picker sits at the same rank too, entered deliberately with `T` and
 left with `Enter` or `Esc`. Like the palette it takes motion, not text: `j`/`k`
 and the arrows move its cursor, and moving previews — the one overlay whose
 motion has a side effect outside itself, since it writes `State.theme` on
-every step (§1's picker subsection, themes design §6).
+every step (§1's picker subsection, themes design §6). Like the palette it
+also leaves `q` quitting rather than swallowing it: a key that means quit
+everywhere except in one overlay is not a key anyone can trust without
+looking, so an overlay that changes that meaning has to say so.
 
 **`Esc` resolves in one order, first hit wins.** An overlay up is dismissed
 first — a search prompt cancels, restoring the filter it found applied; the
@@ -482,7 +485,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A read lands focus in Contents, by key or by click | `reading_a_table_lands_focus_in_contents`, `a_click_on_a_table_lands_focus_in_contents_too`, `focus_moves_before_the_page_arrives`, `a_refused_read_still_lands_focus_in_contents` |
 | Unfolding does not move focus, and a read leaves the tree alone | `unfolding_a_keyspace_leaves_focus_in_tables`, `reading_a_table_leaves_the_tree_selection_where_it_was`, `reading_a_table_lands_focus_in_contents_and_j_walks_the_grid_rather_than_the_tree` (`lc-outbound/tests/scenario.rs`) |
 | The cell is drawn over its row, and the gutter numbers the page | `the_selected_cell_is_marked_apart_from_the_rest_of_its_row`, `the_gutter_is_muted_and_the_values_beside_it_are_not`, `rows_are_numbered_from_one`, `the_row_number_is_the_pages_own_index_after_a_scroll` (`inbound/render.rs`) |
-| The cell highlight reads against the row's without a colour | `a_selected_cell_reads_against_the_selected_row_without_spending_a_colour` (`inbound/theme.rs`) |
+| The cell highlight reads against the row's without a colour | `a_selected_cell_reads_against_the_selected_row_without_spending_a_colour` (`inbound/theme/mod.rs`) |
 | The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render.rs`) |
 | A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
 | The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something` |
@@ -515,7 +518,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A focus letter is text in a panel that takes text | `a_shortcut_is_text_in_a_panel_that_takes_text` |
 | Focus letters have no side effects | `a_shortcut_moves_focus_and_does_nothing_else` |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
-| The marked cell, and only it, is underlined | `each_panel_underlines_the_key_that_focuses_it`, `nothing_but_the_shortcut_is_underlined` (`inbound/render.rs`), `a_shortcut_is_underlined_without_spending_a_colour` (`inbound/theme.rs`) |
+| The marked cell, and only it, is underlined | `each_panel_underlines_the_key_that_focuses_it`, `nothing_but_the_shortcut_is_underlined` (`inbound/render.rs`), `a_shortcut_is_underlined_without_spending_a_colour` (`inbound/theme/mod.rs`) |
 | A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |
 | A click focuses what it lands in | `a_click_focuses_the_panel_it_landed_in`, `a_click_on_chrome_focuses_and_does_nothing_else` |
 | A stale row is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped` |
@@ -597,7 +600,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | An unfocused panel still wears its marker | `an_unfocused_panel_still_wears_its_marker` (`inbound/render.rs`) |
 | The prompt owns the bar row, and its cursor | `an_open_prompt_owns_the_bar_row`, `an_open_prompts_own_cursor_replaces_the_editors`, `the_prompts_cursor_sits_after_the_query` (`inbound/render.rs`) |
 | A matched cell reads apart from an unmatched one, on and off the selected row | `a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row` (`inbound/render.rs`) |
-| `Token::Match` is legible over `Token::Selected` | `a_match_is_legible_over_a_selected_row` (`inbound/theme.rs`) |
+| `Token::Match` is legible over `Token::Selected` | `a_match_is_legible_over_a_selected_row` (`inbound/theme/mod.rs`) |
 | `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
 | It runs only from Queries | `ctrl_r_outside_queries_runs_nothing` |
 | An empty buffer is inert | `an_empty_buffer_runs_nothing` |
