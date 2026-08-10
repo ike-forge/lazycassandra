@@ -3023,10 +3023,7 @@ mod tests {
     }
 
     fn sized(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
-        update(
-            state,
-            Msg::Measured(Geometry::new(heights, ddl_lines, 0)),
-        );
+        update(state, Msg::Measured(Geometry::new(heights, ddl_lines, 0)));
     }
 
     #[test]
@@ -3865,10 +3862,7 @@ mod tests {
         assert_eq!(state.contents.cursor.index(), 6);
         assert_eq!(state.contents.scroll.offset(), 2, "on the last drawn row");
 
-        update(
-            &mut state,
-            Msg::Measured(Geometry::new([2, 2, 2, 1], 0, 0)),
-        );
+        update(&mut state, Msg::Measured(Geometry::new([2, 2, 2, 1], 0, 0)));
 
         assert_eq!(
             state.contents.scroll.offset(),
@@ -3886,10 +3880,7 @@ mod tests {
         let scrolled = state.contents.scroll.offset();
         assert_eq!(scrolled, 15);
 
-        update(
-            &mut state,
-            Msg::Measured(Geometry::new([5, 5, 5, 1], 0, 0)),
-        );
+        update(&mut state, Msg::Measured(Geometry::new([5, 5, 5, 1], 0, 0)));
 
         assert_eq!(
             state.contents.scroll.offset(),
@@ -3909,10 +3900,7 @@ mod tests {
         state.dirty = false;
 
         // Eight rows in an eight-row panel leave nothing to scroll.
-        update(
-            &mut state,
-            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0)),
-        );
+        update(&mut state, Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0)));
 
         assert_eq!(state.contents.scroll.offset(), 0);
         assert!(

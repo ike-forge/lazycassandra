@@ -84,7 +84,6 @@ pub(super) fn body(state: &State) -> PanelBody {
 fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
     let page = grid_page.page();
 
-
     if page.rows.is_empty() {
         return waiting("No rows");
     }
