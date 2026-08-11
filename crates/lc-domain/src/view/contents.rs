@@ -25,7 +25,7 @@ pub struct GridColumn {
     /// Character columns it is drawn in, capped by
     /// [`crate::grid::MAX_COLUMN_WIDTH`]. Computed here rather than in the
     /// renderer so the fitting arithmetic can live beside the offsets it
-    /// bounds (doc/specs/2026-08-10-table-display-design.md §6).
+    /// bounds (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
     pub width: u16,
 }
 

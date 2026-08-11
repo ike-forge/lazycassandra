@@ -54,7 +54,7 @@ pub fn to_key_press(event: KeyEvent) -> Option<KeyPress> {
 /// The reader thread refuses the rest before they cost a channel send:
 /// `EnableMouseCapture` turns on any-event tracking, so a pointer crossing
 /// the window reports one event per cell
-/// (doc/specs/2026-08-09-mouse-input-design.md §2).
+/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §2).
 #[must_use]
 pub fn is_bound(event: MouseEvent) -> bool {
     event.modifiers.is_empty()
@@ -70,7 +70,7 @@ pub fn is_bound(event: MouseEvent) -> bool {
 ///
 /// Returns `None` for a gesture the design does not bind, and for one that
 /// landed outside every panel
-/// (doc/specs/2026-08-09-mouse-input-design.md §2).
+/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §2).
 #[must_use]
 pub fn to_pointer(event: MouseEvent, map: &FrameMap) -> Option<Pointer> {
     // ctrl and alt make a gesture of their own, refused here rather than

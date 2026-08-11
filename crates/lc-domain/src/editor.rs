@@ -3,7 +3,7 @@
 //! Written here rather than taken from a widget crate because the domain is
 //! what builds a `Statement` from this text, gates it on `Posture`, and will
 //! match it against `Schema` for completion
-//! (doc/specs/2026-08-09-queries-editor-design.md §1).
+//! (docs/superpowers/specs/2026-08-09-queries-editor-design.md §1).
 
 /// A multi-line text buffer with one cursor.
 ///

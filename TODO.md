@@ -3,9 +3,9 @@
 - Add readonly mode (make obvious visually)
 - Write actions must all be obvisous (special color/ui)
 - Display shortcuts on the UI (dynamic/contextualized) — the hint bar
-  vision.md §7 Phase 0 promises; doc/shortcuts.md §4 is what it replaces
+  vision.md §7 Phase 0 promises; docs/shortcuts.md §4 is what it replaces
 
-From the table-list review (doc/specs/2026-08-08-table-list-design.md):
+From the table-list review (docs/superpowers/specs/2026-08-08-table-list-design.md):
 
 - Give `TablesPanel` its own `down`/`up` taking `&Schema`, so cursor motion
   cannot be handed the wrong row count. Today `update.rs` reaches through the
@@ -18,7 +18,7 @@ From the table-list review (doc/specs/2026-08-08-table-list-design.md):
 - Untested spec cells: `l`/`Right` on a table row, and ctrl/alt against the
   three tree bindings. Both correct by construction, neither pinned.
 
-From the table-contents slice (doc/specs/2026-08-09-table-contents-design.md §9):
+From the table-contents slice (docs/superpowers/specs/2026-08-09-table-contents-design.md §9):
 
 - Paging. `LIMIT 200` is a wall, not a window: `Effect::FetchNextPage` and
   `Page::next` exist and nothing drives them.
@@ -32,7 +32,7 @@ From the table-contents slice (doc/specs/2026-08-09-table-contents-design.md §9
   superseded read runs to completion on the cluster. Only the `in_flight` drop
   protects the state.
 
-From the table metadata slice (doc/specs/2026-08-09-table-metadata-design.md):
+From the table metadata slice (docs/superpowers/specs/2026-08-09-table-metadata-design.md):
 
 - Display `system_schema.columns`: the regular and static column list in the
   DDL panel. The data has been in `Table` since the table-list slice; only the
@@ -44,23 +44,23 @@ From the table metadata slice (doc/specs/2026-08-09-table-metadata-design.md):
   is wider than the table-list spec's §3 measured. Same failure, same recovery
   — the refresh binding above.
 
-From the panel scrolling slice (doc/specs/2026-08-09-panel-scrolling-design.md):
+From the panel scrolling slice (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md):
 
 - `ctrl-d` and `ctrl-u`. The ctrl layer exists now and has three members:
   `ctrl-e`/`ctrl-y` in Table DDL
-  (doc/specs/2026-08-10-ddl-selection-design.md §4.1) and `ctrl-r` in Queries
-  (doc/specs/2026-08-10-query-execution-design.md). Vim's half-page motions
+  (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §4.1) and `ctrl-r` in Queries
+  (docs/superpowers/specs/2026-08-10-query-execution-design.md). Vim's half-page motions
   still are not in it, and want the layer designed rather than a fourth arm
   added in passing (design §5).
 - A long `Notice` still cannot scroll. One sentence is the assumption; a
   `DbError` carrying a paragraph would break it.
 
-From the mouse input slice (doc/specs/2026-08-09-mouse-input-design.md):
+From the mouse input slice (docs/superpowers/specs/2026-08-09-mouse-input-design.md):
 
 - A wheel notch is three rows, which is a guess. `WHEEL_ROWS` in `update.rs`
   is the one place to change it after a few weeks of use.
 
-From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9):
+From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-design.md §9):
 
 - Size the Queries panel by what is in it. It gets one content row at 80x24
   and 120x40 — the 3-row floor beats `QUERIES_PERCENT` until the terminal is
@@ -119,19 +119,19 @@ From the queries editor slice (doc/specs/2026-08-09-queries-editor-design.md §9
   click is the same `go_to` call Tables and Contents already make — an
   unwired binding, not an open question.
 
-From the query execution slice (doc/specs/2026-08-10-query-execution-design.md):
+From the query execution slice (docs/superpowers/specs/2026-08-10-query-execution-design.md):
 
 - Running the buffer sends all of it as one statement. Splitting on statement
   boundaries, and running only the one under the cursor, needs a CQL parser —
   it lands in `Statement::typed`
-  (doc/specs/2026-08-10-query-execution-design.md §3, §10).
+  (docs/superpowers/specs/2026-08-10-query-execution-design.md §3, §10).
 - A destructive statement typed into the editor is refused rather than
   confirmed. The typed-confirmation flow vision.md §4 principle 6 requires
   replaces that refusal (design §5).
 - A query's result does not page. Neither does a table read; `Effect::FetchNextPage`
   exists and nothing drives it. Both paths get it at once (design §10).
 
-From the command palette slice (doc/specs/2026-08-09-command-palette-design.md §10):
+From the command palette slice (docs/superpowers/specs/2026-08-09-command-palette-design.md §10):
 
 - Search. The palette is named Commands and carries a selection precisely so
   this can land; it needs text input, which needs the mode design §7 defers.
@@ -143,7 +143,7 @@ From the command palette slice (doc/specs/2026-08-09-command-palette-design.md �
   twice, once under each panel that resolves them, which is the honest shape for
   a flat catalogue and exactly the duplication a contextual one would collapse.
 
-From the panel search slice (doc/specs/2026-08-10-panel-search-design.md §8):
+From the panel search slice (docs/superpowers/specs/2026-08-10-panel-search-design.md §8):
 
 - Search in Queries. `/` types a `/` there, and every other printable key is
   text too, so search has no unmodified key left to claim without breaking the
@@ -154,7 +154,7 @@ From the panel search slice (doc/specs/2026-08-10-panel-search-design.md §8):
   vim-style normal mode — that slice's decision, not this one's, since it also
   has to invent how one leaves the panel once `esc` no longer does that.
 
-From the table display slice (doc/specs/2026-08-10-table-display-design.md §11):
+From the table display slice (docs/superpowers/specs/2026-08-10-table-display-design.md §11):
 
 - Expanded-cell inspection. `MAX_COLUMN_WIDTH` is 24 and horizontal scrolling
   reaches columns, not the tails of values, so a 36-character uuid is still

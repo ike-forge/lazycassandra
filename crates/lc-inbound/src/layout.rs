@@ -1,7 +1,7 @@
 //! Panel geometry.
 //!
-//! Proportions come from doc/ui-draft.png; the floors and the collapse rule
-//! from doc/specs/2026-08-08-four-panel-layout-design.md §3.
+//! Proportions come from docs/ui-draft.png; the floors and the collapse rule
+//! from docs/superpowers/specs/2026-08-08-four-panel-layout-design.md §3.
 
 use lc_domain::state::Panel;
 use ratatui::layout::Rect;
@@ -70,7 +70,7 @@ impl PanelRects {
     }
 }
 
-/// Divide `area` into the four panels of doc/ui-draft.png, or refuse it.
+/// Divide `area` into the four panels of docs/ui-draft.png, or refuse it.
 #[must_use]
 pub fn layout(area: Rect) -> Shell {
     if area.width < MIN_W || area.height < MIN_H {

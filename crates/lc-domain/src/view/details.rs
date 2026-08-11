@@ -4,7 +4,7 @@
 //! `system_schema.tables` reports; a keyspace shows its replication. Nothing
 //! selected shows nothing — the connection's state is the Tables panel's job
 //! to narrate, and saying it twice in one sidebar is noise
-//! (doc/specs/2026-08-09-table-metadata-design.md §1).
+//! (docs/superpowers/specs/2026-08-09-table-metadata-design.md §1).
 
 use crate::model::{ClusteringOrder, Keyspace, Replication, Table};
 use crate::search::Filter;
@@ -26,7 +26,7 @@ impl Details {
     /// Every row the panel describes, in the order it draws them — which is
     /// the order the cursor walks. A heading is not a row: it labels the group
     /// beneath it, and there is nothing a cursor on one could mean
-    /// (doc/specs/2026-08-10-ddl-selection-design.md §3).
+    /// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §3).
     pub fn rows(&self) -> impl Iterator<Item = &DetailRow> {
         self.sections.iter().flat_map(|section| section.rows.iter())
     }
@@ -60,7 +60,7 @@ pub struct Section {
 /// The panel reads as two groups — what the table *is*, then what it is
 /// configured to do — and the blank line between them follows from this rather
 /// than from a projection remembering to emit one in the right place
-/// (doc/specs/2026-08-09-visual-polish-design.md §5.1).
+/// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     /// The physical shape: which columns decide placement and ordering.

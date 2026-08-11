@@ -4,7 +4,7 @@
 //! knows nothing about capture, and the panic hook `ratatui::init` installs
 //! only calls `restore`. A leaked capture leaves the terminal reporting every
 //! pointer movement as an escape sequence until the user runs `reset`
-//! (doc/specs/2026-08-09-mouse-input-design.md §8).
+//! (docs/superpowers/specs/2026-08-09-mouse-input-design.md §8).
 
 use std::io::stdout;
 

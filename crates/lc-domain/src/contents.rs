@@ -16,11 +16,11 @@ pub struct ContentsPanel {
     pub cursor: Cursor,
     /// The selected column. With [`ContentsPanel::cursor`] it names one cell,
     /// which is what a future delete or edit acts on
-    /// (doc/specs/2026-08-10-table-display-design.md §2).
+    /// (docs/superpowers/specs/2026-08-10-table-display-design.md §2).
     pub column: Cursor,
-    /// The first row drawn (doc/specs/2026-08-09-list-viewport-design.md §1).
+    /// The first row drawn (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
-    /// The first column drawn (doc/specs/2026-08-10-table-display-design.md §5).
+    /// The first column drawn (docs/superpowers/specs/2026-08-10-table-display-design.md §5).
     pub columns: ColumnScroll,
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
@@ -123,7 +123,7 @@ impl TableRef {
 ///
 /// The panel shows one grid whichever way the request was made — the tree's
 /// `Enter`, or `ctrl-r` over the editor
-/// (doc/specs/2026-08-10-query-execution-design.md §6).
+/// (docs/superpowers/specs/2026-08-10-query-execution-design.md §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
     Table(TableRef),

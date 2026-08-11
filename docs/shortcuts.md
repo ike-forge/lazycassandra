@@ -39,7 +39,7 @@ key before this table is consulted, so these type themselves there instead.
 The four focus letters are underlined in their panel's title, so the binding is
 learned by looking at the panel rather than by reading this file (vision.md §4,
 principle 1). Two of them are not leading letters: the panel names are fixed by
-`doc/ui-draft.png`, and no title is renamed to make a key convenient.
+`docs/ui-draft.png`, and no title is renamed to make a key convenient.
 See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design.md).
 
 ### The search prompt

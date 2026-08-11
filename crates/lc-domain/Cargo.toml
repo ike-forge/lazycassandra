@@ -14,7 +14,7 @@ thiserror.workspace = true
 # A table of character display widths — no terminal, no runtime, no driver, so
 # architecture.md §2's rule holds. The grid's column widths are computed here
 # rather than in the renderer because the offsets they bound live here
-# (doc/specs/2026-08-10-table-display-design.md §6).
+# (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
 unicode-width.workspace = true
 
 [lints]

@@ -62,7 +62,7 @@ pub struct Loader {
 impl Loader {
     /// Advance one frame, or fall back to rest. Reports whether the phase
     /// moved — an idle tick that changes nothing must not cost a repaint
-    /// (doc/specs/2026-08-09-visual-polish-design.md §4.2).
+    /// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §4.2).
     pub const fn advance(&mut self, working: bool) -> bool {
         let next = if working {
             self.frame.wrapping_add(1)
@@ -144,7 +144,7 @@ pub enum Overlay {
     /// The theme picker. `restored` is what `Esc` puts back: the cursor sets
     /// `State.theme` as it moves, so the frame previews each theme and there
     /// is nowhere else the previous one survives
-    /// (doc/specs/2026-08-10-themes-design.md §6).
+    /// (docs/superpowers/specs/2026-08-10-themes-design.md §6).
     Themes {
         cursor: Cursor,
         restored: ThemeChoice,
@@ -422,7 +422,7 @@ impl Cursor {
 /// The Table DDL panel is the one place a cursor and an offset count in
 /// different units: the cursor walks described rows, the offset walks the
 /// wrapped lines they occupy, and only the renderer knows the conversion
-/// (doc/specs/2026-08-10-ddl-selection-design.md §5.4).
+/// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Span {
     /// The first line the row occupies.
@@ -485,7 +485,7 @@ impl Scroll {
     ///
     /// What makes a selection stay visible now that the renderer no longer
     /// arranges it — `update` applies this to whichever cursor moved
-    /// (doc/specs/2026-08-09-list-viewport-design.md §3).
+    /// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §3).
     pub const fn follow(&mut self, index: usize, height: usize) {
         if index < self.offset {
             self.offset = index;
@@ -527,7 +527,7 @@ impl Scroll {
 /// What the last frame turned out to be.
 ///
 /// The renderer's one report back into the domain
-/// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
+/// (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md §3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Geometry {
     heights: [usize; 4],
@@ -536,7 +536,7 @@ pub struct Geometry {
     command_rows: usize,
     /// Character columns the Contents grid's body has, gutter included. A
     /// function of the terminal size alone, which is what keeps §3's
-    /// measurement loop open (doc/specs/2026-08-10-table-display-design.md §6).
+    /// measurement loop open (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
     grid_width: usize,
 }
 
@@ -588,7 +588,7 @@ impl Geometry {
     ///
     /// Zero means it does not fit, which is what makes `?` inert rather than
     /// opening a palette nothing draws
-    /// (doc/specs/2026-08-09-command-palette-design.md §5.1).
+    /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §5.1).
     #[must_use]
     pub const fn command_rows(self) -> usize {
         self.command_rows

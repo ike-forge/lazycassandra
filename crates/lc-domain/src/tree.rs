@@ -15,7 +15,7 @@ use crate::state::{Cursor, Scroll};
 pub struct TablesPanel {
     pub cursor: Cursor,
     /// The first row drawn. Moved by a wheel on its own, and pulled after a
-    /// cursor motion (doc/specs/2026-08-09-list-viewport-design.md §1).
+    /// cursor motion (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
     /// Keyspaces showing their tables.
     ///
@@ -138,7 +138,7 @@ impl TablesPanel {
     /// change nothing on screen while still writing `unfolded` — the one
     /// thing design §4.1 promises filtering never does. This is the single
     /// entry point for that guard, so every caller (keys, a click via
-    /// `activate`) inherits it rather than needing its own; doc/shortcuts.md
+    /// `activate`) inherits it rather than needing its own; docs/shortcuts.md
     /// §2's rule that a panel swallows a motion it cannot honour is why the
     /// key is dropped here instead of half-honoured.
     pub fn toggle(&mut self, schema: &Schema) {

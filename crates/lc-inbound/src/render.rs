@@ -26,7 +26,7 @@ const THUMB: &str = "▐";
 /// against closing a redraw–measure–redraw loop (architecture.md §3). `map`
 /// re-enters nothing — nobody reads it until a human moves a mouse — so it is
 /// free to depend on the offsets `Geometry` may not
-/// (doc/specs/2026-08-09-mouse-input-design.md §4).
+/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rendered {
     pub geometry: Geometry,
@@ -38,7 +38,7 @@ pub struct Rendered {
 ///
 /// The return value is the domain's only way to learn how tall a panel is and
 /// how many lines the Ddl body wrapped to
-/// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
+/// (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md §3).
 pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let ground = theme.ground();
     if ground != Style::new() {
@@ -100,7 +100,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 
         // Every body kind, not only a grid: it is the panel's width, which is
         // what the domain needs in order to decide what would fit once a page
-        // arrives (doc/specs/2026-08-10-table-display-design.md §6).
+        // arrives (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
         if panel.panel == Panel::Contents {
             grid_width = usize::from(inner.width);
         }
@@ -272,7 +272,7 @@ pub(crate) fn scrollbar(
 
 /// Over the bottom border, mirroring [`scrollbar`] on the right one, and only
 /// when a column is off screen — so its absence says nothing is hidden
-/// (doc/specs/2026-08-10-table-display-design.md §9).
+/// (docs/superpowers/specs/2026-08-10-table-display-design.md §9).
 fn horizontal_scrollbar(
     frame: &mut Frame,
     area: Rect,
@@ -942,7 +942,7 @@ mod tests {
     /// Places the cursor and the viewport that belongs with it, as `update`
     /// does — a fixture that sets one without the other describes a state the
     /// application cannot be in
-    /// (doc/specs/2026-08-09-list-viewport-design.md §6).
+    /// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §6).
     fn select_contents(state: &mut State, index: usize, height: usize) {
         let len = state.contents.row_count();
         state.contents.cursor.go_to(index, len);
@@ -2158,7 +2158,7 @@ mod tests {
         // `lc-app` sends only when the geometry changed, and `update` marks
         // dirty only when the clamp moved the offset. A `Geometry` that varied
         // with the offset it bounds would close the loop
-        // (doc/specs/2026-08-09-panel-scrolling-design.md §3).
+        // (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md §3).
         let state = describing(orders());
         let mut scrolled = describing(orders());
         scrolled.ddl.scroll.to_end(100, 6);

@@ -2,13 +2,13 @@
 
 Read these before touching code, in this order:
 
-- [doc/vision.md](doc/vision.md) — why the project exists, scope, roadmap
-- [doc/architecture.md](doc/architecture.md) — crate boundaries, state model, decisions made vs. open
-- [doc/conventions.md](doc/conventions.md) — how the code should read
-- [doc/shortcuts.md](doc/shortcuts.md) — the bound keys and the rules governing
+- [docs/vision.md](docs/vision.md) — why the project exists, scope, roadmap
+- [docs/architecture.md](docs/architecture.md) — crate boundaries, state model, decisions made vs. open
+- [docs/conventions.md](docs/conventions.md) — how the code should read
+- [docs/shortcuts.md](docs/shortcuts.md) — the bound keys and the rules governing
   them; read before adding or changing a binding
 
-The rules below are pulled from `doc/conventions.md` because they are easy to
+The rules below are pulled from `docs/conventions.md` because they are easy to
 violate by default. They do not replace that document — read it for the why.
 
 ## Non-negotiables

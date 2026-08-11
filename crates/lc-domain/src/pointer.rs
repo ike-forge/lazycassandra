@@ -14,7 +14,7 @@ pub enum Pointer {
     Click(Click),
     /// Scrolls `panel` without focusing it: scrolling is a glance where
     /// clicking is a commitment
-    /// (doc/specs/2026-08-09-mouse-input-design.md §6).
+    /// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §6).
     Wheel {
         panel: Panel,
         direction: Wheel,

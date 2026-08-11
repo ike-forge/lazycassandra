@@ -48,7 +48,7 @@ pub struct ViewModel {
 /// An enum rather than a bare frame number the domain promises to zero: which
 /// of the two states the tool is in is the decision `update` is making, and
 /// the one `lc-app` reads to know whether a tick is worth anything
-/// (doc/specs/2026-08-09-visual-polish-design.md §4.2).
+/// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
     /// Nothing outstanding. Drawn at the start of the cycle, always the same
@@ -145,7 +145,7 @@ pub enum PanelBody {
         selected: usize,
         /// The first row drawn. State rather than a value the renderer
         /// derives, so a wheel can move it without moving `selected`
-        /// (doc/specs/2026-08-09-list-viewport-design.md §2).
+        /// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §2).
         offset: usize,
     },
     /// A heading and grouped rows: what is selected, described.

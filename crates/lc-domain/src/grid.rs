@@ -6,7 +6,7 @@
 //! answers, and they cannot be measured in the renderer — "how many fit from
 //! offset N" varies with N, and architecture.md §3 forbids an offset-dependent
 //! measurement crossing back
-//! (doc/specs/2026-08-10-table-display-design.md §6).
+//! (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
 
 use unicode_width::UnicodeWidthStr as _;
 

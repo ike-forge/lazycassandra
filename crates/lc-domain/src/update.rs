@@ -21,7 +21,7 @@ use crate::tree::Node;
 /// How many rows one look at a table brings back.
 ///
 /// A wall rather than a window until paging lands
-/// (doc/specs/2026-08-09-table-contents-design.md §3).
+/// (docs/superpowers/specs/2026-08-09-table-contents-design.md §3).
 pub const ROW_LIMIT: usize = 200;
 
 /// Everything that can happen. Async results re-enter here through the same
@@ -30,7 +30,7 @@ pub const ROW_LIMIT: usize = 200;
 pub enum Msg {
     Input(KeyPress),
     /// A pointer gesture, resolved by `lc-inbound` against the frame it
-    /// happened in (doc/specs/2026-08-09-mouse-input-design.md §5).
+    /// happened in (docs/superpowers/specs/2026-08-09-mouse-input-design.md §5).
     Pointer(Pointer),
     /// The terminal was resized. Carries no geometry — the renderer reads the
     /// real size from `frame.area()` — it exists only to trigger a repaint.
@@ -314,7 +314,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     }
 
     // An open palette takes the keys it uses
-    // (doc/specs/2026-08-09-command-palette-design.md §7).
+    // (docs/superpowers/specs/2026-08-09-command-palette-design.md §7).
     if matches!(state.overlay, Some(Overlay::Commands(_))) {
         return palette_key(state, press.key);
     }
@@ -374,7 +374,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
 const WHEEL_ROWS: usize = 3;
 
 /// The one place a pointer gesture becomes behaviour, as `handle_key` is for
-/// keys (doc/shortcuts.md §2).
+/// keys (docs/shortcuts.md §2).
 ///
 /// Every gesture decomposes into a binding that already exists (design §1): a
 /// click on a tree row is a selection followed by the `Enter` arm, and a wheel
@@ -405,7 +405,7 @@ fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect> {
 
 /// Scrolls `panel`'s viewport without focusing it and without moving its
 /// selection: the wheel is a look somewhere else, and a keypress returns you
-/// (doc/specs/2026-08-09-list-viewport-design.md §1).
+/// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
 fn wheel(state: &mut State, panel: Panel, direction: Wheel) {
     let len = scroll_len(state, panel);
     let height = state.geometry.height(panel);
@@ -685,7 +685,7 @@ fn open_themes(state: &mut State) {
 /// are deliberately inert rather than aliases for `Home`/`End`: the list is
 /// every theme there is and always shorter than the block drawing it, so a
 /// screen is the whole list and paging would be a second name for a motion
-/// that already lands in one press (doc/shortcuts.md §1).
+/// that already lands in one press (docs/shortcuts.md §1).
 fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char('q') => return quit(state),
@@ -757,7 +757,7 @@ fn scroll(state: &mut State, motion: Motion) {
     }
 }
 
-/// The ctrl layer's whole key table (doc/shortcuts.md §2).
+/// The ctrl layer's whole key table (docs/shortcuts.md §2).
 ///
 /// Dispatched above the palette check, so it honours that rule itself rather
 /// than inheriting it: routing a modified key into `palette_key`, which
@@ -789,7 +789,7 @@ enum Line {
 /// Table DDL alone has a cursor and a viewport that count in different units,
 /// so it alone can have a selection its viewport has left — and so it alone
 /// needs a way to move one without the other
-/// (doc/specs/2026-08-10-ddl-selection-design.md §4.1).
+/// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §4.1).
 fn ddl_scroll(state: &mut State, line: Line) -> Vec<Effect> {
     if state.focus != Panel::Ddl {
         return Vec::new();
@@ -843,7 +843,7 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     // A panel that changed height must draw its selection again: the renderer
     // stopped arranging that, and `update`'s epilogue follows only a cursor
     // that *moved* — a resize moves none
-    // (doc/specs/2026-08-09-list-viewport-design.md §5).
+    // (docs/superpowers/specs/2026-08-09-list-viewport-design.md §5).
     //
     // Keyed on the height rather than on the message, so a wheel cannot be
     // undone here: a wheel changes no height, and `lc-app` reports no
@@ -1028,7 +1028,7 @@ fn activate(state: &mut State) -> Vec<Effect> {
 /// Focus moves now rather than when the page lands: it is a consequence of the
 /// keypress, and a focus change that waits on the network happens at a time
 /// the user cannot predict
-/// (doc/specs/2026-08-10-table-display-design.md §1).
+/// (docs/superpowers/specs/2026-08-10-table-display-design.md §1).
 fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
     state.focus = Panel::Contents;
 
@@ -1076,7 +1076,7 @@ fn run(state: &mut State) -> Vec<Effect> {
 /// Focus is deliberately not touched here. Reading from the tree moves it
 /// ([`read`]); `ctrl-r` does not, because the user is composing in a panel
 /// that takes text and pulling focus out of it would turn their next
-/// keystrokes into bindings (doc/specs/2026-08-10-table-display-design.md §1).
+/// keystrokes into bindings (docs/superpowers/specs/2026-08-10-table-display-design.md §1).
 fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) -> Vec<Effect> {
     let mut effects = Vec::new();
 
@@ -1102,7 +1102,7 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
 ///
 /// The four horizontal keys mean *move left* and *move right*, and each panel
 /// resolves that in its own vocabulary — the shape `j`/`k` already have
-/// (doc/shortcuts.md §2, doc/specs/2026-08-10-table-display-design.md §2).
+/// (docs/shortcuts.md §2, docs/superpowers/specs/2026-08-10-table-display-design.md §2).
 fn go_right(state: &mut State) {
     match state.focus {
         Panel::Tables => transition(state, Transition::Open),
@@ -2305,7 +2305,7 @@ mod tests {
 
     /// The two mode guards in `handle_key`, in the order they are written: an
     /// overlay the user opened deliberately outranks the focused panel's claim
-    /// on printable keys (doc/shortcuts.md §2).
+    /// on printable keys (docs/shortcuts.md §2).
     #[test]
     fn an_open_palette_outranks_a_panel_that_takes_text() {
         let mut state = measured(&["a", "b", "c"]);
@@ -4444,7 +4444,7 @@ mod tests {
 
                 assert!(
                     !does_something(&state, press),
-                    "{press:?} does something and doc/shortcuts.md's palette does not list it"
+                    "{press:?} does something and docs/shortcuts.md's palette does not list it"
                 );
             }
         }
@@ -4735,7 +4735,7 @@ mod tests {
 
     /// The prompt is inert to what the ctrl layer does not claim, not to the
     /// whole of it: `handle_key` routes ctrl above every overlay
-    /// (doc/shortcuts.md §2). The layer changes neither focus nor the
+    /// (docs/shortcuts.md §2). The layer changes neither focus nor the
     /// prompt's captured target, so the query survives the chord intact.
     #[test]
     fn the_ctrl_layer_reaches_past_an_open_prompt() {
@@ -4931,7 +4931,7 @@ mod tests {
         );
     }
 
-    /// `ctrl-r`, the Queries member of the ctrl layer (doc/shortcuts.md §2).
+    /// `ctrl-r`, the Queries member of the ctrl layer (docs/shortcuts.md §2).
     fn run_query(state: &mut State) -> Vec<Effect> {
         ctrl(state, Key::Char('r'))
     }

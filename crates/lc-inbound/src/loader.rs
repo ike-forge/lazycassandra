@@ -4,7 +4,7 @@
 //! can live in the domain and reach here as a frame number. That is what keeps
 //! the renderer a pure function of the [`ViewModel`](lc_domain::ViewModel) and
 //! the render tier deterministic — no clock is read on this side of the
-//! boundary (doc/specs/2026-08-09-visual-polish-design.md §4.3).
+//! boundary (docs/superpowers/specs/2026-08-09-visual-polish-design.md §4.3).
 
 use crate::theme::Theme;
 use lc_domain::view::Activity;

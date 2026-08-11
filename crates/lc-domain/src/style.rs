@@ -36,7 +36,7 @@ pub enum Token {
     Match,
     /// The cell the cursor is on, drawn over the selected row: the row says
     /// where you are, the cell says what a command would act on
-    /// (doc/specs/2026-08-10-table-display-design.md §3).
+    /// (docs/superpowers/specs/2026-08-10-table-display-design.md §3).
     SelectedCell,
     /// A keyspace the user made, in the Tables tree.
     Keyspace,
@@ -45,7 +45,7 @@ pub enum Token {
     /// A CQL keyword.
     ///
     /// Defined and themed but not yet emitted: there is no highlighter. A
-    /// theme is not complete without it (doc/specs/2026-08-10-themes-design.md
+    /// theme is not complete without it (docs/superpowers/specs/2026-08-10-themes-design.md
     /// §3).
     Keyword,
     /// A keyspace, table or column name inside a statement.

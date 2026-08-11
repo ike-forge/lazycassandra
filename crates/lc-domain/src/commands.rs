@@ -1,7 +1,7 @@
 //! Every binding the program has, and a cursor over them.
 //!
 //! The palette claims to be complete, which the hint bar deliberately does not
-//! (doc/specs/2026-08-09-command-palette-design.md §2). `update::tests`'
+//! (docs/superpowers/specs/2026-08-09-command-palette-design.md §2). `update::tests`'
 //! sweep is what holds that claim up: reusing [`Binding`] means a row names
 //! `KeyPress` values rather than a string, so a row cannot describe a press no
 //! arm of `handle_key` claims.
@@ -117,10 +117,10 @@ const TABLES: &[Binding] = &[
 
 // `l`/`h` are listed twice, here and under `Tables`, and that is the point:
 // the four horizontal keys mean move left / move right and each panel resolves
-// them in its own vocabulary (doc/shortcuts.md §2). One row saying
+// them in its own vocabulary (docs/shortcuts.md §2). One row saying
 // "unfold the keyspace" would omit what they do in a grid, and the palette may
 // not omit a key that does something
-// (doc/specs/2026-08-09-command-palette-design.md §2).
+// (docs/superpowers/specs/2026-08-09-command-palette-design.md §2).
 const CONTENTS: &[Binding] = &[
     Binding {
         keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Right)],
@@ -142,7 +142,7 @@ const DDL: &[Binding] = &[Binding {
 
 // The editor's printable keys are not rows: every one of them types itself,
 // which is the panel's whole rule rather than a list of bindings
-// (doc/shortcuts.md §2). What is listed is what a key does *not* do elsewhere.
+// (docs/shortcuts.md §2). What is listed is what a key does *not* do elsewhere.
 const QUERIES: &[Binding] = &[
     Binding {
         keys: &[KeyPress::ctrl(Key::Char('r'))],
@@ -357,7 +357,7 @@ mod tests {
     use super::*;
 
     /// The widest row `MIN_W` in the renderer is derived from
-    /// (doc/specs/2026-08-09-command-palette-design.md §5): a `ctrl-e/ctrl-y`
+    /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §5): a `ctrl-e/ctrl-y`
     /// gutter, two columns of gap, and the longest action.
     const WIDEST_KEYS: usize = 13;
     const WIDEST_ACTION: usize = 20;

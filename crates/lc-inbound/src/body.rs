@@ -5,16 +5,16 @@
 //! grid a horizontal one besides — and what lives here is the arithmetic that
 //! needs the area: how many of the domain's column widths fit in it, and
 //! whether the selection falls inside the rows drawn
-//! (doc/specs/2026-08-09-list-viewport-design.md §2). Queries stores no
+//! (docs/superpowers/specs/2026-08-09-list-viewport-design.md §2). Queries stores no
 //! offset at all: both its vertical and horizontal offsets are derived from
 //! the cursor and the area every frame
-//! (doc/specs/2026-08-09-queries-editor-design.md §5).
+//! (docs/superpowers/specs/2026-08-09-queries-editor-design.md §5).
 //!
 //! [`Body::selection`] is the one thing besides [`Extent`] a body reports
 //! back. Every panel but Ddl can locate its own selection from a row index
 //! alone, so `Span::default()` is all they carry; Ddl's selection can span
 //! several wrapped lines, which only the renderer that wrapped them can
-//! measure (doc/specs/2026-08-10-ddl-selection-design.md §5.4).
+//! measure (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4).
 
 use lc_domain::grid::{COLUMN_SPACING, available, fitting};
 use lc_domain::state::Span;
@@ -181,7 +181,7 @@ fn notice(frame: &mut Frame, area: Rect, text: &str, token: Option<Token>, theme
 /// offset only when nothing is selected, and otherwise walks the offset until
 /// the selection is in view — so handing it a selection it cannot see would
 /// drag the viewport back and undo the scroll
-/// (doc/specs/2026-08-09-list-viewport-design.md §4).
+/// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §4).
 const fn visible(selected: usize, offset: usize, height: usize) -> Option<usize> {
     if selected >= offset && selected < offset + height {
         Some(selected)

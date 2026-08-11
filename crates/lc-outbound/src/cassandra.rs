@@ -103,7 +103,7 @@ impl Cluster for CassandraCluster {
     }
 
     /// Unpaged because the statement carries its own `LIMIT`
-    /// (doc/specs/2026-08-09-table-contents-design.md §3). `Page::next` is
+    /// (docs/superpowers/specs/2026-08-09-table-contents-design.md §3). `Page::next` is
     /// `None` for the same reason: there is no cursor to hand back.
     async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError> {
         let session = self.session(conn).await?;
@@ -146,7 +146,7 @@ impl Cluster for CassandraCluster {
 
 /// The three things `scylla::cluster::metadata` does not carry: clustering
 /// order, the CQL type as text, and whether a column is static
-/// (doc/specs/2026-08-08-table-list-design.md §3).
+/// (docs/superpowers/specs/2026-08-08-table-list-design.md §3).
 const COLUMNS_QUERY: &str = "SELECT keyspace_name, table_name, column_name, kind, type, \
                              clustering_order FROM system_schema.columns";
 
@@ -202,7 +202,7 @@ async fn column_rows(
 /// `read_repair_chance`, 4.0 replaces it with `read_repair`, 5.0 adds
 /// `memtable` — so naming them would make this a hard error on any cluster
 /// missing one, while a wildcard reports whatever that cluster knows
-/// (doc/specs/2026-08-09-table-metadata-design.md §2).
+/// (docs/superpowers/specs/2026-08-09-table-metadata-design.md §2).
 const OPTIONS_QUERY: &str = "SELECT * FROM system_schema.tables";
 
 /// The two columns that identify a row rather than describe it. They are the

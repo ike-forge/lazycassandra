@@ -3,7 +3,7 @@
 //! A theme is a [`Palette`] — a table of named colour roles — and one mapping
 //! from [`Token`] to a style, shared by every theme. Adding a theme is adding
 //! a `const Palette`, not a match arm per token
-//! (doc/specs/2026-08-10-themes-design.md §3).
+//! (docs/superpowers/specs/2026-08-10-themes-design.md §3).
 //!
 //! Four roles are `Option<Color>`. `None` is not "no colour": it is *not ours
 //! to set*, which is how vision.md §4 principle 5 is stated in the type system

@@ -3,7 +3,7 @@
 //! One recipe, four ingredient sets: [`Flavour`] names the upstream colours and
 //! [`Flavour::palette`] spends them, so the flavours cannot drift apart and a
 //! fifth costs one table of hex values
-//! (doc/specs/2026-08-10-themes-design.md §5).
+//! (docs/superpowers/specs/2026-08-10-themes-design.md §5).
 
 use ratatui::style::Color;
 

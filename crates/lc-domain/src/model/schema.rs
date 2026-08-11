@@ -57,7 +57,7 @@ pub struct Table {
 /// `memtable` — so a fixed field list would encode a claim that is false, and
 /// would silently drop whatever the running cluster knows and we do not. The
 /// ordering below is the part that is real knowledge
-/// (doc/specs/2026-08-09-table-metadata-design.md §3).
+/// (docs/superpowers/specs/2026-08-09-table-metadata-design.md §3).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TableOptions {
     by_name: BTreeMap<String, String>,
@@ -68,7 +68,7 @@ pub struct TableOptions {
 /// A layout rule, not an importance rule. These are the properties whose
 /// values fit on one line, so they read as a scannable block; the three in
 /// [`BULKY`] wrap and would split it
-/// (doc/specs/2026-08-10-ddl-selection-design.md §2).
+/// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §2).
 const RANKED: &[&str] = &[
     "default_time_to_live",
     "gc_grace_seconds",

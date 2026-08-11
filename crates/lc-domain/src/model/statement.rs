@@ -64,7 +64,7 @@ impl Statement {
     /// classifies as [`StatementKind::Write`] and is refused on a read-only
     /// connection. That is the conservative direction, and it is where a real
     /// CQL parser lands when one arrives
-    /// (doc/specs/2026-08-10-query-execution-design.md §4).
+    /// (docs/superpowers/specs/2026-08-10-query-execution-design.md §4).
     #[must_use]
     pub fn typed(cql: &str) -> Self {
         Self {

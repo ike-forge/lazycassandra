@@ -1,7 +1,7 @@
 //! Searching a panel: the term, where it can be applied, and the prompt that
 //! collects it.
 //!
-//! doc/specs/2026-08-10-panel-search-design.md.
+//! docs/superpowers/specs/2026-08-10-panel-search-design.md.
 
 use crate::state::Panel;
 

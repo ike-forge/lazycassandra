@@ -19,7 +19,7 @@ pub struct Binding {
 ///
 /// A hint that would not is drawn greyed rather than dropped: the binding is
 /// still what the panel is for, and a bar whose contents move as the buffer
-/// fills teaches less than one that stays put (doc/shortcuts.md §2).
+/// fills teaches less than one that stays put (docs/shortcuts.md §2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Liveness {
     Live,
@@ -112,7 +112,7 @@ const PALETTE_GLOBAL: &[Binding] = &[
 /// is open. Moving is the whole panel group, and it is named "preview"
 /// because that is what the press does — the cursor writes `State.theme` on
 /// every step (themes design §6). `pgup`/`pgdn` are left out because the
-/// picker leaves them inert (doc/shortcuts.md §1), and a bar that lies is
+/// picker leaves them inert (docs/shortcuts.md §1), and a bar that lies is
 /// worse than no bar.
 pub(crate) const THEMES: &[Binding] = &[
     Binding {

@@ -12,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 /// A pointer event only means something against the frame it happened in, and
 /// this thread has no frame — so a bound one is forwarded whole, and the main
 /// loop, which holds the map, resolves it
-/// (doc/specs/2026-08-09-mouse-input-design.md §4). Gestures `is_bound` refuses
+/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4). Gestures `is_bound` refuses
 /// — chiefly `Moved`, which any-event tracking reports for every cell the
 /// pointer crosses — never reach the channel at all (design §2).
 #[derive(Debug)]

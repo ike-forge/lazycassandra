@@ -4,7 +4,7 @@
 //! given and the `Extent` its body returned — rather than computed a second
 //! time. A second description of the layout drifts, and drift here is silent:
 //! presses landing on the wrong row
-//! (doc/specs/2026-08-09-mouse-input-design.md §4).
+//! (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
 
 use lc_domain::pointer::Click;
 use lc_domain::state::Panel;

@@ -88,7 +88,7 @@ fn draw(terminal: &mut DefaultTerminal, state: &State) -> Result<Rendered> {
 /// changed.
 ///
 /// Sending unconditionally would redraw, re-measure and redraw forever
-/// (doc/specs/2026-08-09-panel-scrolling-design.md §3).
+/// (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md §3).
 fn report(tx: &mpsc::UnboundedSender<Incoming>, last: &mut Option<Geometry>, geometry: Geometry) {
     if *last == Some(geometry) {
         return;

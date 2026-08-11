@@ -3,7 +3,7 @@
 //! [`lc_domain::model::CqlValue`] covers the shapes the grid has to draw
 //! differently and documents that the rest arrives as text carrying the
 //! driver's rendering. scylla's `CqlValue` has no `Display`, so this module is
-//! that rendering (doc/specs/2026-08-09-table-contents-design.md §5).
+//! that rendering (docs/superpowers/specs/2026-08-09-table-contents-design.md §5).
 
 use std::collections::BTreeMap;
 

@@ -3,7 +3,7 @@
 //! Names are never abbreviated and values are never truncated: there is no
 //! expansion mechanism yet, so an abbreviation would owe the reader a decoder
 //! and a truncation would hide data permanently
-//! (doc/specs/2026-08-09-table-metadata-design.md §6). Wrapping spends lines
+//! (docs/superpowers/specs/2026-08-09-table-metadata-design.md §6). Wrapping spends lines
 //! instead, which is why the option ordering carries so much weight.
 //!
 //! Widths are counted in `char`s. Every identifier this panel draws is ASCII;
@@ -12,7 +12,7 @@
 //! that.
 //!
 //! A row's selection spans as many lines as it wrapped to
-//! (doc/specs/2026-08-10-ddl-selection-design.md §5.2), so `lay_out` reports
+//! (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.2), so `lay_out` reports
 //! back where it drew the highlight as a [`Span`] over the wrapped lines,
 //! rather than the row index the cursor carries in. `List` and `Table` need a
 //! guard against a selection scrolled out of view, because a stateful widget
@@ -78,7 +78,7 @@ pub(crate) fn render(
 ///
 /// The span is what the frame reports back as `Geometry::ddl_selection`, so
 /// the domain can bound an offset over text it cannot wrap itself
-/// (doc/specs/2026-08-10-ddl-selection-design.md §5.4). It is measured
+/// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4). It is measured
 /// against every line this function produces, never against the ones a
 /// caller happens to scroll into view — an offset must never feed back into
 /// what is measured, or a redraw could chase its own tail
@@ -182,7 +182,7 @@ fn column_lines(
 /// column is set by the widest name, and one long name then pushes every other
 /// value past the edge — `bloom_filter_fp_chance` puts it at 23, where
 /// `gc_grace_seconds` and `864000` need 29 of a 28-column panel
-/// (doc/specs/2026-08-09-visual-polish-design.md §5.2).
+/// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.2).
 ///
 /// Which properties get one line therefore follows from their length. `comment`
 /// and `compaction` wrap because they are long, not because they are named.
