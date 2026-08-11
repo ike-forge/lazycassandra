@@ -16,6 +16,7 @@ struct Flavour {
     surface0: Color,
     surface1: Color,
     overlay1: Color,
+    subtext1: Color,
     text: Color,
     yellow: Color,
     teal: Color,
@@ -38,9 +39,10 @@ impl Flavour {
             base: Some(self.base),
             surface: Some(self.surface0),
             text: Some(self.text),
-            border: Some(self.surface1),
+            panel_border: Some(self.subtext1),
             highlight: self.surface1,
             highlight_text: None,
+            focus: self.blue,
             muted: self.overlay1,
             partition: self.yellow,
             clustering: self.teal,
@@ -81,6 +83,7 @@ const LATTE_FLAVOUR: Flavour = Flavour {
     surface0: rgb(0xccd0da),
     surface1: rgb(0xbcc0cc),
     overlay1: rgb(0x8c8fa1),
+    subtext1: rgb(0x5c5f77),
     text: rgb(0x4c4f69),
     yellow: rgb(0xdf8e1d),
     teal: rgb(0x179299),
@@ -102,6 +105,7 @@ const FRAPPE_FLAVOUR: Flavour = Flavour {
     surface0: rgb(0x414559),
     surface1: rgb(0x51576d),
     overlay1: rgb(0x838ba7),
+    subtext1: rgb(0xb5bfe2),
     text: rgb(0xc6d0f5),
     yellow: rgb(0xe5c890),
     teal: rgb(0x81c8be),
@@ -123,6 +127,7 @@ const MACCHIATO_FLAVOUR: Flavour = Flavour {
     surface0: rgb(0x363a4f),
     surface1: rgb(0x494d64),
     overlay1: rgb(0x8087a2),
+    subtext1: rgb(0xb8c0e0),
     text: rgb(0xcad3f5),
     yellow: rgb(0xeed49f),
     teal: rgb(0x8bd5ca),
@@ -144,6 +149,7 @@ const MOCHA_FLAVOUR: Flavour = Flavour {
     surface0: rgb(0x313244),
     surface1: rgb(0x45475a),
     overlay1: rgb(0x7f849c),
+    subtext1: rgb(0xbac2de),
     text: rgb(0xcdd6f4),
     yellow: rgb(0xf9e2af),
     teal: rgb(0x94e2d5),
@@ -216,7 +222,7 @@ mod tests {
             assert!(palette.base.is_some(), "{name} has no field");
             assert!(palette.surface.is_some(), "{name} has no overlay ground");
             assert!(palette.text.is_some(), "{name} has no body text");
-            assert!(palette.border.is_some(), "{name} has no borders");
+            assert!(palette.panel_border.is_some(), "{name} has no panel borders");
             assert_eq!(
                 palette.highlight_text, None,
                 "{name} knows its own base, so the cursor row keeps its colours"

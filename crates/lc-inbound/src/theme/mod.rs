@@ -29,13 +29,16 @@ pub(crate) struct Palette {
     pub(crate) surface: Option<Color>,
     /// Body text, and `Severity::Info`.
     pub(crate) text: Option<Color>,
-    pub(crate) border: Option<Color>,
+    /// A panel's frame, and a scrollbar's track.
+    pub(crate) panel_border: Option<Color>,
     /// The cursor row's background.
     pub(crate) highlight: Color,
     /// The cursor row's text, where the theme cannot guarantee its own roles
     /// read against `highlight` (design §3.1). `None` keeps the row's own
     /// column colours; `Some` flattens them for legibility.
     pub(crate) highlight_text: Option<Color>,
+    /// The focused panel's border and title.
+    pub(crate) focus: Color,
     pub(crate) muted: Color,
     pub(crate) partition: Color,
     pub(crate) clustering: Color,
@@ -97,10 +100,10 @@ impl Theme {
     }
 
     /// A panel's border. `Token::Focused` is patched on top of this rather
-    /// than replacing it, so a focused panel is a bold border of the theme's
-    /// colour rather than an uncoloured one.
+    /// than replacing it, so a focused panel's border becomes the theme's
+    /// `focus` colour on top of whatever `panel_border` set (or left unset).
     pub(crate) fn border_style(self) -> Style {
-        maybe(self.palette.border)
+        maybe(self.palette.panel_border)
     }
 
     #[must_use]
@@ -127,10 +130,12 @@ impl Theme {
             // though its colour is overwritten — the same distinction the
             // pre-`Palette` theme drew with `DIM` alone (design §4.3).
             Token::Muted | Token::HintAction => fg(palette.muted).add_modifier(Modifier::DIM),
-            // Bold rather than a colour: focus must not compete with the
-            // colours that carry meaning, and it has to read on a panel border
-            // the theme may have coloured already.
-            Token::Focused | Token::HintKey => Style::new().add_modifier(Modifier::BOLD),
+            // A colour of its own now (2026-08-11-panel-focus-contrast-design.md
+            // §2 withdraws the earlier "bold only" decision): it still reads on
+            // a panel border the theme may have coloured already, because
+            // `Style::patch` lets this `fg` overwrite `panel_border`'s.
+            Token::Focused => fg(palette.focus).add_modifier(Modifier::BOLD),
+            Token::HintKey => Style::new().add_modifier(Modifier::BOLD),
             Token::Shortcut => Style::new().add_modifier(Modifier::UNDERLINED),
             Token::Selected => selected(palette),
             // `fg` and `BOLD` both: where a palette declines
@@ -207,9 +212,10 @@ pub(crate) mod tests {
             base: _,
             surface: _,
             text: _,
-            border: _,
+            panel_border: _,
             highlight: _,
             highlight_text: _,
+            focus: _,
             muted,
             partition,
             clustering,
@@ -251,7 +257,7 @@ pub(crate) mod tests {
         assert_eq!(palette.base, None, "the background is the user's");
         assert_eq!(palette.surface, None);
         assert_eq!(palette.text, None, "so is the body foreground");
-        assert_eq!(palette.border, None);
+        assert_eq!(palette.panel_border, None);
     }
 
     /// Every theme, not only the default: a flavour paints its field once,
@@ -307,11 +313,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn focus_is_drawn_without_spending_a_colour() {
-        let style = Theme::default().style(Token::Focused);
+    fn focus_is_drawn_with_the_focus_colour() {
+        let theme = Theme::default();
+        let style = theme.style(Token::Focused);
 
         assert!(style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(style.fg, None, "focus must not compete with meaning");
+        assert_eq!(style.fg, Some(theme.palette().focus));
     }
 
     #[test]
