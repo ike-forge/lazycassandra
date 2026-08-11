@@ -29,7 +29,7 @@ pub(crate) struct Palette {
     pub(crate) surface: Option<Color>,
     /// Body text, and `Severity::Info`.
     pub(crate) text: Option<Color>,
-    /// A panel's frame, and a scrollbar's track.
+    /// A panel's frame, and a scrollbar's thumb.
     pub(crate) panel_border: Option<Color>,
     /// The cursor row's background.
     pub(crate) highlight: Color,

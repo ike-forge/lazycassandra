@@ -253,10 +253,13 @@ fn render_prompt(frame: &mut Frame, hint_bar: Rect, query: &str, view: &ViewMode
 /// Over the block's right border, so it spends no content width — and only
 /// when something is hidden, so its absence says nothing is.
 ///
-/// The track is the border glyph in the border's own style, so it repaints
-/// what it covers and only the thumb is left visible. `Scrollbar`'s default
-/// set is `DOUBLE_VERTICAL`, whose `║` is what makes an unstyled scrollbar
-/// read as a second border beside the first (design §3).
+/// The track is the border glyph, muted, so it reads as part of the border
+/// rather than a second bar beside it; the thumb takes the border's own
+/// (possibly focus-patched) style, so the scroll position — not the
+/// unscrolled rest of the column — carries the stronger colour
+/// (2026-08-11-panel-focus-contrast-design.md). `Scrollbar`'s default set is
+/// `DOUBLE_VERTICAL`, whose `║` is what makes an unstyled scrollbar read as a
+/// second border beside the first (design §3).
 ///
 /// `ScrollbarState` normalises the thumb against `content_length - 1 +
 /// viewport_length`, a model whose `position` is a selection index running over
@@ -345,9 +348,9 @@ fn bar(
             .begin_symbol(None)
             .end_symbol(None)
             .track_symbol(Some(track))
-            .track_style(border)
+            .track_style(theme.style(Token::Muted))
             .thumb_symbol(thumb)
-            .thumb_style(theme.style(Token::Muted)),
+            .thumb_style(border),
         area.inner(margin),
         &mut state,
     );
@@ -430,6 +433,33 @@ mod tests {
             ground,
             Color::Rgb(0x1e, 0x1e, 0x2e),
             "a flavour owns the whole frame, corners included"
+        );
+    }
+
+    #[test]
+    fn focus_wins_over_a_flavours_own_panel_border() {
+        let theme = Theme::of(ThemeChoice::CatppuccinMocha);
+        let mut terminal =
+            Terminal::new(TestBackend::new(40, 12)).expect("TestBackend always initialises");
+        let state = State {
+            focus: Panel::Tables,
+            ..State::default()
+        };
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(&state), theme);
+            })
+            .expect("TestBackend always draws");
+
+        let buffer = terminal.backend().buffer();
+        let corner_fg = buffer[(0, 0)].fg;
+
+        assert_eq!(
+            corner_fg,
+            theme.palette().focus,
+            "focus's colour patches on top of panel_border's, exactly as \
+             border_style()'s doc comment claims"
         );
     }
 
