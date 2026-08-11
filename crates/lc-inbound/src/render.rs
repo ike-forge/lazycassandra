@@ -3,7 +3,7 @@
 use lc_domain::ViewModel;
 use lc_domain::state::{Geometry, Panel, Span as DdlSpan};
 use lc_domain::style::Token;
-use lc_domain::view::OverlayView;
+use lc_domain::view::{OverlayView, PanelView};
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
@@ -63,12 +63,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     for (index, panel) in view.panels.iter().enumerate() {
         let area = rects.get(panel.panel);
 
-        let (before, shortcut, after) = panel.title.split();
-        let title = Line::from(vec![
-            Span::raw(before),
-            Span::styled(shortcut, theme.style(Token::Shortcut)),
-            Span::raw(after),
-        ]);
+        let is_focused_panel = panel.panel == view.focus;
+        let title = panel_title(panel, is_focused_panel, theme);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -88,7 +84,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             }
         }
 
-        let border = if panel.panel == view.focus {
+        let border = if is_focused_panel {
             theme.border_style().patch(theme.style(Token::Focused))
         } else {
             theme.border_style()
@@ -208,6 +204,27 @@ fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
             ..rect
         },
     )
+}
+
+/// The shortcut span keeps its own `Token::Shortcut` style regardless of
+/// focus; the plain text around it takes `Token::Focused`'s colour when its
+/// panel is focused, matching the border.
+fn panel_title(panel: &PanelView, is_focused_panel: bool, theme: Theme) -> Line<'_> {
+    let (before, shortcut, after) = panel.title.split();
+    if is_focused_panel {
+        let focus_style = theme.style(Token::Focused);
+        Line::from(vec![
+            Span::styled(before, focus_style),
+            Span::styled(shortcut, theme.style(Token::Shortcut)),
+            Span::styled(after, focus_style),
+        ])
+    } else {
+        Line::from(vec![
+            Span::raw(before),
+            Span::styled(shortcut, theme.style(Token::Shortcut)),
+            Span::raw(after),
+        ])
+    }
 }
 
 /// Both titles and the two corners plus a space either side of each.
@@ -581,6 +598,38 @@ mod tests {
         assert!(!bold(16, 0), "Contents is not");
         assert!(!bold(0, 7), "Ddl is not");
         assert!(!bold(16, 8), "Queries is not");
+    }
+
+    #[test]
+    fn only_the_focused_panel_wears_the_focus_colour() {
+        let buffer = draw(40, 12);
+        let focus_fg = |x, y| buffer.cell((x, y)).expect("corner is in bounds").fg;
+        let focus = Theme::default().palette().focus;
+
+        // Top-left corner of each panel; Tables is focused by default.
+        assert_eq!(focus_fg(0, 0), focus, "Tables' border is focus-coloured");
+        assert_ne!(focus_fg(16, 0), focus, "Contents' is not");
+        assert_ne!(focus_fg(0, 7), focus, "Ddl's is not");
+        assert_ne!(focus_fg(16, 8), focus, "Queries' is not");
+    }
+
+    #[test]
+    fn the_focused_panels_plain_title_text_wears_the_focus_colour() {
+        // Row 0 is "╭Tables────────╮╭Table contents────────╮": Tables'
+        // shortcut 'T' sits at x=1 (underlined, its own style), so x=2 is
+        // the first cell of its plain "ables" — and Contents is not focused,
+        // so x=18, inside its plain "able " before the 'c' shortcut at
+        // x=23, must stay uncoloured.
+        let buffer = draw(40, 12);
+        let fg = |x, y| buffer.cell((x, y)).expect("cell is in bounds").fg;
+        let focus = Theme::default().palette().focus;
+
+        assert_eq!(
+            fg(2, 0),
+            focus,
+            "Tables' plain title text is focus-coloured"
+        );
+        assert_ne!(fg(18, 0), focus, "Contents' plain title text is not");
     }
 
     #[test]
