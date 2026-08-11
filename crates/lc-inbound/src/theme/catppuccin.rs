@@ -222,7 +222,10 @@ mod tests {
             assert!(palette.base.is_some(), "{name} has no field");
             assert!(palette.surface.is_some(), "{name} has no overlay ground");
             assert!(palette.text.is_some(), "{name} has no body text");
-            assert!(palette.panel_border.is_some(), "{name} has no panel borders");
+            assert!(
+                palette.panel_border.is_some(),
+                "{name} has no panel borders"
+            );
             assert_eq!(
                 palette.highlight_text, None,
                 "{name} knows its own base, so the cursor row keeps its colours"
