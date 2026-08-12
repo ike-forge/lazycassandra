@@ -232,9 +232,15 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
         Panel::Tables => marking("Tables".to_owned()),
         Panel::Ddl => {
             let tab = state.ddl.tab();
-            let labels: Vec<(&'static str, bool)> = DdlTab::ALL
+            let labels: Vec<(&'static str, &'static str, bool)> = DdlTab::ALL
                 .iter()
-                .map(|candidate| (candidate.label(), *candidate == tab))
+                .map(|candidate| {
+                    (
+                        candidate.label(),
+                        candidate.short_label(),
+                        *candidate == tab,
+                    )
+                })
                 .collect();
 
             PanelTitle::tabbed(&labels, panel.shortcut())

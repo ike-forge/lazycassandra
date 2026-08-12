@@ -43,6 +43,19 @@ impl DdlTab {
             Self::Columns => "Table columns",
         }
     }
+
+    /// The label a border too narrow for the full strip falls back to.
+    ///
+    /// It drops the noun the panel's own name already supplies, which is what
+    /// lets both tabs stay on a sidebar that cannot hold both full names
+    /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4).
+    #[must_use]
+    pub const fn short_label(self) -> &'static str {
+        match self {
+            Self::Ddl => "Table DDL",
+            Self::Columns => "Columns",
+        }
+    }
 }
 
 /// The Table DDL panel's own state.

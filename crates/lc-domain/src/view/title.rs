@@ -25,6 +25,9 @@ pub struct PanelTitle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tab {
     text: String,
+    /// The name to fall back to on a border that cannot hold every full one.
+    /// Equal to `text` for a tab with nothing to drop.
+    short: String,
     mark: Option<Range<usize>>,
     /// Whether this is the tab whose body the panel is drawing. Always true
     /// for a panel with one tab.
@@ -39,22 +42,27 @@ impl PanelTitle {
     /// exist.
     pub(crate) fn marking(text: String, shortcut: char) -> Self {
         Self {
-            tabs: vec![Tab::new(text, Some(shortcut), true)],
+            tabs: vec![Tab::new(text.clone(), text, Some(shortcut), true)],
         }
     }
 
-    /// A strip of labelled tabs, each flagged with whether it is the one drawn.
+    /// A strip of tabs, each named twice — in full and in the short form a
+    /// narrow border falls back to — and flagged with whether it is the one
+    /// drawn.
     ///
     /// Only the first tab is offered the mark: the shortcut names the panel,
     /// and underlining it once per tab would claim a binding per tab where
-    /// there is one for the panel (design §4).
-    pub(crate) fn tabbed(labels: &[(&'static str, bool)], shortcut: char) -> Self {
+    /// there is one for the panel (design §4). That is also why the first
+    /// tab's short form keeps its full name — the mark has to survive the
+    /// fallback.
+    pub(crate) fn tabbed(labels: &[(&'static str, &'static str, bool)], shortcut: char) -> Self {
         let tabs = labels
             .iter()
             .enumerate()
-            .map(|(index, (label, active))| {
+            .map(|(index, (label, short, active))| {
                 Tab::new(
                     (*label).to_owned(),
+                    (*short).to_owned(),
                     (index == 0).then_some(shortcut),
                     *active,
                 )
@@ -83,19 +91,30 @@ impl PanelTitle {
 }
 
 impl Tab {
-    fn new(text: String, shortcut: Option<char>, active: bool) -> Self {
+    fn new(text: String, short: String, shortcut: Option<char>, active: bool) -> Self {
         let mark = shortcut.and_then(|shortcut| {
             text.char_indices()
                 .find(|(_, character)| character.eq_ignore_ascii_case(&shortcut))
                 .map(|(index, character)| index..index + character.len_utf8())
         });
 
-        Self { text, mark, active }
+        Self {
+            text,
+            short,
+            mark,
+            active,
+        }
     }
 
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The name to draw where the full strip does not fit.
+    #[must_use]
+    pub fn short(&self) -> &str {
+        &self.short
     }
 
     /// The tab in three pieces: what precedes the shortcut, the shortcut, and
@@ -111,6 +130,18 @@ impl Tab {
             &self.text[mark.start..mark.end],
             &self.text[mark.end..],
         )
+    }
+
+    /// The short name in the same three pieces. A tab whose short form is not
+    /// its full one is drawn unmarked: the mark is a range into `text`, and a
+    /// shortened name is not the string it was measured against.
+    #[must_use]
+    pub fn split_short(&self) -> (&str, &str, &str) {
+        if self.short == self.text {
+            return self.split();
+        }
+
+        (&self.short, "", "")
     }
 }
 
@@ -171,7 +202,13 @@ mod tests {
 
     #[test]
     fn a_strip_reads_as_its_tabs_joined() {
-        let title = PanelTitle::tabbed(&[("Table DDL", true), ("Table columns", false)], 'a');
+        let title = PanelTitle::tabbed(
+            &[
+                ("Table DDL", "Table DDL", true),
+                ("Table columns", "Columns", false),
+            ],
+            'a',
+        );
 
         assert_eq!(title.text(), "Table DDL - Table columns");
         assert_eq!(
@@ -189,10 +226,34 @@ mod tests {
     }
 
     #[test]
+    fn a_shortened_tab_gives_up_its_mark_and_a_tab_with_nothing_to_drop_keeps_it() {
+        let title = PanelTitle::tabbed(
+            &[
+                ("Table DDL", "Table DDL", true),
+                ("Table columns", "Columns", false),
+            ],
+            'a',
+        );
+
+        assert_eq!(
+            title.tabs()[0].split_short(),
+            ("T", "a", "ble DDL"),
+            "the tab holding the mark is the one whose short form is its full one"
+        );
+        assert_eq!(title.tabs()[1].split_short(), ("Columns", "", ""));
+    }
+
+    #[test]
     fn only_the_first_tab_carries_the_shortcut() {
         // 'a' occurs in both labels; marking it twice would claim two bindings
         // where there is one.
-        let title = PanelTitle::tabbed(&[("Table DDL", false), ("Table columns", true)], 'a');
+        let title = PanelTitle::tabbed(
+            &[
+                ("Table DDL", "Table DDL", false),
+                ("Table columns", "Columns", true),
+            ],
+            'a',
+        );
 
         assert_eq!(title.tabs()[0].split(), ("T", "a", "ble DDL"));
         assert_eq!(title.tabs()[1].split(), ("Table columns", "", ""));

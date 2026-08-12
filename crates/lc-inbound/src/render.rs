@@ -64,8 +64,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         let area = rects.get(panel.panel);
 
         let is_focused_panel = panel.panel == view.focus;
-        let tabs = drawn_tabs(&panel.title, area.width);
-        let title = panel_title(&tabs, is_focused_panel, theme);
+        let (tabs, form) = drawn_tabs(&panel.title, area.width);
+        let title = panel_title(&tabs, form, is_focused_panel, theme);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -78,7 +78,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         // still says so.
         if let Some(term) = &panel.filter {
             let marker = format!("/{term}");
-            if marker_fits(area.width, &strip(&tabs), &marker) {
+            if marker_fits(area.width, &strip(&tabs, form), &marker) {
                 block = block.title(
                     Line::from(Span::styled(
                         format!("{TITLE_PAD}{marker}{TITLE_PAD}"),
@@ -223,7 +223,12 @@ const TITLE_PAD: &str = " ";
 /// focus; the plain text around it takes `Token::Focused`'s colour when its
 /// panel is focused, matching the border. An inactive tab is muted whether or
 /// not its panel has focus: it names something the panel is not showing.
-fn panel_title<'a>(tabs: &[&'a Tab], is_focused_panel: bool, theme: Theme) -> Line<'a> {
+fn panel_title<'a>(
+    tabs: &[&'a Tab],
+    form: Strip,
+    is_focused_panel: bool,
+    theme: Theme,
+) -> Line<'a> {
     let shortcut = theme.style(Token::Shortcut);
     let separator = theme.style(Token::Muted);
     let active = if is_focused_panel {
@@ -240,7 +245,10 @@ fn panel_title<'a>(tabs: &[&'a Tab], is_focused_panel: bool, theme: Theme) -> Li
         }
 
         let style = if tab.active { active } else { separator };
-        let (before, mark, after) = tab.split();
+        let (before, mark, after) = match form {
+            Strip::Short => tab.split_short(),
+            Strip::Full | Strip::Active => tab.split(),
+        };
 
         spans.push(Span::styled(before, style));
         // The active tab's mark spends no colour of its own, so it inherits
@@ -255,28 +263,49 @@ fn panel_title<'a>(tabs: &[&'a Tab], is_focused_panel: bool, theme: Theme) -> Li
     Line::from(spans)
 }
 
-/// The tabs a `width`-column border can hold: all of them, or the one being
-/// drawn.
-///
-/// A strip too wide for its panel would be clipped mid-label, which says the
-/// panel has a tab named `Table col` — so the panel gives up the tabs it is not
-/// showing before it gives up a whole name
-/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4).
-fn drawn_tabs(title: &PanelTitle, width: u16) -> Vec<&Tab> {
-    let all: Vec<&Tab> = title.tabs().iter().collect();
-    let padding = 2 * TITLE_PAD.chars().count() + 2;
+/// How much of a panel's title strip its border turned out to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Strip {
+    /// Every tab, under its full name.
+    Full,
+    /// Every tab, under the short names.
+    Short,
+    /// The tab being drawn, alone and whole.
+    Active,
+}
 
-    if strip(&all).chars().count() + padding <= usize::from(width) {
-        return all;
+/// The tabs a `width`-column border can hold, and the names to draw them
+/// under.
+///
+/// Three rungs, each giving up less than clipping would: a clipped strip says
+/// the panel has a tab named `Table col`, which is a name no key reaches
+/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4). Every tab stays
+/// visible for as long as it can, because a tab nobody can see is one nobody
+/// presses `a` for.
+fn drawn_tabs(title: &PanelTitle, width: u16) -> (Vec<&Tab>, Strip) {
+    let all: Vec<&Tab> = title.tabs().iter().collect();
+    let holds =
+        |text: &str| text.chars().count() + 2 * TITLE_PAD.chars().count() + 2 <= usize::from(width);
+
+    for form in [Strip::Full, Strip::Short] {
+        if holds(&strip(&all, form)) {
+            return (all, form);
+        }
     }
 
-    all.into_iter().filter(|tab| tab.active).collect()
+    (
+        all.into_iter().filter(|tab| tab.active).collect(),
+        Strip::Active,
+    )
 }
 
 /// What `tabs` reads as on the border, separators included.
-fn strip(tabs: &[&Tab]) -> String {
+fn strip(tabs: &[&Tab], form: Strip) -> String {
     tabs.iter()
-        .map(|tab| tab.text())
+        .map(|tab| match form {
+            Strip::Short => tab.short(),
+            Strip::Full | Strip::Active => tab.text(),
+        })
         .collect::<Vec<_>>()
         .join(lc_domain::view::TAB_SEPARATOR)
 }
@@ -1852,10 +1881,21 @@ mod tests {
     }
 
     #[test]
-    fn a_border_too_narrow_for_the_strip_keeps_the_tab_it_is_drawing_whole() {
-        // At 100 columns the sidebar is 25: the strip needs 29, one name
-        // fits. A clipped strip would name a tab that does not exist.
+    fn a_border_too_narrow_for_the_full_strip_shortens_the_names_before_dropping_a_tab() {
+        // At 100 columns the sidebar is 25: the full strip needs 29 and the
+        // short one 23, so both tabs stay named and the focus mark stays with
+        // the tab that carries it.
         let buffer = draw_state(100, 41, &listing(orders()));
+        let border = row(&buffer, top_border(&buffer, "Table DDL").1);
+
+        assert!(border.contains("Table DDL - Columns"), "got {border:?}");
+    }
+
+    #[test]
+    fn a_border_too_narrow_for_either_strip_keeps_the_tab_it_is_drawing_whole() {
+        // At 40 columns the sidebar is on its 16-column floor, which holds
+        // neither strip. A clipped one would name a tab that does not exist.
+        let buffer = draw_state(40, 12, &listing(orders()));
         let border = row(&buffer, top_border(&buffer, "Table columns").1);
 
         assert!(border.contains("Table columns"), "got {border:?}");
