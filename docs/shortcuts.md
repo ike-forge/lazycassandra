@@ -31,7 +31,8 @@ panel that takes text (§2).
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
 | `t`¹ | Focus **T**ables. |
-| `a`¹ | Focus T**a**ble DDL. |
+| `a`¹ | Focus T**a**ble DDL, on its DDL tab. |
+| `b`¹ | Focus Table DDL, on its Table columns tab. |
 | `c`¹ | Focus Table **c**ontents. |
 | `u`¹ | Focus Q**u**eries. |
 
@@ -45,9 +46,20 @@ principle 1). Two of them are not leading letters: the panel names are fixed by
 See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design.md).
 
 A focus letter moves focus and does nothing else, however often it is pressed.
-Table DDL's second tab briefly rode on the repeat and no longer does: one key
-means one action, and the tab strip is waiting on a binding of its own rather
-than on a second meaning for `a` (§4).
+Table DDL's second tab briefly rode on a repeat of `a` and no longer does: one
+key means one action, so each of the panel's tabs has a key of its own. `a` is
+the DDL tab's as well as the panel's — the tab it opens on is the one the
+panel's own letter reaches — and `b` is the Table columns tab's. Both name a
+place rather than a motion: they arrive at the same view whichever tab was up,
+so neither has to be pressed twice and neither can leave you somewhere you did
+not ask for. `b` is not a mnemonic; it is the free letter nearest `a`, and
+`c` was already Table **c**ontents (§3).
+
+Arriving at the tab already drawn costs nothing: `a` from another panel is how
+focus comes back to the DDL tab, and it leaves the cursor on the row you were
+reading. Changing tab does move the cursor and the viewport to the top — the
+tabs describe different rows, so a row index carried across addresses nothing
+the user chose.
 
 ### The search prompt
 
@@ -197,10 +209,11 @@ table into Contents under a filter; only the fold/unfold path is swallowed.
 
 ### Table DDL panel
 
-Nothing of its own. Motion, search and `Esc` reach it the way they reach any
-other panel, and the two bindings it once had are gone: `a` focuses the panel
-and no longer walks its tabs (§1), and `ctrl-e`/`ctrl-y`, which moved the
-viewport a line without the cursor, are retired with them.
+Its tabs, and nothing else. `a` and `b` are global keys (§1) rather than
+bindings of this panel — they are how you reach it from anywhere, so a panel
+that does not yet have focus has to answer them. Motion, search and `Esc` reach
+it the way they reach any other panel. `ctrl-e`/`ctrl-y`, which moved the
+viewport a line without the cursor, are gone.
 
 Table DDL is still the one panel whose cursor and viewport count in different
 units and can therefore disagree
@@ -209,7 +222,7 @@ the viewport alone is the wheel (§7), which is a look somewhere else rather
 than a way to reach a row; the next `j` or `k` brings the viewport back to the
 cursor. `ctrl-e`/`ctrl-y` went because a viewport the cursor keeps yanking back
 is not a way to read a panel from its heading down; what replaces them is a
-slice of its own, along with the Table columns tab it will have to reach (§4).
+slice of its own (§4).
 
 `ctrl-e` now means one thing rather than two: it opens the external editor
 from Queries and is inert everywhere else (§1's Queries subsection). Losing
@@ -458,10 +471,10 @@ means once a panel can carry state of its own (panel search design §6).
 
 ## 3. The key budget
 
-Taken, lowercase: `a` `c` `h` `j` `k` `l` `q` `t` `u`, plus `?` and `/`. Taken,
-uppercase: none — no shifted letter is bound (§2).
+Taken, lowercase: `a` `b` `c` `h` `j` `k` `l` `q` `t` `u`, plus `?` and `/`.
+Taken, uppercase: none — no shifted letter is bound (§2).
 
-Free, lowercase: `b` `d` `e` `f` `g` `i` `m` `n` `o` `p` `r` `s` `v` `w` `x`
+Free, lowercase: `d` `e` `f` `g` `i` `m` `n` `o` `p` `r` `s` `v` `w` `x`
 `y` `z`, every digit, every uppercase letter, and `Space`.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
@@ -496,8 +509,7 @@ which is a spec-level change.
 | `1`–`4` focus | Superseded by `t`/`a`/`c`/`u`, which the panel can show in its own title; a digit cannot. |
 | `A` `C` `T` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. `T` opened the theme picker until the picker moved to `ctrl-t`, and is free again. |
 | `Space` | Was `Enter`'s synonym on a tree row. One key, one action (§2). |
-| A Table DDL tab key | The panel's second tab rode on a repeat of `a` and now has no key at all. It gets a direct binding of its own, the way every panel has one — a slice, not a second meaning for a focus letter. |
-| `ctrl-e` / `ctrl-y` | Moved the Table DDL viewport a line without its cursor. Retired with the tab key above: reading a panel from its heading down needs a design, not two chords. |
+| `ctrl-e` / `ctrl-y` | Moved the Table DDL viewport a line without its cursor. Reading a panel from its heading down needs a design, not two chords. |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
 | Horizontal wheel | Dropped at the edge, and this slice did not pick it up. A notch moves the row viewport; columns are reached with the keys §1 names. |
@@ -571,6 +583,9 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` |
 | A focus letter is text in a panel that takes text | `a_shortcut_is_text_in_a_panel_that_takes_text` |
 | Focus letters have no side effects | `a_shortcut_moves_focus_and_does_nothing_else` |
+| Each Table DDL tab has a key, and it is the one named here | `each_tab_answers_to_the_key_the_shortcuts_doc_names`, `a_tab_key_leads_back_to_the_tab_that_claims_it` (`ddl.rs`) |
+| A tab key reaches its tab from anywhere, and `a` comes back | `b_reaches_the_table_columns_tab_from_wherever_focus_was`, `a_returns_the_panel_to_its_ddl_tab`, `b_is_text_in_a_panel_that_takes_text` |
+| A tab change restarts the cursor; arriving at the tab drawn does not | `showing_a_tab_draws_it`, `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone`, `a_tab_change_leaves_the_filter_where_it_was` (`ddl.rs`) |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
 | The marked cell, and only it, is underlined | `each_panel_underlines_the_key_that_focuses_it`, `nothing_but_the_shortcut_is_underlined` (`inbound/render.rs`), `a_shortcut_is_underlined_without_spending_a_colour` (`inbound/theme/mod.rs`) |
 | A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |

@@ -26,14 +26,22 @@ impl DdlTab {
     /// The tabs in the order the title strip draws them.
     pub const ALL: [Self; 2] = [Self::Ddl, Self::Columns];
 
-    /// The next tab, wrapping — what pressing the panel's own shortcut does
-    /// once the panel already has focus.
+    /// The key that reaches this tab, from any panel that does not take text.
+    ///
+    /// A tab is a place, so it gets a key of its own rather than a second
+    /// meaning for the panel's — which is why `Ddl` answers to the panel's own
+    /// letter and `Columns` to one of its own (docs/shortcuts.md §4).
     #[must_use]
-    pub const fn next(self) -> Self {
+    pub const fn shortcut(self) -> char {
         match self {
-            Self::Ddl => Self::Columns,
-            Self::Columns => Self::Ddl,
+            Self::Ddl => 'a',
+            Self::Columns => 'b',
         }
+    }
+
+    #[must_use]
+    pub fn from_shortcut(key: char) -> Option<Self> {
+        Self::ALL.into_iter().find(|tab| tab.shortcut() == key)
     }
 
     #[must_use]
@@ -84,14 +92,20 @@ impl DdlPanel {
         self.tab
     }
 
-    /// Moves to the next tab, putting the cursor and the viewport back at the
-    /// top.
+    /// Draws `tab`, putting the cursor and the viewport back at the top when
+    /// that is a change.
     ///
     /// The two tabs describe different rows, so a cursor carried across would
     /// land on a row the user never chose — and on a shorter tab, past the end
-    /// until the next `Msg::Measured` clamped it.
-    pub const fn cycle(&mut self) {
-        self.tab = self.tab.next();
+    /// until the next `Msg::Measured` clamped it. Arriving at the tab already
+    /// drawn is not a change: `a` is how focus comes back to the panel, and it
+    /// may not cost the user the row they were reading.
+    pub fn show(&mut self, tab: DdlTab) {
+        if self.tab == tab {
+            return;
+        }
+
+        self.tab = tab;
         self.cursor.to_start();
         self.scroll.to_start();
     }
@@ -119,17 +133,30 @@ mod tests {
     }
 
     #[test]
-    fn cycling_walks_every_tab_and_comes_back() {
-        let mut panel = DdlPanel::default();
-        let walked: Vec<DdlTab> = DdlTab::ALL
-            .iter()
-            .map(|_| {
-                panel.cycle();
-                panel.tab()
-            })
-            .collect();
+    fn each_tab_answers_to_the_key_the_shortcuts_doc_names() {
+        assert_eq!(
+            DdlTab::ALL.map(DdlTab::shortcut),
+            ['a', 'b'],
+            "the keys are a promise to the user's fingers, not an implementation detail"
+        );
+    }
 
-        assert_eq!(walked, [DdlTab::Columns, DdlTab::Ddl]);
+    #[test]
+    fn a_tab_key_leads_back_to_the_tab_that_claims_it() {
+        for tab in DdlTab::ALL {
+            assert_eq!(DdlTab::from_shortcut(tab.shortcut()), Some(tab));
+        }
+
+        assert_eq!(DdlTab::from_shortcut('z'), None);
+    }
+
+    #[test]
+    fn showing_a_tab_draws_it() {
+        let mut panel = DdlPanel::default();
+
+        panel.show(DdlTab::Columns);
+
+        assert_eq!(panel.tab(), DdlTab::Columns);
     }
 
     #[test]
@@ -138,10 +165,24 @@ mod tests {
         panel.cursor.go_to(4, 8);
         panel.scroll.down(40, 10);
 
-        panel.cycle();
+        panel.show(DdlTab::Columns);
 
         assert_eq!(panel.cursor.index(), 0);
         assert_eq!(panel.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone() {
+        // The key that reaches a tab is pressed to arrive, not to start over:
+        // from Table DDL's own tab, `a` is how focus returns to the panel.
+        let mut panel = DdlPanel::default();
+        panel.cursor.go_to(4, 8);
+        panel.scroll.down(40, 10);
+
+        panel.show(DdlTab::Ddl);
+
+        assert_eq!(panel.cursor.index(), 4);
+        assert_eq!(panel.scroll.offset(), 1);
     }
 
     #[test]
@@ -151,7 +192,7 @@ mod tests {
         let mut panel = DdlPanel::default();
         panel.set_filter(Filter::new("id"));
 
-        panel.cycle();
+        panel.show(DdlTab::Columns);
 
         assert_eq!(panel.filter().map(Filter::as_str), Some("id"));
     }
