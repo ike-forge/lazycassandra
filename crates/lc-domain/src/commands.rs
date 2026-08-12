@@ -141,6 +141,10 @@ const QUERIES: &[Binding] = &[
         action: "run the buffer",
     },
     Binding {
+        keys: &[KeyPress::ctrl(Key::Char('e'))],
+        action: "open in $EDITOR",
+    },
+    Binding {
         keys: &[KeyPress::new(Key::Enter)],
         action: "split the line",
     },
@@ -345,8 +349,11 @@ mod tests {
     use super::*;
 
     /// The widest row `MIN_W` in the renderer is derived from
-    /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §5): a `ctrl-e/ctrl-y`
-    /// gutter, two columns of gap, and the longest action.
+    /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §5): a
+    /// thirteen-column key gutter, two columns of gap, and the longest action.
+    /// No row fills the gutter today — `pgdn/ctrl-d` is the widest — and the
+    /// renderer's `MIN_W` is derived from the constant rather than from the
+    /// catalogue, so the two stay pinned to each other.
     const WIDEST_KEYS: usize = 13;
     const WIDEST_ACTION: usize = 20;
 
@@ -379,6 +386,17 @@ mod tests {
                 action: "run the buffer",
             }),
             "the palette claims to be complete, and ctrl-r is the one binding no key types"
+        );
+    }
+
+    #[test]
+    fn the_catalogue_lists_the_external_editor() {
+        assert!(
+            rows().contains(&CommandRow::Command {
+                keys: "ctrl-e".to_owned(),
+                action: "open in $EDITOR",
+            }),
+            "the palette claims to be complete"
         );
     }
 

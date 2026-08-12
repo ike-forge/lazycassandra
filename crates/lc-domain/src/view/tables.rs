@@ -11,22 +11,34 @@ use super::{PanelBody, failure, waiting};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeRow {
     pub label: String,
-    /// 0 for a keyspace, 1 for a table.
-    pub depth: u8,
-    pub marker: Marker,
+    /// What the row names, and where it sits under its keyspace. Not derivable
+    /// from [`TreeRow::token`]: a system keyspace and its tables are both
+    /// [`Token::Muted`].
+    pub kind: RowKind,
     /// [`Token::Muted`] for the cluster's own keyspaces and their tables.
     /// A user keyspace and a user table are told apart, which is the
     /// distinction the panel exists for.
     pub token: Token,
 }
 
-/// Whether a row has children, and whether they are showing.
+/// What a tree row names.
+///
+/// A table carries whether it is the last one drawn under its keyspace, which
+/// is what decides the limb the renderer draws it on. Last-ness is over the
+/// rows the panel actually shows, so a filter that hides the tail of a
+/// keyspace moves the elbow up rather than leaving it on a row nobody sees
+/// (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Marker {
-    Folded,
-    Unfolded,
-    /// Nothing to unfold: a table, or a keyspace with no tables.
-    Leaf,
+pub enum RowKind {
+    Keyspace,
+    Table { last: bool },
+}
+
+impl RowKind {
+    #[must_use]
+    pub const fn is_table(self) -> bool {
+        matches!(self, Self::Table { .. })
+    }
 }
 
 pub(super) fn body(state: &State) -> PanelBody {
@@ -43,7 +55,17 @@ pub(super) fn body(state: &State) -> PanelBody {
 }
 
 fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
-    let rows: Vec<TreeRow> = tables.rows(schema).iter().map(tree_row).collect();
+    let nodes = tables.rows(schema);
+    let rows: Vec<TreeRow> = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            tree_row(
+                node,
+                matches!(nodes.get(index + 1), Some(Node::Table { .. })),
+            )
+        })
+        .collect();
 
     if rows.is_empty() {
         return match tables.filter() {
@@ -62,33 +84,27 @@ fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
     }
 }
 
-fn tree_row(node: &Node<'_>) -> TreeRow {
-    let (keyspace, label, depth, marker) = match node {
-        Node::Keyspace { keyspace, unfolded } => {
-            let marker = if keyspace.tables.is_empty() {
-                Marker::Leaf
-            } else if *unfolded {
-                Marker::Unfolded
-            } else {
-                Marker::Folded
-            };
-            (*keyspace, keyspace.name.clone(), 0, marker)
-        }
-        Node::Table { keyspace, table } => (*keyspace, table.name.clone(), 1, Marker::Leaf),
+/// `followed` says whether the next row drawn is another table of the same
+/// keyspace — the only thing a table row needs in order to know it is the last
+/// of its own, because a keyspace's tables are contiguous and a keyspace row
+/// ends the run.
+fn tree_row(node: &Node<'_>, followed: bool) -> TreeRow {
+    let (keyspace, label, kind) = match node {
+        Node::Keyspace { keyspace, .. } => (*keyspace, keyspace.name.clone(), RowKind::Keyspace),
+        Node::Table { keyspace, table } => (
+            *keyspace,
+            table.name.clone(),
+            RowKind::Table { last: !followed },
+        ),
     };
 
-    let token = match keyspace.kind() {
-        KeyspaceKind::System => Token::Muted,
-        KeyspaceKind::User if depth == 0 => Token::Keyspace,
-        KeyspaceKind::User => Token::Table,
+    let token = match (keyspace.kind(), kind) {
+        (KeyspaceKind::System, _) => Token::Muted,
+        (KeyspaceKind::User, RowKind::Keyspace) => Token::Keyspace,
+        (KeyspaceKind::User, RowKind::Table { .. }) => Token::Table,
     };
 
-    TreeRow {
-        label,
-        depth,
-        marker,
-        token,
-    }
+    TreeRow { label, kind, token }
 }
 
 #[cfg(test)]
@@ -183,9 +199,9 @@ mod tests {
         };
 
         assert_eq!(
-            rows[0].marker,
-            Marker::Leaf,
-            "an unfoldable-looking row that unfolds to nothing is worse than none"
+            rows[0].kind,
+            RowKind::Keyspace,
+            "a keyspace with nothing under it is still a keyspace"
         );
     }
 
@@ -197,8 +213,7 @@ mod tests {
             panic!("a loaded schema lists its keyspaces");
         };
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].marker, Marker::Folded);
-        assert_eq!(rows[0].depth, 0);
+        assert_eq!(rows[0].kind, RowKind::Keyspace);
 
         let schema = state.schema().cloned().expect("loaded");
         state.tables.open(&schema);
@@ -208,12 +223,12 @@ mod tests {
         };
         assert_eq!(
             rows.iter()
-                .map(|row| (row.depth, row.marker, row.label.as_str()))
+                .map(|row| (row.kind, row.label.as_str()))
                 .collect::<Vec<_>>(),
             [
-                (0, Marker::Unfolded, "shop"),
-                (1, Marker::Leaf, "orders"),
-                (1, Marker::Leaf, "users"),
+                (RowKind::Keyspace, "shop"),
+                (RowKind::Table { last: false }, "orders"),
+                (RowKind::Table { last: true }, "users"),
             ]
         );
     }
@@ -298,8 +313,14 @@ mod tests {
             panic!("a loaded schema draws a tree");
         };
 
-        let keyspace = rows.iter().find(|row| row.depth == 0).expect("a keyspace");
-        let table = rows.iter().find(|row| row.depth == 1).expect("a table");
+        let keyspace = rows
+            .iter()
+            .find(|row| row.kind == RowKind::Keyspace)
+            .expect("a keyspace");
+        let table = rows
+            .iter()
+            .find(|row| row.kind.is_table())
+            .expect("a table");
 
         assert_eq!(keyspace.token, Token::Keyspace);
         assert_eq!(table.token, Token::Table);

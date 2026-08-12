@@ -211,6 +211,11 @@ cursor. `ctrl-e`/`ctrl-y` went because a viewport the cursor keeps yanking back
 is not a way to read a panel from its heading down; what replaces them is a
 slice of its own, along with the Table columns tab it will have to reach (§4).
 
+`ctrl-e` now means one thing rather than two: it opens the external editor
+from Queries and is inert everywhere else (§1's Queries subsection). Losing
+the Table DDL half is what "one key, one action" costs and buys here — a chord
+whose meaning depended on focus was the last of its kind (§2).
+
 ### Queries panel
 
 The panel takes text, so while it has focus every printable key is a
@@ -219,6 +224,7 @@ character and not a binding. What it does not claim keeps its global meaning.
 | Key | Action |
 |---|---|
 | `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. A buffer that is empty or all whitespace runs nothing, and the bar greys the hint out while that is so — §2. |
+| `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
 | any printable key | Insert it. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
@@ -229,7 +235,9 @@ character and not a binding. What it does not claim keeps its global meaning.
 
 `Tab` and `Shift-Tab` still move focus. Nothing else global survives inside
 the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
-it is the ctrl layer's Queries member and does nothing outside this panel.
+it is the ctrl layer's Queries member and does nothing outside this panel,
+and neither does `ctrl-e`, which opens the buffer in the user's editor
+([external editor design](specs/2026-08-12-external-editor-design.md) §1).
 See [queries editor design](specs/2026-08-09-queries-editor-design.md).
 
 ---
@@ -297,17 +305,19 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has four members. `ctrl-r` runs the Queries
-buffer: the panel takes text, so every printable key there is a character and
-the action the panel exists for has no unmodified key available
-([query execution design](specs/2026-08-10-query-execution-design.md) §1).
+for whatever is focused. The layer has five members. `ctrl-r` runs the Queries
+buffer, and `ctrl-e` opens that buffer in an external editor: the panel takes
+text, so every printable key there is a character and neither action has an
+unmodified key available
+([query execution design](specs/2026-08-10-query-execution-design.md) §1,
+[external editor design](specs/2026-08-12-external-editor-design.md) §1).
 `ctrl-t` opens the theme picker, for the reason §1's picker subsection gives.
 `ctrl-d` and `ctrl-u` are the exception the rule can afford, and are described
 under §1's motion table: they delegate to the paging arm rather than carry a
 meaning of their own, so the layer still holds nothing that shadows a plain
-key. `ctrl-r` and `ctrl-t` gate on their own panel and their own overlay;
+key. The first three gate on their own panel and their own overlay;
 `ctrl-d`/`ctrl-u` are dispatched above the guard `ctrl_key` applies to the
-other two, since an overlay pages exactly as it does under `PageDown`.
+others, since an overlay pages exactly as it does under `PageDown`.
 
 **Vim and arrows are synonyms, both ways.** `j`/`↓`, `k`/`↑`, `l`/`→`, `h`/`←`.
 Neither set is the real one. Anyone who reaches for arrows should never hit a
@@ -458,10 +468,11 @@ Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
 editor binds, inside Queries.
 
-Ctrl taken: `ctrl-r` in Queries, `ctrl-t` everywhere, `ctrl-d`/`ctrl-u`
-everywhere `PageDown`/`PageUp` do anything. The rest of the layer is free —
-including `r`, `t`, `d` and `u` themselves as plain keys, where they mean what
-§1 says. Alt is not a layer and nothing may claim from it.
+Ctrl taken: `ctrl-r` and `ctrl-e` in Queries, `ctrl-t` everywhere, and
+`ctrl-d`/`ctrl-u` everywhere `PageDown`/`PageUp` do anything. The rest of
+the layer is free — including `r`, `e`, `t`, `d` and `u` themselves as plain
+keys, where they mean what §1 says. Alt is not a layer and nothing may claim
+from it.
 
 Named keys the domain understands but nothing binds: `Insert` `F1`–`F12`.
 Anything crossterm reports outside that vocabulary is dropped at the edge and
@@ -659,6 +670,14 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A greyed hint is drawn distinctly and keeps its width | `an_inert_hint_is_greyed_rather_than_dropped` (`inbound/hints.rs`) |
 | The bar's sweep asks only what it claims | `every_hint_the_bar_shows_does_something` |
 | The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
+| `ctrl-e` hands the Queries buffer to an editor | `ctrl_e_hands_the_queries_buffer_to_an_editor` |
+| `ctrl-e` is inert outside Queries | `ctrl_e_is_inert_outside_queries` |
+| An open palette swallows it too | `ctrl_e_under_the_palette_does_nothing` |
+| A closed editor replaces the buffer and moves the cursor to its end | `a_closed_editor_replaces_the_buffer` |
+| A failed editor keeps the buffer and raises a message | `a_failed_editor_says_so_and_keeps_the_buffer` |
+| The palette lists it | `the_catalogue_lists_the_external_editor` (`commands.rs`) |
+| The bar names it after `ctrl-r run` | `the_queries_bar_names_the_editor_binding_after_run` (`view/hints.rs`) |
+| No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an

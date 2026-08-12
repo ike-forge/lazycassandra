@@ -19,23 +19,20 @@
 use lc_domain::grid::{COLUMN_SPACING, available, fitting};
 use lc_domain::state::Span;
 use lc_domain::style::Token;
-use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
+use lc_domain::view::{GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::Style;
-use ratatui::text::{Line, Text};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span as TextSpan, Text};
 use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
 use crate::theme::Theme;
 
-const FOLDED: &str = "▸ ";
-const UNFOLDED: &str = "▾ ";
-/// A row with nothing to unfold still spends the marker's width, so names stay
-/// aligned down the panel.
-const LEAF: &str = "  ";
-
-const INDENT: &str = "  ";
+/// The limb a table hangs off its keyspace by, and the one that closes the
+/// run.
+const LIMB: &str = "├─ ";
+const LAST_LIMB: &str = "└─ ";
 
 const ELLIPSIS: char = '…';
 
@@ -380,14 +377,38 @@ fn truncated(text: &str, width: u16) -> String {
 }
 
 fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
-    let indent = INDENT.repeat(usize::from(row.depth));
-    let marker = match row.marker {
-        Marker::Folded => FOLDED,
-        Marker::Unfolded => UNFOLDED,
-        Marker::Leaf => LEAF,
+    // A keyspace opens at the margin and its tables hang off it, so the shape
+    // of the tree is the indentation and no separate fold marker is spent on
+    // saying what the drawn rows already say
+    // (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §9).
+    let limb = match row.kind {
+        RowKind::Keyspace => "",
+        RowKind::Table { last: false } => LIMB,
+        RowKind::Table { last: true } => LAST_LIMB,
     };
 
-    ListItem::new(format!("{indent}{marker}{}", row.label)).style(theme.style(row.token))
+    // The icon carries BOLD and the rest of the row does not: a terminal that
+    // has no bold cut of the Nerd Font draws the same glyph and loses nothing,
+    // and one that has draws the only part of the row that has to be read as a
+    // shape rather than as text
+    // (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §7).
+    // The icon takes the colour of what it names rather than the row's, so a
+    // system keyspace's glyph keeps its colour while its name stays muted:
+    // the mute says "this is not yours to browse", which is a claim about the
+    // name, not about what kind of thing the row is (design §8).
+    let icon = TextSpan::styled(
+        crate::icons::tree_row(row.kind),
+        theme
+            .style(crate::icons::token(row.kind))
+            .add_modifier(Modifier::BOLD),
+    );
+
+    ListItem::new(Line::from(vec![
+        TextSpan::raw(limb),
+        icon,
+        TextSpan::raw(row.label.clone()),
+    ]))
+    .style(theme.style(row.token))
 }
 
 /// One buffer line is one screen row: long lines scroll sideways rather than

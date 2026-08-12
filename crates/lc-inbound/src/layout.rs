@@ -10,8 +10,9 @@ const SIDEBAR_PERCENT: u16 = 25;
 const DDL_PERCENT: u16 = 40;
 const QUERIES_PERCENT: u16 = 10;
 
-/// Two borders and one line of content. Below this a block shows nothing.
-const PANEL_MIN_H: u16 = 3;
+/// Two borders, the blank row every panel opens and closes with, and one line
+/// of content. Below this a block shows nothing.
+const PANEL_MIN_H: u16 = 5;
 const SIDEBAR_MIN_W: u16 = 16;
 /// `split`'s `major_floor` for the root split: how much the main column must
 /// be able to keep before the sidebar is allowed to exist at all.
@@ -155,8 +156,8 @@ mod tests {
         // content.
         let r = rects(80, 24);
 
-        assert_eq!(r.get(Panel::Contents), Rect::new(20, 0, 60, 20));
-        assert_eq!(r.get(Panel::Queries), Rect::new(20, 20, 60, 3));
+        assert_eq!(r.get(Panel::Contents), Rect::new(20, 0, 60, 18));
+        assert_eq!(r.get(Panel::Queries), Rect::new(20, 18, 60, 5));
     }
 
     #[test]
@@ -189,11 +190,11 @@ mod tests {
     }
 
     #[test]
-    fn both_floors_still_fit_at_seven_rows() {
-        let r = rects(80, 7);
+    fn both_floors_still_fit_at_eleven_rows() {
+        let r = rects(80, 11);
 
-        assert_eq!(r.get(Panel::Contents).height, 3);
-        assert_eq!(r.get(Panel::Queries).height, 3);
+        assert_eq!(r.get(Panel::Contents).height, 5);
+        assert_eq!(r.get(Panel::Queries).height, 5);
     }
 
     #[test]
@@ -217,7 +218,7 @@ mod tests {
     fn split_lifts_the_minor_part_to_its_floor() {
         assert_eq!(
             split(24, QUERIES_PERCENT, PANEL_MIN_H, PANEL_MIN_H),
-            (21, 3)
+            (19, 5)
         );
     }
 
@@ -275,7 +276,7 @@ mod tests {
 
     #[test]
     fn the_minimum_grew_by_the_bar_it_now_has_to_hold() {
-        assert_eq!((MIN_W, MIN_H), (40, 7));
+        assert_eq!((MIN_W, MIN_H), (40, 11));
 
         let r = rects(MIN_W, MIN_H);
         for panel in Panel::ALL {

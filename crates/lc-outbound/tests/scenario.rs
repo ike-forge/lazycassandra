@@ -14,7 +14,7 @@ use lc_domain::posture::Posture;
 use lc_domain::state::Panel;
 use lc_domain::style::Token;
 use lc_domain::update::ROW_LIMIT;
-use lc_domain::view::{DetailRow, Details, Marker, OverlayView, PanelBody};
+use lc_domain::view::{DetailRow, Details, OverlayView, PanelBody, RowKind};
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
 
@@ -116,9 +116,9 @@ async fn connecting_and_describing_fills_the_tables_panel() {
         ["shop", "typezoo", "system_schema"]
     );
     assert_eq!(
-        rows[0].marker,
-        Marker::Leaf,
-        "these fixtures have no tables to unfold"
+        rows[0].kind,
+        RowKind::Keyspace,
+        "these fixtures have no tables to hang off a keyspace"
     );
     assert_eq!(*selected, 0);
 }
@@ -176,12 +176,12 @@ async fn pressing_l_unfolds_a_keyspace_and_the_view_model_shows_its_tables() {
     };
     assert_eq!(
         rows.iter()
-            .map(|row| (row.depth, row.marker, row.label.as_str()))
+            .map(|row| (row.kind, row.label.as_str()))
             .collect::<Vec<_>>(),
         [
-            (0, Marker::Unfolded, "shop"),
-            (1, Marker::Leaf, "orders"),
-            (1, Marker::Leaf, "users"),
+            (RowKind::Keyspace, "shop"),
+            (RowKind::Table { last: false }, "orders"),
+            (RowKind::Table { last: true }, "users"),
         ]
     );
     assert_eq!(*selected, 0);
@@ -215,9 +215,8 @@ async fn pressing_h_from_a_table_lands_on_its_parent_keyspace() {
         panic!("a described cluster with tables lists a tree");
     };
     assert_eq!(*selected, 0);
-    assert_eq!(
-        rows[0].marker,
-        Marker::Unfolded,
+    assert!(
+        rows.iter().any(|row| row.kind.is_table()),
         "stepping out must not fold the keyspace"
     );
 }

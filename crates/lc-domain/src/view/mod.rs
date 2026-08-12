@@ -16,7 +16,7 @@ mod title;
 pub use contents::{GridCell, GridColumn};
 pub use details::{ColumnKind, DetailRow, Details, Group, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness};
-pub use tables::{Marker, TreeRow};
+pub use tables::{RowKind, TreeRow};
 pub use title::{PanelTitle, TAB_SEPARATOR, Tab};
 
 pub use crate::editor::Position;

@@ -515,6 +515,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_queries_bar_names_the_editor_binding_after_run() {
+        let mut state = fits();
+        state.focus = Panel::Queries;
+
+        let panel = bar(&state).panel;
+
+        assert_eq!(
+            panel
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .take(2)
+                .collect::<Vec<_>>(),
+            [("ctrl-r", "run"), ("ctrl-e", "edit")],
+            "the panel exists to run queries; editing one is the next thing it does"
+        );
+    }
+
+    #[test]
+    fn no_other_bar_names_the_editor_binding() {
+        for focus in [Panel::Tables, Panel::Ddl, Panel::Contents] {
+            let state = State { focus, ..fits() };
+
+            assert!(
+                bar(&state).panel.iter().all(|hint| hint.action != "edit"),
+                "{focus:?} does not open an editor"
+            );
+        }
+    }
+
     /// The `Queries` bar with `text` in its buffer, `\n` meaning Enter.
     fn queries_bar(text: &str) -> HintBar {
         let mut state = fits();
