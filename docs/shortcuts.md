@@ -39,9 +39,9 @@ panel that takes text (§2).
 ¹ Not reachable from Queries. A panel that takes text claims every printable
 key before this table is consulted, so these type themselves there instead.
 
-The four focus letters are underlined in their panel's title, so the binding is
-learned by looking at the panel rather than by reading this file (vision.md §4,
-principle 1). Two of them are not leading letters: the panel names are fixed by
+The four focus letters are drawn in a colour of their own in their panel's
+title, so the binding is learned by looking at the panel rather than by reading
+this file (vision.md §4, principle 1). Two of them are not leading letters: the panel names are fixed by
 `docs/ui-draft.png`, and no title is renamed to make a key convenient.
 See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design.md).
 
@@ -394,7 +394,7 @@ every panel that does not take text, and is text in the one panel that does.
 The rule's own enforcement test was renamed for this — §5.
 
 **A binding must be visible.** vision.md §4, principle 1: discoverability is
-ambient. The focus letters are underlined in their titles; the hint bar along
+ambient. The focus letters carry their own colour in their titles; the hint bar along
 the bottom row names each focused panel's principal bindings, not its full
 surface — the bar has never claimed to be the complete list
 ([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` is named wherever it
@@ -602,7 +602,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A keyspace is offered no Columns tab, and `c` stores none | `a_keyspace_is_offered_no_columns_tab_and_keeps_describing_itself` (`view/details.rs`), `c_on_a_keyspace_focuses_the_panel_and_draws_no_columns_tab` |
 | A tab change restarts the cursor; arriving at the tab drawn does not | `showing_a_tab_draws_it`, `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone`, `a_tab_change_leaves_the_filter_where_it_was` (`ddl.rs`) |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
-| The marked cell, and only it, is underlined | `each_panel_underlines_the_key_that_focuses_it`, `nothing_but_the_shortcut_is_underlined` (`inbound/render.rs`), `a_shortcut_is_underlined_without_spending_a_colour` (`inbound/theme/mod.rs`) |
+| The marked cell, and only it, wears the shortcut colour | `each_panel_colours_the_key_that_focuses_it`, `nothing_but_the_shortcut_wears_the_shortcut_colour` (`inbound/render.rs`), `a_shortcut_is_a_colour_of_its_own_on_a_focused_title` (`inbound/theme/mod.rs`) |
 | A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |
 | A click focuses what it lands in | `a_click_focuses_the_panel_it_landed_in`, `a_click_on_chrome_focuses_and_does_nothing_else` |
 | A stale row is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped` |

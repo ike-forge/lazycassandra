@@ -51,7 +51,7 @@ impl PanelTitle {
     /// drawn.
     ///
     /// Only the first tab is offered the mark: the shortcut names the panel,
-    /// and underlining it once per tab would claim a binding per tab where
+    /// and marking it once per tab would claim a binding per tab where
     /// there is one for the panel (design §4). That is also why the first
     /// tab's short form keeps its full name — the mark has to survive the
     /// fallback.

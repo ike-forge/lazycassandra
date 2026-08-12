@@ -34,6 +34,9 @@ pub(crate) const DEFAULT: Palette = Palette {
     highlight: Color::Rgb(0x45, 0x48, 0x5a),
     highlight_text: Some(Color::Rgb(0xe8, 0xea, 0xf2)),
     focus: BLUE,
+    // The same amber as `partition`. They never share a surface — one is a
+    // grid column, the other a letter in a panel title.
+    shortcut: AMBER,
     muted: GREY,
     partition: AMBER,
     clustering: TEAL,

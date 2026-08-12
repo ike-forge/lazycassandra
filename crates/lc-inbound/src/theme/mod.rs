@@ -39,6 +39,10 @@ pub(crate) struct Palette {
     pub(crate) highlight_text: Option<Color>,
     /// The focused panel's border and title.
     pub(crate) focus: Color,
+    /// The letter that focuses a panel, inside that panel's title. Read
+    /// against both a focused title (`focus`) and an unfocused one, so it is
+    /// neither of those colours.
+    pub(crate) shortcut: Color,
     pub(crate) muted: Color,
     pub(crate) partition: Color,
     pub(crate) clustering: Color,
@@ -141,7 +145,10 @@ impl Theme {
             // `Style::patch` lets this `fg` overwrite `panel_border`'s.
             Token::Focused => fg(palette.focus).add_modifier(Modifier::BOLD),
             Token::HintKey => Style::new().add_modifier(Modifier::BOLD),
-            Token::Shortcut => Style::new().add_modifier(Modifier::UNDERLINED),
+            // A colour rather than an underline: the mark has to survive
+            // terminals that draw no underline at all, and it reads at a
+            // glance the way btop's and Midnight Commander's do.
+            Token::Shortcut => fg(palette.shortcut).add_modifier(Modifier::BOLD),
             Token::Selected => selected(palette),
             // `fg` and `BOLD` both: where a palette declines
             // `highlight_text`, the colour survives being patched under the
@@ -221,6 +228,7 @@ pub(crate) mod tests {
             highlight: _,
             highlight_text: _,
             focus: _,
+            shortcut,
             muted,
             partition,
             clustering,
@@ -238,6 +246,7 @@ pub(crate) mod tests {
         } = *palette;
 
         vec![
+            ("shortcut", shortcut),
             ("muted", muted),
             ("partition", partition),
             ("clustering", clustering),
@@ -327,11 +336,18 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_shortcut_is_underlined_without_spending_a_colour() {
-        let style = Theme::default().style(Token::Shortcut);
+    fn a_shortcut_is_a_colour_of_its_own_on_a_focused_title() {
+        for choice in ThemeChoice::ALL {
+            let theme = Theme::of(choice);
+            let style = theme.style(Token::Shortcut);
 
-        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
-        assert_eq!(style.fg, None);
+            assert_eq!(style.fg, Some(theme.palette().shortcut));
+            assert_ne!(
+                style.fg,
+                theme.style(Token::Focused).fg,
+                "{choice:?}: the mark would vanish into the title it sits in"
+            );
+        }
     }
 
     #[test]

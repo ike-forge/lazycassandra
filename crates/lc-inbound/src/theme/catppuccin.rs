@@ -43,6 +43,7 @@ impl Flavour {
             highlight: self.surface1,
             highlight_text: None,
             focus: self.blue,
+            shortcut: self.yellow,
             muted: self.overlay1,
             partition: self.yellow,
             clustering: self.teal,
@@ -52,8 +53,9 @@ impl Flavour {
             accent: self.peach,
             match_: self.flamingo,
             success: self.green,
-            // The same yellow as `partition`. They never share a surface —
-            // one is a grid column, the other a status message.
+            // The same yellow as `partition` and `shortcut`. None of the
+            // three share a surface — a grid column, a panel title's letter,
+            // a status message.
             warning: self.yellow,
             danger: self.red,
             keyword: self.mauve,

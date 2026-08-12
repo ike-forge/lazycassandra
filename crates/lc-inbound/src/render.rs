@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn the_focused_panels_plain_title_text_wears_the_focus_colour() {
         // Row 0 is "╭Tables────────╮╭Table contents────────╮": Tables'
-        // shortcut 'T' sits at x=1 (underlined, its own style), so x=2 is
+        // shortcut 'T' sits at x=1 (its own colour), so x=2 is
         // the first cell of its plain "ables" — and Contents is not focused,
         // so x=18, inside its plain "able " before the 'c' shortcut at
         // x=23, must stay uncoloured.
@@ -829,40 +829,34 @@ mod tests {
     }
 
     #[test]
-    fn each_panel_underlines_the_key_that_focuses_it() {
+    fn each_panel_colours_the_key_that_focuses_it() {
         let buffer = draw(40, 12);
-        let underlined = |x, y| {
-            buffer
-                .cell((x, y))
-                .expect("cell is in bounds")
-                .modifier
-                .contains(Modifier::UNDERLINED)
+        let marked = |x, y| {
+            buffer.cell((x, y)).expect("cell is in bounds").fg
+                == Theme::default().palette().shortcut
         };
 
         // "╭── Tables" and "╭── Table contents" on row 0, "╭── DDL" on row 7,
         // "╭── Queries" on row 8 — a corner, the inset and `TITLE_PAD` precede
         // each name.
-        assert!(underlined(5, 0), "Tables underlines its a");
-        assert!(underlined(22, 0), "Table contents underlines its b");
-        assert!(underlined(4, 7), "DDL underlines its D");
-        assert!(underlined(21, 8), "Queries underlines its u");
+        assert!(marked(5, 0), "Tables marks its a");
+        assert!(marked(22, 0), "Table contents marks its b");
+        assert!(marked(4, 7), "DDL marks its D");
+        assert!(marked(21, 8), "Queries marks its u");
     }
 
     #[test]
-    fn nothing_but_the_shortcut_is_underlined() {
+    fn nothing_but_the_shortcut_wears_the_shortcut_colour() {
         let buffer = draw(40, 12);
-        let underlined = |x, y| {
-            buffer
-                .cell((x, y))
-                .expect("cell is in bounds")
-                .modifier
-                .contains(Modifier::UNDERLINED)
+        let marked = |x, y| {
+            buffer.cell((x, y)).expect("cell is in bounds").fg
+                == Theme::default().palette().shortcut
         };
 
         for x in [0, 1, 3, 4, 9] {
-            assert!(!underlined(x, 0), "column {x} of row 0 is not the mark");
+            assert!(!marked(x, 0), "column {x} of row 0 is not the mark");
         }
-        assert!(!underlined(5, 7), "only the first D of DDL is its mark");
+        assert!(!marked(5, 7), "only the first D of DDL is its mark");
     }
 
     #[test]
