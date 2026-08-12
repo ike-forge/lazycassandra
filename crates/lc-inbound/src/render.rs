@@ -9,9 +9,7 @@ use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, BorderType, Padding, Scrollbar, ScrollbarOrientation, ScrollbarState,
-};
+use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::body::Extent;
 use crate::hit::{FrameMap, PanelHit};
@@ -213,7 +211,6 @@ fn panel_block(
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(border)
-        .padding(body_padding(panel.panel))
         .title(panel_title(
             &tabs,
             form,
@@ -237,22 +234,6 @@ fn panel_block(
     }
 
     (block, border)
-}
-
-/// The air a panel's body is drawn inside its border with.
-///
-/// The two left-column panels get a blank column before the right border:
-/// their rows are the only ones that reach it — a tree row's name and a DDL
-/// line both run to whatever width they need — and a glyph pressed against
-/// the frame reads as part of it
-/// (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §10). The
-/// grid and the log pad their own columns, so a second one there would only
-/// cost them width.
-fn body_padding(panel: Panel) -> Padding {
-    match panel {
-        Panel::Tables | Panel::Ddl => Padding::right(1),
-        Panel::Contents | Panel::Queries => Padding::ZERO,
-    }
 }
 
 /// The blank column between a title and the border either side of it.
@@ -1119,7 +1100,7 @@ mod tests {
     fn a_heading_with_no_room_for_its_icon_keeps_the_whole_name() {
         // The Ddl body is 23 columns at this width; the name is 23 too, so
         // the icon would cost the tail of a name this panel never abbreviates.
-        let buffer = draw_state(104, 41, &listing(orders()));
+        let buffer = draw_state(100, 41, &listing(orders()));
 
         assert_eq!(ddl_rows(&buffer)[0], "shop.orders_by_customer");
     }
@@ -1990,10 +1971,7 @@ mod tests {
         state
     }
 
-    /// Inside the Ddl panel's border at 104x41: fourteen rows of 23 columns.
-    ///
-    /// 104 rather than 100 because the panel spends a column of its 26 on the
-    /// right padding `body_padding` gives it.
+    /// Inside the Ddl panel's border at 100x41: fourteen rows of 23 columns.
     fn ddl_rows(buffer: &Buffer) -> Vec<String> {
         (25..39)
             .map(|y| {
@@ -2024,7 +2002,7 @@ mod tests {
             ..orders()
         };
 
-        let buffer = draw_state(104, 41, &listing(table));
+        let buffer = draw_state(100, 41, &listing(table));
 
         assert_eq!(
             ddl_rows(&buffer)[..7],
@@ -2112,7 +2090,7 @@ mod tests {
 
     #[test]
     fn a_selected_tables_shape_is_drawn_above_its_options() {
-        let buffer = draw_state(104, 41, &describing(orders()));
+        let buffer = draw_state(100, 41, &describing(orders()));
 
         assert_eq!(
             ddl_rows(&buffer),
@@ -2142,7 +2120,7 @@ mod tests {
         );
     }
 
-    /// Every row inside the Ddl body (104x41, see [`ddl_rows`]) whose first
+    /// Every row inside the Ddl body (100x41, see [`ddl_rows`]) whose first
     /// content cell carries the background `Token::Selected` gives.
     fn highlighted_rows(buffer: &Buffer) -> Vec<u16> {
         let highlight = Theme::default()
@@ -2174,7 +2152,7 @@ mod tests {
         // columns, so this row is one cursor stop drawn across two lines.
         state.ddl.cursor.go_to(4, lc_domain::view::ddl_rows(&state));
 
-        let buffer = draw_state(104, 41, &state);
+        let buffer = draw_state(100, 41, &state);
 
         assert_eq!(
             highlighted_rows(&buffer),
@@ -2190,7 +2168,7 @@ mod tests {
         state.focus = Panel::Ddl;
         state.ddl.cursor.go_to(3, lc_domain::view::ddl_rows(&state));
 
-        let buffer = draw_state(104, 41, &state);
+        let buffer = draw_state(100, 41, &state);
 
         assert_eq!(
             highlighted_rows(&buffer),
@@ -2205,7 +2183,7 @@ mod tests {
         state.focus = Panel::Ddl;
         state.ddl.cursor.to_start();
 
-        let buffer = draw_state(104, 41, &state);
+        let buffer = draw_state(100, 41, &state);
         let highlighted = highlighted_rows(&buffer);
 
         assert!(
@@ -2313,8 +2291,8 @@ mod tests {
         // sequence moves the assertions below instead of the cursor.
         state.ddl.cursor.go_to(2, rows);
 
-        let span = geometry_of(104, 41, &state).ddl_selection();
-        let buffer = draw_state(104, 41, &state);
+        let span = geometry_of(100, 41, &state).ddl_selection();
+        let buffer = draw_state(100, 41, &state);
 
         // The body's first line is drawn at row 25 (see `ddl_rows`), and the
         // panel is not scrolled, so a span index is a row offset from there.
@@ -2349,7 +2327,7 @@ mod tests {
             .cursor
             .go_to(details.row_count() - 1, details.row_count());
 
-        let buffer = draw_state(104, 40, &state);
+        let buffer = draw_state(100, 40, &state);
         let colour = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
         let theme = Theme::default();
         let partition = theme
@@ -2387,7 +2365,7 @@ mod tests {
         let schema = state.schema().cloned().expect("loaded");
         state.tables.close(&schema);
 
-        let buffer = draw_state(104, 40, &state);
+        let buffer = draw_state(100, 40, &state);
 
         let rows: Vec<String> = ddl_rows(&buffer)[..4]
             .iter()
@@ -2408,7 +2386,7 @@ mod tests {
 
     #[test]
     fn the_ddl_panel_is_empty_until_something_is_selected() {
-        let buffer = draw_state(104, 41, &State::default());
+        let buffer = draw_state(100, 41, &State::default());
 
         assert!(
             ddl_rows(&buffer).iter().all(String::is_empty),
