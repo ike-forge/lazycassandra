@@ -22,8 +22,8 @@ use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
-use ratatui::style::Style;
-use ratatui::text::{Line, Text};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span as TextSpan, Text};
 use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
@@ -387,9 +387,22 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
         Marker::Leaf => LEAF,
     };
 
-    let icon = crate::icons::tree_row(row.kind);
+    // The icon carries BOLD and the rest of the row does not: a terminal that
+    // has no bold cut of the Nerd Font draws the same glyph and loses nothing,
+    // and one that has draws the only part of the row that has to be read as a
+    // shape rather than as text
+    // (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §7).
+    let icon = TextSpan::styled(
+        crate::icons::tree_row(row.kind),
+        Style::new().add_modifier(Modifier::BOLD),
+    );
 
-    ListItem::new(format!("{indent}{marker}{icon}{}", row.label)).style(theme.style(row.token))
+    ListItem::new(Line::from(vec![
+        TextSpan::raw(format!("{indent}{marker}")),
+        icon,
+        TextSpan::raw(row.label.clone()),
+    ]))
+    .style(theme.style(row.token))
 }
 
 /// One buffer line is one screen row: long lines scroll sideways rather than
