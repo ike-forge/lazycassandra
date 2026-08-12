@@ -387,7 +387,9 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
         Marker::Leaf => LEAF,
     };
 
-    ListItem::new(format!("{indent}{marker}{}", row.label)).style(theme.style(row.token))
+    let icon = crate::icons::tree_row(row.kind);
+
+    ListItem::new(format!("{indent}{marker}{icon}{}", row.label)).style(theme.style(row.token))
 }
 
 /// One buffer line is one screen row: long lines scroll sideways rather than

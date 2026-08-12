@@ -11,6 +11,10 @@ use super::{PanelBody, failure, waiting};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeRow {
     pub label: String,
+    /// What the row names. Separate from [`TreeRow::depth`], which is
+    /// indentation and nothing else, and from [`TreeRow::token`], which cannot
+    /// be asked: a system keyspace and its tables are both [`Token::Muted`].
+    pub kind: RowKind,
     /// 0 for a keyspace, 1 for a table.
     pub depth: u8,
     pub marker: Marker,
@@ -18,6 +22,13 @@ pub struct TreeRow {
     /// A user keyspace and a user table are told apart, which is the
     /// distinction the panel exists for.
     pub token: Token,
+}
+
+/// What a tree row names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowKind {
+    Keyspace,
+    Table,
 }
 
 /// Whether a row has children, and whether they are showing.
@@ -63,7 +74,7 @@ fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
 }
 
 fn tree_row(node: &Node<'_>) -> TreeRow {
-    let (keyspace, label, depth, marker) = match node {
+    let (keyspace, label, kind, marker) = match node {
         Node::Keyspace { keyspace, unfolded } => {
             let marker = if keyspace.tables.is_empty() {
                 Marker::Leaf
@@ -72,20 +83,26 @@ fn tree_row(node: &Node<'_>) -> TreeRow {
             } else {
                 Marker::Folded
             };
-            (*keyspace, keyspace.name.clone(), 0, marker)
+            (*keyspace, keyspace.name.clone(), RowKind::Keyspace, marker)
         }
-        Node::Table { keyspace, table } => (*keyspace, table.name.clone(), 1, Marker::Leaf),
+        Node::Table { keyspace, table } => {
+            (*keyspace, table.name.clone(), RowKind::Table, Marker::Leaf)
+        }
     };
 
-    let token = match keyspace.kind() {
-        KeyspaceKind::System => Token::Muted,
-        KeyspaceKind::User if depth == 0 => Token::Keyspace,
-        KeyspaceKind::User => Token::Table,
+    let token = match (keyspace.kind(), kind) {
+        (KeyspaceKind::System, _) => Token::Muted,
+        (KeyspaceKind::User, RowKind::Keyspace) => Token::Keyspace,
+        (KeyspaceKind::User, RowKind::Table) => Token::Table,
     };
 
     TreeRow {
         label,
-        depth,
+        kind,
+        depth: match kind {
+            RowKind::Keyspace => 0,
+            RowKind::Table => 1,
+        },
         marker,
         token,
     }

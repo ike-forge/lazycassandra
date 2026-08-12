@@ -11,6 +11,7 @@ mod body;
 mod details;
 mod hints;
 pub mod hit;
+mod icons;
 pub mod input;
 pub mod layout;
 mod loader;

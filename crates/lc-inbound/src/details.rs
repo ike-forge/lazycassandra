@@ -90,7 +90,14 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
     // the one the Tables tree already spends on that kind of name, so the panel
     // and the tree agree about what a table looks like.
     let heading = Line::styled(
-        truncate(&details.heading, width),
+        truncate(
+            &prefixed(
+                crate::icons::heading(details.heading_token),
+                &details.heading,
+                width,
+            ),
+            width,
+        ),
         theme
             .style(details.heading_token)
             .add_modifier(Modifier::BOLD),
@@ -112,7 +119,11 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
             .token
             .map_or_else(Style::new, |token| theme.style(token));
 
-        lines.push(Line::styled(truncate(&section.heading, width), style));
+        let icon = crate::icons::section(section.token);
+        lines.push(Line::styled(
+            truncate(&prefixed(icon, &section.heading, width), width),
+            style,
+        ));
 
         for detail in &section.rows {
             let mut drawn = row_lines(detail, width, style, theme);
@@ -135,6 +146,21 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
     }
 
     Laid { lines, selection }
+}
+
+/// `text` behind its icon, or bare where the two together would push the name
+/// past `width`.
+///
+/// The name comes first: an icon says what a heading is, and the heading
+/// already says it in words — so the two columns it spends are given up rather
+/// than paid for out of a name this panel promises never to abbreviate
+/// (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §4).
+fn prefixed(icon: &str, text: &str, width: usize) -> String {
+    if icon.chars().count() + text.chars().count() > width {
+        return text.to_owned();
+    }
+
+    format!("{icon}{text}")
 }
 
 /// `style` patched onto both the line's own style and each of its spans'.

@@ -1037,9 +1037,75 @@ mod tests {
     fn keyspaces_are_listed_inside_the_tables_panel() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo", "system"], 0));
 
-        assert_eq!(row(&buffer, 1), "│  shop        ││Press Enter on a table│");
-        assert_eq!(row(&buffer, 2), "│  typezoo     ││                      │");
-        assert_eq!(row(&buffer, 3), "│  system      ││                      │");
+        assert_eq!(
+            row(&buffer, 1),
+            "│  \u{f0306} shop      ││Press Enter on a table│"
+        );
+        assert_eq!(
+            row(&buffer, 2),
+            "│  \u{f0306} typezoo   ││                      │"
+        );
+        assert_eq!(
+            row(&buffer, 3),
+            "│  \u{f0306} system    ││                      │"
+        );
+    }
+
+    #[test]
+    fn a_tree_row_wears_the_icon_of_what_it_names() {
+        let mut state = State {
+            connection: ConnectionState::Connected(Connection {
+                id: ConnId::next(),
+                posture: Posture::ReadOnly,
+                schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
+            }),
+            ..State::default()
+        };
+        let schema = state.schema().cloned().expect("loaded");
+        state.tables.open(&schema);
+
+        let buffer = draw_state(40, 12, &state);
+
+        assert!(
+            row(&buffer, 1).contains(&format!("{}shop", crate::icons::KEYSPACE)),
+            "the keyspace icon precedes the keyspace"
+        );
+        assert!(
+            row(&buffer, 2).contains(&format!("{}orders", crate::icons::TABLE)),
+            "the table icon precedes the table"
+        );
+    }
+
+    #[test]
+    fn a_ddl_heading_wears_the_table_icon_and_a_key_section_the_key_one() {
+        // Wide enough that the heading has room for its icon; the panel that
+        // has not is the subject of its own test.
+        let buffer = draw_state(160, 41, &describing(orders()));
+        let rows = ddl_rows(&buffer);
+
+        assert!(
+            rows[0].trim_start().starts_with(crate::icons::TABLE),
+            "the heading names a table, got {:?}",
+            rows[0]
+        );
+        assert!(
+            rows.iter()
+                .any(|line| *line == format!("{}Partition Key", crate::icons::KEY)),
+            "got {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|line| line.starts_with("Options")),
+            "a section that is not a key wears no icon, got {rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_heading_with_no_room_for_its_icon_keeps_the_whole_name() {
+        // The Ddl panel is 23 columns at this width; the name is 23 too, so
+        // the icon would cost the tail of a name this panel never abbreviates.
+        let buffer = draw_state(100, 41, &listing(orders()));
+
+        assert_eq!(ddl_rows(&buffer)[0], "shop.orders_by_customer");
     }
 
     #[test]
@@ -1060,12 +1126,21 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
 
-        assert_eq!(row(&buffer, 1), "│▾ shop        ││Press Enter on a table│");
-        assert_eq!(row(&buffer, 2), "│    orders    ││                      │");
-        assert_eq!(row(&buffer, 3), "│    users     ││                      │");
+        assert_eq!(
+            row(&buffer, 1),
+            "│▾ \u{f0306} shop      ││Press Enter on a table│"
+        );
+        assert_eq!(
+            row(&buffer, 2),
+            "│    \u{f0ce} orders  ││                      │"
+        );
+        assert_eq!(
+            row(&buffer, 3),
+            "│    \u{f0ce} users   ││                      │"
+        );
         assert_eq!(
             row(&buffer, 4),
-            "│  typezoo     ││                      │",
+            "│  \u{f0306} typezoo   ││                      │",
             "a keyspace with no tables draws no marker"
         );
     }
@@ -1291,7 +1366,7 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▸ shop        ││  id email                                │",
+            "│▸ \u{f0306} shop      ││  id email                                │",
             "the header leaves the gutter blank"
         );
         assert_eq!(
@@ -1337,7 +1412,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▸ shop              ││  a                        b                                      │",
+            "│▸ \u{f0306} shop            ││  a                        b                                      │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
@@ -1537,7 +1612,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▸ shop        ││No rows                                   │"
+            "│▸ \u{f0306} shop      ││No rows                                   │"
         );
     }
 
@@ -2002,9 +2077,9 @@ mod tests {
             [
                 "shop.orders_by_customer",
                 "",
-                "Partition Key",
+                "\u{f43d} Partition Key",
                 "  customer_id      uuid",
-                "Clustering Key",
+                "\u{f43d} Clustering Key",
                 "  order_date ↓     date",
                 "  order_id ↑   timeuuid",
                 // The one blank row, splitting what the table is from what it
@@ -2279,7 +2354,12 @@ mod tests {
 
         assert_eq!(
             rows,
-            ["shop", "", "Replication", "class    SimpleStrategy"],
+            [
+                "\u{f0306} shop",
+                "",
+                "Replication",
+                "class    SimpleStrategy"
+            ],
             "the only section opens the panel, so it takes no blank row of its own"
         );
     }
@@ -2485,7 +2565,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│  ks00        ▐│Press Enter on a table│",
+            "│  \u{f0306} ks00      ▐│Press Enter on a table│",
             "the row is as wide as it is without a bar; the bar replaced the border"
         );
     }
