@@ -76,6 +76,24 @@ impl Editor {
         self.settle();
     }
 
+    /// Replaces the whole buffer, cursor at the end of it.
+    ///
+    /// Both invariants survive by construction: `split` on a `&str` always
+    /// yields at least one piece, so the buffer is never empty, and the cursor
+    /// is put on the last line's end. The end rather than the old offset —
+    /// that offset means nothing against text the external editor may have
+    /// rewritten entirely
+    /// (docs/superpowers/specs/2026-08-12-external-editor-design.md §3).
+    pub fn replace(&mut self, text: &str) {
+        self.lines = text.split('\n').map(str::to_owned).collect();
+        self.cursor = Position {
+            line: self.lines.len() - 1,
+            column: 0,
+        };
+        self.cursor.column = self.line_len();
+        self.settle();
+    }
+
     /// Deletes the character before the cursor. At the start of a line that is
     /// the line break, so the line joins the one above; at the start of the
     /// buffer there is nothing to delete.
@@ -497,5 +515,34 @@ mod tests {
 
         editor.page_up(9);
         assert_eq!(editor.cursor().line, 0);
+    }
+
+    #[test]
+    fn replacing_the_buffer_lands_the_cursor_at_its_end() {
+        let mut editor = typed("SELECT");
+
+        editor.replace("SELECT *\nFROM t");
+
+        assert_eq!(editor.text(), "SELECT *\nFROM t");
+        assert_eq!(editor.cursor(), Position { line: 1, column: 6 });
+    }
+
+    #[test]
+    fn replacing_with_nothing_leaves_the_buffer_as_default() {
+        let mut editor = typed("SELECT *\nFROM t");
+
+        editor.replace("");
+
+        assert_eq!(editor, Editor::default());
+    }
+
+    #[test]
+    fn a_replaced_buffer_takes_edits_at_the_cursor() {
+        let mut editor = Editor::default();
+
+        editor.replace("FROM t");
+        editor.insert('!');
+
+        assert_eq!(editor.text(), "FROM t!");
     }
 }
