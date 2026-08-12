@@ -250,7 +250,7 @@ const TITLE_PAD: &str = " ";
 /// and not a cost, because the names come first — a sidebar on its 16-column
 /// floor spends what it has left over on the inset and no more, rather than
 /// shortening a tab to buy one.
-const TITLE_INSET: usize = 5;
+const TITLE_INSET: usize = 2;
 
 /// The horizontal glyph of the border the panels are drawn with — `ratatui`
 /// puts it under a title, and a title that pads with it puts it back.
@@ -668,13 +668,13 @@ mod tests {
         // rows to Ddl's 4, and Queries sits on its 3-row floor.
         let buffer = draw(40, 12);
 
-        assert_eq!(row(&buffer, 0), "╭───── Tables ─╮╭───── Table contents ─╮");
+        assert_eq!(row(&buffer, 0), "╭── Tables ────╮╭── Table contents ────╮");
         assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
         assert_eq!(row(&buffer, 6), "╰──────────────╯│                      │");
         // The Ddl strip does not fit a 16-column border, so the panel draws
         // the tab it is showing rather than a clipped pair of names.
-        assert_eq!(row(&buffer, 7), "╭─── Table DDL ╮╰──────────────────────╯");
-        assert_eq!(row(&buffer, 8), "│              │╭───── Queries ────────╮");
+        assert_eq!(row(&buffer, 7), "╭── Table DDL ─╮╰──────────────────────╯");
+        assert_eq!(row(&buffer, 8), "│              │╭── Queries ───────────╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
@@ -841,14 +841,13 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        // "╭───── Tables" and "╭───── Table contents" on row 0,
-        // "╭─── Table DDL" on row 7, "╭───── Queries" on row 8 — a corner,
-        // the inset and `TITLE_PAD` precede each name, and the Ddl border has
-        // only three columns spare for its inset.
-        assert!(underlined(7, 0), "Tables underlines its T");
-        assert!(underlined(29, 0), "Table contents underlines its c");
-        assert!(underlined(6, 7), "Table DDL underlines its a");
-        assert!(underlined(24, 8), "Queries underlines its u");
+        // "╭── Tables" and "╭── Table contents" on row 0, "╭── Table DDL" on
+        // row 7, "╭── Queries" on row 8 — a corner, the inset and `TITLE_PAD`
+        // precede each name.
+        assert!(underlined(4, 0), "Tables underlines its T");
+        assert!(underlined(26, 0), "Table contents underlines its c");
+        assert!(underlined(5, 7), "Table DDL underlines its a");
+        assert!(underlined(21, 8), "Queries underlines its u");
     }
 
     #[test]
@@ -862,10 +861,10 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        for x in [0, 1, 5, 6, 8, 12] {
+        for x in [0, 1, 3, 5, 9] {
             assert!(!underlined(x, 0), "column {x} of row 0 is not the mark");
         }
-        assert!(!underlined(5, 7), "the T of Table DDL is not its mark");
+        assert!(!underlined(4, 7), "the T of Table DDL is not its mark");
     }
 
     #[test]
@@ -1288,7 +1287,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 0),
-            "╭───── Tables ─╮╭─── Table contents — shop.orders (2 rows) ╮"
+            "╭── Tables ────╮╭── Table contents — shop.orders (2 rows) ─╮"
         );
         assert_eq!(
             row(&buffer, 1),
@@ -1937,16 +1936,18 @@ mod tests {
     }
 
     #[test]
-    fn a_border_with_no_room_to_spare_keeps_its_name_and_gives_up_the_inset() {
-        // The Ddl panel on the sidebar's 16-column floor: nine columns of
-        // name, four of corner and padding, three left over.
-        let buffer = draw(40, 12);
-        let border = row(&buffer, 7);
+    fn a_border_with_one_column_to_spare_gives_it_to_the_title_and_not_the_marker() {
+        // Tables on the sidebar's 16-column floor wearing `/or`: six columns
+        // of name, three of marker, four of padding and two of corner leave
+        // one. The title takes it, so the border does not read as two
+        // alignments at once.
+        let mut state = browsing(&["shop"], 0);
+        state.apply_filter(Filtered::Tables, Filter::new("or"));
 
-        assert!(
-            border.starts_with("╭─── Table DDL ╮"),
-            "the name comes before the inset, got {border:?}"
-        );
+        let buffer = draw_state(40, 12, &state);
+        let border = row(&buffer, 0);
+
+        assert!(border.starts_with("╭─ Tables  /or ╮"), "got {border:?}");
     }
 
     #[test]
@@ -2998,7 +2999,7 @@ mod tests {
         let border = row(&buffer, top_border(&buffer, "Tables").1);
 
         assert_eq!(
-            border, "╭ Tables  /ord ╮╭───── Table contents ─╮",
+            border, "╭ Tables  /ord ╮╭── Table contents ────╮",
             "the widest term this width can hold, sitting flush with no gap and no overlap"
         );
     }
