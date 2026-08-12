@@ -9,7 +9,9 @@ use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, BorderType, Padding, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 
 use crate::body::Extent;
 use crate::hit::{FrameMap, PanelHit};
@@ -211,6 +213,19 @@ fn panel_block(
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(border)
+        // A row under the title and a column before the right border: content
+        // pressed against a border reads as part of the frame, and the title
+        // needs the row below it to stop being the first row of the body
+        // (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §10).
+        // Left and bottom stay flush: the tree's limbs and the grid's gutter
+        // are the left margin, and the bottom border carries the scrollbar's
+        // end.
+        .padding(Padding {
+            left: 0,
+            right: 1,
+            top: 1,
+            bottom: 0,
+        })
         .title(panel_title(
             &tabs,
             form,
@@ -669,12 +684,12 @@ mod tests {
         let buffer = draw(40, 12);
 
         assert_eq!(row(&buffer, 0), "╭── Tables ────╮╭── Table contents ────╮");
-        assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
-        assert_eq!(row(&buffer, 6), "╰──────────────╯│                      │");
+        assert_eq!(row(&buffer, 1), "│              ││                      │");
+        assert_eq!(row(&buffer, 6), "╰──────────────╯╰──────────────────────╯");
         // The Ddl strip does not fit a 16-column border, so the panel draws
         // the tab it is showing rather than a clipped pair of names.
-        assert_eq!(row(&buffer, 7), "╭── Table DDL ─╮╰──────────────────────╯");
-        assert_eq!(row(&buffer, 8), "│              │╭── Queries ───────────╮");
+        assert_eq!(row(&buffer, 7), "╭── Table DDL ─╮╭── Queries ───────────╮");
+        assert_eq!(row(&buffer, 8), "│              ││                      │");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
@@ -841,13 +856,13 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        // "╭── Tables" and "╭── Table contents" on row 0, "╭── Table DDL" on
-        // row 7, "╭── Queries" on row 8 — a corner, the inset and `TITLE_PAD`
+        // "╭── Tables" and "╭── Table contents" on row 0, "╭── Table DDL"
+        // and "╭── Queries" on row 7 — a corner, the inset and `TITLE_PAD`
         // precede each name.
         assert!(underlined(4, 0), "Tables underlines its T");
         assert!(underlined(26, 0), "Table contents underlines its c");
         assert!(underlined(5, 7), "Table DDL underlines its a");
-        assert!(underlined(21, 8), "Queries underlines its u");
+        assert!(underlined(21, 7), "Queries underlines its u");
     }
 
     #[test]
@@ -869,12 +884,12 @@ mod tests {
 
     #[test]
     fn a_frame_below_the_minimum_draws_the_notice_and_nothing_else() {
-        for (width, height) in [(39, 6), (40, 6), (40, 5), (39, 5)] {
+        for (width, height) in [(39, 8), (40, 8), (40, 7), (39, 7)] {
             let buffer = draw(width, height);
             let text: String = (0..height).map(|y| row(&buffer, y)).collect();
 
             assert!(
-                text.contains("need 40×7"),
+                text.contains("need 40×9"),
                 "{width}x{height} must say what it needs, got {text:?}"
             );
             assert!(
@@ -902,9 +917,9 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        assert_eq!(lines(3), ["Too small", "need 40×7", "have 30×3"]);
-        assert_eq!(lines(2), ["need 40×7", "have 30×2"]);
-        assert_eq!(lines(1), ["need 40×7"]);
+        assert_eq!(lines(3), ["Too small", "need 40×9", "have 30×3"]);
+        assert_eq!(lines(2), ["need 40×9", "have 30×2"]);
+        assert_eq!(lines(1), ["need 40×9"]);
     }
 
     #[test]
@@ -1013,10 +1028,11 @@ mod tests {
             ..State::default()
         };
         state.tables.cursor.go_to(selected, names.len());
-        // Five rows of body at the sizes these tests draw. Set with the cursor
-        // for the reason `select_contents` sets it: half a state is not a
-        // state (list viewport design §6).
-        state.tables.scroll.follow(selected, 5);
+        // Four rows of body at the sizes these tests draw, the fifth spent on
+        // the blank row the panel opens with. Set with the cursor for the
+        // reason `select_contents` sets it: half a state is not a state
+        // (list viewport design §6).
+        state.tables.scroll.follow(selected, 4);
         state
     }
 
@@ -1038,15 +1054,15 @@ mod tests {
         let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo", "system"], 0));
 
         assert_eq!(
-            row(&buffer, 1),
-            "│\u{f084} shop        ││Press Enter on a table│"
-        );
-        assert_eq!(
             row(&buffer, 2),
-            "│\u{f084} typezoo     ││                      │"
+            "│\u{f084} shop        ││Press Enter on a      │"
         );
         assert_eq!(
             row(&buffer, 3),
+            "│\u{f084} typezoo     ││table                 │"
+        );
+        assert_eq!(
+            row(&buffer, 4),
             "│\u{f084} system      ││                      │"
         );
     }
@@ -1067,11 +1083,11 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
 
         assert!(
-            row(&buffer, 1).contains(&format!("{}shop", crate::icons::KEYSPACE)),
+            row(&buffer, 2).contains(&format!("{}shop", crate::icons::KEYSPACE)),
             "the keyspace icon precedes the keyspace"
         );
         assert!(
-            row(&buffer, 2).contains(&format!("{}orders", crate::icons::TABLE)),
+            row(&buffer, 3).contains(&format!("{}orders", crate::icons::TABLE)),
             "the table icon precedes the table"
         );
     }
@@ -1101,11 +1117,15 @@ mod tests {
 
     #[test]
     fn a_heading_with_no_room_for_its_icon_keeps_the_whole_name() {
-        // The Ddl panel is 23 columns at this width; the name is 23 too, so
-        // the icon would cost the tail of a name this panel never abbreviates.
-        let buffer = draw_state(100, 41, &listing(orders()));
+        // The Ddl panel is 23 columns of content at this width — a 26-column
+        // sidebar, less its right padding — and the name is 23 too, so the
+        // icon would cost the tail of a name this panel never abbreviates.
+        let buffer = draw_state(104, 41, &listing(orders()));
 
-        assert_eq!(ddl_rows(&buffer)[0], "shop.orders_by_customer");
+        assert_eq!(
+            block_row(&buffer, "Columns", 0).trim_end(),
+            "shop.orders_by_customer"
+        );
     }
 
     #[test]
@@ -1127,19 +1147,19 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
 
         assert_eq!(
-            row(&buffer, 1),
-            "│\u{f084} shop        ││Press Enter on a table│"
-        );
-        assert_eq!(
             row(&buffer, 2),
-            "│├─ \u{f0ce} orders   ││                      │"
+            "│\u{f084} shop        ││Press Enter on a      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│└─ \u{f0ce} users    ││                      │"
+            "│├─ \u{f0ce} orders   ││table                 │"
         );
         assert_eq!(
             row(&buffer, 4),
+            "│└─ \u{f0ce} users    ││                      │"
+        );
+        assert_eq!(
+            row(&buffer, 5),
             "│\u{f084} typezoo     ││                      │",
             "a keyspace with no tables draws no marker"
         );
@@ -1157,8 +1177,8 @@ mod tests {
             .fg
             .expect("muted spends a colour");
 
-        assert_ne!(fg(1), muted, "shop is the user's");
-        assert_eq!(fg(2), muted, "system is the cluster's");
+        assert_ne!(fg(2), muted, "shop is the user's");
+        assert_eq!(fg(3), muted, "system is the cluster's");
     }
 
     #[test]
@@ -1173,9 +1193,9 @@ mod tests {
             .fg
             .expect("a keyspace spends a colour");
 
-        assert_eq!(icon(2), keyspace, "the icon says what the row is");
+        assert_eq!(icon(3), keyspace, "the icon says what the row is");
         assert_eq!(
-            buffer.cell((3, 2)).expect("inside the panel").fg,
+            buffer.cell((3, 3)).expect("inside the panel").fg,
             muted,
             "the name it precedes stays the cluster's"
         );
@@ -1190,9 +1210,9 @@ mod tests {
             .expect("the cursor row spends a background");
         let selected = |y: u16| buffer.cell((1, y)).expect("inside the panel").bg == highlight;
 
-        assert!(!selected(1));
-        assert!(selected(2), "typezoo is selected");
-        assert!(!selected(3));
+        assert!(!selected(2));
+        assert!(selected(3), "typezoo is selected");
+        assert!(!selected(4));
     }
 
     #[test]
@@ -1204,7 +1224,7 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
 
-        assert_eq!(row(&buffer, 1), "│Connecting…   ││Press Enter on a table│");
+        assert_eq!(row(&buffer, 1), "│              ││                      │");
     }
 
     #[test]
@@ -1215,7 +1235,7 @@ mod tests {
         };
 
         let buffer = draw_state(40, 12, &state);
-        let cell = buffer.cell((1, 1)).expect("inside the panel");
+        let cell = buffer.cell((1, 2)).expect("inside the panel");
         let danger = Theme::default()
             .style(Token::Severity(Severity::Danger))
             .fg
@@ -1316,7 +1336,7 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
 
-        for y in 2..7 {
+        for y in 3..6 {
             assert!(
                 !selected(y),
                 "row 0 is off screen, so nothing drawn is the selection"
@@ -1328,10 +1348,10 @@ mod tests {
         // work rather than a fixture that stopped drawing rows.
         let mut on_screen = showing(page_of(&["id"], &rows));
         on_screen.contents.cursor.go_to(12, 20);
-        on_screen.contents.scroll.follow(12, 5);
+        on_screen.contents.scroll.follow(12, 3);
         let buffer = draw_state(60, 12, &on_screen);
         let highlighted =
-            (2..7).any(|y| buffer.cell((17, y)).expect("inside the panel").bg == highlight);
+            (3..6).any(|y| buffer.cell((17, y)).expect("inside the panel").bg == highlight);
 
         assert!(
             highlighted,
@@ -1389,16 +1409,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││  id email                                │",
+            "│              ││                                          │",
             "the header leaves the gutter blank"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││1 1  ada@example.com                      │"
+            "│\u{f084} shop        ││  id email                                │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││2 2  bob@example.com                      │"
+            "│              ││1 1  ada@example.com                      │"
         );
     }
 
@@ -1414,7 +1434,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 2),
-            "│              ││1 8f14e45f-ceea-467a-9c2b…                │",
+            "│\u{f084} shop        ││  id                                      │",
             "a silently clipped value looks like a shorter value"
         );
     }
@@ -1435,12 +1455,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop              ││  a                        b                                      │",
+            "│                    ││                                                                  │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│                    ││1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…               │",
+            "│\u{f084} shop              ││  a                        b                                      │",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -1450,7 +1470,7 @@ mod tests {
         let state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
 
         let buffer = draw_state(60, 12, &state);
-        let header = |x: u16| buffer.cell((x, 1)).expect("inside the panel");
+        let header = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
         let partition = Theme::default()
             .style(Token::PartitionKey)
             .fg
@@ -1532,7 +1552,7 @@ mod tests {
         state.contents.cursor.go_to(0, 2);
 
         let buffer = draw_state(60, 12, &state);
-        let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
+        let cell = |x: u16| buffer.cell((x, 4)).expect("inside the panel");
         let muted = Theme::default()
             .style(Token::Muted)
             .fg
@@ -1561,7 +1581,7 @@ mod tests {
         let buffer = draw_state(70, 12, &state);
         // Shifted right by the row-number gutter and its spacing: one digit
         // for a one-row page, plus one column (table display design §4).
-        let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
+        let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
         let null_cell = cell(23);
         let word_cell = cell(29);
 
@@ -1599,23 +1619,23 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
 
-        assert!(!selected(1), "the header is never the selection");
-        assert!(!selected(2), "nor is the first row");
-        assert!(selected(3), "the second row is");
+        assert!(!selected(2), "the header is never the selection");
+        assert!(!selected(3), "nor is the first row");
+        assert!(selected(4), "the second row is");
     }
 
     #[test]
     fn the_grid_scrolls_to_keep_the_selection_on_screen() {
-        // The Contents panel holds a header and five rows at this size, so a
+        // The Contents panel holds a header and three rows at this size, so a
         // twenty-row page forces the scroll a plain `Table` would not perform.
         let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
         let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
         let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
         let mut state = showing(page_of(&["id"], &rows));
-        select_contents(&mut state, 19, 5);
+        select_contents(&mut state, 19, 3);
 
         let buffer = draw_state(60, 12, &state);
-        let drawn: Vec<String> = (2..8).map(|y| row(&buffer, y)).collect();
+        let drawn: Vec<String> = (3..6).map(|y| row(&buffer, y)).collect();
 
         assert!(
             drawn.iter().any(|line| line.contains("row19")),
@@ -1635,7 +1655,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││No rows                                   │"
+            "│              ││                                          │"
         );
     }
 
@@ -1695,11 +1715,12 @@ mod tests {
                 .modifier
                 .contains(Modifier::UNDERLINED)
         };
-        // The top border, then the grid's header row, then the first row —
-        // the one the cursor is on, at its first column. That column is two
-        // wide and sits past the one-digit gutter and its spacing.
+        // The top border, the blank row the panel opens with, the grid's
+        // header row, then the first row — the one the cursor is on, at its
+        // first column. That column is two wide and sits past the one-digit
+        // gutter and its spacing.
         let first = area.x + 3;
-        let selected = area.y + 2;
+        let selected = area.y + 3;
 
         assert!(underlined(first, selected), "the cell the cursor is on");
         assert!(underlined(first + 1, selected), "for its whole width");
@@ -1725,7 +1746,7 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
+        let cell = |x: u16| buffer.cell((x, area.y + 3)).expect("inside the panel");
         let first = area.x + 3;
         let highlight = Theme::default()
             .style(Token::Selected)
@@ -1747,7 +1768,7 @@ mod tests {
     fn the_gutter_is_muted_and_the_values_beside_it_are_not() {
         let buffer = frame_showing_grid(4, 40, 3);
         let area = block_area(&buffer, "Table contents");
-        let fg = |x: u16| buffer.cell((x, area.y + 3)).expect("inside the panel").fg;
+        let fg = |x: u16| buffer.cell((x, area.y + 4)).expect("inside the panel").fg;
         let muted = Theme::default()
             .style(Token::Muted)
             .fg
@@ -1768,14 +1789,15 @@ mod tests {
     /// A twelve-column page whose column cursor visited `path` in order, with
     /// the horizontal viewport following it the way `update` does.
     ///
-    /// Twelve two-wide columns in the 22-column body a 40x12 frame gives the
-    /// Contents panel, less the one-digit gutter and its spacing: seven fit, so
-    /// anything past the seventh has to be reached by scrolling.
+    /// Twelve two-wide columns in the 21-column body a 40x12 frame gives the
+    /// Contents panel — its 22 columns inside the border, less the one the
+    /// padding keeps — and less the one-digit gutter and its spacing: six fit,
+    /// so anything past the sixth has to be reached by scrolling.
     fn showing_column_path(path: &[usize]) -> State {
         let page = sized_page(12, 3);
         let widths = lc_domain::grid::widths(&page);
         let mut state = showing(page);
-        let available = lc_domain::grid::available(22, 1);
+        let available = lc_domain::grid::available(21, 1);
 
         for column in path {
             state.contents.column.go_to(*column, widths.len());
@@ -1810,32 +1832,32 @@ mod tests {
         let first = block_row(&buffer, "Table contents", 1);
         let underlined = |x: u16| {
             buffer
-                .cell((x, area.y + 2))
+                .cell((x, area.y + 3))
                 .expect("inside the panel")
                 .modifier
                 .contains(Modifier::UNDERLINED)
         };
 
         assert!(
-            heading.trim_start().starts_with("c2"),
+            heading.trim_start().starts_with("c3"),
             "the drawn window starts at the offset, got {heading:?}"
         );
         assert!(
             first.starts_with('1'),
             "the gutter is pinned and never scrolls off, got {first:?}"
         );
-        // c2 is drawn first, so the cursor's c5 is the fourth column drawn.
+        // c3 is drawn first, so the cursor's c5 is the third column drawn.
         assert!(
-            underlined(drawn_column(area, 3)) && underlined(drawn_column(area, 3) + 1),
+            underlined(drawn_column(area, 2)) && underlined(drawn_column(area, 2) + 1),
             "the cell cursor is on c5, counted from the drawn window rather \
              than from the page: {heading:?}"
         );
         assert!(
-            !underlined(drawn_column(area, 4)),
+            !underlined(drawn_column(area, 3)),
             "and not on the column beside it"
         );
         assert!(
-            !underlined(drawn_column(area, 6)),
+            !underlined(drawn_column(area, 5)),
             "nor on the last column drawn, where an index blind to the offset \
              would land"
         );
@@ -1976,9 +1998,9 @@ mod tests {
 
     /// Inside the Ddl panel's border at 100x41: fourteen rows of 23 columns.
     fn ddl_rows(buffer: &Buffer) -> Vec<String> {
-        (25..39)
+        (26..39)
             .map(|y| {
-                (1..24)
+                (1..23)
                     .filter_map(|x| buffer.cell((x, y)))
                     .map(Cell::symbol)
                     .collect::<String>()
@@ -2010,13 +2032,13 @@ mod tests {
         assert_eq!(
             ddl_rows(&buffer)[..7],
             [
-                "shop.orders_by_customer",
+                "shop.orders_by_custom…",
                 "",
                 "4 columns",
-                "PK customer_id     uuid",
-                "CK order_date      date",
-                "CK order_id    timeuuid",
-                "S  region          text",
+                "PK customer_id    uuid",
+                "CK order_date     date",
+                "CK order_id   timeuuid",
+                "S  region         text",
             ]
         );
     }
@@ -2098,27 +2120,25 @@ mod tests {
         assert_eq!(
             ddl_rows(&buffer),
             [
-                "shop.orders_by_customer",
+                // The name is 23 columns and the body 22, so the heading is
+                // the one thing here the panel does elide.
+                "shop.orders_by_custom…",
                 "",
                 "\u{f030b} Partition Key",
-                "  customer_id      uuid",
+                "  customer_id     uuid",
                 "\u{f030b} Clustering Key",
-                "  order_date ↓     date",
-                "  order_id ↑   timeuuid",
+                "  order_date ↓    date",
+                "  order_id ↑  timeuuid",
                 // The one blank row, splitting what the table is from what it
                 // is configured to do.
                 "",
                 "Options",
-                "gc_grace_seconds 864000",
-                // `bloom_filter_fp_chance` and its value need 26 of the
-                // panel's 23, so it keeps the wrapped shape.
+                // `gc_grace_seconds` and its value need 24 of the panel's 22,
+                // so this one wraps now too.
+                "gc_grace_seconds",
+                "  864000",
                 "bloom_filter_fp_chance",
                 "  0.01",
-                // `comment` is bulky, so it sorts last even though it fits
-                // on one line here.
-                "comment  Order history.",
-                // The row the shorter body leaves unfilled.
-                "",
             ]
         );
     }
@@ -2131,7 +2151,7 @@ mod tests {
             .bg
             .expect("the cursor row spends a background");
 
-        (25..39)
+        (26..39)
             .filter(|&y| buffer.cell((1, y)).is_some_and(|cell| cell.bg == highlight))
             .collect()
     }
@@ -2139,7 +2159,7 @@ mod tests {
     /// The text a Ddl body row drew, at the same coordinates [`ddl_rows`]
     /// reads.
     fn row_text(buffer: &Buffer, row: u16) -> String {
-        (1..24)
+        (1..23)
             .filter_map(|x| buffer.cell((x, row)))
             .map(Cell::symbol)
             .collect::<String>()
@@ -2151,7 +2171,7 @@ mod tests {
     fn every_line_of_a_selected_property_is_highlighted() {
         let mut state = describing(orders());
         state.focus = Panel::Ddl;
-        // `bloom_filter_fp_chance` and its value need 26 of the panel's 23
+        // `bloom_filter_fp_chance` and its value need 26 of the panel's 22
         // columns, so this row is one cursor stop drawn across two lines.
         state.ddl.cursor.go_to(4, lc_domain::view::ddl_rows(&state));
 
@@ -2159,7 +2179,7 @@ mod tests {
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [35, 36],
+            [37, 38],
             "a wrapped value is one cursor stop, so exactly its own two lines \
              are the selection — not fewer, and not bleeding into comment below"
         );
@@ -2175,7 +2195,7 @@ mod tests {
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [34],
+            [35, 36],
             "gc_grace_seconds fits one line, so exactly it is the selection"
         );
     }
@@ -2247,13 +2267,13 @@ mod tests {
         state.ddl.cursor.go_to(last, details.row_count());
 
         // `comment` is the last row and wraps to three lines at this width;
-        // scrolling thirteen lines down cuts its first two into view and
+        // scrolling fourteen lines down cuts its first two into view and
         // leaves the third below the fold.
-        let total = crate::details::lay_out(&details, last, 14, Theme::default())
+        let total = crate::details::lay_out(&details, last, 13, Theme::default())
             .lines
             .len();
-        for _ in 0..13 {
-            state.ddl.scroll.down(total, 5);
+        for _ in 0..14 {
+            state.ddl.scroll.down(total, 4);
         }
 
         let highlight = Theme::default()
@@ -2263,7 +2283,6 @@ mod tests {
         let buffer = draw_state(40, 20, &state);
         let selected = |y: u16| buffer.cell((1, y)).expect("inside the panel").bg == highlight;
 
-        assert!(!selected(13), "this line belongs to the row above comment");
         assert!(!selected(14), "this line belongs to the row above comment");
         assert!(!selected(15), "this line belongs to the row above comment");
         assert!(
@@ -2297,14 +2316,14 @@ mod tests {
         let span = geometry_of(100, 41, &state).ddl_selection();
         let buffer = draw_state(100, 41, &state);
 
-        // The body's first line is drawn at row 25 (see `ddl_rows`), and the
+        // The body's first line is drawn at row 26 (see `ddl_rows`), and the
         // panel is not scrolled, so a span index is a row offset from there.
-        let row = 25 + u16::try_from(span.first).expect("a short body");
+        let row = 26 + u16::try_from(span.first).expect("a short body");
 
         assert_eq!(span.lines, 1, "comment fits one line at this width");
         assert_eq!(
             row_text(&buffer, row),
-            "comment  Order history.",
+            "comment Order history.",
             "the last surviving row, not the third row of the unfiltered list"
         );
         assert_eq!(
@@ -2342,18 +2361,18 @@ mod tests {
             .fg
             .expect("the clustering key spends a colour");
 
-        assert_eq!(colour(27), partition, "Partition Key");
-        assert_eq!(colour(28), partition, "its column");
-        assert_eq!(colour(29), clustering, "Clustering Key");
-        assert_eq!(colour(30), clustering, "its column");
-        // 32 is the blank row the settings group opens with.
+        assert_eq!(colour(28), partition, "Partition Key");
+        assert_eq!(colour(29), partition, "its column");
+        assert_eq!(colour(30), clustering, "Clustering Key");
+        assert_eq!(colour(31), clustering, "its column");
+        // 33 is the blank row the settings group opens with.
         assert_eq!(
-            colour(33),
+            colour(34),
             Color::Reset,
             "an option is not part of the key structure and must not read as one"
         );
         assert_eq!(
-            colour(34),
+            colour(35),
             Theme::default()
                 .style(Token::PropertyName)
                 .fg
@@ -2377,12 +2396,7 @@ mod tests {
 
         assert_eq!(
             rows,
-            [
-                "\u{f084} shop",
-                "",
-                "Replication",
-                "class    SimpleStrategy"
-            ],
+            ["\u{f084} shop", "", "Replication", "class   SimpleStrategy"],
             "the only section opens the panel, so it takes no blank row of its own"
         );
     }
@@ -2422,14 +2436,15 @@ mod tests {
     #[test]
     fn the_frame_reports_what_each_panel_can_show() {
         // At 40x20: a 16-column sidebar, Tables 12 rows tall and Ddl 7, so
-        // ten and five rows of content inside their borders.
+        // nine and four rows of content inside their borders and the blank
+        // row each opens with.
         let geometry = geometry_of(40, 20, &describing(orders()));
 
-        assert_eq!(geometry.height(Panel::Tables), 10);
-        assert_eq!(geometry.height(Panel::Ddl), 5);
+        assert_eq!(geometry.height(Panel::Tables), 9);
+        assert_eq!(geometry.height(Panel::Ddl), 4);
         assert_eq!(
             geometry.ddl_lines(),
-            crate::details::lay_out(&ddl_details(&describing(orders())), 0, 14, Theme::default())
+            crate::details::lay_out(&ddl_details(&describing(orders())), 0, 13, Theme::default())
                 .lines
                 .len()
         );
@@ -2442,24 +2457,25 @@ mod tests {
         let geometry = geometry_of(60, 12, &state);
 
         // The Contents panel is 8 rows tall at this size: 6 inside its
-        // border, one of which the header takes.
+        // border, one of which the blank row it opens with takes and one the
+        // header.
         assert_eq!(
             geometry.height(Panel::Contents),
-            5,
+            3,
             "a page motion must not count the header as a row it can land on"
         );
     }
 
     #[test]
     fn the_frame_reports_how_wide_the_contents_panel_is() {
-        // The Contents block is 44 columns of the 60 at this size, so 42
-        // inside its borders.
+        // The Contents block is 44 columns of the 60 at this size, so 41 for
+        // the grid: two borders and the column the padding keeps clear.
         let state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
 
-        assert_eq!(geometry_of(60, 12, &state).grid_width(), 42);
+        assert_eq!(geometry_of(60, 12, &state).grid_width(), 41);
         assert_eq!(
             geometry_of(60, 12, &State::default()).grid_width(),
-            42,
+            41,
             "the width is the panel's, and the domain needs it before a page arrives"
         );
     }
@@ -2475,10 +2491,10 @@ mod tests {
     #[test]
     fn the_ddl_panel_scrolls_to_the_lines_below_its_fold() {
         // At 40x20 the sidebar is 16 columns and the Ddl panel is 7 rows, so
-        // its body is fourteen columns of five rows — and `orders()` wraps to
-        // more than five lines in that.
-        const WIDTH: usize = 14;
-        const HEIGHT: usize = 5;
+        // its body is thirteen columns of four rows, past the padding — and
+        // `orders()` wraps to more than four lines in that.
+        const WIDTH: usize = 13;
+        const HEIGHT: usize = 4;
 
         let state = describing(orders());
         let all = crate::details::lay_out(&ddl_details(&state), 0, WIDTH, Theme::default()).lines;
@@ -2497,12 +2513,12 @@ mod tests {
 
         let before = draw_state(40, 20, &state);
         let after = draw_state(40, 20, &scrolled);
-        // Inside the Ddl panel only: rows 13..17, columns 1..14. A full-width
+        // Inside the Ddl panel only: rows 14..17, columns 1..13. A full-width
         // row would also carry whatever the Contents panel is saying.
         let visible = |buffer: &Buffer| -> Vec<String> {
-            (13..18)
+            (14..18)
                 .map(|y| {
-                    (1..15)
+                    (1..14)
                         .filter_map(|x| buffer.cell((x, y)))
                         .map(Cell::symbol)
                         .collect::<String>()
@@ -2588,7 +2604,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} ks00        ▐│Press Enter on a table│",
+            "│              ▐│                      │",
             "the row is as wide as it is without a bar; the bar replaced the border"
         );
     }
@@ -2620,14 +2636,15 @@ mod tests {
 
     #[test]
     fn the_selection_stays_visible_when_the_list_outgrows_the_panel() {
-        // Six rows of content fit in an eight-row Tables panel at this size;
-        // twelve keyspaces force the scroll a plain `List` (no `ListState`)
-        // would silently fail to perform.
+        // Four rows of content fit in a seven-row Tables panel at this size,
+        // one more spent on the blank row the panel opens with; twelve
+        // keyspaces force the scroll a plain `List` (no `ListState`) would
+        // silently fail to perform.
         let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
 
         let buffer = draw_state(40, 12, &browsing(&refs, 11));
-        let rows: Vec<String> = (1..7).map(|y| row(&buffer, y)).collect();
+        let rows: Vec<String> = (2..6).map(|y| row(&buffer, y)).collect();
 
         assert!(
             rows.iter().any(|line| line.contains("ks11")),
@@ -2755,28 +2772,28 @@ mod tests {
         let (buffer, map) = draw_mapped(60, 12, &state);
 
         assert!(
-            row(&buffer, 1).contains("id") && row(&buffer, 1).contains("email"),
-            "row 1 must be the header row this test is about"
+            row(&buffer, 2).contains("id") && row(&buffer, 2).contains("email"),
+            "row 2 must be the header row this test is about"
         );
         assert!(
-            row(&buffer, 2).contains("ada@example.com"),
-            "row 2 must carry the first row's value, or `row: 0` below proves nothing"
+            row(&buffer, 3).contains("ada@example.com"),
+            "row 3 must carry the first row's value, or `row: 0` below proves nothing"
         );
 
         assert_eq!(
-            map.hit(20, 1),
+            map.hit(20, 2),
             Some(Click::Panel(Panel::Contents)),
             "the header names columns; clicking one sorts nothing"
         );
         assert_eq!(
-            map.hit(20, 2),
+            map.hit(20, 3),
             Some(Click::Row {
                 panel: Panel::Contents,
                 row: 0
             })
         );
         assert_eq!(
-            map.hit(20, 4),
+            map.hit(20, 5),
             Some(Click::Panel(Panel::Contents)),
             "below the last row is blank space, not a row"
         );
@@ -3339,8 +3356,11 @@ mod tests {
     fn block_row(buffer: &Buffer, title: &str, line: u16) -> String {
         let area = block_area(buffer, title);
 
-        (area.x + 1..area.right() - 1)
-            .filter_map(|x| buffer.cell((x, area.y + 1 + line)))
+        // Past the border and the blank row every panel opens with
+        // (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §10),
+        // and stopping short of the column the padding leaves at the right.
+        (area.x + 1..area.right() - 2)
+            .filter_map(|x| buffer.cell((x, area.y + 2 + line)))
             .map(Cell::symbol)
             .collect()
     }
