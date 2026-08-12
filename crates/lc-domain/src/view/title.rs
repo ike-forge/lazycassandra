@@ -34,6 +34,16 @@ pub struct Tab {
     pub active: bool,
 }
 
+/// One tab as its panel asks for it: named twice — in full and in the short
+/// form a narrow border falls back to — with the key that reaches it and
+/// whether it is the one drawn.
+pub(crate) struct TabSpec {
+    pub(crate) label: &'static str,
+    pub(crate) short: &'static str,
+    pub(crate) shortcut: char,
+    pub(crate) active: bool,
+}
+
 impl PanelTitle {
     /// `text` with its first case-insensitive `shortcut` marked.
     ///
@@ -46,25 +56,20 @@ impl PanelTitle {
         }
     }
 
-    /// A strip of tabs, each named twice — in full and in the short form a
-    /// narrow border falls back to — and flagged with whether it is the one
-    /// drawn.
+    /// A strip of tabs, each carrying the key that reaches it.
     ///
-    /// Only the first tab is offered the mark: the shortcut names the panel,
-    /// and marking it once per tab would claim a binding per tab where
-    /// there is one for the panel (design §4). That is also why the first
-    /// tab's short form keeps its full name — the mark has to survive the
-    /// fallback.
-    pub(crate) fn tabbed(labels: &[(&'static str, &'static str, bool)], shortcut: char) -> Self {
-        let tabs = labels
+    /// Every tab is marked, not only the first: a tab is a place with a key of
+    /// its own (docs/shortcuts.md §4), so a strip that marked one would leave
+    /// the rest of its bindings unadvertised.
+    pub(crate) fn tabbed(specs: &[TabSpec]) -> Self {
+        let tabs = specs
             .iter()
-            .enumerate()
-            .map(|(index, (label, short, active))| {
+            .map(|spec| {
                 Tab::new(
-                    (*label).to_owned(),
-                    (*short).to_owned(),
-                    (index == 0).then_some(shortcut),
-                    *active,
+                    spec.label.to_owned(),
+                    spec.short.to_owned(),
+                    Some(spec.shortcut),
+                    spec.active,
                 )
             })
             .collect();
@@ -200,15 +205,26 @@ mod tests {
         }
     }
 
+    fn strip(active: usize) -> PanelTitle {
+        PanelTitle::tabbed(&[
+            TabSpec {
+                label: "Table DDL",
+                short: "Table DDL",
+                shortcut: 'd',
+                active: active == 0,
+            },
+            TabSpec {
+                label: "Table columns",
+                short: "Columns",
+                shortcut: 'c',
+                active: active == 1,
+            },
+        ])
+    }
+
     #[test]
     fn a_strip_reads_as_its_tabs_joined() {
-        let title = PanelTitle::tabbed(
-            &[
-                ("Table DDL", "Table DDL", true),
-                ("Table columns", "Columns", false),
-            ],
-            'a',
-        );
+        let title = strip(0);
 
         assert_eq!(title.text(), "Table DDL - Table columns");
         assert_eq!(
@@ -227,35 +243,21 @@ mod tests {
 
     #[test]
     fn a_shortened_tab_gives_up_its_mark_and_a_tab_with_nothing_to_drop_keeps_it() {
-        let title = PanelTitle::tabbed(
-            &[
-                ("Table DDL", "Table DDL", true),
-                ("Table columns", "Columns", false),
-            ],
-            'a',
-        );
+        let title = strip(0);
 
         assert_eq!(
             title.tabs()[0].split_short(),
-            ("T", "a", "ble DDL"),
-            "the tab holding the mark is the one whose short form is its full one"
+            ("Table ", "D", "DL"),
+            "a short form equal to the full name keeps the mark"
         );
         assert_eq!(title.tabs()[1].split_short(), ("Columns", "", ""));
     }
 
     #[test]
-    fn only_the_first_tab_carries_the_shortcut() {
-        // 'a' occurs in both labels; marking it twice would claim two bindings
-        // where there is one.
-        let title = PanelTitle::tabbed(
-            &[
-                ("Table DDL", "Table DDL", false),
-                ("Table columns", "Columns", true),
-            ],
-            'a',
-        );
+    fn every_tab_carries_its_own_shortcut() {
+        let title = strip(1);
 
-        assert_eq!(title.tabs()[0].split(), ("T", "a", "ble DDL"));
-        assert_eq!(title.tabs()[1].split(), ("Table columns", "", ""));
+        assert_eq!(title.tabs()[0].split(), ("Table ", "D", "DL"));
+        assert_eq!(title.tabs()[1].split(), ("Table ", "c", "olumns"));
     }
 }

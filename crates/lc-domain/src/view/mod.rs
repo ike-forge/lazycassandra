@@ -17,6 +17,7 @@ pub use contents::{GridCell, GridColumn};
 pub use details::{ColumnKind, DetailRow, Details, Group, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness};
 pub use tables::{RowKind, TreeRow};
+use title::TabSpec;
 pub use title::{PanelTitle, TAB_SEPARATOR, Tab};
 
 pub use crate::editor::Position;
@@ -241,18 +242,17 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
         Panel::Tables => marking("Tables".to_owned()),
         Panel::Ddl => {
             let tab = details::shown_tab(state);
-            let labels: Vec<(&'static str, &'static str, bool)> = details::tabs_for(state)
+            let specs: Vec<TabSpec> = details::tabs_for(state)
                 .iter()
-                .map(|candidate| {
-                    (
-                        candidate.label(),
-                        candidate.short_label(),
-                        *candidate == tab,
-                    )
+                .map(|candidate| TabSpec {
+                    label: candidate.label(),
+                    short: candidate.short_label(),
+                    shortcut: candidate.shortcut(),
+                    active: *candidate == tab,
                 })
                 .collect();
 
-            PanelTitle::tabbed(&labels, panel.shortcut())
+            PanelTitle::tabbed(&specs)
         }
         Panel::Contents => marking(contents::title(state)),
         Panel::Queries => marking("Queries".to_owned()),

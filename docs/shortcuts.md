@@ -57,7 +57,9 @@ The DDL panel's second tab briefly rode on a repeat of the panel's own letter
 and no longer does: one key means one action, so each of the panel's tabs has
 a key of its own. `d` is the DDL tab's as well as the panel's — the tab it
 opens on is the one the panel's own letter reaches — and `c` is the Columns
-tab's. Both name a place rather than a motion: they arrive at the same view
+tab's, and each tab carries its own letter in the shortcut colour on the strip,
+so a binding is not advertised for one tab and hidden for the next. Both name a
+place rather than a motion: they arrive at the same view
 whichever tab was up, so neither has to be pressed twice and neither can leave
 you somewhere you did not ask for.
 

@@ -2064,7 +2064,9 @@ mod tests {
 
         assert!(border.contains("DDL - Columns"), "got {border:?}");
 
-        let (fg, _, modifier) = style_of_first(&buffer, "Columns");
+        // Past its 'C', which wears the shortcut colour whether or not its tab
+        // is the one drawn.
+        let (fg, _, modifier) = style_of_first(&buffer, "olumns");
         let muted = Theme::default().style(Token::Muted);
 
         assert_eq!(fg, muted.fg.expect("muted spends a colour"));
