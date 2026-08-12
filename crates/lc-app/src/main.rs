@@ -113,7 +113,8 @@ fn resolve(incoming: Incoming, map: &FrameMap) -> Option<Msg> {
 
 async fn run(mut terminal: DefaultTerminal) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    input::spawn_reader(tx.clone());
+    let suspension = input::Suspension::default();
+    input::spawn_reader(tx.clone(), suspension.clone());
     spawn_ticker(tx.clone());
 
     let conn = ConnId::next();
