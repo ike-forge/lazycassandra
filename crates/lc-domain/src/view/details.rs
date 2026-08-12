@@ -137,17 +137,13 @@ pub enum ColumnKind {
 }
 
 impl ColumnKind {
-    /// The two columns of border the marker occupies, blank for a regular
-    /// column: the common case is the one that earns no ink
+    /// Whether the column is part of the primary key, which is the one thing
+    /// the renderer marks with a glyph — the rest of what a kind means travels
+    /// as its [`token`](Self::token)
     /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §5).
     #[must_use]
-    pub const fn marker(self) -> &'static str {
-        match self {
-            Self::Partition => "PK",
-            Self::Clustering => "CK",
-            Self::Static => "S",
-            Self::Regular => "",
-        }
+    pub const fn is_key(self) -> bool {
+        matches!(self, Self::Partition | Self::Clustering)
     }
 
     #[must_use]
@@ -178,17 +174,10 @@ pub(super) fn body(state: &State) -> PanelBody {
 pub(super) fn of(state: &State) -> Option<Details> {
     let schema = state.schema()?;
 
-    let mut details = match (state.tables.selected(schema)?, state.ddl.tab()) {
+    let mut details = match (state.tables.selected(schema)?, shown_tab(state)) {
         (Node::Table { keyspace, table }, DdlTab::Ddl) => of_table(keyspace, table),
         (Node::Table { keyspace, table }, DdlTab::Columns) => columns_of(keyspace, table),
-        (Node::Keyspace { keyspace, .. }, DdlTab::Ddl) => of_keyspace(keyspace),
-        // A keyspace has no columns, so the tab says so rather than falling
-        // back to the replication the other tab is for: a tab that shows
-        // something else when it has nothing teaches the wrong thing about
-        // what it is (design §6).
-        (Node::Keyspace { .. }, DdlTab::Columns) => Details {
-            sections: Vec::new(),
-        },
+        (Node::Keyspace { keyspace, .. }, _) => of_keyspace(keyspace),
     };
 
     if let Some(filter) = state.ddl.filter() {
@@ -198,12 +187,51 @@ pub(super) fn of(state: &State) -> Option<Details> {
     Some(details)
 }
 
+/// The tabs the panel offers for what is selected.
+///
+/// A keyspace has no columns, so the strip does not draw a tab that could only
+/// say so — an empty tab teaches the wrong thing about what it is
+/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §6).
+pub(super) fn tabs_for(state: &State) -> &'static [DdlTab] {
+    if describes_a_table(state) {
+        &DdlTab::ALL
+    } else {
+        &[DdlTab::Ddl]
+    }
+}
+
+/// The tab the panel draws, which is the one it holds only where that tab
+/// exists for what is selected.
+///
+/// The held tab is left alone rather than reset: stepping from a table onto
+/// its keyspace and back is navigation, and it may not cost the user the tab
+/// they were reading.
+pub(super) fn shown_tab(state: &State) -> DdlTab {
+    let tab = state.ddl.tab();
+
+    if tabs_for(state).contains(&tab) {
+        tab
+    } else {
+        DdlTab::Ddl
+    }
+}
+
+fn describes_a_table(state: &State) -> bool {
+    matches!(
+        state
+            .schema()
+            .and_then(|schema| state.tables.selected(schema)),
+        Some(Node::Table { .. })
+    )
+}
+
 fn scrolled(state: &State, details: Details) -> PanelBody {
     if details.sections.is_empty() {
-        return match state.ddl.filter() {
-            Some(filter) => waiting(&format!("No property matches \"{}\"", filter.as_str())),
-            None => waiting("A keyspace has no columns"),
-        };
+        // Every subject the panel describes has identity rows of its own, so a
+        // filter is the only thing that can empty it.
+        return state.ddl.filter().map_or(PanelBody::Blank, |filter| {
+            waiting(&format!("No property matches \"{}\"", filter.as_str()))
+        });
     }
 
     PanelBody::Details {
@@ -601,18 +629,34 @@ mod tests {
     }
 
     #[test]
-    fn the_columns_tab_of_a_keyspace_says_it_has_none() {
+    fn a_keyspace_is_offered_no_columns_tab_and_keeps_describing_itself() {
         let mut state = tabled(&[("shop", &["orders"])]);
         state.ddl.show(DdlTab::Columns);
 
         assert_eq!(
-            ddl_body(&state),
-            PanelBody::Notice {
-                text: "A keyspace has no columns".to_owned(),
-                token: Some(Token::Muted),
-            },
-            "falling back to the other tab's replication would misname what this tab is"
+            tabs_for(&state),
+            [DdlTab::Ddl],
+            "a tab that could only say a keyspace has no columns is not drawn"
         );
+        assert_eq!(
+            shown_tab(&state),
+            DdlTab::Ddl,
+            "so the panel draws the one tab it does offer"
+        );
+        assert_eq!(
+            headings(&details(&state)),
+            ["Replication"],
+            "the held tab is masked, not the subject"
+        );
+    }
+
+    #[test]
+    fn a_table_is_offered_both_tabs_and_keeps_the_one_it_was_left_on() {
+        let mut state = browsing(orders());
+        state.ddl.show(DdlTab::Columns);
+
+        assert_eq!(tabs_for(&state), DdlTab::ALL);
+        assert_eq!(shown_tab(&state), DdlTab::Columns);
     }
 
     #[test]

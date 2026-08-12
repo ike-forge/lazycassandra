@@ -1,4 +1,4 @@
-//! The Table DDL panel's state: a cursor over the rows it describes, a
+//! The DDL panel's state: a cursor over the rows it describes, a
 //! viewport over the lines they wrapped to, and the filter narrowing them.
 //!
 //! A module of its own for the reason [`crate::tree`] and [`crate::contents`]
@@ -30,12 +30,12 @@ impl DdlTab {
     ///
     /// A tab is a place, so it gets a key of its own rather than a second
     /// meaning for the panel's — which is why `Ddl` answers to the panel's own
-    /// letter and `Columns` to one of its own (docs/shortcuts.md §4).
+    /// letter and `Columns` to its own leading one (docs/shortcuts.md §4).
     #[must_use]
     pub const fn shortcut(self) -> char {
         match self {
-            Self::Ddl => 'a',
-            Self::Columns => 'b',
+            Self::Ddl => 'd',
+            Self::Columns => 'c',
         }
     }
 
@@ -47,26 +47,24 @@ impl DdlTab {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Ddl => "Table DDL",
-            Self::Columns => "Table columns",
+            Self::Ddl => "DDL",
+            Self::Columns => "Columns",
         }
     }
 
     /// The label a border too narrow for the full strip falls back to.
     ///
-    /// It drops the noun the panel's own name already supplies, which is what
-    /// lets both tabs stay on a sidebar that cannot hold both full names
+    /// Both names are already short enough that there is nothing left to drop:
+    /// what the tabs describe is a table, and the identity rows beneath the
+    /// border say which one
     /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4).
     #[must_use]
     pub const fn short_label(self) -> &'static str {
-        match self {
-            Self::Ddl => "Table DDL",
-            Self::Columns => "Columns",
-        }
+        self.label()
     }
 }
 
-/// The Table DDL panel's own state.
+/// The DDL panel's own state.
 ///
 /// The cursor and the viewport count in different units — see
 /// [`Span`](crate::state::Span) — which is why this panel is not in `update`'s
@@ -136,7 +134,7 @@ mod tests {
     fn each_tab_answers_to_the_key_the_shortcuts_doc_names() {
         assert_eq!(
             DdlTab::ALL.map(DdlTab::shortcut),
-            ['a', 'b'],
+            ['d', 'c'],
             "the keys are a promise to the user's fingers, not an implementation detail"
         );
     }
@@ -174,7 +172,7 @@ mod tests {
     #[test]
     fn showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone() {
         // The key that reaches a tab is pressed to arrive, not to start over:
-        // from Table DDL's own tab, `a` is how focus returns to the panel.
+        // from the DDL tab, `d` is how focus returns to the panel.
         let mut panel = DdlPanel::default();
         panel.cursor.go_to(4, 8);
         panel.scroll.down(40, 10);

@@ -281,15 +281,16 @@ impl Panel {
     /// The key that focuses this panel from anywhere.
     ///
     /// Underlined in the panel's title, so the binding is on screen rather
-    /// than in a manual (vision.md §4, principle 1). Two of the four are not
-    /// leading letters — the titles are fixed by the draft, and the keys were
-    /// chosen to be reachable rather than to match a first character.
+    /// than in a manual (vision.md §4, principle 1). Three of the four are not
+    /// leading letters: the four panels and the DDL panel's two tabs are six
+    /// places under one home row, so the letters were chosen to sit together
+    /// rather than to match a first character (docs/shortcuts.md §4).
     #[must_use]
     pub const fn shortcut(self) -> char {
         match self {
-            Self::Tables => 't',
-            Self::Ddl => 'a',
-            Self::Contents => 'c',
+            Self::Tables => 'a',
+            Self::Contents => 'b',
+            Self::Ddl => 'd',
             Self::Queries => 'u',
         }
     }
@@ -798,7 +799,7 @@ mod tests {
     fn the_shortcuts_are_the_ones_the_design_names() {
         assert_eq!(
             Panel::ALL.map(Panel::shortcut),
-            ['t', 'a', 'c', 'u'],
+            ['a', 'd', 'b', 'u'],
             "the keys are a promise to the user's fingers, not an implementation detail"
         );
     }

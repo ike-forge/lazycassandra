@@ -231,12 +231,14 @@ fn key_column_lines(
     )
 }
 
-/// A column in the Table columns tab: its kind in the two columns the other
-/// tab spends on indentation, then the name, then the type at the margin.
+/// A column in the Columns tab: the key glyph in the two columns the other tab
+/// spends on indentation, then the name, then the type at the margin.
 ///
-/// The marker carries the colour and the name does not, for the reason a
-/// property's value is left alone: two coloured runs on a line this narrow is
-/// one too many (visual polish design §5.2).
+/// The whole row wears the kind's colour rather than a marker alone. The glyph
+/// only says whether the column is part of the primary key — which of the two
+/// keys, and whether a non-key column is static, is what the colour carries,
+/// and it can only carry it by covering the row
+/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §5).
 fn column_lines(
     name: &str,
     cql_type: &str,
@@ -244,17 +246,17 @@ fn column_lines(
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
-    let marker = kind.marker();
-    let mut lines = laid_out(&format!("{marker:INDENT$} {name}"), cql_type, width)
+    let marker = if kind.is_key() {
+        crate::icons::KEY
+    } else {
+        &" ".repeat(INDENT)
+    };
+    let style = theme.style(kind.token());
+
+    laid_out(&format!("{marker}{name}"), cql_type, width)
         .into_iter()
-        .map(Line::raw)
-        .collect::<Vec<Line<'static>>>();
-
-    if let Some(first) = lines.first_mut() {
-        *first = marked(first, INDENT, theme.style(kind.token()));
-    }
-
-    lines
+        .map(|text| Line::styled(text, style))
+        .collect()
 }
 
 /// `line` with its first `taken` characters lifted into a span of their own.
@@ -438,39 +440,45 @@ mod tests {
     }
 
     #[test]
-    fn a_listed_column_wears_its_kind_where_the_other_tab_indents() {
+    fn a_listed_key_column_wears_the_key_glyph_where_the_other_tab_indents() {
         assert_eq!(
             listed("customer_id", "uuid", ColumnKind::Partition, 23),
-            ["PK customer_id     uuid"]
+            [format!("{}customer_id      uuid", crate::icons::KEY)]
         );
         assert_eq!(
             listed("order_date", "date", ColumnKind::Clustering, 23),
-            ["CK order_date      date"]
+            [format!("{}order_date       date", crate::icons::KEY)],
+            "the same glyph: which key it is is what the colour says"
         );
         assert_eq!(
             listed("region", "text", ColumnKind::Static, 23),
-            ["S  region          text"]
+            ["  region           text"]
         );
         assert_eq!(
             listed("status", "text", ColumnKind::Regular, 23),
-            ["   status          text"],
-            "the common case earns no ink, and the names still line up"
+            ["  status           text"],
+            "a column outside the key earns no glyph, and the names still line up"
         );
     }
 
     #[test]
-    fn only_the_kind_marker_carries_the_kinds_colour() {
+    fn a_listed_column_carries_its_kinds_colour_across_the_whole_row() {
         let theme = Theme::default();
-        let lines = column_lines("customer_id", "uuid", ColumnKind::Partition, 23, theme);
-        let partition = theme.style(Token::PartitionKey).fg;
 
-        assert!(partition.is_some(), "the token has to spend a colour");
-        assert_eq!(lines[0].spans[0].content, "PK");
-        assert_eq!(lines[0].spans[0].style.fg, partition);
-        assert_eq!(
-            lines[0].spans[1].style.fg, None,
-            "two coloured runs on a line this narrow is one too many"
-        );
+        for (kind, token) in [
+            (ColumnKind::Partition, Token::PartitionKey),
+            (ColumnKind::Clustering, Token::ClusteringKey),
+            (ColumnKind::Static, Token::StaticColumn),
+            (ColumnKind::Regular, Token::RegularColumn),
+        ] {
+            let lines = column_lines("customer_id", "uuid", kind, 23, theme);
+            let colour = theme.style(token).fg;
+
+            assert_eq!(
+                lines[0].style.fg, colour,
+                "{kind:?} must read as its own kind end to end"
+            );
+        }
     }
 
     #[test]
@@ -482,7 +490,7 @@ mod tests {
                 ColumnKind::Regular,
                 23
             ),
-            ["   warehouse_identifier", "    frozen<list<text>>"]
+            ["  warehouse_identifier", "    frozen<list<text>>"]
         );
     }
 

@@ -44,20 +44,20 @@ const GLOBAL: &[Binding] = &[
         action: "previous panel",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('t'))],
+        keys: &[KeyPress::new(Key::Char('a'))],
         action: "focus Tables",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('a'))],
-        action: "Table DDL, its DDL",
+        keys: &[KeyPress::new(Key::Char('b'))],
+        action: "focus Table contents",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('b'))],
-        action: "Table DDL, columns",
+        keys: &[KeyPress::new(Key::Char('d'))],
+        action: "DDL, its DDL tab",
     },
     Binding {
         keys: &[KeyPress::new(Key::Char('c'))],
-        action: "focus Table contents",
+        action: "DDL, its columns tab",
     },
     Binding {
         keys: &[KeyPress::new(Key::Char('u'))],

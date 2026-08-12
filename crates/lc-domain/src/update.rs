@@ -396,14 +396,18 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('h') | Key::Left => go_left(state),
         Key::Char('/') => open_prompt(state),
         // Last, so every binding above keeps precedence over a panel key. A
-        // Table DDL tab is a place the same way a panel is, so its key both
-        // focuses the panel and draws the tab — one press to arrive, whichever
-        // tab was last up (docs/shortcuts.md §4). Checked first because `a` is
-        // both the panel's letter and its first tab's.
+        // DDL tab is a place the same way a panel is, so its key both focuses
+        // the panel and draws the tab — one press to arrive, whichever tab was
+        // last up (docs/shortcuts.md §4). Checked first because `d` is both
+        // the panel's letter and its first tab's.
         Key::Char(key) => {
             if let Some(tab) = DdlTab::from_shortcut(key) {
                 state.focus = Panel::Ddl;
-                state.ddl.show(tab);
+                // A tab the strip does not draw is not a place to arrive at:
+                // `c` on a keyspace focuses the panel and no more.
+                if crate::view::ddl_tabs(state).contains(&tab) {
+                    state.ddl.show(tab);
+                }
             } else if let Some(panel) = Panel::from_shortcut(key) {
                 state.focus = panel;
             }
@@ -2598,7 +2602,7 @@ mod tests {
     fn typing_outside_queries_still_focuses_a_panel() {
         let mut state = browsing(&["a"]);
 
-        press(&mut state, Key::Char('c'));
+        press(&mut state, Key::Char('b'));
 
         assert_eq!(state.focus, Panel::Contents);
         assert_eq!(state.queries.text(), "", "nothing leaked into the buffer");
@@ -2658,6 +2662,15 @@ mod tests {
             1,
             "a selection past the end of a smaller schema must be pulled in"
         );
+    }
+
+    /// `browsing_tables` with the cursor stepped onto a table, which is what
+    /// the Columns tab needs in order to exist.
+    fn browsing_a_table() -> State {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('l'));
+        state
     }
 
     fn browsing_tables(keyspaces: &[(&str, &[&str])]) -> State {
@@ -3196,14 +3209,14 @@ mod tests {
     }
 
     #[test]
-    fn b_reaches_the_table_columns_tab_from_wherever_focus_was() {
+    fn c_reaches_the_columns_tab_from_wherever_focus_was() {
         for from in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
-            let mut state = State {
-                focus: from,
-                ..State::default()
-            };
+            // A table has to be selected, or the strip draws no Columns tab
+            // for the key to arrive at.
+            let mut state = browsing_a_table();
+            state.focus = from;
 
-            press(&mut state, Key::Char('b'));
+            press(&mut state, Key::Char('c'));
 
             assert_eq!(state.focus, Panel::Ddl, "from {from:?}");
             assert_eq!(state.ddl.tab(), DdlTab::Columns, "from {from:?}");
@@ -3211,18 +3224,33 @@ mod tests {
     }
 
     #[test]
-    fn a_returns_the_panel_to_its_ddl_tab() {
-        let mut state = State::default();
+    fn c_on_a_keyspace_focuses_the_panel_and_draws_no_columns_tab() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        press(&mut state, Key::Char('l'));
 
-        press(&mut state, Key::Char('b'));
-        press(&mut state, Key::Char('a'));
+        press(&mut state, Key::Char('c'));
+
+        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(
+            state.ddl.tab(),
+            DdlTab::Ddl,
+            "a keyspace has no columns, so there is no tab to store"
+        );
+    }
+
+    #[test]
+    fn d_returns_the_panel_to_its_ddl_tab() {
+        let mut state = browsing_a_table();
+
+        press(&mut state, Key::Char('c'));
+        press(&mut state, Key::Char('d'));
 
         assert_eq!(state.focus, Panel::Ddl);
         assert_eq!(state.ddl.tab(), DdlTab::Ddl);
     }
 
     #[test]
-    fn b_is_text_in_a_panel_that_takes_text() {
+    fn c_is_text_in_a_panel_that_takes_text() {
         let mut state = State {
             focus: Panel::Queries,
             ..State::default()

@@ -224,6 +224,15 @@ pub fn ddl_rows(state: &State) -> usize {
     details::of(state).map_or(0, |details| details.row_count())
 }
 
+/// The tabs the Ddl panel offers for what the Tables cursor is on.
+///
+/// Public because the key that reaches a tab must not store one the strip
+/// does not draw: `c` on a keyspace focuses the panel and no more.
+#[must_use]
+pub fn ddl_tabs(state: &State) -> &'static [DdlTab] {
+    details::tabs_for(state)
+}
+
 /// A panel's top border: one name, or the strip of tabs it can show.
 fn title(state: &State, panel: Panel) -> PanelTitle {
     let marking = |text: String| PanelTitle::marking(text, panel.shortcut());
@@ -231,8 +240,8 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
     match panel {
         Panel::Tables => marking("Tables".to_owned()),
         Panel::Ddl => {
-            let tab = state.ddl.tab();
-            let labels: Vec<(&'static str, &'static str, bool)> = DdlTab::ALL
+            let tab = details::shown_tab(state);
+            let labels: Vec<(&'static str, &'static str, bool)> = details::tabs_for(state)
                 .iter()
                 .map(|candidate| {
                     (
@@ -340,8 +349,10 @@ mod tests {
         assert_eq!(
             view.panels.map(|panel| panel.title.text()),
             [
+                // Nothing is selected, so the panel offers no Columns tab to
+                // describe a table with.
                 "Tables",
-                "Table DDL - Table columns",
+                "DDL",
                 "Table contents",
                 "Queries"
             ]

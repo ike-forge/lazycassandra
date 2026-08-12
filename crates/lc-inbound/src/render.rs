@@ -672,9 +672,9 @@ mod tests {
         assert_eq!(row(&buffer, 0), "╭── Tables ────╮╭── Table contents ────╮");
         assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
         assert_eq!(row(&buffer, 6), "╰──────────────╯│                      │");
-        // The Ddl strip does not fit a 16-column border, so the panel draws
-        // the tab it is showing rather than a clipped pair of names.
-        assert_eq!(row(&buffer, 7), "╭── Table DDL ─╮╰──────────────────────╯");
+        // Nothing is selected, so the panel offers no Columns tab and the
+        // strip is the one name.
+        assert_eq!(row(&buffer, 7), "╭── DDL ───────╮╰──────────────────────╯");
         assert_eq!(row(&buffer, 8), "│              │╭── Queries ───────────╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
@@ -839,12 +839,12 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        // "╭── Tables" and "╭── Table contents" on row 0, "╭── Table DDL" on
-        // row 7, "╭── Queries" on row 8 — a corner, the inset and `TITLE_PAD`
-        // precede each name.
-        assert!(underlined(4, 0), "Tables underlines its T");
-        assert!(underlined(26, 0), "Table contents underlines its c");
-        assert!(underlined(5, 7), "Table DDL underlines its a");
+        // "╭── Tables" and "╭── Table contents" on row 0, "╭── DDL" on row 7,
+        // "╭── Queries" on row 8 — a corner, the inset and `TITLE_PAD` precede
+        // each name.
+        assert!(underlined(5, 0), "Tables underlines its a");
+        assert!(underlined(22, 0), "Table contents underlines its b");
+        assert!(underlined(4, 7), "DDL underlines its D");
         assert!(underlined(21, 8), "Queries underlines its u");
     }
 
@@ -859,10 +859,10 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        for x in [0, 1, 3, 5, 9] {
+        for x in [0, 1, 3, 4, 9] {
             assert!(!underlined(x, 0), "column {x} of row 0 is not the mark");
         }
-        assert!(!underlined(4, 7), "the T of Table DDL is not its mark");
+        assert!(!underlined(5, 7), "only the first D of DDL is its mark");
     }
 
     #[test]
@@ -2025,10 +2025,12 @@ mod tests {
                 "    orders_by_customer",
                 "",
                 "4 columns",
-                "PK customer_id     uuid",
-                "CK order_date      date",
-                "CK order_id    timeuuid",
-                "S  region          text",
+                "\u{f030b} customer_id      uuid",
+                "\u{f030b} order_date       date",
+                "\u{f030b} order_id     timeuuid",
+                // No glyph outside the primary key: the row's colour is what
+                // says a column is static.
+                "  region           text",
             ]
         );
     }
@@ -2064,14 +2066,11 @@ mod tests {
     fn a_border_wide_enough_names_both_tabs_and_mutes_the_one_not_drawn() {
         // 120 columns puts the sidebar at 30, which holds the whole strip.
         let buffer = draw_state(120, 41, &describing(orders()));
-        let border = row(&buffer, top_border(&buffer, "Table DDL").1);
+        let border = row(&buffer, top_border(&buffer, "DDL").1);
 
-        assert!(
-            border.contains("Table DDL - Table columns"),
-            "got {border:?}"
-        );
+        assert!(border.contains("DDL - Columns"), "got {border:?}");
 
-        let (fg, _, modifier) = style_of_first(&buffer, "Table columns");
+        let (fg, _, modifier) = style_of_first(&buffer, "Columns");
         let muted = Theme::default().style(Token::Muted);
 
         assert_eq!(fg, muted.fg.expect("muted spends a colour"));
@@ -2082,25 +2081,25 @@ mod tests {
     }
 
     #[test]
-    fn a_border_too_narrow_for_the_full_strip_shortens_the_names_before_dropping_a_tab() {
-        // At 100 columns the sidebar is 25: the full strip needs 29 and the
-        // short one 23, so both tabs stay named and the focus mark stays with
-        // the tab that carries it.
+    fn a_sidebar_on_its_usual_width_still_names_both_tabs() {
+        // At 100 columns the sidebar is 25, and the strip needs 13 of the 21
+        // a border that wide has to spend on a title.
         let buffer = draw_state(100, 41, &listing(orders()));
-        let border = row(&buffer, top_border(&buffer, "Table DDL").1);
+        let border = row(&buffer, top_border(&buffer, "DDL").1);
 
-        assert!(border.contains("Table DDL - Columns"), "got {border:?}");
+        assert!(border.contains("DDL - Columns"), "got {border:?}");
     }
 
     #[test]
     fn a_border_too_narrow_for_either_strip_keeps_the_tab_it_is_drawing_whole() {
-        // At 40 columns the sidebar is on its 16-column floor, which holds
-        // neither strip. A clipped one would name a tab that does not exist.
+        // At 40 columns the sidebar is on its 16-column floor, which the
+        // strip does not fit. A clipped one would name a tab that does not
+        // exist.
         let buffer = draw_state(40, 12, &listing(orders()));
-        let border = row(&buffer, top_border(&buffer, "Table columns").1);
+        let border = row(&buffer, top_border(&buffer, "Columns").1);
 
-        assert!(border.contains("Table columns"), "got {border:?}");
-        assert!(!border.contains("Table DDL"), "got {border:?}");
+        assert!(border.contains("Columns"), "got {border:?}");
+        assert!(!border.contains("DDL"), "got {border:?}");
     }
 
     #[test]
