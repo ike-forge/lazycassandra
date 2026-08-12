@@ -44,7 +44,13 @@ pub(crate) fn open(
     buffer: &str,
 ) -> Result<Msg> {
     suspension.suspend();
-    let released = release(terminal, || capture.suspended(|| session(buffer)));
+    // Capture off, then the alternate screen left; retaken in the reverse
+    // order — the alternate screen re-entered before capture goes back on.
+    // Nesting it any other way opens a window, on the retake path, where
+    // mouse reporting is live over a terminal that is out of raw mode and on
+    // the normal screen: pointer motion in that window is echoed as escape
+    // sequences into the user's shell (design §4).
+    let released = capture.suspended(|| release(terminal, || session(buffer)));
     suspension.resume();
 
     Ok(match released?? {

@@ -2359,14 +2359,24 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_e_under_the_palette_does_nothing() {
-        let mut state = State {
-            focus: Panel::Queries,
-            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
-            ..State::default()
-        };
+    fn ctrl_e_under_an_overlay_does_nothing() {
+        let overlays = [
+            Overlay::Commands(CommandsPanel::opened()),
+            Overlay::Themes {
+                cursor: Cursor::default(),
+                restored: ThemeChoice::default(),
+            },
+        ];
 
-        assert!(ctrl(&mut state, Key::Char('e')).is_empty());
+        for overlay in overlays {
+            let mut state = State {
+                focus: Panel::Queries,
+                overlay: Some(overlay),
+                ..State::default()
+            };
+
+            assert!(ctrl(&mut state, Key::Char('e')).is_empty());
+        }
     }
 
     #[test]

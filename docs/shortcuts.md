@@ -289,25 +289,22 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has four members. `ctrl-e` and `ctrl-y`
-scroll the Table DDL viewport without moving its cursor, which is the one
-panel whose cursor and viewport can disagree
+for whatever is focused. The layer has four members. `ctrl-y` scrolls the
+Table DDL viewport without moving its cursor, which is the one panel whose
+cursor and viewport can disagree
 ([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4.1).
-`ctrl-r` runs the Queries buffer: the panel takes text, so every printable key
-there is a character and the action the panel exists for has no unmodified key
-available ([query execution design](specs/2026-08-10-query-execution-design.md)
-§1). Each member gates on its own panel; `ctrl_key` itself only refuses the
-palette. `ctrl-d`/`ctrl-u` are still unbound and still want designing.
-
-The layer has four members, and one of them — `ctrl-e` — carries a different
-meaning in each of two panels: the Table DDL viewport scroll, and opening the
-Queries buffer in an external editor
-([external editor design](specs/2026-08-12-external-editor-design.md) §1). That
-is the same rule the horizontal four follow, not an exception to it: focus
-decides, and in any one frame the chord does exactly one thing. What the rule
-protects is unchanged — a ctrl key is still a binding of its own and never a
+`ctrl-e` shares that panel's viewport scroll but carries a second, different
+meaning in Queries: opening the buffer in an external editor
+([external editor design](specs/2026-08-12-external-editor-design.md) §1).
+Focus decides which meaning applies, and in any one frame the chord does
+exactly one thing — a ctrl key is still a binding of its own and never a
 synonym for the plain one, and a member is still inert in the panels that do
-not claim it.
+not claim it. `ctrl-r` runs the Queries buffer: the panel takes text, so every
+printable key there is a character and the action the panel exists for has no
+unmodified key available
+([query execution design](specs/2026-08-10-query-execution-design.md) §1).
+Each member gates on its own panel; `ctrl_key` itself only refuses the
+palette. `ctrl-d`/`ctrl-u` are still unbound and still want designing.
 
 **Vim and arrows are synonyms, both ways.** `j`/`↓`, `k`/`↑`, `l`/`→`, `h`/`←`.
 Neither set is the real one. Anyone who reaches for arrows should never hit a

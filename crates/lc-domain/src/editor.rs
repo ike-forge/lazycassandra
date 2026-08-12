@@ -84,7 +84,17 @@ impl Editor {
     /// that offset means nothing against text the external editor may have
     /// rewritten entirely
     /// (docs/superpowers/specs/2026-08-12-external-editor-design.md §3).
+    ///
+    /// One trailing line terminator, `\n` or `\r\n`, is stripped before
+    /// splitting: every POSIX editor writes one on save, and this is the
+    /// round trip back from `text()`, which never produces one — without the
+    /// strip every trip through the external editor would append a blank
+    /// line (external editor design §3).
     pub fn replace(&mut self, text: &str) {
+        let text = text
+            .strip_suffix("\r\n")
+            .or_else(|| text.strip_suffix('\n'))
+            .unwrap_or(text);
         self.lines = text.split('\n').map(str::to_owned).collect();
         self.cursor = Position {
             line: self.lines.len() - 1,
@@ -534,6 +544,38 @@ mod tests {
         editor.replace("");
 
         assert_eq!(editor, Editor::default());
+    }
+
+    #[test]
+    fn replacing_strips_one_trailing_newline() {
+        let mut editor = typed("SELECT");
+
+        editor.replace("SELECT * FROM t\n");
+
+        assert_eq!(editor.lines(), ["SELECT * FROM t".to_owned()]);
+        assert_eq!(
+            editor.cursor(),
+            Position {
+                line: 0,
+                column: 15
+            }
+        );
+    }
+
+    #[test]
+    fn replacing_strips_one_trailing_crlf() {
+        let mut editor = typed("SELECT");
+
+        editor.replace("SELECT * FROM t\r\n");
+
+        assert_eq!(editor.lines(), ["SELECT * FROM t".to_owned()]);
+        assert_eq!(
+            editor.cursor(),
+            Position {
+                line: 0,
+                column: 15
+            }
+        );
     }
 
     #[test]

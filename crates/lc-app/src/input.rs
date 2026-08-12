@@ -107,8 +107,23 @@ fn wait<'a>(changed: &Condvar, flags: MutexGuard<'a, Flags>) -> MutexGuard<'a, F
     changed.wait(flags).unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Calls `Suspension::leave` on drop, so every exit from the reader loop —
+/// including a panic unwinding through it — is the same exit as the three
+/// `break`s that used to call it directly. A `leave()` placed after the loop
+/// is skipped on unwind, and a panicked reader that never sets `gone` is a
+/// `suspend` that blocks forever on a condvar nobody will ever notify
+/// (docs/superpowers/specs/2026-08-12-external-editor-design.md §4).
+struct LeaveOnDrop<'a>(&'a Suspension);
+
+impl Drop for LeaveOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.leave();
+    }
+}
+
 pub(crate) fn spawn_reader(tx: UnboundedSender<Incoming>, suspension: Suspension) {
     std::thread::spawn(move || {
+        let _leave_on_drop = LeaveOnDrop(&suspension);
         loop {
             suspension.park();
 
@@ -142,9 +157,6 @@ pub(crate) fn spawn_reader(tx: UnboundedSender<Incoming>, suspension: Suspension
                 break;
             }
         }
-        // Every exit above means the reader will never park again — tell any
-        // `suspend` in progress or still to come so it doesn't wait forever.
-        suspension.leave();
     });
 }
 
@@ -187,5 +199,28 @@ mod tests {
         let suspension = Suspension::default();
         suspension.leave();
         suspension.suspend();
+    }
+
+    /// The regression this guards: a `leave()` placed after the reader loop
+    /// is skipped when the loop body panics, so `gone` is never set and a
+    /// concurrent `suspend` blocks forever. `LeaveOnDrop` must fire on
+    /// unwind too.
+    #[test]
+    fn leave_on_drop_fires_even_when_the_reader_panics() {
+        let suspension = Suspension::default();
+        let reader = suspension.clone();
+
+        let handle = std::thread::spawn(move || {
+            let _leave_on_drop = LeaveOnDrop(&reader);
+            panic!("standing in for a reader that crashed mid-loop");
+        });
+
+        assert!(handle.join().is_err(), "the reader thread panicked");
+        suspension.suspend();
+        let (flags, _changed) = &*suspension.0;
+        assert!(
+            lock(flags).gone,
+            "the drop guard must set `gone` on unwind, not only on a clean exit"
+        );
     }
 }

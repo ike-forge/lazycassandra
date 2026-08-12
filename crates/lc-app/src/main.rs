@@ -21,7 +21,7 @@ use lc_inbound::{FrameMap, Rendered, Theme};
 use lc_outbound::cassandra::CassandraCluster;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
-use tokio::time::{Duration, interval};
+use tokio::time::{Duration, MissedTickBehavior, interval};
 
 /// The interval `ratatui_opentui_loader` is built around. Real time enters the
 /// program here and nowhere else — the domain sees only `Msg::Tick`, and
@@ -34,6 +34,13 @@ const TICK: Duration = Duration::from_millis(40);
 fn spawn_ticker(tx: mpsc::UnboundedSender<Incoming>) {
     tokio::spawn(async move {
         let mut ticks = interval(TICK);
+        // A blocking editing session lets ticks queue up behind it; the
+        // default `Burst` behaviour would replay every missed one on return,
+        // driving the loader and marking the frame dirty thousands of times
+        // before the edited buffer is even applied. A tick is a phase pulse,
+        // not an event with a payload — one catch-up tick means as much as
+        // any other (external editor design §4).
+        ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             ticks.tick().await;
