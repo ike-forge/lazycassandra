@@ -4,7 +4,8 @@
 //! the main loop stops drawing, gets off stdin, and waits
 //! (docs/superpowers/specs/2026-08-12-external-editor-design.md §4).
 
-use std::io::stdout;
+use std::fs::File;
+use std::io::{Write, stdout};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -74,7 +75,7 @@ fn release<T>(terminal: &mut DefaultTerminal, body: impl FnOnce() -> T) -> Resul
 /// rather than a type's.
 fn session(buffer: &str) -> Result<String, String> {
     let path = temp_path();
-    std::fs::write(&path, buffer)
+    write_fresh(&path, buffer)
         .map_err(|error| format!("could not write {}: {error}", path.display()))?;
 
     let edited = run(&path);
@@ -83,6 +84,20 @@ fn session(buffer: &str) -> Result<String, String> {
     let _removed = std::fs::remove_file(&path);
 
     edited
+}
+
+/// `create_new` refuses a path that already exists — including one a local
+/// attacker pre-created as a symlink to steer the write elsewhere — rather
+/// than following it the way `fs::write` would. The name is guessable
+/// (pid and a counter, not a random one — design §4.1), so this is the write
+/// that keeps a guessable path from being a hijackable one (external editor
+/// design §4.1).
+fn write_fresh(path: &Path, buffer: &str) -> std::io::Result<()> {
+    File::options()
+        .write(true)
+        .create_new(true)
+        .open(path)?
+        .write_all(buffer.as_bytes())
 }
 
 fn run(path: &Path) -> Result<String, String> {

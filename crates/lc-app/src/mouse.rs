@@ -54,7 +54,7 @@ impl MouseCapture {
     ///
     /// If capture cannot be turned back on, which leaves the terminal usable
     /// but with the pointer inert.
-    #[allow(
+    #[expect(
         clippy::unused_self,
         reason = "the receiver is the proof a MouseCapture exists to suspend; \
                   dropping it would let this be called with none enabled"
