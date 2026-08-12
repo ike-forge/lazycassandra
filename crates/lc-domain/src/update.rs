@@ -63,6 +63,15 @@ pub enum Msg {
         query: QueryId,
         error: DbError,
     },
+    /// The external editor exited cleanly; this is what it saved
+    /// (docs/superpowers/specs/2026-08-12-external-editor-design.md §3).
+    EditorClosed {
+        buffer: String,
+    },
+    /// It could not be run, or it exited non-zero. The buffer is untouched.
+    EditorFailed {
+        reason: String,
+    },
     Quit,
 }
 
@@ -84,6 +93,13 @@ pub enum Effect {
     },
     Cancel(QueryId),
     RecordHistory(Box<Statement>),
+    /// Hand `buffer` to the user's editor and report what comes back. The one
+    /// effect `lc-app` runs on the main loop rather than as a task: the child
+    /// needs the terminal, so nothing else may draw while it holds it
+    /// (design §4).
+    OpenEditor {
+        buffer: String,
+    },
     Quit,
 }
 
@@ -274,8 +290,31 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             Vec::new()
         }
 
+        Msg::EditorClosed { buffer } => editor_closed(state, &buffer),
+
+        Msg::EditorFailed { reason } => editor_failed(state, reason),
+
         Msg::Quit => quit(state),
     }
+}
+
+fn editor_closed(state: &mut State, buffer: &str) -> Vec<Effect> {
+    state.queries.replace(buffer);
+    state.mark_dirty();
+    Vec::new()
+}
+
+fn editor_failed(state: &mut State, reason: String) -> Vec<Effect> {
+    raise(
+        state,
+        Message {
+            title: "Editor".to_owned(),
+            message: reason,
+            severity: Severity::Danger,
+        },
+    );
+    state.mark_dirty();
+    Vec::new()
 }
 
 fn quit(state: &mut State) -> Vec<Effect> {
@@ -787,10 +826,26 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     match key {
         Key::Char('r') => run(state),
+        Key::Char('e') if state.focus == Panel::Queries => open_editor(state),
         Key::Char('e') => ddl_scroll(state, Line::Down),
         Key::Char('y') => ddl_scroll(state, Line::Up),
         _ => Vec::new(),
     }
+}
+
+/// The one ctrl chord with a per-panel meaning: `ctrl-e` scrolls the Table DDL
+/// viewport and opens the editor from Queries. Neither panel wants the other's
+/// action — Table DDL takes no text, and Queries has no viewport that can
+/// leave its cursor — and focus decides which is meant, as it does for every
+/// other key (design §1).
+fn open_editor(state: &State) -> Vec<Effect> {
+    if state.focus != Panel::Queries {
+        return Vec::new();
+    }
+
+    vec![Effect::OpenEditor {
+        buffer: state.queries.text(),
+    }]
 }
 
 /// Which way `ctrl-e` and `ctrl-y` move the Ddl viewport.
@@ -2268,6 +2323,115 @@ mod tests {
         ctrl(&mut state, Key::Char('e'));
 
         assert_eq!(state.ddl.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn ctrl_e_hands_the_queries_buffer_to_an_editor() {
+        let mut state = State {
+            focus: Panel::Queries,
+            ..State::default()
+        };
+        state.queries.replace("SELECT * FROM t");
+
+        let effects = ctrl(&mut state, Key::Char('e'));
+
+        assert_eq!(
+            effects,
+            vec![Effect::OpenEditor {
+                buffer: "SELECT * FROM t".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn ctrl_e_still_scrolls_the_ddl_viewport() {
+        let mut state = State {
+            focus: Panel::Ddl,
+            ..State::default()
+        };
+
+        let effects = ctrl(&mut state, Key::Char('e'));
+
+        assert!(
+            effects.is_empty(),
+            "the DDL member moves a viewport and asks for nothing"
+        );
+    }
+
+    #[test]
+    fn ctrl_e_is_inert_outside_the_two_panels_that_claim_it() {
+        for focus in [Panel::Tables, Panel::Contents] {
+            let mut state = State {
+                focus,
+                ..State::default()
+            };
+
+            assert!(
+                ctrl(&mut state, Key::Char('e')).is_empty(),
+                "{focus:?} claims no ctrl-e"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_e_under_an_overlay_does_nothing() {
+        let overlays = [
+            Overlay::Commands(CommandsPanel::opened()),
+            Overlay::Themes {
+                cursor: Cursor::default(),
+                restored: ThemeChoice::default(),
+            },
+        ];
+
+        for overlay in overlays {
+            let mut state = State {
+                focus: Panel::Queries,
+                overlay: Some(overlay),
+                ..State::default()
+            };
+
+            assert!(ctrl(&mut state, Key::Char('e')).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_closed_editor_replaces_the_buffer() {
+        let mut state = State::default();
+        state.queries.replace("SELECT");
+
+        let effects = update(
+            &mut state,
+            Msg::EditorClosed {
+                buffer: "SELECT *\nFROM t".to_owned(),
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(state.queries.text(), "SELECT *\nFROM t");
+        assert!(state.dirty, "the buffer changed, so the frame is stale");
+    }
+
+    #[test]
+    fn a_failed_editor_says_so_and_keeps_the_buffer() {
+        let mut state = State::default();
+        state.queries.replace("SELECT");
+
+        let effects = update(
+            &mut state,
+            Msg::EditorFailed {
+                reason: "could not run hx: No such file or directory".to_owned(),
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(state.queries.text(), "SELECT");
+        assert!(matches!(
+            state.overlay,
+            Some(Overlay::Message(Message {
+                severity: Severity::Danger,
+                ..
+            }))
+        ));
     }
 
     /// A state focused on Queries with `text` typed into it, `\n` meaning

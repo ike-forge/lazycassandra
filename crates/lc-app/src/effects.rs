@@ -12,8 +12,10 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::input::Incoming;
 
-/// The effects that still have no port behind them are inert. `Quit` needs no
-/// work here — `update` has already set `State::should_quit`.
+/// The effects that still have no port behind them are inert, and so is
+/// `OpenEditor` — the main loop will run that one itself, before anything
+/// reaches here (external editor design §4). `Quit` needs no work here —
+/// `update` has already set `State::should_quit`.
 pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, effect: &Effect) {
     match effect {
         Effect::Connect(conn) => {
@@ -65,6 +67,7 @@ pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, ef
         Effect::FetchNextPage { .. }
         | Effect::Cancel(_)
         | Effect::RecordHistory(_)
+        | Effect::OpenEditor { .. }
         | Effect::Quit => {}
     }
 }
