@@ -46,12 +46,14 @@ From the table metadata slice (docs/superpowers/specs/2026-08-09-table-metadata-
 
 From the panel scrolling slice (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md):
 
-- `ctrl-d` and `ctrl-u`. The ctrl layer exists now and has three members:
+- `ctrl-d` and `ctrl-u`. The ctrl layer exists now and has four members:
   `ctrl-e`/`ctrl-y` in Table DDL
-  (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §4.1) and `ctrl-r` in Queries
-  (docs/superpowers/specs/2026-08-10-query-execution-design.md). Vim's half-page motions
-  still are not in it, and want the layer designed rather than a fourth arm
-  added in passing (design §5).
+  (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §4.1), `ctrl-r` in Queries
+  (docs/superpowers/specs/2026-08-10-query-execution-design.md), and `ctrl-e`
+  again in Queries, opening the buffer in an external editor
+  (docs/superpowers/specs/2026-08-12-external-editor-design.md §1). Vim's
+  half-page motions still are not in it, and want the layer designed rather
+  than a fifth arm added in passing (design §5).
 - A long `Notice` still cannot scroll. One sentence is the assumption; a
   `DbError` carrying a paragraph would break it.
 

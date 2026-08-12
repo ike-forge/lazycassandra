@@ -193,7 +193,7 @@ Accepted anywhere, but a no-op unless Table DDL has focus.
 | `ctrl-e` | Scroll the viewport down one line, leaving the cursor where it is. |
 | `ctrl-y` | Scroll it up one line. |
 
-Two of the ctrl layer's three members (§2), and the only panel that needs a
+Two of the ctrl layer's four members (§2), and the only panel that needs a
 key to move a viewport on its own: a table option can be taller than the
 panel, so this is the one place a selection and a viewport can genuinely
 disagree — elsewhere the two never diverge, and there
@@ -201,6 +201,10 @@ is no viewport to move independently of the selection. A selection scrolled
 out of view is not drawn; the next `j` or `k` brings the viewport back to it,
 because motion follows the cursor.
 See [Table DDL selection design](specs/2026-08-10-ddl-selection-design.md) §4.1.
+
+`ctrl-e` is also the Queries panel's editor binding (§1's Queries subsection).
+The two never compete: Table DDL takes no text, and Queries has no viewport
+that can leave its cursor behind.
 
 ### Queries panel
 
@@ -210,6 +214,7 @@ character and not a binding. What it does not claim keeps its global meaning.
 | Key | Action |
 |---|---|
 | `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. A buffer that is empty or all whitespace runs nothing, and the bar greys the hint out while that is so — §2. |
+| `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
 | any printable key | Insert it. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
@@ -221,7 +226,12 @@ character and not a binding. What it does not claim keeps its global meaning.
 `Tab` and `Shift-Tab` still move focus. Nothing else global survives inside
 the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
 it is the ctrl layer's Queries member and does nothing outside this panel,
-just as `ctrl-e`/`ctrl-y` do nothing outside Table DDL.
+just as `ctrl-y` does nothing outside Table DDL. `ctrl-e` is the layer's
+second Queries member, and the one chord that means two things: from Queries
+it opens the editor, from Table DDL it scrolls that panel's viewport, and it
+is inert in the other two. Focus decides which is meant, as it does for every
+other key
+([external editor design](specs/2026-08-12-external-editor-design.md) §1).
 See [queries editor design](specs/2026-08-09-queries-editor-design.md).
 
 ---
@@ -279,7 +289,7 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has three members. `ctrl-e` and `ctrl-y`
+for whatever is focused. The layer has four members. `ctrl-e` and `ctrl-y`
 scroll the Table DDL viewport without moving its cursor, which is the one
 panel whose cursor and viewport can disagree
 ([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4.1).
@@ -288,6 +298,16 @@ there is a character and the action the panel exists for has no unmodified key
 available ([query execution design](specs/2026-08-10-query-execution-design.md)
 §1). Each member gates on its own panel; `ctrl_key` itself only refuses the
 palette. `ctrl-d`/`ctrl-u` are still unbound and still want designing.
+
+The layer has four members, and one of them — `ctrl-e` — carries a different
+meaning in each of two panels: the Table DDL viewport scroll, and opening the
+Queries buffer in an external editor
+([external editor design](specs/2026-08-12-external-editor-design.md) §1). That
+is the same rule the horizontal four follow, not an exception to it: focus
+decides, and in any one frame the chord does exactly one thing. What the rule
+protects is unchanged — a ctrl key is still a binding of its own and never a
+synonym for the plain one, and a member is still inert in the panels that do
+not claim it.
 
 **Vim and arrows are synonyms, both ways.** `j`/`↓`, `k`/`↑`, `l`/`→`, `h`/`←`.
 Neither set is the real one. Anyone who reaches for arrows should never hit a
@@ -431,10 +451,11 @@ Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
 editor binds, inside Queries.
 
-Ctrl taken: `ctrl-e` and `ctrl-y` in Table DDL, `ctrl-r` in Queries. The rest
-of the layer is free — including `e`, `y` and `r` themselves everywhere but the
-panel that claims them — with `ctrl-d`/`ctrl-u` spoken for (§4). Alt is not a
-layer and nothing may claim from it.
+Ctrl taken: `ctrl-e` and `ctrl-y` in Table DDL, `ctrl-r` in Queries, and
+`ctrl-e` again in Queries, where it opens the buffer in an external editor.
+The rest of the layer is free — including `e`, `y` and `r` themselves
+everywhere but the panel that claims them — with `ctrl-d`/`ctrl-u` spoken for
+(§4). Alt is not a layer and nothing may claim from it.
 
 Named keys the domain understands but nothing binds: `Insert` `F1`–`F12`.
 Anything crossterm reports outside that vocabulary is dropped at the edge and
@@ -502,7 +523,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Paging and `Home`/`End` | `page_down_moves_the_tree_by_one_panel_height`, `home_and_end_reach_the_ends_of_the_tree_in_one_key` |
 | Ctrl/alt are not synonyms | `an_unbound_ctrl_key_does_nothing`, `an_alt_modified_key_is_not_a_binding` |
 | `ctrl-e`/`ctrl-y` scroll Table DDL's viewport and leave its cursor alone | `ctrl_e_and_ctrl_y_scroll_the_ddl_panel_without_moving_its_cursor` |
-| `ctrl-e` belongs to Table DDL alone | `ctrl_e_belongs_to_the_ddl_panel_alone` |
+| `ctrl-e` is inert in Tables, not a Tables binding | `ctrl_e_belongs_to_the_ddl_panel_alone` |
 | An open palette still claims it first | `an_open_palette_swallows_ctrl_e` |
 | Shifted letters stay free | `a_shifted_shortcut_stays_unbound` |
 | `T` opens the picker on the theme in force | `the_picker_opens_on_the_theme_in_force` |
