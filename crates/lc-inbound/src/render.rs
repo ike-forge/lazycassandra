@@ -684,7 +684,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  j/k move  l/h fold  ⏎ open  / search │ tab panel  q quit",
+            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open  / search │ tab panel  q quit",
             "the loader takes the leading cells and the hints follow it"
         );
         assert!(
@@ -724,10 +724,7 @@ mod tests {
         let drawn = row(&buffer, 23);
         let hints: String = drawn.chars().skip(taken).collect();
 
-        assert_eq!(
-            hints.trim_end(),
-            " j/k scroll  pgdn/pgup page  home/end ends │ ?/esc close  q quit"
-        );
+        assert_eq!(hints.trim_end(), " home/end ends │ ?/esc close  q quit");
     }
 
     #[test]
@@ -737,10 +734,10 @@ mod tests {
             .map(|&panel| row(&draw_focused(80, 24, panel), 23).trim_end().to_owned())
             .collect();
 
-        assert!(bars[0].contains("l/h fold"), "Tables folds: {:?}", bars[0]);
-        assert!(bars[1].contains("j/k move"), "Ddl moves: {:?}", bars[1]);
+        assert!(bars[0].contains("⏎ open"), "Tables opens: {:?}", bars[0]);
+        assert!(bars[1].contains("/ search"), "Ddl filters: {:?}", bars[1]);
         assert!(
-            bars[2].contains("j/k move"),
+            bars[2].contains("home/end ends"),
             "Contents moves: {:?}",
             bars[2]
         );
@@ -757,7 +754,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 11).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  j/k move │ tab panel  q quit",
+            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open │ tab panel  q quit",
             "the cells the loader took come out of the hints, lowest value first"
         );
     }

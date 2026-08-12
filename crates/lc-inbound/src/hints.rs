@@ -155,7 +155,7 @@ mod tests {
     fn a_wide_frame_shows_every_hint() {
         assert_eq!(
             drawn(Panel::Tables, 80),
-            " j/k move  l/h fold  ⏎ open  / search │ tab panel  q quit"
+            " ⏎ open  / search │ tab panel  q quit"
         );
     }
 
@@ -165,13 +165,9 @@ mod tests {
         // fitting (design §6). `?` never joins this fixture's bar — these
         // states never carry a geometry a palette would fit (design §5.1) —
         // so the thresholds are exactly what they were before `?` existed.
-        assert_eq!(
-            drawn(Panel::Tables, 46),
-            " j/k move  l/h fold │ tab panel  q quit"
-        );
-        assert_eq!(drawn(Panel::Tables, 38), " j/k move │ tab panel  q quit");
-        assert_eq!(drawn(Panel::Tables, 28), " j/k move │ q quit");
-        assert_eq!(drawn(Panel::Tables, 17), " q quit");
+        assert_eq!(drawn(Panel::Tables, 36), " ⏎ open │ tab panel  q quit");
+        assert_eq!(drawn(Panel::Tables, 25), " ⏎ open │ q quit");
+        assert_eq!(drawn(Panel::Tables, 15), " q quit");
         assert_eq!(drawn(Panel::Tables, 6), "");
     }
 
@@ -212,31 +208,28 @@ mod tests {
 
         assert_eq!(
             drawn(80),
-            " j/k move  l/h fold  ⏎ open  / search │ tab panel  ? commands  q quit"
+            " ⏎ open  / search │ tab panel  ? commands  q quit"
         );
         assert_eq!(
             drawn(46),
-            " j/k move │ tab panel  ? commands  q quit",
+            " ⏎ open │ tab panel  ? commands  q quit",
             "tab panel is still here alongside ? commands"
         );
         assert_eq!(
-            drawn(40),
-            " j/k move │ ? commands  q quit",
+            drawn(37),
+            " ⏎ open │ ? commands  q quit",
             "tab panel goes first as the frame narrows"
         );
         assert_eq!(
-            drawn(28),
-            " j/k move │ q quit",
+            drawn(26),
+            " ⏎ open │ q quit",
             "? commands goes next; q quit is still the last one out"
         );
     }
 
     #[test]
     fn the_widest_bar_still_fits_the_narrowest_legal_frame() {
-        assert_eq!(
-            drawn(Panel::Ddl, 40),
-            " j/k move  a tab │ tab panel  q quit"
-        );
+        assert_eq!(drawn(Panel::Ddl, 40), " home/end ends │ tab panel  q quit");
     }
 
     #[test]
@@ -322,7 +315,7 @@ mod tests {
         let keys = line
             .spans
             .iter()
-            .find(|span| span.content.as_ref() == "j/k")
+            .find(|span| span.content.as_ref() == "⏎")
             .expect("the first hint's key");
 
         assert_eq!(keys.style, Theme::default().style(Token::HintKey));

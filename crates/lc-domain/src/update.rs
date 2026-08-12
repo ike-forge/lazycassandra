@@ -351,35 +351,20 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::PageUp => scroll(state, Motion::PageUp),
         Key::Home => scroll(state, Motion::Start),
         Key::End => scroll(state, Motion::End),
-        Key::Enter | Key::Char(' ') => return activate(state),
+        Key::Enter => return activate(state),
         Key::Char('l') | Key::Right => go_right(state),
         Key::Char('h') | Key::Left => go_left(state),
         Key::Char('/') => open_prompt(state),
-        Key::Char('T') => open_themes(state),
         // Last, so every binding above keeps precedence over a panel key.
         Key::Char(key) => {
             if let Some(panel) = Panel::from_shortcut(key) {
-                focus_or_cycle(state, panel);
+                state.focus = panel;
             }
         }
         _ => {}
     }
 
     Vec::new()
-}
-
-/// Focuses `panel`, or moves it to its next tab when it already has focus.
-///
-/// The second press is not a second binding: a panel with tabs spends its own
-/// shortcut on them, so the key that reaches a panel is also the key that walks
-/// what it can show (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §3).
-/// A panel with one view is unchanged by the repeat.
-fn focus_or_cycle(state: &mut State, panel: Panel) {
-    if state.focus == panel && panel == Panel::Ddl {
-        state.ddl.cycle();
-    } else {
-        state.focus = panel;
-    }
 }
 
 /// Rows a wheel notch moves, in whatever unit the panel scrolls in. One is
@@ -669,14 +654,19 @@ fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `T` opens the theme picker, seated on the theme in force.
+/// `ctrl-t` opens the theme picker, seated on the theme in force.
 ///
 /// Refused where the frame cannot draw a list, for the reason [`open_palette`]
 /// gives. Gated on the palette's own room rather than on a measurement of its
 /// own: the picker is the smaller block, so a frame that holds a palette holds
 /// a picker.
+///
+/// Refused over a live prompt too, which no unmodified key needs to say: the
+/// ctrl layer is dispatched above every overlay, so this is the one opener a
+/// prompt cannot swallow, and replacing one would strand the panel under a
+/// half-typed query with nothing left holding the filter it had.
 fn open_themes(state: &mut State) {
-    if state.geometry.command_rows() == 0 {
+    if state.geometry.command_rows() == 0 || matches!(state.overlay, Some(Overlay::Search(_))) {
         return;
     }
 
@@ -695,11 +685,11 @@ fn open_themes(state: &mut State) {
 /// the same live-as-you-type rule the search prompt follows (panel search
 /// design §1).
 ///
-/// `q` still quits, for the reason [`palette_key`] gives. `PageUp`/`PageDown`
-/// are deliberately inert rather than aliases for `Home`/`End`: the list is
-/// every theme there is and always shorter than the block drawing it, so a
-/// screen is the whole list and paging would be a second name for a motion
-/// that already lands in one press (docs/shortcuts.md §1).
+/// `q` still quits, for the reason [`palette_key`] gives. Paging is the whole
+/// of the picker's long-range motion: the list is every theme there is and
+/// always shorter than the block drawing it, so one page is the whole list and
+/// a separate `Home`/`End` would be a second key for a landing `PageUp` and
+/// `PageDown` already make in one press (docs/shortcuts.md §1).
 fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char('q') => return quit(state),
@@ -715,6 +705,7 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 
     let last = ThemeChoice::ALL.len();
+    let height = state.geometry.command_rows();
     let Some(Overlay::Themes { cursor, .. }) = &mut state.overlay else {
         return Vec::new();
     };
@@ -722,8 +713,8 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char('j') | Key::Down => cursor.down(last),
         Key::Char('k') | Key::Up => cursor.up(),
-        Key::Home => cursor.to_start(),
-        Key::End => cursor.to_end(last),
+        Key::PageDown => cursor.page_down(last, height),
+        Key::PageUp => cursor.page_up(height),
         _ => {}
     }
 
@@ -778,6 +769,15 @@ fn scroll(state: &mut State, motion: Motion) {
 /// matches on the key alone, would make `ctrl-j` move the palette cursor.
 /// Each arm gates on its own panel below.
 fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
+    // Paging is decided above the refusal below: `ctrl-d`/`ctrl-u` are a
+    // second spelling of `PageDown`/`PageUp` rather than members of their own,
+    // so they reach whatever those two reach, an open overlay included.
+    match key {
+        Key::Char('d') => return page(state, Key::PageDown),
+        Key::Char('u') => return page(state, Key::PageUp),
+        _ => {}
+    }
+
     if matches!(
         state.overlay,
         Some(Overlay::Commands(_) | Overlay::Themes { .. })
@@ -787,37 +787,36 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     match key {
         Key::Char('r') => run(state),
-        Key::Char('e') => ddl_scroll(state, Line::Down),
-        Key::Char('y') => ddl_scroll(state, Line::Up),
+        Key::Char('t') => {
+            open_themes(state);
+            Vec::new()
+        }
         _ => Vec::new(),
     }
 }
 
-/// Which way `ctrl-e` and `ctrl-y` move the Ddl viewport.
-#[derive(Clone, Copy)]
-enum Line {
-    Down,
-    Up,
-}
+/// `ctrl-d`/`ctrl-u`, dispatched to whatever `key` would reach unmodified.
+///
+/// Delegating rather than paging here is what keeps the two spellings from
+/// drifting: an overlay that learns to page learns it once.
+fn page(state: &mut State, key: Key) -> Vec<Effect> {
+    match &state.overlay {
+        Some(Overlay::Commands(_)) => palette_key(state, key),
+        Some(Overlay::Themes { .. }) => themes_key(state, key),
+        // The prompt takes text and pages nothing, so neither spelling does.
+        Some(Overlay::Search(_)) => Vec::new(),
+        Some(Overlay::Message(_)) | None => {
+            if state.focus.takes_text() {
+                edit(state, key);
+            } else if matches!(key, Key::PageDown) {
+                scroll(state, Motion::PageDown);
+            } else {
+                scroll(state, Motion::PageUp);
+            }
 
-/// Table DDL alone has a cursor and a viewport that count in different units,
-/// so it alone can have a selection its viewport has left — and so it alone
-/// needs a way to move one without the other
-/// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §4.1).
-fn ddl_scroll(state: &mut State, line: Line) -> Vec<Effect> {
-    if state.focus != Panel::Ddl {
-        return Vec::new();
+            Vec::new()
+        }
     }
-
-    match line {
-        Line::Down => state.ddl.scroll.down(
-            state.geometry.ddl_lines(),
-            state.geometry.height(Panel::Ddl),
-        ),
-        Line::Up => state.ddl.scroll.up(),
-    }
-
-    Vec::new()
 }
 
 /// How many rows `panel`'s *cursor* moves over. Queries never arrives here —
@@ -1859,7 +1858,7 @@ mod tests {
         let mut state = measured(&["a"]);
         state.theme = ThemeChoice::CatppuccinFrappe;
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
 
         assert_eq!(
             theme_picker(&state),
@@ -1871,7 +1870,7 @@ mod tests {
     fn moving_the_cursor_previews_the_theme() {
         let mut state = measured(&["a"]);
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('j'));
 
         assert_eq!(
@@ -1885,7 +1884,7 @@ mod tests {
     fn enter_keeps_the_previewed_theme() {
         let mut state = measured(&["a"]);
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Enter);
 
@@ -1898,7 +1897,7 @@ mod tests {
         let mut state = measured(&["a"]);
         state.theme = ThemeChoice::CatppuccinMocha;
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
         press(&mut state, Key::Escape);
 
@@ -1910,7 +1909,7 @@ mod tests {
     fn the_picker_cursor_cannot_run_off_the_list() {
         let mut state = measured(&["a"]);
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
         for _ in 0..ThemeChoice::ALL.len() * 2 {
             press(&mut state, Key::Char('j'));
         }
@@ -1929,44 +1928,48 @@ mod tests {
     }
 
     #[test]
-    fn home_and_end_reach_the_ends_of_the_theme_list() {
+    fn paging_reaches_the_ends_of_the_theme_list() {
         let mut state = measured(&["a"]);
 
-        press(&mut state, Key::Char('T'));
-        press(&mut state, Key::End);
+        ctrl(&mut state, Key::Char('t'));
+        press(&mut state, Key::PageDown);
 
-        assert_eq!(theme_picker(&state), Some(ThemeChoice::ALL.len() - 1));
+        assert_eq!(
+            theme_picker(&state),
+            Some(ThemeChoice::ALL.len() - 1),
+            "the list is shorter than the block drawing it, so one page is all of it"
+        );
         assert_eq!(
             state.theme,
             ThemeChoice::ALL[ThemeChoice::ALL.len() - 1],
-            "an end is a move, and every move previews"
+            "a page is a move, and every move previews"
         );
 
-        press(&mut state, Key::Home);
+        press(&mut state, Key::PageUp);
 
         assert_eq!(theme_picker(&state), Some(0));
         assert_eq!(state.theme, ThemeChoice::ALL[0]);
     }
 
     #[test]
-    fn q_still_quits_with_the_picker_open() {
+    fn ctrl_d_and_ctrl_u_page_the_picker_too() {
         let mut state = measured(&["a"]);
 
-        press(&mut state, Key::Char('T'));
-        let effects = press(&mut state, Key::Char('q'));
+        ctrl(&mut state, Key::Char('t'));
+        ctrl(&mut state, Key::Char('d'));
 
-        assert!(
-            state.should_quit,
-            "a key that means quit everywhere but one overlay is not one anyone can trust"
-        );
-        assert!(!effects.is_empty(), "quitting cancels what is in flight");
+        assert_eq!(theme_picker(&state), Some(ThemeChoice::ALL.len() - 1));
+
+        ctrl(&mut state, Key::Char('u'));
+
+        assert_eq!(theme_picker(&state), Some(0));
     }
 
     #[test]
-    fn paging_the_picker_does_nothing() {
-        for key in [Key::PageDown, Key::PageUp] {
+    fn the_ends_are_inert_in_the_picker() {
+        for key in [Key::Home, Key::End] {
             let mut state = measured(&["a"]);
-            press(&mut state, Key::Char('T'));
+            ctrl(&mut state, Key::Char('t'));
             press(&mut state, Key::Char('j'));
             let before = crate::view::view_model(&state);
 
@@ -1975,9 +1978,23 @@ mod tests {
             assert_eq!(
                 crate::view::view_model(&state),
                 before,
-                "{key:?} is inert in the picker by design, and the bar does not name it"
+                "{key:?} would be a second name for the page the picker already takes"
             );
         }
+    }
+
+    #[test]
+    fn q_still_quits_with_the_picker_open() {
+        let mut state = measured(&["a"]);
+
+        ctrl(&mut state, Key::Char('t'));
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(
+            state.should_quit,
+            "a key that means quit everywhere but one overlay is not one anyone can trust"
+        );
+        assert!(!effects.is_empty(), "quitting cancels what is in flight");
     }
 
     /// The panel guards above sweep states with no overlay, so an overlay's
@@ -1988,7 +2005,7 @@ mod tests {
         // Mid-list, so every direction and both ends have somewhere to go.
         let seated = || {
             let mut state = measured(&["a"]);
-            press(&mut state, Key::Char('T'));
+            ctrl(&mut state, Key::Char('t'));
             press(&mut state, Key::Char('j'));
             press(&mut state, Key::Char('j'));
             state
@@ -2026,7 +2043,7 @@ mod tests {
     #[test]
     fn moving_the_picker_cursor_asks_for_a_repaint() {
         let mut state = measured(&["a"]);
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
         state.dirty = false;
 
         press(&mut state, Key::Char('j'));
@@ -2041,7 +2058,7 @@ mod tests {
     fn a_frame_too_small_for_a_list_refuses_the_picker() {
         let mut state = State::default();
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
 
         assert!(
             state.overlay.is_none(),
@@ -2054,7 +2071,7 @@ mod tests {
         let mut state = measured(&["a"]);
         state.theme = ThemeChoice::CatppuccinMocha;
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
         assert_ne!(
             state.theme,
@@ -2083,7 +2100,7 @@ mod tests {
         let mut state = measured(&["a"]);
         state.theme = ThemeChoice::CatppuccinMocha;
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
         assert_ne!(state.theme, ThemeChoice::CatppuccinMocha);
 
@@ -2109,7 +2126,7 @@ mod tests {
         let mut state = measured(&["a"]);
         state.theme = ThemeChoice::CatppuccinMocha;
 
-        press(&mut state, Key::Char('T'));
+        ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
         assert_ne!(state.theme, ThemeChoice::CatppuccinMocha);
 
@@ -2219,55 +2236,62 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_e_and_ctrl_y_scroll_the_ddl_panel_without_moving_its_cursor() {
-        let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
-        sized(&mut state, [8, 4, 8, 1], 40);
+    fn ctrl_d_and_ctrl_u_page_the_focused_panel() {
+        let mut paged = measured(&["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"]);
+        let mut chorded = paged.clone();
 
-        ctrl(&mut state, Key::Char('e'));
+        press(&mut paged, Key::PageDown);
+        ctrl(&mut chorded, Key::Char('d'));
 
-        assert_eq!(state.ddl.scroll.offset(), 1);
-        assert_eq!(
-            state.ddl.cursor.index(),
-            0,
-            "the viewport moved and the selection did not"
-        );
+        assert_eq!(chorded.tables.cursor.index(), paged.tables.cursor.index());
+        assert!(chorded.tables.cursor.index() > 0, "a page was available");
 
-        ctrl(&mut state, Key::Char('y'));
+        press(&mut paged, Key::PageUp);
+        ctrl(&mut chorded, Key::Char('u'));
 
-        assert_eq!(state.ddl.scroll.offset(), 0);
+        assert_eq!(chorded.tables.cursor.index(), paged.tables.cursor.index());
     }
 
     #[test]
-    fn ctrl_e_belongs_to_the_ddl_panel_alone() {
-        let mut state = read_shop_orders();
-        state.focus = Panel::Tables;
-        sized(&mut state, [8, 4, 8, 1], 40);
-        let selected = state.tables.cursor.index();
-
-        ctrl(&mut state, Key::Char('e'));
-
-        assert_eq!(state.ddl.scroll.offset(), 0);
-        assert_eq!(
-            state.tables.cursor.index(),
-            selected,
-            "ctrl-e outside Ddl is inert, not a Tables binding"
-        );
-    }
-
-    #[test]
-    fn an_open_palette_swallows_ctrl_e() {
-        let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
-        // `sized`'s command_rows is always zero, which would leave `?` inert
-        // (`open_palette`'s own guard) — set geometry directly, as `measured`
-        // above does, so the palette this test needs actually opens.
-        state.geometry = Geometry::new([8, 4, 8, 1], 40, 1);
+    fn ctrl_d_pages_an_open_palette_rather_than_the_panel_underneath() {
+        let mut state = measured(&["a"]);
         press(&mut state, Key::Char('?'));
 
-        ctrl(&mut state, Key::Char('e'));
+        ctrl(&mut state, Key::Char('d'));
 
-        assert_eq!(state.ddl.scroll.offset(), 0);
+        assert_eq!(
+            palette(&state).expect("still open").selected(),
+            15,
+            "ctrl-d is pgdn by another name, and pgdn pages the palette"
+        );
+        assert_eq!(state.tables.cursor.index(), 0);
+    }
+
+    #[test]
+    fn ctrl_d_pages_the_editor_the_way_pgdn_does() {
+        let mut paged = editing("a\nb\nc\nd\ne\nf");
+        let mut chorded = paged.clone();
+
+        press(&mut paged, Key::PageUp);
+        ctrl(&mut chorded, Key::Char('u'));
+
+        assert_eq!(chorded.queries.cursor(), paged.queries.cursor());
+        assert_eq!(chorded.queries.text(), paged.queries.text(), "not text");
+    }
+
+    #[test]
+    fn ctrl_d_is_inert_under_a_search_prompt() {
+        let mut state = browsing(&["a", "b", "c", "d", "e", "f", "g", "h"]);
+        press(&mut state, Key::Char('/'));
+        let before = crate::view::view_model(&state);
+
+        ctrl(&mut state, Key::Char('d'));
+
+        assert_eq!(
+            crate::view::view_model(&state),
+            before,
+            "the prompt pages nothing, and the chord is not text either"
+        );
     }
 
     /// A state focused on Queries with `text` typed into it, `\n` meaning
@@ -2493,24 +2517,34 @@ mod tests {
     }
 
     #[test]
-    fn enter_and_space_both_toggle_a_keyspace() {
-        for key in [Key::Enter, Key::Char(' ')] {
-            let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+    fn enter_toggles_a_keyspace() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
 
-            let effects = press(&mut state, key);
-            assert_eq!(row_count(&state), 3, "{key:?} did not unfold");
-            assert!(
-                effects.is_empty(),
-                "unfolding is a pure state change and must emit no effect (table-list design §2)"
-            );
+        let effects = press(&mut state, Key::Enter);
+        assert_eq!(row_count(&state), 3, "⏎ did not unfold");
+        assert!(
+            effects.is_empty(),
+            "unfolding is a pure state change and must emit no effect (table-list design §2)"
+        );
 
-            let effects = press(&mut state, key);
-            assert_eq!(row_count(&state), 1, "{key:?} did not fold");
-            assert!(
-                effects.is_empty(),
-                "folding is a pure state change and must emit no effect (table-list design §2)"
-            );
-        }
+        let effects = press(&mut state, Key::Enter);
+        assert_eq!(row_count(&state), 1, "⏎ did not fold");
+        assert!(
+            effects.is_empty(),
+            "folding is a pure state change and must emit no effect (table-list design §2)"
+        );
+    }
+
+    /// One key for one action: `Space` was `Enter`'s synonym and is now free
+    /// (docs/shortcuts.md §2, §3).
+    #[test]
+    fn space_is_not_a_second_name_for_enter() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+
+        let effects = press(&mut state, Key::Char(' '));
+
+        assert_eq!(row_count(&state), 1, "space unfolded a keyspace");
+        assert!(effects.is_empty(), "space read a table");
     }
 
     #[test]
@@ -2982,27 +3016,8 @@ mod tests {
     }
 
     #[test]
-    fn the_ddl_shortcut_walks_the_panels_tabs_once_it_already_has_focus() {
-        let mut state = State::default();
-
-        press(&mut state, Key::Char(Panel::Ddl.shortcut()));
-        assert_eq!(state.focus, Panel::Ddl);
-        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "the first press only focuses");
-
-        press(&mut state, Key::Char(Panel::Ddl.shortcut()));
-        assert_eq!(state.ddl.tab(), DdlTab::Columns);
-        assert_eq!(state.focus, Panel::Ddl, "and focus stays where it was");
-
-        press(&mut state, Key::Char(Panel::Ddl.shortcut()));
-        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "wrapping round");
-    }
-
-    #[test]
-    fn a_repeated_shortcut_leaves_a_panel_with_one_view_alone() {
-        for panel in Panel::ALL
-            .into_iter()
-            .filter(|panel| !panel.takes_text() && *panel != Panel::Ddl)
-        {
+    fn a_repeated_shortcut_leaves_a_panel_alone() {
+        for panel in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
             let mut state = State::default();
 
             press(&mut state, Key::Char(panel.shortcut()));
@@ -3012,7 +3027,7 @@ mod tests {
             assert_eq!(
                 state.ddl.tab(),
                 DdlTab::Ddl,
-                "{panel:?} must not walk another panel's tabs"
+                "a focus letter moves focus and does nothing else, however often it is pressed"
             );
         }
     }
@@ -3123,12 +3138,15 @@ mod tests {
     }
 
     #[test]
-    fn space_reads_a_table_the_same_way_enter_does() {
+    fn space_reads_no_table() {
         let mut state = read_shop_orders();
 
         press(&mut state, Key::Char(' '));
 
-        assert!(state.contents.outstanding().is_some());
+        assert!(
+            state.contents.outstanding().is_none(),
+            "space is free, not a second name for ⏎"
+        );
     }
 
     #[test]
@@ -3156,16 +3174,14 @@ mod tests {
 
     #[test]
     fn reading_a_table_lands_focus_in_contents() {
-        for key in [Key::Enter, Key::Char(' ')] {
-            let mut state = tabled(&[("shop", &["orders"])]);
-            state.focus = Panel::Tables;
-            press(&mut state, Key::Char('l'));
-            press(&mut state, Key::Char('j'));
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
 
-            press(&mut state, key);
+        press(&mut state, Key::Enter);
 
-            assert_eq!(state.focus, Panel::Contents, "{key:?}");
-        }
+        assert_eq!(state.focus, Panel::Contents);
     }
 
     #[test]
@@ -4462,7 +4478,7 @@ mod tests {
 
         // Off the first row, so `k` and `home` have somewhere to go here too.
         let mut picker_open = measured(&["a", "b", "c"]);
-        press(&mut picker_open, Key::Char('T'));
+        ctrl(&mut picker_open, Key::Char('t'));
         press(&mut picker_open, Key::Char('j'));
 
         vec![covered, elsewhere, moved, palette_open, picker_open]
@@ -4784,30 +4800,18 @@ mod tests {
         );
     }
 
-    /// The prompt is inert to what the ctrl layer does not claim, not to the
-    /// whole of it: `handle_key` routes ctrl above every overlay
-    /// (docs/shortcuts.md §2). The layer changes neither focus nor the
-    /// prompt's captured target, so the query survives the chord intact.
+    /// The layer is dispatched above every overlay, so a chord that would open
+    /// one has to refuse the prompt itself: opening a picker over a live query
+    /// would leave the panel filtered with nothing holding what it filtered
+    /// from (docs/shortcuts.md §1).
     #[test]
-    fn the_ctrl_layer_reaches_past_an_open_prompt() {
-        let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
-        sized(&mut state, [8, 4, 8, 1], 40);
+    fn ctrl_t_is_refused_over_a_live_prompt() {
+        let mut state = measured(&["a"]);
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('t'));
 
-        ctrl(&mut state, Key::Char('e'));
+        ctrl(&mut state, Key::Char('t'));
 
-        assert_eq!(
-            state.ddl.scroll.offset(),
-            1,
-            "ctrl-e is dispatched before the prompt is consulted"
-        );
-        assert_eq!(
-            searching(&state).map(Prompt::target),
-            Some(Filtered::Ddl),
-            "the chord moved no focus, so the prompt still filters what it opened over"
-        );
         assert_eq!(searching(&state).map(Prompt::query), Some("t"));
     }
 
@@ -4906,7 +4910,7 @@ mod tests {
     }
 
     /// The blank frame design §3.3 accepts, carried to its repair: the offset
-    /// a chord produced from pre-filter geometry is out of range for the body
+    /// a wheel produced from pre-filter geometry is out of range for the body
     /// the filter left, and the next measurement pulls it back. One frame
     /// wide, and the loop terminates.
     #[test]
@@ -4914,17 +4918,24 @@ mod tests {
         let mut state = read_shop_orders();
         state.focus = Panel::Ddl;
         sized(&mut state, [8, 4, 8, 1], 40);
-        press(&mut state, Key::Char('/'));
-        press(&mut state, Key::Char('t'));
 
         for _ in 0..20 {
-            ctrl(&mut state, Key::Char('e'));
+            point(
+                &mut state,
+                Pointer::Wheel {
+                    panel: Panel::Ddl,
+                    direction: Wheel::Down,
+                },
+            );
         }
         assert_eq!(
             state.ddl.scroll.offset(),
-            20,
-            "the chord bounds itself against the pre-filter line count"
+            36,
+            "the wheel bounds itself against the pre-filter line count"
         );
+
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('t'));
 
         // The frame the filter produced: nine wrapped lines in a four-line
         // panel, so no offset past five is drawable.

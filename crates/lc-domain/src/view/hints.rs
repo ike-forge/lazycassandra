@@ -72,25 +72,15 @@ pub(crate) const QUIT: Binding = Binding {
     action: "quit",
 };
 
-/// What the bar names in place of the focused panel's group while the
-/// palette is open (design §7). Three, because that is all of it: `esc`/`q`
-/// are `PALETTE_GLOBAL`'s below, and `⏎`/`space` are inert until the palette
-/// can run a command (design §10), so scrolling by a row, a screen, or to an
-/// end is everything left for the bar to say.
-const PALETTE: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
-        action: "scroll",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
-        action: "page",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
-        action: "ends",
-    },
-];
+/// What the bar names in place of the focused panel's group while the palette
+/// is open (design §7). One row: `esc`/`q` are `PALETTE_GLOBAL`'s below, `⏎`
+/// is inert until the palette can run a command (design §10), and moving by a
+/// row or a screen is assumed rather than taught, in here as in every panel
+/// bar (docs/shortcuts.md §2) — which leaves the ends.
+const PALETTE: &[Binding] = &[Binding {
+    keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
+    action: "ends",
+}];
 
 /// `esc` is named only here. The bar leaves it out everywhere else because it
 /// does something only when an overlay is up, and naming it always would be a
@@ -111,19 +101,12 @@ const PALETTE_GLOBAL: &[Binding] = &[
 /// What the bar names in place of the focused panel's group while the picker
 /// is open. Moving is the whole panel group, and it is named "preview"
 /// because that is what the press does — the cursor writes `State.theme` on
-/// every step (themes design §6). `pgup`/`pgdn` are left out because the
-/// picker leaves them inert (docs/shortcuts.md §1), and a bar that lies is
-/// worse than no bar.
-pub(crate) const THEMES: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
-        action: "preview",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
-        action: "ends",
-    },
-];
+/// every step (themes design §6). The one bar that still names `j`/`k`: what
+/// it teaches is the side effect, not the motion.
+pub(crate) const THEMES: &[Binding] = &[Binding {
+    keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
+    action: "preview",
+}];
 
 /// The two ways out are named apart, because they differ in what they leave
 /// behind: `⏎` keeps the previewed theme and `esc` puts back the one the
@@ -303,10 +286,10 @@ mod tests {
     fn a_binding_behind_ctrl_is_named_with_a_ctrl_prefix() {
         assert_eq!(
             label(&[
-                KeyPress::ctrl(Key::Char('e')),
-                KeyPress::ctrl(Key::Char('y')),
+                KeyPress::ctrl(Key::Char('d')),
+                KeyPress::ctrl(Key::Char('u')),
             ]),
-            "ctrl-e/ctrl-y"
+            "ctrl-d/ctrl-u"
         );
         assert_eq!(label(&[KeyPress::new(Key::Char('j'))]), "j");
     }
@@ -342,8 +325,8 @@ mod tests {
 
         let bar = bar(&state);
 
-        assert_eq!(bar.panel[0].keys, "j/k");
-        assert_eq!(bar.panel[0].action, "move");
+        assert_eq!(bar.panel[0].keys, "⏎");
+        assert_eq!(bar.panel[0].action, "open");
         assert_eq!(bar.global.last().expect("q quit is last").action, "quit");
     }
 
@@ -419,7 +402,7 @@ mod tests {
 
         let bar = bar(&state);
 
-        assert_eq!(bar.panel[0].action, "scroll");
+        assert_eq!(bar.panel[0].action, "ends");
         assert_eq!(bar.global[0].keys, "?/esc");
         assert_eq!(bar.global[0].action, "close");
         assert_eq!(bar.global.last().expect("q is last").action, "quit");
@@ -442,7 +425,7 @@ mod tests {
                 .iter()
                 .map(|hint| (hint.keys.as_str(), hint.action))
                 .collect::<Vec<_>>(),
-            [("j/k", "preview"), ("home/end", "ends")],
+            [("j/k", "preview")],
             "the focused panel responds to nothing while the picker is up"
         );
         assert_eq!(

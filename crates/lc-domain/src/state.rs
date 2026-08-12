@@ -184,15 +184,11 @@ pub enum Panel {
     Queries,
 }
 
+// Motion is not here, in any panel's bar: `j`/`k`, the arrows and
+// `pgup`/`pgdn` are what a user of a terminal list already reaches for, and a
+// bar that spends its width teaching them has none left for what is particular
+// to the panel (docs/shortcuts.md §2). The palette still lists every one.
 const TABLES_HINTS: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
-        action: "move",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Char('h'))],
-        action: "fold",
-    },
     // `⏎` on a keyspace folds it and on a table reads it. The bar names the
     // focused panel and nothing finer (design §1), so one label has to cover
     // both — "open" is true of either row, "read" of half of them.
@@ -210,28 +206,6 @@ const TABLES_HINTS: &[Binding] = &[
 
 const DDL_HINTS: &[Binding] = &[
     Binding {
-        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
-        action: "move",
-    },
-    // The panel's own focus key, named only in the bar it applies to: pressed
-    // anywhere else it focuses this panel instead
-    // (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §3).
-    Binding {
-        keys: &[KeyPress::new(Key::Char('a'))],
-        action: "tab",
-    },
-    Binding {
-        keys: &[
-            KeyPress::ctrl(Key::Char('e')),
-            KeyPress::ctrl(Key::Char('y')),
-        ],
-        action: "scroll",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
-        action: "page",
-    },
-    Binding {
         keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",
     },
@@ -242,18 +216,6 @@ const DDL_HINTS: &[Binding] = &[
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
-        action: "move",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Char('h'))],
-        action: "column",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)],
-        action: "page",
-    },
     Binding {
         keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
         action: "ends",

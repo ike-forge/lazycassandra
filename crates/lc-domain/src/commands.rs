@@ -28,7 +28,7 @@ const GLOBAL: &[Binding] = &[
         action: "commands",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('T'))],
+        keys: &[KeyPress::ctrl(Key::Char('t'))],
         action: "choose a theme",
     },
     Binding {
@@ -47,13 +47,9 @@ const GLOBAL: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('t'))],
         action: "focus Tables",
     },
-    // The one focus key that says two things, because it does two: pressing it
-    // at a panel it already focuses walks that panel's tabs
-    // (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §3), and the
-    // palette may not omit what a key does.
     Binding {
         keys: &[KeyPress::new(Key::Char('a'))],
-        action: "focus DDL, then tab",
+        action: "focus Table DDL",
     },
     Binding {
         keys: &[KeyPress::new(Key::Char('c'))],
@@ -84,11 +80,11 @@ const MOTION: &[Binding] = &[
         action: "up one row",
     },
     Binding {
-        keys: &[KeyPress::new(Key::PageDown)],
+        keys: &[KeyPress::new(Key::PageDown), KeyPress::ctrl(Key::Char('d'))],
         action: "down one screen",
     },
     Binding {
-        keys: &[KeyPress::new(Key::PageUp)],
+        keys: &[KeyPress::new(Key::PageUp), KeyPress::ctrl(Key::Char('u'))],
         action: "up one screen",
     },
     Binding {
@@ -106,7 +102,7 @@ const MOTION: &[Binding] = &[
 // `Tables`, "read" can only mean a table.
 const TABLES: &[Binding] = &[
     Binding {
-        keys: &[KeyPress::new(Key::Enter), KeyPress::new(Key::Char(' '))],
+        keys: &[KeyPress::new(Key::Enter)],
         action: "fold/unfold, or read",
     },
     Binding {
@@ -135,14 +131,6 @@ const CONTENTS: &[Binding] = &[
         action: "previous column",
     },
 ];
-
-const DDL: &[Binding] = &[Binding {
-    keys: &[
-        KeyPress::ctrl(Key::Char('e')),
-        KeyPress::ctrl(Key::Char('y')),
-    ],
-    action: "scroll one line",
-}];
 
 // The editor's printable keys are not rows: every one of them types itself,
 // which is the panel's whole rule rather than a list of bindings
@@ -187,10 +175,6 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Search",
         bindings: SEARCH,
-    },
-    Group {
-        heading: "Table DDL",
-        bindings: DDL,
     },
     Group {
         heading: "Table contents",
