@@ -264,6 +264,13 @@ const QUERIES_HINTS: &[Binding] = &[
         keys: &[KeyPress::ctrl(Key::Char('r'))],
         action: "run",
     },
+    // Unconditionally true in every frame Queries is focused, so it is named
+    // plainly rather than greyed — unlike `ctrl-r`, which lies on an empty
+    // buffer (external editor design §5).
+    Binding {
+        keys: &[KeyPress::ctrl(Key::Char('e'))],
+        action: "edit",
+    },
     Binding {
         keys: &[KeyPress::new(Key::Enter)],
         action: "newline",

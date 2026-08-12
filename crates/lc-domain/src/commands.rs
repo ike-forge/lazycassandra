@@ -149,6 +149,10 @@ const QUERIES: &[Binding] = &[
         action: "run the buffer",
     },
     Binding {
+        keys: &[KeyPress::ctrl(Key::Char('e'))],
+        action: "open in $EDITOR",
+    },
+    Binding {
         keys: &[KeyPress::new(Key::Enter)],
         action: "split the line",
     },
@@ -391,6 +395,17 @@ mod tests {
                 action: "run the buffer",
             }),
             "the palette claims to be complete, and ctrl-r is the one binding no key types"
+        );
+    }
+
+    #[test]
+    fn the_catalogue_lists_the_external_editor() {
+        assert!(
+            rows().contains(&CommandRow::Command {
+                keys: "ctrl-e".to_owned(),
+                action: "open in $EDITOR",
+            }),
+            "the palette claims to be complete"
         );
     }
 
