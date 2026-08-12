@@ -523,7 +523,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Paging and `Home`/`End` | `page_down_moves_the_tree_by_one_panel_height`, `home_and_end_reach_the_ends_of_the_tree_in_one_key` |
 | Ctrl/alt are not synonyms | `an_unbound_ctrl_key_does_nothing`, `an_alt_modified_key_is_not_a_binding` |
 | `ctrl-e`/`ctrl-y` scroll Table DDL's viewport and leave its cursor alone | `ctrl_e_and_ctrl_y_scroll_the_ddl_panel_without_moving_its_cursor` |
-| `ctrl-e` is inert in Tables, not a Tables binding | `ctrl_e_belongs_to_the_ddl_panel_alone` |
+| `ctrl-e` outside Table DDL is inert, not a Tables binding | `ctrl_e_belongs_to_the_ddl_panel_alone` |
 | An open palette still claims it first | `an_open_palette_swallows_ctrl_e` |
 | Shifted letters stay free | `a_shifted_shortcut_stays_unbound` |
 | `T` opens the picker on the theme in force | `the_picker_opens_on_the_theme_in_force` |
@@ -649,6 +649,15 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A greyed hint is drawn distinctly and keeps its width | `an_inert_hint_is_greyed_rather_than_dropped` (`inbound/hints.rs`) |
 | The bar's sweep asks only what it claims | `every_hint_the_bar_shows_does_something` |
 | The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
+| `ctrl-e` hands the Queries buffer to an editor | `ctrl_e_hands_the_queries_buffer_to_an_editor` |
+| `ctrl-e` still scrolls the Table DDL viewport | `ctrl_e_still_scrolls_the_ddl_viewport` |
+| `ctrl-e` is inert outside the two panels that claim it | `ctrl_e_is_inert_outside_the_two_panels_that_claim_it` |
+| An open palette swallows it too | `ctrl_e_under_the_palette_does_nothing` |
+| A closed editor replaces the buffer and moves the cursor to its end | `a_closed_editor_replaces_the_buffer` |
+| A failed editor keeps the buffer and raises a message | `a_failed_editor_says_so_and_keeps_the_buffer` |
+| The palette lists it | `the_catalogue_lists_the_external_editor` (`commands.rs`) |
+| The bar names it after `ctrl-r run` | `the_queries_bar_names_the_editor_binding_after_run` (`view/hints.rs`) |
+| No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an
