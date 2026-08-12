@@ -49,7 +49,11 @@ const GLOBAL: &[Binding] = &[
     },
     Binding {
         keys: &[KeyPress::new(Key::Char('a'))],
-        action: "focus Table DDL",
+        action: "Table DDL, its DDL",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('b'))],
+        action: "Table DDL, columns",
     },
     Binding {
         keys: &[KeyPress::new(Key::Char('c'))],

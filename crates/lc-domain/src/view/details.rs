@@ -469,7 +469,7 @@ mod tests {
 
     fn columns_tab(state: &State) -> State {
         let mut state = state.clone();
-        state.ddl.cycle();
+        state.ddl.show(DdlTab::Columns);
         state
     }
 
@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn the_columns_tab_of_a_keyspace_says_it_has_none() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.ddl.cycle();
+        state.ddl.show(DdlTab::Columns);
 
         assert_eq!(
             ddl_body(&state),

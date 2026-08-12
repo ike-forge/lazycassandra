@@ -6,6 +6,7 @@
 
 use crate::commands::CommandsPanel;
 use crate::contents::{ContentsState, Subject, TableRef};
+use crate::ddl::DdlTab;
 use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
@@ -394,9 +395,16 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('l') | Key::Right => go_right(state),
         Key::Char('h') | Key::Left => go_left(state),
         Key::Char('/') => open_prompt(state),
-        // Last, so every binding above keeps precedence over a panel key.
+        // Last, so every binding above keeps precedence over a panel key. A
+        // Table DDL tab is a place the same way a panel is, so its key both
+        // focuses the panel and draws the tab — one press to arrive, whichever
+        // tab was last up (docs/shortcuts.md §4). Checked first because `a` is
+        // both the panel's letter and its first tab's.
         Key::Char(key) => {
-            if let Some(panel) = Panel::from_shortcut(key) {
+            if let Some(tab) = DdlTab::from_shortcut(key) {
+                state.focus = Panel::Ddl;
+                state.ddl.show(tab);
+            } else if let Some(panel) = Panel::from_shortcut(key) {
                 state.focus = panel;
             }
         }
@@ -3185,6 +3193,46 @@ mod tests {
                 "a focus letter moves focus and does nothing else, however often it is pressed"
             );
         }
+    }
+
+    #[test]
+    fn b_reaches_the_table_columns_tab_from_wherever_focus_was() {
+        for from in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
+            let mut state = State {
+                focus: from,
+                ..State::default()
+            };
+
+            press(&mut state, Key::Char('b'));
+
+            assert_eq!(state.focus, Panel::Ddl, "from {from:?}");
+            assert_eq!(state.ddl.tab(), DdlTab::Columns, "from {from:?}");
+        }
+    }
+
+    #[test]
+    fn a_returns_the_panel_to_its_ddl_tab() {
+        let mut state = State::default();
+
+        press(&mut state, Key::Char('b'));
+        press(&mut state, Key::Char('a'));
+
+        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl);
+    }
+
+    #[test]
+    fn b_is_text_in_a_panel_that_takes_text() {
+        let mut state = State {
+            focus: Panel::Queries,
+            ..State::default()
+        };
+
+        press(&mut state, Key::Char('b'));
+
+        assert_eq!(state.focus, Panel::Queries, "focus is the mode");
+        assert_eq!(state.queries.text(), "b");
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "and no tab changed under it");
     }
 
     #[test]

@@ -528,6 +528,7 @@ mod tests {
     use lc_domain::ThemeChoice;
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{Subject, TableRef};
+    use lc_domain::ddl::DdlTab;
     use lc_domain::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
@@ -2010,7 +2011,7 @@ mod tests {
     /// `describing`, moved to the panel's second tab.
     fn listing(table: Table) -> State {
         let mut state = describing(table);
-        state.ddl.cycle();
+        state.ddl.show(DdlTab::Columns);
         state
     }
 
