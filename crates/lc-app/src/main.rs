@@ -3,6 +3,7 @@
 //! Deliberately thin: wiring, not logic (architecture.md §2). It is the only
 //! crate that sees all three layers.
 
+mod editor;
 mod effects;
 mod input;
 mod mouse;
@@ -15,7 +16,7 @@ use lc_domain::model::ConnId;
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
 use lc_domain::state::Geometry;
-use lc_domain::{Msg, State, update, view_model};
+use lc_domain::{Effect, Msg, State, update, view_model};
 use lc_inbound::{FrameMap, Rendered, Theme};
 use lc_outbound::cassandra::CassandraCluster;
 use ratatui::DefaultTerminal;
@@ -60,9 +61,9 @@ async fn main() -> Result<()> {
 /// Holds mouse capture for exactly as long as the loop runs, so it is released
 /// while the terminal is still ours.
 async fn captured(terminal: DefaultTerminal) -> Result<()> {
-    let _capture = mouse::MouseCapture::enable()?;
+    let capture = mouse::MouseCapture::enable()?;
 
-    run(terminal).await
+    run(terminal, &capture).await
 }
 
 /// The fixture's convention (docker/compose.yaml). Scaffolding until the
@@ -111,7 +112,7 @@ fn resolve(incoming: Incoming, map: &FrameMap) -> Option<Msg> {
     }
 }
 
-async fn run(mut terminal: DefaultTerminal) -> Result<()> {
+async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let suspension = input::Suspension::default();
     input::spawn_reader(tx.clone(), suspension.clone());
@@ -142,6 +143,16 @@ async fn run(mut terminal: DefaultTerminal) -> Result<()> {
         };
 
         for effect in update(&mut state, msg) {
+            // The one effect that is not a task: the child owns the terminal,
+            // so nothing else may draw while it holds it. Its outcome comes
+            // back through the same channel every other effect returns through
+            // (external editor design §4).
+            if let Effect::OpenEditor { buffer } = &effect {
+                let outcome = editor::open(&mut terminal, capture, &suspension, buffer)?;
+                let _sent = tx.send(outcome.into());
+                continue;
+            }
+
             effects::run(&tx, &cluster, &effect);
         }
 

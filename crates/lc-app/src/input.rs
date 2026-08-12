@@ -57,13 +57,6 @@ struct Flags {
 
 impl Suspension {
     /// Blocks until the reader is parked. Called before the child is spawned.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Task 5 wires the call site around the editor's child process"
-        )
-    )]
     pub(crate) fn suspend(&self) {
         let (flags, changed) = &*self.0;
         let mut flags = lock(flags);
@@ -74,13 +67,6 @@ impl Suspension {
     }
 
     /// Puts the reader back on stdin.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Task 5 wires the call site around the editor's child process"
-        )
-    )]
     pub(crate) fn resume(&self) {
         let (flags, changed) = &*self.0;
         lock(flags).suspended = false;

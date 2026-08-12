@@ -43,6 +43,31 @@ impl MouseCapture {
 
         Ok(Self(()))
     }
+
+    /// Turns capture off for as long as `body` runs, and back on after.
+    ///
+    /// The guard is not given up and re-taken: `enable` installs a panic hook,
+    /// and re-taking it per edit would chain a new hook onto the last one every
+    /// time (external editor design §4).
+    ///
+    /// # Errors
+    ///
+    /// If capture cannot be turned back on, which leaves the terminal usable
+    /// but with the pointer inert.
+    #[allow(
+        clippy::unused_self,
+        reason = "the receiver is the proof a MouseCapture exists to suspend; \
+                  dropping it would let this be called with none enabled"
+    )]
+    pub(crate) fn suspended<T>(&self, body: impl FnOnce() -> T) -> Result<T> {
+        disable();
+
+        let value = body();
+
+        execute!(stdout(), EnableMouseCapture)?;
+
+        Ok(value)
+    }
 }
 
 impl Drop for MouseCapture {
