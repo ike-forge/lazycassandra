@@ -1159,6 +1159,26 @@ mod tests {
     }
 
     #[test]
+    fn a_dimmed_rows_icon_keeps_the_colour_of_what_it_names() {
+        let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
+        // Column 3: the border, then the two the fold marker spends.
+        let icon = |y: u16| buffer.cell((3, y)).expect("inside the panel").fg;
+        let theme = Theme::default();
+        let muted = theme.style(Token::Muted).fg.expect("muted spends a colour");
+        let keyspace = theme
+            .style(Token::Keyspace)
+            .fg
+            .expect("a keyspace spends a colour");
+
+        assert_eq!(icon(2), keyspace, "the icon says what the row is");
+        assert_eq!(
+            buffer.cell((5, 2)).expect("inside the panel").fg,
+            muted,
+            "the name it precedes stays the cluster's"
+        );
+    }
+
+    #[test]
     fn the_selected_row_is_the_one_the_cursor_is_on() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "typezoo", "system"], 1));
         let highlight = Theme::default()

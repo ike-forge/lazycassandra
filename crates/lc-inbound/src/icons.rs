@@ -32,6 +32,15 @@ pub(crate) const fn tree_row(kind: RowKind) -> &'static str {
     }
 }
 
+/// The colour an icon carries: the one its own kind is drawn in, whatever the
+/// row around it is drawn in.
+pub(crate) const fn token(kind: RowKind) -> Token {
+    match kind {
+        RowKind::Keyspace => Token::Keyspace,
+        RowKind::Table => Token::Table,
+    }
+}
+
 /// The icon for a Ddl heading naming a table or a keyspace, and nothing for a
 /// heading that names neither.
 pub(crate) fn heading(token: Token) -> &'static str {

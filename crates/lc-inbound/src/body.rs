@@ -392,9 +392,15 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
     // and one that has draws the only part of the row that has to be read as a
     // shape rather than as text
     // (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §7).
+    // The icon takes the colour of what it names rather than the row's, so a
+    // system keyspace's glyph keeps its colour while its name stays muted:
+    // the mute says "this is not yours to browse", which is a claim about the
+    // name, not about what kind of thing the row is (design §8).
     let icon = TextSpan::styled(
         crate::icons::tree_row(row.kind),
-        Style::new().add_modifier(Modifier::BOLD),
+        theme
+            .style(crate::icons::token(row.kind))
+            .add_modifier(Modifier::BOLD),
     );
 
     ListItem::new(Line::from(vec![
