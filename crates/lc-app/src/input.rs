@@ -48,28 +48,39 @@ pub(crate) struct Suspension(Arc<(Mutex<Flags>, Condvar)>);
 struct Flags {
     suspended: bool,
     parked: bool,
+    /// The reader dies on a poll error, a read error, or a closed channel —
+    /// the terminal or the main loop is gone. A `suspend` that outlives it
+    /// would otherwise wait forever for a `parked` that will never come,
+    /// freezing the program instead of exiting.
+    gone: bool,
 }
 
 impl Suspension {
     /// Blocks until the reader is parked. Called before the child is spawned.
-    ///
-    /// Task 5 wires the call site around the editor's child process; until
-    /// then nothing outside this module's tests calls it.
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Task 5 wires the call site around the editor's child process"
+        )
+    )]
     pub(crate) fn suspend(&self) {
         let (flags, changed) = &*self.0;
         let mut flags = lock(flags);
         flags.suspended = true;
-        while !flags.parked {
+        while !flags.parked && !flags.gone {
             flags = wait(changed, flags);
         }
     }
 
     /// Puts the reader back on stdin.
-    ///
-    /// Task 5 wires the call site around the editor's child process; until
-    /// then nothing outside this module's tests calls it.
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Task 5 wires the call site around the editor's child process"
+        )
+    )]
     pub(crate) fn resume(&self) {
         let (flags, changed) = &*self.0;
         lock(flags).suspended = false;
@@ -86,6 +97,15 @@ impl Suspension {
             flags = wait(changed, flags);
         }
         flags.parked = false;
+    }
+
+    /// Marks the handshake dead: the reader has exited and will never park
+    /// again, so any `suspend` in progress or still to come must stop
+    /// waiting rather than block forever.
+    fn leave(&self) {
+        let (flags, changed) = &*self.0;
+        lock(flags).gone = true;
+        changed.notify_all();
     }
 }
 
@@ -114,10 +134,10 @@ pub(crate) fn spawn_reader(tx: UnboundedSender<Incoming>, suspension: Suspension
                 Ok(false) => continue,
                 // A poll error means the terminal is gone; there is nobody
                 // left to report it to.
-                Err(_) => return,
+                Err(_) => break,
             }
 
-            let Ok(event) = event::read() else { return };
+            let Ok(event) = event::read() else { break };
 
             let incoming = match event {
                 Event::Key(key) => lc_inbound::input::to_key_press(key)
@@ -133,9 +153,12 @@ pub(crate) fn spawn_reader(tx: UnboundedSender<Incoming>, suspension: Suspension
             if let Some(incoming) = incoming
                 && tx.send(incoming).is_err()
             {
-                return;
+                break;
             }
         }
+        // Every exit above means the reader will never park again — tell any
+        // `suspend` in progress or still to come so it doesn't wait forever.
+        suspension.leave();
     });
 }
 
@@ -149,27 +172,34 @@ mod tests {
     fn suspend_waits_for_the_reader_to_park() {
         let suspension = Suspension::default();
         let reader = suspension.clone();
-        let parked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let flag = Arc::clone(&parked);
 
         let handle = std::thread::spawn(move || {
             reader.park();
-            flag.store(true, std::sync::atomic::Ordering::SeqCst);
         });
 
         suspension.suspend();
+        let (flags, _changed) = &*suspension.0;
         assert!(
-            !handle.is_finished(),
-            "suspend returned while the reader could still be inside read()"
+            lock(flags).parked,
+            "suspend returned before the reader announced it had parked"
         );
 
         suspension.resume();
         handle.join().expect("the reader thread parked and woke");
-        assert!(parked.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]
     fn park_returns_immediately_when_nothing_is_suspended() {
         Suspension::default().park();
+    }
+
+    /// Without the `gone` escape, this hangs: nothing left alive would ever
+    /// set `parked`, and nextest reports the hang as a timeout rather than a
+    /// clean failure — the same signal the deadlock case above relies on.
+    #[test]
+    fn suspend_stops_waiting_once_the_reader_is_gone() {
+        let suspension = Suspension::default();
+        suspension.leave();
+        suspension.suspend();
     }
 }
