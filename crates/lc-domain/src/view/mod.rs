@@ -14,7 +14,7 @@ mod tables;
 mod title;
 
 pub use contents::{GridCell, GridColumn};
-pub use details::{ColumnKind, DetailRow, Details, Group, Section};
+pub use details::{ColumnKind, DetailRow, Details, Group, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness};
 pub use tables::{RowKind, TreeRow};
 pub use title::{PanelTitle, TAB_SEPARATOR, Tab};

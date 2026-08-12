@@ -3917,10 +3917,13 @@ mod tests {
         );
 
         let rows = crate::view::ddl_rows(&state);
-        assert_eq!(rows, 1, "one partition column and nothing else");
+        assert_eq!(
+            rows, 3,
+            "the keyspace, the table, one partition column and nothing else"
+        );
         assert_eq!(
             state.ddl.cursor.index(),
-            0,
+            rows - 1,
             "the clamp must pull the cursor back even though no measurement arrived"
         );
     }

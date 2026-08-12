@@ -14,7 +14,7 @@ use lc_domain::posture::Posture;
 use lc_domain::state::Panel;
 use lc_domain::style::Token;
 use lc_domain::update::ROW_LIMIT;
-use lc_domain::view::{DetailRow, Details, OverlayView, PanelBody, RowKind};
+use lc_domain::view::{DetailRow, Details, OverlayView, PanelBody, RowKind, Section};
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
 
@@ -409,6 +409,34 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
     );
 }
 
+/// The `(label, name)` pairs of the identity rows the panel opens with.
+fn named(details: &Details) -> Vec<(&'static str, &str)> {
+    details
+        .rows()
+        .filter_map(|row| match row {
+            DetailRow::Identity { kind, name } => Some((kind.label(), name.as_str())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The headings the sections carry, which the identity group has none of.
+fn headings(details: &Details) -> Vec<&str> {
+    details
+        .sections
+        .iter()
+        .filter_map(|section| section.heading.as_deref())
+        .collect()
+}
+
+fn section<'a>(details: &'a Details, heading: &str) -> &'a Section {
+    details
+        .sections
+        .iter()
+        .find(|section| section.heading.as_deref() == Some(heading))
+        .unwrap_or_else(|| panic!("{heading} is missing"))
+}
+
 fn ddl_details(state: &State) -> Details {
     let PanelBody::Details { details, .. } = &view_model(state).panels[1].body else {
         panic!("a selected row has something to describe");
@@ -427,15 +455,8 @@ async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
     run(&cluster, &mut state, effects).await;
 
     let keyspace = ddl_details(&state);
-    assert_eq!(keyspace.heading, "shop");
-    assert_eq!(
-        keyspace
-            .sections
-            .iter()
-            .map(|section| section.heading.as_str())
-            .collect::<Vec<_>>(),
-        ["Replication"]
-    );
+    assert_eq!(named(&keyspace), [("Keyspace", "shop")]);
+    assert_eq!(headings(&keyspace), ["Replication"]);
 
     update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
     let effects = update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
@@ -445,18 +466,18 @@ async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
     );
 
     let table = ddl_details(&state);
-    assert_eq!(table.heading, "shop.orders");
     assert_eq!(
-        table
-            .sections
-            .iter()
-            .map(|section| section.heading.as_str())
-            .collect::<Vec<_>>(),
+        named(&table),
+        [("Keyspace", "shop"), ("Table", "orders")],
+        "the panel names what it describes in rows of its own"
+    );
+    assert_eq!(
+        headings(&table),
         ["Partition Key", "Options"],
         "these fixtures have no clustering columns, so that section is absent"
     );
     assert_eq!(
-        table.sections[1].rows,
+        section(&table, "Options").rows,
         [
             DetailRow::Property {
                 name: "gc_grace_seconds".to_owned(),

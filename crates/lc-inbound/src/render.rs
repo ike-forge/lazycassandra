@@ -1075,16 +1075,21 @@ mod tests {
     }
 
     #[test]
-    fn a_ddl_heading_wears_the_table_icon_and_a_key_section_the_key_one() {
-        // Wide enough that the heading has room for its icon; the panel that
+    fn the_ddl_identity_rows_wear_the_tree_icons_and_a_key_section_the_key_one() {
+        // Wide enough that every label has room for its icon; the panel that
         // has not is the subject of its own test.
         let buffer = draw_state(160, 41, &describing(orders()));
         let rows = ddl_rows(&buffer);
 
         assert!(
-            rows[0].trim_start().starts_with(crate::icons::TABLE),
-            "the heading names a table, got {:?}",
+            rows[0].starts_with(&format!("{}Keyspace", crate::icons::KEYSPACE)),
+            "the panel names its keyspace as the tree does, got {:?}",
             rows[0]
+        );
+        assert!(
+            rows[1].starts_with(&format!("{}Table", crate::icons::TABLE)),
+            "and its table likewise, got {:?}",
+            rows[1]
         );
         assert!(
             rows.iter()
@@ -1098,12 +1103,19 @@ mod tests {
     }
 
     #[test]
-    fn a_heading_with_no_room_for_its_icon_keeps_the_whole_name() {
-        // The Ddl body is 23 columns at this width; the name is 23 too, so
-        // the icon would cost the tail of a name this panel never abbreviates.
+    fn a_name_with_no_room_beside_its_label_wraps_rather_than_abbreviating() {
+        // The Ddl body is 23 columns at this width, and the label spends ten
+        // of them, so the table's name cannot share the line it labels.
         let buffer = draw_state(100, 41, &listing(orders()));
 
-        assert_eq!(ddl_rows(&buffer)[0], "shop.orders_by_customer");
+        assert_eq!(
+            ddl_rows(&buffer)[..3],
+            [
+                format!("{}Keyspace         shop", crate::icons::KEYSPACE),
+                format!("{}Table", crate::icons::TABLE),
+                "    orders_by_customer".to_owned(),
+            ]
+        );
     }
 
     #[test]
@@ -2006,9 +2018,11 @@ mod tests {
         let buffer = draw_state(100, 41, &listing(table));
 
         assert_eq!(
-            ddl_rows(&buffer)[..7],
+            ddl_rows(&buffer)[..9],
             [
-                "shop.orders_by_customer",
+                "\u{f084} Keyspace         shop",
+                "\u{f0ce} Table",
+                "    orders_by_customer",
                 "",
                 "4 columns",
                 "PK customer_id     uuid",
@@ -2096,15 +2110,19 @@ mod tests {
         assert_eq!(
             ddl_rows(&buffer),
             [
-                "shop.orders_by_customer",
+                "\u{f084} Keyspace         shop",
+                "\u{f0ce} Table",
+                "    orders_by_customer",
+                // The blank row between what the panel is about and the shape
+                // of what it is about.
                 "",
                 "\u{f030b} Partition Key",
                 "  customer_id      uuid",
                 "\u{f030b} Clustering Key",
                 "  order_date ↓     date",
                 "  order_id ↑   timeuuid",
-                // The one blank row, splitting what the table is from what it
-                // is configured to do.
+                // And the one splitting what the table is from what it is
+                // configured to do.
                 "",
                 "Options",
                 "gc_grace_seconds 864000",
@@ -2112,11 +2130,8 @@ mod tests {
                 // body's 23, so it keeps the wrapped shape.
                 "bloom_filter_fp_chance",
                 "  0.01",
-                // `comment` is bulky, so it sorts last even though it fits
-                // on one line here.
-                "comment  Order history.",
-                // The row the shorter body leaves unfilled.
-                "",
+                // `comment` sorts last and now falls below the fold, which is
+                // what the scrollbar beside it says.
             ]
         );
     }
@@ -2150,14 +2165,16 @@ mod tests {
         let mut state = describing(orders());
         state.focus = Panel::Ddl;
         // `bloom_filter_fp_chance` and its value need 26 of the body's 23
-        // columns, so this row is one cursor stop drawn across two lines.
-        state.ddl.cursor.go_to(4, lc_domain::view::ddl_rows(&state));
+        // columns, so this row is one cursor stop drawn across two lines. Six
+        // rows in: the keyspace, the table, one partition and two clustering
+        // columns, then `gc_grace_seconds`.
+        state.ddl.cursor.go_to(6, lc_domain::view::ddl_rows(&state));
 
         let buffer = draw_state(100, 41, &state);
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [35, 36],
+            [37, 38],
             "a wrapped value is one cursor stop, so exactly its own two lines \
              are the selection — not fewer, and not bleeding into comment below"
         );
@@ -2167,13 +2184,13 @@ mod tests {
     fn a_one_line_property_has_exactly_its_own_line_reversed() {
         let mut state = describing(orders());
         state.focus = Panel::Ddl;
-        state.ddl.cursor.go_to(3, lc_domain::view::ddl_rows(&state));
+        state.ddl.cursor.go_to(5, lc_domain::view::ddl_rows(&state));
 
         let buffer = draw_state(100, 41, &state);
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [34],
+            [36],
             "gc_grace_seconds fits one line, so exactly it is the selection"
         );
     }
@@ -2244,13 +2261,13 @@ mod tests {
         let last = details.row_count() - 1;
         state.ddl.cursor.go_to(last, details.row_count());
 
-        // `comment` is the last row and wraps to three lines at this width;
-        // scrolling thirteen lines down cuts its first two into view and
-        // leaves the third below the fold.
-        let total = crate::details::lay_out(&details, last, 14, Theme::default())
-            .lines
-            .len();
-        for _ in 0..13 {
+        // `comment` is the last row and wraps to three lines at this width.
+        // Scrolled until its first line is the fourth of the five visible, two
+        // of them are in view and the third is below the fold.
+        let laid = crate::details::lay_out(&details, last, 14, Theme::default());
+        let total = laid.lines.len();
+        assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
+        for _ in 0..laid.selection.first - 3 {
             state.ddl.scroll.down(total, 5);
         }
 
@@ -2283,14 +2300,15 @@ mod tests {
     fn the_reported_span_indexes_the_rows_a_filter_left() {
         let mut state = describing(orders());
         state.focus = Panel::Ddl;
-        // `order_date`, `order_id` by name and `comment` by its value; the
-        // partition key's row misses, so that whole section goes with it.
+        // The table's own name, `order_date` and `order_id` by name, and
+        // `comment` by its value; the keyspace and the partition key's column
+        // miss, so the partition section goes with it.
         state.apply_filter(Filtered::Ddl, Filter::new("or"));
         let rows = lc_domain::view::ddl_rows(&state);
-        // Index 2 is `comment`, the last of the three — spelt out rather than
+        // Index 3 is `comment`, the last of the four — spelt out rather than
         // taken from `rows`, so a `rows` that stopped counting the filtered
         // sequence moves the assertions below instead of the cursor.
-        state.ddl.cursor.go_to(2, rows);
+        state.ddl.cursor.go_to(3, rows);
 
         let span = geometry_of(100, 41, &state).ddl_selection();
         let buffer = draw_state(100, 41, &state);
@@ -2311,7 +2329,7 @@ mod tests {
             "and it is the row the frame actually highlighted"
         );
         assert_eq!(
-            rows, 3,
+            rows, 4,
             "and the count the domain clamps against is the same sequence"
         );
     }
@@ -2340,18 +2358,18 @@ mod tests {
             .fg
             .expect("the clustering key spends a colour");
 
-        assert_eq!(colour(27), partition, "Partition Key");
-        assert_eq!(colour(28), partition, "its column");
-        assert_eq!(colour(29), clustering, "Clustering Key");
-        assert_eq!(colour(30), clustering, "its column");
-        // 32 is the blank row the settings group opens with.
+        assert_eq!(colour(29), partition, "Partition Key");
+        assert_eq!(colour(30), partition, "its column");
+        assert_eq!(colour(31), clustering, "Clustering Key");
+        assert_eq!(colour(32), clustering, "its column");
+        // 34 is the blank row the settings group opens with.
         assert_eq!(
-            colour(33),
+            colour(35),
             Color::Reset,
             "an option is not part of the key structure and must not read as one"
         );
         assert_eq!(
-            colour(34),
+            colour(36),
             Theme::default()
                 .style(Token::PropertyName)
                 .fg
@@ -2376,12 +2394,12 @@ mod tests {
         assert_eq!(
             rows,
             [
-                "\u{f084} shop",
+                "\u{f084} Keyspace         shop",
                 "",
                 "Replication",
                 "class    SimpleStrategy"
             ],
-            "the only section opens the panel, so it takes no blank row of its own"
+            "no table is selected, so the panel names only the keyspace"
         );
     }
 

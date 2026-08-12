@@ -24,10 +24,10 @@
 use lc_domain::model::ClusteringOrder;
 use lc_domain::state::Span;
 use lc_domain::style::Token;
-use lc_domain::view::{ColumnKind, DetailRow, Details, Group};
+use lc_domain::view::{ColumnKind, DetailRow, Details, Group, IdentityKind};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span as TextSpan};
 use ratatui::widgets::Paragraph;
 
@@ -84,46 +84,31 @@ pub(crate) fn render(
 /// what is measured, or a redraw could chase its own tail
 /// (architecture.md §3).
 pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: Theme) -> Laid {
-    // Centred and bold: the heading names what every row below it belongs to,
-    // and left-aligned in the body's own colour it read as the first of them
-    // (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §7). The colour is
-    // the one the Tables tree already spends on that kind of name, so the panel
-    // and the tree agree about what a table looks like.
-    let heading = Line::styled(
-        truncate(
-            &prefixed(
-                crate::icons::heading(details.heading_token),
-                &details.heading,
-                width,
-            ),
-            width,
-        ),
-        theme
-            .style(details.heading_token)
-            .add_modifier(Modifier::BOLD),
-    )
-    .centered();
-    let mut lines = vec![heading, Line::raw("")];
+    let mut lines: Vec<Line<'static>> = Vec::new();
     let mut selection = Span::default();
     let mut row = 0;
+    let mut previous: Option<Group> = None;
 
-    for (index, section) in details.sections.iter().enumerate() {
-        // The one row spent on separation, and only where it buys the split
-        // between what the table is and what it is configured to do. A section
-        // that opens the panel already has the heading's blank line above it.
-        if index > 0 && section.group == Group::Settings {
+    for section in &details.sections {
+        // The one row spent on separation, and only where it buys a split
+        // between two of the panel's parts: what the rows are about, what the
+        // table is, what it is configured to do.
+        if previous.is_some_and(|group| group != section.group) {
             lines.push(Line::raw(""));
         }
+        previous = Some(section.group);
 
         let style = section
             .token
             .map_or_else(Style::new, |token| theme.style(token));
 
-        let icon = crate::icons::section(section.token);
-        lines.push(Line::styled(
-            truncate(&prefixed(icon, &section.heading, width), width),
-            style,
-        ));
+        if let Some(heading) = &section.heading {
+            let icon = crate::icons::section(section.token);
+            lines.push(Line::styled(
+                truncate(&prefixed(icon, heading, width), width),
+                style,
+            ));
+        }
 
         for detail in &section.rows {
             let mut drawn = row_lines(detail, width, style, theme);
@@ -194,7 +179,37 @@ fn row_lines(row: &DetailRow, width: usize, style: Style, theme: Theme) -> Vec<L
             kind,
         } => column_lines(name, cql_type, *kind, width, theme),
         DetailRow::Property { name, value } => property_lines(name, value, width, style, theme),
+        DetailRow::Identity { kind, name } => identity_lines(*kind, name, width, theme),
     }
+}
+
+/// `Keyspace` or `Table` at the left, the name it carries at the right margin
+/// — the shape a key column already uses, so the two read as one table down
+/// the panel.
+///
+/// The label wears the icon and the colour the Tables tree gives that kind of
+/// name, and the name itself is left plain: the label is what tells the two
+/// rows apart, and two coloured runs on a line this narrow is one too many
+/// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.2).
+fn identity_lines(
+    kind: IdentityKind,
+    name: &str,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let icon = crate::icons::identity(kind.token());
+    let label = prefixed(icon, kind.label(), width);
+    let taken = count(&label);
+    let mut lines = laid_out(&label, name, width)
+        .into_iter()
+        .map(Line::raw)
+        .collect::<Vec<Line<'static>>>();
+
+    if let Some(first) = lines.first_mut() {
+        *first = marked(first, taken, theme.style(kind.token()));
+    }
+
+    lines
 }
 
 fn key_column_lines(
@@ -371,7 +386,7 @@ fn count(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use lc_domain::style::Token;
-    use lc_domain::view::Section;
+    use lc_domain::view::{IdentityKind, Section};
 
     use super::*;
 
@@ -471,20 +486,58 @@ mod tests {
         );
     }
 
+    fn named(kind: IdentityKind, name: &str, width: usize) -> Vec<String> {
+        texts(&identity_lines(kind, name, width, Theme::default()))
+    }
+
     #[test]
-    fn the_heading_is_centred_and_bold_in_the_colour_of_what_it_names() {
+    fn an_identity_row_puts_the_name_at_the_margin_behind_a_labelled_icon() {
+        assert_eq!(
+            named(IdentityKind::Keyspace, "shop", 23),
+            [format!("{}Keyspace         shop", crate::icons::KEYSPACE)]
+        );
+        assert_eq!(
+            named(IdentityKind::Table, "orders", 23),
+            [format!("{}Table          orders", crate::icons::TABLE)]
+        );
+    }
+
+    #[test]
+    fn a_name_too_wide_to_share_the_label_line_wraps_beneath_it() {
+        assert_eq!(
+            named(IdentityKind::Table, "orders_by_customer", 23),
+            [
+                format!("{}Table", crate::icons::TABLE),
+                "    orders_by_customer".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn only_the_label_of_an_identity_row_carries_the_kinds_colour() {
         let theme = Theme::default();
-        let details = Details {
-            heading: "shop.orders".to_owned(),
-            heading_token: Token::Table,
-            sections: Vec::new(),
-        };
+        let lines = identity_lines(IdentityKind::Keyspace, "shop", 23, theme);
+        let keyspace = theme.style(Token::Keyspace).fg;
 
-        let heading = lay_out(&details, 0, 28, theme).lines.remove(0);
+        assert!(keyspace.is_some(), "the token has to spend a colour");
+        assert_eq!(
+            lines[0].spans[0].content,
+            format!("{}Keyspace", crate::icons::KEYSPACE)
+        );
+        assert_eq!(lines[0].spans[0].style.fg, keyspace);
+        assert_eq!(
+            lines[0].spans[1].style.fg, None,
+            "the name is left alone, as a column's is beside its marker"
+        );
+    }
 
-        assert_eq!(heading.alignment, Some(ratatui::layout::Alignment::Center));
-        assert_eq!(heading.style.fg, theme.style(Token::Table).fg);
-        assert!(heading.style.add_modifier.contains(Modifier::BOLD));
+    #[test]
+    fn a_panel_too_narrow_for_the_icon_keeps_the_whole_label() {
+        assert_eq!(
+            named(IdentityKind::Keyspace, "shop", 9),
+            ["Keyspace", "    shop"],
+            "the icon goes before a label this panel promises to draw whole"
+        );
     }
 
     #[test]
@@ -594,11 +647,18 @@ mod tests {
     #[test]
     fn lay_out_reports_the_span_of_the_row_it_highlighted() {
         let details = Details {
-            heading: "shop.orders".to_owned(),
-            heading_token: Token::Table,
             sections: vec![
                 Section {
-                    heading: "Partition Key".to_owned(),
+                    heading: None,
+                    group: Group::Identity,
+                    token: None,
+                    rows: vec![DetailRow::Identity {
+                        kind: IdentityKind::Table,
+                        name: "orders".to_owned(),
+                    }],
+                },
+                Section {
+                    heading: Some("Partition Key".to_owned()),
                     group: Group::Shape,
                     token: Some(Token::PartitionKey),
                     rows: vec![DetailRow::KeyColumn {
@@ -608,7 +668,7 @@ mod tests {
                     }],
                 },
                 Section {
-                    heading: "Options".to_owned(),
+                    heading: Some("Options".to_owned()),
                     group: Group::Settings,
                     token: None,
                     rows: vec![DetailRow::Property {
@@ -621,12 +681,18 @@ mod tests {
             ],
         };
 
-        let laid = lay_out(&details, 0, 28, Theme::default());
+        assert_eq!(
+            lay_out(&details, 0, 28, Theme::default()).selection,
+            Span { first: 0, lines: 1 },
+            "the identity row opens the body, so nothing precedes it"
+        );
+
+        let laid = lay_out(&details, 1, 28, Theme::default());
 
         assert_eq!(
             laid.selection,
             Span { first: 3, lines: 1 },
-            "heading, blank, section heading, then the first column"
+            "identity, blank, section heading, then the first column"
         );
 
         let laid = lay_out(&details, details.row_count() - 1, 28, Theme::default());

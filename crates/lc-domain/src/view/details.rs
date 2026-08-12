@@ -15,15 +15,9 @@ use crate::tree::Node;
 
 use super::{PanelBody, waiting};
 
-/// A heading and the groups beneath it.
+/// The groups the panel draws, identity first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Details {
-    /// `shop.orders_by_customer`, or a keyspace name.
-    pub heading: String,
-    /// What the heading names, so the renderer draws a table's name as a table
-    /// and a keyspace's as a keyspace rather than inventing a heading colour of
-    /// its own (architecture.md §6).
-    pub heading_token: Token,
     pub sections: Vec<Section>,
 }
 
@@ -50,8 +44,10 @@ impl Details {
 /// empty rather than by a projection remembering to skip it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
-    /// `Partition Key`, `Clustering Key`, `Options`, `Replication`.
-    pub heading: String,
+    /// `Partition Key`, `Clustering Key`, `Options`, `Replication`. `None` for
+    /// the identity group, whose two rows name themselves — a heading over
+    /// `Keyspace` and `Table` could only restate them.
+    pub heading: Option<String>,
     /// What the group is, which decides both the blank line above it and
     /// whether its rows read as key structure.
     pub group: Group,
@@ -60,14 +56,17 @@ pub struct Section {
     pub rows: Vec<DetailRow>,
 }
 
-/// Which half of the panel a section belongs to.
+/// Which part of the panel a section belongs to.
 ///
-/// The panel reads as two groups — what the table *is*, then what it is
-/// configured to do — and the blank line between them follows from this rather
-/// than from a projection remembering to emit one in the right place
+/// The panel reads as three groups — what the rows are about, what the table
+/// *is*, then what it is configured to do — and the blank line between them
+/// follows from a change of group rather than from a projection remembering to
+/// emit one in the right place
 /// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
+    /// Which keyspace, and which of its tables, the rest of the panel is about.
+    Identity,
     /// The physical shape: which columns decide placement and ordering.
     Shape,
     /// What the schema reports about it: table options, replication.
@@ -94,6 +93,35 @@ pub enum DetailRow {
     },
     /// A property: name on its own line, value indented beneath it.
     Property { name: String, value: String },
+    /// What the panel is describing: a fixed label and the name it carries,
+    /// drawn in the colour and behind the icon that name wears in the Tables
+    /// tree (docs/superpowers/specs/2026-08-12-ddl-identity-rows-design.md §2).
+    Identity { kind: IdentityKind, name: String },
+}
+
+/// Which name an [`DetailRow::Identity`] row carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityKind {
+    Keyspace,
+    Table,
+}
+
+impl IdentityKind {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Keyspace => "Keyspace",
+            Self::Table => "Table",
+        }
+    }
+
+    #[must_use]
+    pub const fn token(self) -> Token {
+        match self {
+            Self::Keyspace => Token::Keyspace,
+            Self::Table => Token::Table,
+        }
+    }
 }
 
 /// What a column is to its table.
@@ -158,9 +186,7 @@ pub(super) fn of(state: &State) -> Option<Details> {
         // back to the replication the other tab is for: a tab that shows
         // something else when it has nothing teaches the wrong thing about
         // what it is (design §6).
-        (Node::Keyspace { keyspace, .. }, DdlTab::Columns) => Details {
-            heading: keyspace.name.clone(),
-            heading_token: Token::Keyspace,
+        (Node::Keyspace { .. }, DdlTab::Columns) => Details {
             sections: Vec::new(),
         },
     };
@@ -209,13 +235,34 @@ impl DetailRow {
                 filter.matches(name) || filter.matches(cql_type)
             }
             Self::Property { name, value } => filter.matches(name) || filter.matches(value),
+            // The label is not matched, for the reason a section heading is
+            // not: `Keyspace` and `Table` are the same two words on every
+            // table, so a filter over them narrows nothing.
+            Self::Identity { name, .. } => filter.matches(name),
         }
+    }
+}
+
+/// The keyspace a panel is about, and the table when one is selected.
+fn identity(keyspace: &Keyspace, table: Option<&Table>) -> Section {
+    let row = |kind: IdentityKind, name: &str| DetailRow::Identity {
+        kind,
+        name: name.to_owned(),
+    };
+
+    Section {
+        heading: None,
+        group: Group::Identity,
+        token: None,
+        rows: std::iter::once(row(IdentityKind::Keyspace, &keyspace.name))
+            .chain(table.map(|table| row(IdentityKind::Table, &table.name)))
+            .collect(),
     }
 }
 
 fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     let partition = Section {
-        heading: "Partition Key".to_owned(),
+        heading: Some("Partition Key".to_owned()),
         group: Group::Shape,
         token: Some(Token::PartitionKey),
         rows: table
@@ -231,7 +278,7 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     };
 
     let clustering = Section {
-        heading: "Clustering Key".to_owned(),
+        heading: Some("Clustering Key".to_owned()),
         group: Group::Shape,
         token: Some(Token::ClusteringKey),
         rows: table
@@ -247,7 +294,7 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     };
 
     let options = Section {
-        heading: "Options".to_owned(),
+        heading: Some("Options".to_owned()),
         group: Group::Settings,
         token: None,
         rows: table
@@ -261,9 +308,12 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     };
 
     Details {
-        heading: format!("{}.{}", keyspace.name, table.name),
-        heading_token: Token::Table,
-        sections: populated([partition, clustering, options]),
+        sections: populated([
+            identity(keyspace, Some(table)),
+            partition,
+            clustering,
+            options,
+        ]),
     }
 }
 
@@ -306,29 +356,28 @@ fn columns_of(keyspace: &Keyspace, table: &Table) -> Details {
         .collect();
 
     Details {
-        heading: format!("{}.{}", keyspace.name, table.name),
-        heading_token: Token::Table,
-        sections: populated([Section {
-            heading: format!("{} columns", table.columns().count()),
-            group: Group::Shape,
-            token: None,
-            rows,
-        }]),
+        sections: populated([
+            identity(keyspace, Some(table)),
+            Section {
+                heading: Some(format!("{} columns", table.columns().count())),
+                group: Group::Shape,
+                token: None,
+                rows,
+            },
+        ]),
     }
 }
 
 fn of_keyspace(keyspace: &Keyspace) -> Details {
     let replication = Section {
-        heading: "Replication".to_owned(),
+        heading: Some("Replication".to_owned()),
         group: Group::Settings,
         token: None,
         rows: replication_rows(&keyspace.replication),
     };
 
     Details {
-        heading: keyspace.name.clone(),
-        heading_token: Token::Keyspace,
-        sections: populated([replication]),
+        sections: populated([identity(keyspace, None), replication]),
     }
 }
 
@@ -390,11 +439,23 @@ mod tests {
         details
     }
 
+    /// The headings the panel draws, which the identity group has none of.
     fn headings(details: &Details) -> Vec<&str> {
         details
             .sections
             .iter()
-            .map(|section| section.heading.as_str())
+            .filter_map(|section| section.heading.as_deref())
+            .collect()
+    }
+
+    /// The identity rows, as the `(label, name)` pairs they draw as.
+    fn identity_rows(details: &Details) -> Vec<(&str, &str)> {
+        details
+            .rows()
+            .filter_map(|row| match row {
+                DetailRow::Identity { kind, name } => Some((kind.label(), name.as_str())),
+                _ => None,
+            })
             .collect()
     }
 
@@ -402,7 +463,7 @@ mod tests {
         details
             .sections
             .iter()
-            .find(|section| section.heading == heading)
+            .find(|section| section.heading.as_deref() == Some(heading))
             .unwrap_or_else(|| panic!("{heading} is missing"))
     }
 
@@ -479,7 +540,11 @@ mod tests {
 
         assert_eq!(headings(&details), ["5 columns"]);
         assert_eq!(
-            details.rows().cloned().collect::<Vec<_>>(),
+            details
+                .rows()
+                .filter(|row| !matches!(row, DetailRow::Identity { .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
             [
                 DetailRow::Column {
                     name: "customer_id".to_owned(),
@@ -522,7 +587,7 @@ mod tests {
                     DetailRow::KeyColumn { name, .. } | DetailRow::Column { name, .. } => {
                         Some(name.clone())
                     }
-                    DetailRow::Property { .. } => None,
+                    DetailRow::Property { .. } | DetailRow::Identity { .. } => None,
                 })
                 .collect()
         };
@@ -566,23 +631,52 @@ mod tests {
     }
 
     #[test]
-    fn a_heading_names_what_it_is_so_the_renderer_need_not_guess() {
-        assert_eq!(details(&browsing(orders())).heading_token, Token::Table);
+    fn a_selected_table_is_named_by_its_keyspace_and_its_own_name() {
         assert_eq!(
-            details(&columns_tab(&browsing(orders()))).heading_token,
-            Token::Table
+            identity_rows(&details(&browsing(orders()))),
+            [("Keyspace", "shop"), ("Table", "orders_by_customer")],
+            "one row each, so the panel can label them and the tree's colours \
+             say which is which"
         );
         assert_eq!(
-            details(&tabled(&[("shop", &["orders"])])).heading_token,
-            Token::Keyspace
+            identity_rows(&details(&columns_tab(&browsing(orders())))),
+            [("Keyspace", "shop"), ("Table", "orders_by_customer")],
+            "the other tab describes the same table"
         );
     }
 
     #[test]
-    fn a_selected_table_is_named_by_its_keyspace_and_its_own_name() {
+    fn a_selected_keyspace_names_only_itself() {
         assert_eq!(
-            details(&browsing(orders())).heading,
-            "shop.orders_by_customer"
+            identity_rows(&details(&tabled(&[("shop", &["orders"])]))),
+            [("Keyspace", "shop")],
+            "there is no table selected to name"
+        );
+    }
+
+    #[test]
+    fn the_identity_rows_open_the_body_and_the_cursor_walks_them() {
+        let details = details(&browsing(orders()));
+
+        assert!(
+            matches!(
+                details.rows().next(),
+                Some(DetailRow::Identity {
+                    kind: IdentityKind::Keyspace,
+                    ..
+                })
+            ),
+            "identity comes before the shape it describes"
+        );
+        assert_eq!(
+            details.row_count(),
+            2 + details
+                .sections
+                .iter()
+                .filter(|section| section.group != Group::Identity)
+                .map(|section| section.rows.len())
+                .sum::<usize>(),
+            "they are rows like any other, so the cursor can land on them"
         );
     }
 
@@ -631,7 +725,10 @@ mod tests {
         let table = details(&browsing(orders()));
         let groups: Vec<Group> = table.sections.iter().map(|section| section.group).collect();
 
-        assert_eq!(groups, [Group::Shape, Group::Shape, Group::Settings]);
+        assert_eq!(
+            groups,
+            [Group::Identity, Group::Shape, Group::Shape, Group::Settings]
+        );
         assert_eq!(
             section(&details(&tabled(&[("shop", &["orders"])])), "Replication").group,
             Group::Settings,
@@ -730,7 +827,7 @@ mod tests {
 
         let details = details(&state);
 
-        assert_eq!(details.heading, "shop");
+        assert_eq!(identity_rows(&details), [("Keyspace", "shop")]);
         assert_eq!(
             section(&details, "Replication").rows,
             [
@@ -907,11 +1004,12 @@ mod tests {
 
         assert_eq!(
             details.row_count(),
-            6,
-            "one partition column, two clustering, three options — and no heading"
+            8,
+            "the keyspace and the table, one partition column, two clustering, \
+             three options — and no heading"
         );
         assert_eq!(
-            details.rows().nth(1),
+            details.rows().nth(3),
             Some(&DetailRow::KeyColumn {
                 name: "order_date".to_owned(),
                 order: Some(ClusteringOrder::Descending),

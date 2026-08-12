@@ -42,9 +42,9 @@ pub(crate) const fn token(kind: RowKind) -> Token {
     }
 }
 
-/// The icon for a Ddl heading naming a table or a keyspace, and nothing for a
-/// heading that names neither.
-pub(crate) fn heading(token: Token) -> &'static str {
+/// The icon a Ddl identity row wears, and nothing for a token that names
+/// neither a keyspace nor a table.
+pub(crate) fn identity(token: Token) -> &'static str {
     match token {
         Token::Keyspace => KEYSPACE,
         Token::Table => TABLE,
