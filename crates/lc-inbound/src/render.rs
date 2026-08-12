@@ -3,7 +3,7 @@
 use lc_domain::ViewModel;
 use lc_domain::state::{Geometry, Panel, Span as DdlSpan};
 use lc_domain::style::Token;
-use lc_domain::view::{OverlayView, PanelView};
+use lc_domain::view::{OverlayView, PanelTitle, Tab};
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
@@ -64,7 +64,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         let area = rects.get(panel.panel);
 
         let is_focused_panel = panel.panel == view.focus;
-        let title = panel_title(panel, is_focused_panel, theme);
+        let tabs = drawn_tabs(&panel.title, area.width);
+        let title = panel_title(&tabs, is_focused_panel, theme);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -77,9 +78,13 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         // still says so.
         if let Some(term) = &panel.filter {
             let marker = format!("/{term}");
-            if marker_fits(area.width, panel.title.text(), &marker) {
+            if marker_fits(area.width, &strip(&tabs), &marker) {
                 block = block.title(
-                    Line::from(Span::styled(marker, theme.style(Token::Muted))).right_aligned(),
+                    Line::from(Span::styled(
+                        format!("{TITLE_PAD}{marker}{TITLE_PAD}"),
+                        theme.style(Token::Muted),
+                    ))
+                    .right_aligned(),
                 );
             }
         }
@@ -206,30 +211,80 @@ fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
     )
 }
 
+/// The columns of border between a corner and the text nearest it.
+///
+/// `ratatui` gives a title none, so a name grows out of the corner it touches.
+/// One column is the whole gap: two would cost four columns of a sidebar that
+/// sits on a 16-column floor, which is where the filter marker stops fitting
+/// beside a title (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §2).
+const TITLE_PAD: &str = " ";
+
 /// The shortcut span keeps its own `Token::Shortcut` style regardless of
 /// focus; the plain text around it takes `Token::Focused`'s colour when its
-/// panel is focused, matching the border.
-fn panel_title(panel: &PanelView, is_focused_panel: bool, theme: Theme) -> Line<'_> {
-    let (before, shortcut, after) = panel.title.split();
-    if is_focused_panel {
-        let focus_style = theme.style(Token::Focused);
-        Line::from(vec![
-            Span::styled(before, focus_style),
-            Span::styled(shortcut, theme.style(Token::Shortcut)),
-            Span::styled(after, focus_style),
-        ])
+/// panel is focused, matching the border. An inactive tab is muted whether or
+/// not its panel has focus: it names something the panel is not showing.
+fn panel_title<'a>(tabs: &[&'a Tab], is_focused_panel: bool, theme: Theme) -> Line<'a> {
+    let shortcut = theme.style(Token::Shortcut);
+    let separator = theme.style(Token::Muted);
+    let active = if is_focused_panel {
+        theme.style(Token::Focused)
     } else {
-        Line::from(vec![
-            Span::raw(before),
-            Span::styled(shortcut, theme.style(Token::Shortcut)),
-            Span::raw(after),
-        ])
+        Style::new()
+    };
+
+    let mut spans = vec![Span::raw(TITLE_PAD)];
+
+    for (index, tab) in tabs.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(lc_domain::view::TAB_SEPARATOR, separator));
+        }
+
+        let style = if tab.active { active } else { separator };
+        let (before, mark, after) = tab.split();
+
+        spans.push(Span::styled(before, style));
+        // The active tab's mark spends no colour of its own, so it inherits
+        // whatever the border or the focus style put under it; an inactive
+        // tab's is muted with the rest of that tab, or the strip would mark a
+        // tab the panel is not showing more strongly than the one it is.
+        spans.push(Span::styled(mark, style.patch(shortcut)));
+        spans.push(Span::styled(after, style));
     }
+
+    spans.push(Span::raw(TITLE_PAD));
+    Line::from(spans)
 }
 
-/// Both titles and the two corners plus a space either side of each.
+/// The tabs a `width`-column border can hold: all of them, or the one being
+/// drawn.
+///
+/// A strip too wide for its panel would be clipped mid-label, which says the
+/// panel has a tab named `Table col` — so the panel gives up the tabs it is not
+/// showing before it gives up a whole name
+/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4).
+fn drawn_tabs(title: &PanelTitle, width: u16) -> Vec<&Tab> {
+    let all: Vec<&Tab> = title.tabs().iter().collect();
+    let padding = 2 * TITLE_PAD.chars().count() + 2;
+
+    if strip(&all).chars().count() + padding <= usize::from(width) {
+        return all;
+    }
+
+    all.into_iter().filter(|tab| tab.active).collect()
+}
+
+/// What `tabs` reads as on the border, separators included.
+fn strip(tabs: &[&Tab]) -> String {
+    tabs.iter()
+        .map(|tab| tab.text())
+        .collect::<Vec<_>>()
+        .join(lc_domain::view::TAB_SEPARATOR)
+}
+
+/// Both titles, the two corners, and the padding either side of each.
 fn marker_fits(width: u16, title: &str, marker: &str) -> bool {
-    let needed = title.chars().count() + marker.chars().count() + 6;
+    let padding = 4 * TITLE_PAD.chars().count();
+    let needed = title.chars().count() + marker.chars().count() + 2 + padding;
     usize::from(width) >= needed
 }
 
@@ -520,11 +575,13 @@ mod tests {
         // rows to Ddl's 4, and Queries sits on its 3-row floor.
         let buffer = draw(40, 12);
 
-        assert_eq!(row(&buffer, 0), "╭Tables────────╮╭Table contents────────╮");
+        assert_eq!(row(&buffer, 0), "╭ Tables ──────╮╭ Table contents ──────╮");
         assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
         assert_eq!(row(&buffer, 6), "╰──────────────╯│                      │");
-        assert_eq!(row(&buffer, 7), "╭Table DDL─────╮╰──────────────────────╯");
-        assert_eq!(row(&buffer, 8), "│              │╭Queries───────────────╮");
+        // The Ddl strip does not fit a 16-column border, so the panel draws
+        // the tab it is showing rather than a clipped pair of names.
+        assert_eq!(row(&buffer, 7), "╭ Table DDL ───╮╰──────────────────────╯");
+        assert_eq!(row(&buffer, 8), "│              │╭ Queries ─────────────╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
@@ -691,12 +748,13 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        // "╭Tables" and "╭Table contents" on row 0, "╭Table DDL" on row 7,
-        // "╭Queries" on row 8 — the border occupies the first column of each.
-        assert!(underlined(1, 0), "Tables underlines its T");
-        assert!(underlined(23, 0), "Table contents underlines its c");
-        assert!(underlined(2, 7), "Table DDL underlines its a");
-        assert!(underlined(18, 8), "Queries underlines its u");
+        // "╭ Tables" and "╭ Table contents" on row 0, "╭ Table DDL" on
+        // row 7, "╭ Queries" on row 8 — a corner and `TITLE_PAD` precede
+        // each name.
+        assert!(underlined(2, 0), "Tables underlines its T");
+        assert!(underlined(24, 0), "Table contents underlines its c");
+        assert!(underlined(3, 7), "Table DDL underlines its a");
+        assert!(underlined(19, 8), "Queries underlines its u");
     }
 
     #[test]
@@ -710,10 +768,10 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
 
-        for x in [0, 2, 3, 6] {
+        for x in [0, 1, 3, 4, 7] {
             assert!(!underlined(x, 0), "column {x} of row 0 is not the mark");
         }
-        assert!(!underlined(1, 7), "the T of Table DDL is not its mark");
+        assert!(!underlined(2, 7), "the T of Table DDL is not its mark");
     }
 
     #[test]
@@ -1136,7 +1194,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 0),
-            "╭Tables────────╮╭Table contents — shop.orders (2 rows)─────╮"
+            "╭ Tables ──────╮╭ Table contents — shop.orders (2 rows) ───╮"
         );
         assert_eq!(
             row(&buffer, 1),
@@ -1739,6 +1797,71 @@ mod tests {
             .collect()
     }
 
+    /// `describing`, moved to the panel's second tab.
+    fn listing(table: Table) -> State {
+        let mut state = describing(table);
+        state.ddl.cycle();
+        state
+    }
+
+    #[test]
+    fn the_columns_tab_draws_every_column_with_its_kind_and_type() {
+        let table = Table {
+            static_columns: vec![Column {
+                name: "region".to_owned(),
+                cql_type: "text".to_owned(),
+            }],
+            ..orders()
+        };
+
+        let buffer = draw_state(100, 41, &listing(table));
+
+        assert_eq!(
+            ddl_rows(&buffer)[..7],
+            [
+                "shop.orders_by_customer",
+                "",
+                "4 columns",
+                "PK customer_id     uuid",
+                "CK order_date      date",
+                "CK order_id    timeuuid",
+                "S  region          text",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_border_wide_enough_names_both_tabs_and_mutes_the_one_not_drawn() {
+        // 120 columns puts the sidebar at 30, which holds the whole strip.
+        let buffer = draw_state(120, 41, &describing(orders()));
+        let border = row(&buffer, top_border(&buffer, "Table DDL").1);
+
+        assert!(
+            border.contains("Table DDL - Table columns"),
+            "got {border:?}"
+        );
+
+        let (fg, _, modifier) = style_of_first(&buffer, "Table columns");
+        let muted = Theme::default().style(Token::Muted);
+
+        assert_eq!(fg, muted.fg.expect("muted spends a colour"));
+        assert!(
+            modifier.contains(Modifier::DIM),
+            "the tab is not the one drawn"
+        );
+    }
+
+    #[test]
+    fn a_border_too_narrow_for_the_strip_keeps_the_tab_it_is_drawing_whole() {
+        // At 100 columns the sidebar is 25: the strip needs 29, one name
+        // fits. A clipped strip would name a tab that does not exist.
+        let buffer = draw_state(100, 41, &listing(orders()));
+        let border = row(&buffer, top_border(&buffer, "Table columns").1);
+
+        assert!(border.contains("Table columns"), "got {border:?}");
+        assert!(!border.contains("Table DDL"), "got {border:?}");
+    }
+
     #[test]
     fn a_selected_tables_shape_is_drawn_above_its_options() {
         let buffer = draw_state(100, 41, &describing(orders()));
@@ -2018,8 +2141,13 @@ mod tests {
 
         let buffer = draw_state(100, 40, &state);
 
+        let rows: Vec<String> = ddl_rows(&buffer)[..4]
+            .iter()
+            .map(|row| row.trim_start().to_owned())
+            .collect();
+
         assert_eq!(
-            ddl_rows(&buffer)[..4],
+            rows,
             ["shop", "", "Replication", "class    SimpleStrategy"],
             "the only section opens the panel, so it takes no blank row of its own"
         );
@@ -2729,10 +2857,10 @@ mod tests {
     #[test]
     fn the_marker_fits_flush_against_the_corner_it_is_tuned_for() {
         // At 40 columns Tables sits on its 16-column floor: 1 (`╭`) + 6
-        // (`Tables`) + 4 (`/ord`) + 1 (`╮`) leaves exactly 4 columns of
-        // border between title and marker — `marker_fits`'s constant of 6
-        // read as "both corners plus a space either side of each" tuned
-        // against this exact border, not picked from the arithmetic alone.
+        // (`Tables`) + 4 (`/ord`) + 1 (`╮`) leaves exactly 4 columns, which is
+        // what `TITLE_PAD` spends either side of each — so the two sit flush
+        // with a gap and no dash between them, and one column narrower drops
+        // the marker.
         let mut state = browsing(&["shop"], 0);
         state.apply_filter(Filtered::Tables, Filter::new("ord"));
 
@@ -2740,7 +2868,7 @@ mod tests {
         let border = row(&buffer, top_border(&buffer, "Tables").1);
 
         assert_eq!(
-            border, "╭Tables────/ord╮╭Table contents────────╮",
+            border, "╭ Tables  /ord ╮╭ Table contents ──────╮",
             "the widest term this width can hold, sitting flush with no gap and no overlap"
         );
     }

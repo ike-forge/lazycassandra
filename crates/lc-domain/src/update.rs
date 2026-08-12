@@ -359,13 +359,27 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         // Last, so every binding above keeps precedence over a panel key.
         Key::Char(key) => {
             if let Some(panel) = Panel::from_shortcut(key) {
-                state.focus = panel;
+                focus_or_cycle(state, panel);
             }
         }
         _ => {}
     }
 
     Vec::new()
+}
+
+/// Focuses `panel`, or moves it to its next tab when it already has focus.
+///
+/// The second press is not a second binding: a panel with tabs spends its own
+/// shortcut on them, so the key that reaches a panel is also the key that walks
+/// what it can show (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §3).
+/// A panel with one view is unchanged by the repeat.
+fn focus_or_cycle(state: &mut State, panel: Panel) {
+    if state.focus == panel && panel == Panel::Ddl {
+        state.ddl.cycle();
+    } else {
+        state.focus = panel;
+    }
 }
 
 /// Rows a wheel notch moves, in whatever unit the panel scrolls in. One is
@@ -1231,6 +1245,7 @@ mod tests {
     use super::*;
     use crate::commands::{CATALOGUE, CommandsPanel};
     use crate::contents::ContentsState;
+    use crate::ddl::DdlTab;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::search::{Filter, Filtered, Prompt};
@@ -2963,6 +2978,42 @@ mod tests {
                     to.shortcut()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_ddl_shortcut_walks_the_panels_tabs_once_it_already_has_focus() {
+        let mut state = State::default();
+
+        press(&mut state, Key::Char(Panel::Ddl.shortcut()));
+        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "the first press only focuses");
+
+        press(&mut state, Key::Char(Panel::Ddl.shortcut()));
+        assert_eq!(state.ddl.tab(), DdlTab::Columns);
+        assert_eq!(state.focus, Panel::Ddl, "and focus stays where it was");
+
+        press(&mut state, Key::Char(Panel::Ddl.shortcut()));
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "wrapping round");
+    }
+
+    #[test]
+    fn a_repeated_shortcut_leaves_a_panel_with_one_view_alone() {
+        for panel in Panel::ALL
+            .into_iter()
+            .filter(|panel| !panel.takes_text() && *panel != Panel::Ddl)
+        {
+            let mut state = State::default();
+
+            press(&mut state, Key::Char(panel.shortcut()));
+            press(&mut state, Key::Char(panel.shortcut()));
+
+            assert_eq!(state.focus, panel);
+            assert_eq!(
+                state.ddl.tab(),
+                DdlTab::Ddl,
+                "{panel:?} must not walk another panel's tabs"
+            );
         }
     }
 

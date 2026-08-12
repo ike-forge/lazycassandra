@@ -24,10 +24,10 @@
 use lc_domain::model::ClusteringOrder;
 use lc_domain::state::Span;
 use lc_domain::style::Token;
-use lc_domain::view::{DetailRow, Details, Group};
+use lc_domain::view::{ColumnKind, DetailRow, Details, Group};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span as TextSpan};
 use ratatui::widgets::Paragraph;
 
@@ -84,7 +84,19 @@ pub(crate) fn render(
 /// what is measured, or a redraw could chase its own tail
 /// (architecture.md §3).
 pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: Theme) -> Laid {
-    let mut lines = vec![Line::raw(truncate(&details.heading, width)), Line::raw("")];
+    // Centred and bold: the heading names what every row below it belongs to,
+    // and left-aligned in the body's own colour it read as the first of them
+    // (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §7). The colour is
+    // the one the Tables tree already spends on that kind of name, so the panel
+    // and the tree agree about what a table looks like.
+    let heading = Line::styled(
+        truncate(&details.heading, width),
+        theme
+            .style(details.heading_token)
+            .add_modifier(Modifier::BOLD),
+    )
+    .centered();
+    let mut lines = vec![heading, Line::raw("")];
     let mut selection = Span::default();
     let mut row = 0;
 
@@ -142,19 +154,24 @@ fn patched(mut line: Line<'static>, style: Style) -> Line<'static> {
 
 fn row_lines(row: &DetailRow, width: usize, style: Style, theme: Theme) -> Vec<Line<'static>> {
     match row {
-        DetailRow::Column {
+        DetailRow::KeyColumn {
             name,
             order,
             cql_type,
-        } => column_lines(name, *order, cql_type, width)
+        } => key_column_lines(name, *order, cql_type, width)
             .into_iter()
             .map(|text| Line::styled(text, style))
             .collect(),
+        DetailRow::Column {
+            name,
+            cql_type,
+            kind,
+        } => column_lines(name, cql_type, *kind, width, theme),
         DetailRow::Property { name, value } => property_lines(name, value, width, style, theme),
     }
 }
 
-fn column_lines(
+fn key_column_lines(
     name: &str,
     order: Option<ClusteringOrder>,
     cql_type: &str,
@@ -165,12 +182,56 @@ fn column_lines(
         Some(ClusteringOrder::Descending) => DESCENDING,
         None => "",
     };
-    let left = format!("{}{name}{arrow}", " ".repeat(INDENT));
 
-    match gap(&left, cql_type, width) {
-        Some(gap) => vec![format!("{left}{}{cql_type}", " ".repeat(gap))],
-        None => std::iter::once(truncate(&left, width))
-            .chain(wrap(cql_type, width, TYPE_INDENT))
+    laid_out(
+        &format!("{}{name}{arrow}", " ".repeat(INDENT)),
+        cql_type,
+        width,
+    )
+}
+
+/// A column in the Table columns tab: its kind in the two columns the other
+/// tab spends on indentation, then the name, then the type at the margin.
+///
+/// The marker carries the colour and the name does not, for the reason a
+/// property's value is left alone: two coloured runs on a line this narrow is
+/// one too many (visual polish design §5.2).
+fn column_lines(
+    name: &str,
+    cql_type: &str,
+    kind: ColumnKind,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let marker = kind.marker();
+    let mut lines = laid_out(&format!("{marker:INDENT$} {name}"), cql_type, width)
+        .into_iter()
+        .map(Line::raw)
+        .collect::<Vec<Line<'static>>>();
+
+    if let Some(first) = lines.first_mut() {
+        *first = marked(first, INDENT, theme.style(kind.token()));
+    }
+
+    lines
+}
+
+/// `line` with its first `taken` characters lifted into a span of their own.
+fn marked(line: &Line<'static>, taken: usize, style: Style) -> Line<'static> {
+    let text = line.to_string();
+    let mark: String = text.chars().take(taken).collect();
+    let rest: String = text.chars().skip(taken).collect();
+
+    Line::from(vec![TextSpan::styled(mark, style), TextSpan::raw(rest)])
+}
+
+/// `left` with `right` at the margin when the two fit, `right` wrapped beneath
+/// it when they do not.
+fn laid_out(left: &str, right: &str, width: usize) -> Vec<String> {
+    match gap(left, right, width) {
+        Some(gap) => vec![format!("{left}{}{right}", " ".repeat(gap))],
+        None => std::iter::once(truncate(left, width))
+            .chain(wrap(right, width, TYPE_INDENT))
             .collect(),
     }
 }
@@ -306,7 +367,7 @@ mod tests {
     #[test]
     fn a_column_puts_its_type_at_the_right_margin() {
         assert_eq!(
-            column_lines("customer_id", None, "uuid", 23),
+            key_column_lines("customer_id", None, "uuid", 23),
             ["  customer_id      uuid"]
         );
     }
@@ -314,11 +375,11 @@ mod tests {
     #[test]
     fn a_clustering_column_carries_its_direction_beside_its_name() {
         assert_eq!(
-            column_lines("order_date", Some(ClusteringOrder::Descending), "date", 23),
+            key_column_lines("order_date", Some(ClusteringOrder::Descending), "date", 23),
             ["  order_date ↓     date"]
         );
         assert_eq!(
-            column_lines("order_id", Some(ClusteringOrder::Ascending), "timeuuid", 23),
+            key_column_lines("order_id", Some(ClusteringOrder::Ascending), "timeuuid", 23),
             ["  order_id ↑   timeuuid"]
         );
     }
@@ -326,9 +387,78 @@ mod tests {
     #[test]
     fn a_column_too_wide_for_one_line_drops_its_type_beneath_the_name() {
         assert_eq!(
-            column_lines("warehouse_identifier", None, "frozen<list<text>>", 23),
+            key_column_lines("warehouse_identifier", None, "frozen<list<text>>", 23),
             ["  warehouse_identifier", "    frozen<list<text>>"]
         );
+    }
+
+    fn listed(name: &str, cql_type: &str, kind: ColumnKind, width: usize) -> Vec<String> {
+        texts(&column_lines(name, cql_type, kind, width, Theme::default()))
+    }
+
+    #[test]
+    fn a_listed_column_wears_its_kind_where_the_other_tab_indents() {
+        assert_eq!(
+            listed("customer_id", "uuid", ColumnKind::Partition, 23),
+            ["PK customer_id     uuid"]
+        );
+        assert_eq!(
+            listed("order_date", "date", ColumnKind::Clustering, 23),
+            ["CK order_date      date"]
+        );
+        assert_eq!(
+            listed("region", "text", ColumnKind::Static, 23),
+            ["S  region          text"]
+        );
+        assert_eq!(
+            listed("status", "text", ColumnKind::Regular, 23),
+            ["   status          text"],
+            "the common case earns no ink, and the names still line up"
+        );
+    }
+
+    #[test]
+    fn only_the_kind_marker_carries_the_kinds_colour() {
+        let theme = Theme::default();
+        let lines = column_lines("customer_id", "uuid", ColumnKind::Partition, 23, theme);
+        let partition = theme.style(Token::PartitionKey).fg;
+
+        assert!(partition.is_some(), "the token has to spend a colour");
+        assert_eq!(lines[0].spans[0].content, "PK");
+        assert_eq!(lines[0].spans[0].style.fg, partition);
+        assert_eq!(
+            lines[0].spans[1].style.fg, None,
+            "two coloured runs on a line this narrow is one too many"
+        );
+    }
+
+    #[test]
+    fn a_listed_column_too_wide_for_one_line_drops_its_type_beneath_the_name() {
+        assert_eq!(
+            listed(
+                "warehouse_identifier",
+                "frozen<list<text>>",
+                ColumnKind::Regular,
+                23
+            ),
+            ["   warehouse_identifier", "    frozen<list<text>>"]
+        );
+    }
+
+    #[test]
+    fn the_heading_is_centred_and_bold_in_the_colour_of_what_it_names() {
+        let theme = Theme::default();
+        let details = Details {
+            heading: "shop.orders".to_owned(),
+            heading_token: Token::Table,
+            sections: Vec::new(),
+        };
+
+        let heading = lay_out(&details, 0, 28, theme).lines.remove(0);
+
+        assert_eq!(heading.alignment, Some(ratatui::layout::Alignment::Center));
+        assert_eq!(heading.style.fg, theme.style(Token::Table).fg);
+        assert!(heading.style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -439,12 +569,13 @@ mod tests {
     fn lay_out_reports_the_span_of_the_row_it_highlighted() {
         let details = Details {
             heading: "shop.orders".to_owned(),
+            heading_token: Token::Table,
             sections: vec![
                 Section {
                     heading: "Partition Key".to_owned(),
                     group: Group::Shape,
                     token: Some(Token::PartitionKey),
-                    rows: vec![DetailRow::Column {
+                    rows: vec![DetailRow::KeyColumn {
                         name: "customer_id".to_owned(),
                         order: None,
                         cql_type: "uuid".to_owned(),

@@ -14,14 +14,15 @@ mod tables;
 mod title;
 
 pub use contents::{GridCell, GridColumn};
-pub use details::{DetailRow, Details, Group, Section};
+pub use details::{ColumnKind, DetailRow, Details, Group, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness};
 pub use tables::{Marker, TreeRow};
-pub use title::PanelTitle;
+pub use title::{PanelTitle, TAB_SEPARATOR, Tab};
 
 pub use crate::editor::Position;
 
 use crate::commands::{self, CommandRow};
+use crate::ddl::DdlTab;
 use crate::model::DbError;
 use crate::state::{Message, Overlay, Panel, State};
 use crate::style::{Severity, Token};
@@ -193,7 +194,7 @@ pub fn view_model(state: &State) -> ViewModel {
     ViewModel {
         panels: Panel::ALL.map(|panel| PanelView {
             panel,
-            title: PanelTitle::marking(title(state, panel), panel.shortcut()),
+            title: title(state, panel),
             body: body(state, panel),
             filter: crate::search::Filtered::of(panel)
                 .and_then(|target| state.filter(target))
@@ -223,12 +224,23 @@ pub fn ddl_rows(state: &State) -> usize {
     details::of(state).map_or(0, |details| details.row_count())
 }
 
-fn title(state: &State, panel: Panel) -> String {
+/// A panel's top border: one name, or the strip of tabs it can show.
+fn title(state: &State, panel: Panel) -> PanelTitle {
+    let marking = |text: String| PanelTitle::marking(text, panel.shortcut());
+
     match panel {
-        Panel::Tables => "Tables".to_owned(),
-        Panel::Ddl => "Table DDL".to_owned(),
-        Panel::Contents => contents::title(state),
-        Panel::Queries => "Queries".to_owned(),
+        Panel::Tables => marking("Tables".to_owned()),
+        Panel::Ddl => {
+            let tab = state.ddl.tab();
+            let labels: Vec<(&'static str, bool)> = DdlTab::ALL
+                .iter()
+                .map(|candidate| (candidate.label(), *candidate == tab))
+                .collect();
+
+            PanelTitle::tabbed(&labels, panel.shortcut())
+        }
+        Panel::Contents => marking(contents::title(state)),
+        Panel::Queries => marking("Queries".to_owned()),
     }
 }
 
@@ -320,8 +332,14 @@ mod tests {
         let view = view_model(&State::default());
 
         assert_eq!(
-            view.panels.map(|panel| panel.title.text().to_owned()),
-            ["Tables", "Table DDL", "Table contents", "Queries"].map(str::to_owned)
+            view.panels.map(|panel| panel.title.text()),
+            [
+                "Tables",
+                "Table DDL - Table columns",
+                "Table contents",
+                "Queries"
+            ]
+            .map(str::to_owned)
         );
     }
 
@@ -463,7 +481,7 @@ mod tests {
     fn every_panel_title_marks_the_key_that_focuses_it() {
         for state in every_contents_state() {
             for panel in view_model(&state).panels {
-                let (_, mark, _) = panel.title.split();
+                let (_, mark, _) = panel.title.tabs()[0].split();
 
                 assert!(
                     mark.eq_ignore_ascii_case(&panel.panel.shortcut().to_string()),

@@ -213,6 +213,13 @@ const DDL_HINTS: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
         action: "move",
     },
+    // The panel's own focus key, named only in the bar it applies to: pressed
+    // anywhere else it focuses this panel instead
+    // (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §3).
+    Binding {
+        keys: &[KeyPress::new(Key::Char('a'))],
+        action: "tab",
+    },
     Binding {
         keys: &[
             KeyPress::ctrl(Key::Char('e')),

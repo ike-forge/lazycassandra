@@ -6,7 +6,8 @@
 //! to narrate, and saying it twice in one sidebar is noise
 //! (docs/superpowers/specs/2026-08-09-table-metadata-design.md §1).
 
-use crate::model::{ClusteringOrder, Keyspace, Replication, Table};
+use crate::ddl::DdlTab;
+use crate::model::{ClusteringOrder, Column, Keyspace, Replication, Table};
 use crate::search::Filter;
 use crate::state::State;
 use crate::style::Token;
@@ -19,6 +20,10 @@ use super::{PanelBody, waiting};
 pub struct Details {
     /// `shop.orders_by_customer`, or a keyspace name.
     pub heading: String,
+    /// What the heading names, so the renderer draws a table's name as a table
+    /// and a keyspace's as a keyspace rather than inventing a heading colour of
+    /// its own (architecture.md §6).
+    pub heading_token: Token,
     pub sections: Vec<Section>,
 }
 
@@ -71,15 +76,61 @@ pub enum Group {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetailRow {
-    /// A column: name and CQL type on one line, the type pushed right.
-    Column {
+    /// A key column under the heading that already says which key it is part
+    /// of: name and CQL type on one line, the type pushed right.
+    KeyColumn {
         name: String,
         /// `None` for a partition column, which has no ordering of its own.
         order: Option<ClusteringOrder>,
         cql_type: String,
     },
+    /// A column in the Table columns tab, where nothing above it says what
+    /// part of the table it plays — so the row carries its own kind, and the
+    /// renderer marks it (design §5).
+    Column {
+        name: String,
+        cql_type: String,
+        kind: ColumnKind,
+    },
     /// A property: name on its own line, value indented beneath it.
     Property { name: String, value: String },
+}
+
+/// What a column is to its table.
+///
+/// The four are exhaustive over [`Table`]'s own fields, so a column cannot be
+/// listed under a kind the schema does not model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnKind {
+    Partition,
+    Clustering,
+    Static,
+    Regular,
+}
+
+impl ColumnKind {
+    /// The two columns of border the marker occupies, blank for a regular
+    /// column: the common case is the one that earns no ink
+    /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §5).
+    #[must_use]
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::Partition => "PK",
+            Self::Clustering => "CK",
+            Self::Static => "S",
+            Self::Regular => "",
+        }
+    }
+
+    #[must_use]
+    pub const fn token(self) -> Token {
+        match self {
+            Self::Partition => Token::PartitionKey,
+            Self::Clustering => Token::ClusteringKey,
+            Self::Static => Token::StaticColumn,
+            Self::Regular => Token::RegularColumn,
+        }
+    }
 }
 
 pub(super) fn body(state: &State) -> PanelBody {
@@ -99,9 +150,19 @@ pub(super) fn body(state: &State) -> PanelBody {
 pub(super) fn of(state: &State) -> Option<Details> {
     let schema = state.schema()?;
 
-    let mut details = match state.tables.selected(schema)? {
-        Node::Table { keyspace, table } => of_table(keyspace, table),
-        Node::Keyspace { keyspace, .. } => of_keyspace(keyspace),
+    let mut details = match (state.tables.selected(schema)?, state.ddl.tab()) {
+        (Node::Table { keyspace, table }, DdlTab::Ddl) => of_table(keyspace, table),
+        (Node::Table { keyspace, table }, DdlTab::Columns) => columns_of(keyspace, table),
+        (Node::Keyspace { keyspace, .. }, DdlTab::Ddl) => of_keyspace(keyspace),
+        // A keyspace has no columns, so the tab says so rather than falling
+        // back to the replication the other tab is for: a tab that shows
+        // something else when it has nothing teaches the wrong thing about
+        // what it is (design §6).
+        (Node::Keyspace { keyspace, .. }, DdlTab::Columns) => Details {
+            heading: keyspace.name.clone(),
+            heading_token: Token::Keyspace,
+            sections: Vec::new(),
+        },
     };
 
     if let Some(filter) = state.ddl.filter() {
@@ -112,8 +173,11 @@ pub(super) fn of(state: &State) -> Option<Details> {
 }
 
 fn scrolled(state: &State, details: Details) -> PanelBody {
-    if let Some(filter) = state.ddl.filter().filter(|_| details.sections.is_empty()) {
-        return waiting(&format!("No property matches \"{}\"", filter.as_str()));
+    if details.sections.is_empty() {
+        return match state.ddl.filter() {
+            Some(filter) => waiting(&format!("No property matches \"{}\"", filter.as_str())),
+            None => waiting("A keyspace has no columns"),
+        };
     }
 
     PanelBody::Details {
@@ -141,7 +205,9 @@ impl Details {
 impl DetailRow {
     fn matches(&self, filter: &Filter) -> bool {
         match self {
-            Self::Column { name, cql_type, .. } => filter.matches(name) || filter.matches(cql_type),
+            Self::KeyColumn { name, cql_type, .. } | Self::Column { name, cql_type, .. } => {
+                filter.matches(name) || filter.matches(cql_type)
+            }
             Self::Property { name, value } => filter.matches(name) || filter.matches(value),
         }
     }
@@ -156,7 +222,7 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
             .primary_key
             .partition
             .iter()
-            .map(|column| DetailRow::Column {
+            .map(|column| DetailRow::KeyColumn {
                 name: column.name.clone(),
                 order: None,
                 cql_type: column.cql_type.clone(),
@@ -172,7 +238,7 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
             .primary_key
             .clustering
             .iter()
-            .map(|clustering| DetailRow::Column {
+            .map(|clustering| DetailRow::KeyColumn {
                 name: clustering.column.name.clone(),
                 order: Some(clustering.order),
                 cql_type: clustering.column.cql_type.clone(),
@@ -196,7 +262,58 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
 
     Details {
         heading: format!("{}.{}", keyspace.name, table.name),
+        heading_token: Token::Table,
         sections: populated([partition, clustering, options]),
+    }
+}
+
+/// Every column the table has, in [`Table::columns`] order, as one flat list.
+///
+/// Flat rather than grouped by kind: the group headings would restate the DDL
+/// tab's own top half, and the point of this tab is the whole column set in one
+/// scan — the kind travels with each row instead (design §5).
+fn columns_of(keyspace: &Keyspace, table: &Table) -> Details {
+    let row = |column: &Column, kind: ColumnKind| DetailRow::Column {
+        name: column.name.clone(),
+        cql_type: column.cql_type.clone(),
+        kind,
+    };
+
+    let rows = table
+        .primary_key
+        .partition
+        .iter()
+        .map(|column| row(column, ColumnKind::Partition))
+        .chain(
+            table
+                .primary_key
+                .clustering
+                .iter()
+                .map(|clustering| row(&clustering.column, ColumnKind::Clustering)),
+        )
+        .chain(
+            table
+                .static_columns
+                .iter()
+                .map(|column| row(column, ColumnKind::Static)),
+        )
+        .chain(
+            table
+                .regular_columns
+                .iter()
+                .map(|column| row(column, ColumnKind::Regular)),
+        )
+        .collect();
+
+    Details {
+        heading: format!("{}.{}", keyspace.name, table.name),
+        heading_token: Token::Table,
+        sections: populated([Section {
+            heading: format!("{} columns", table.columns().count()),
+            group: Group::Shape,
+            token: None,
+            rows,
+        }]),
     }
 }
 
@@ -210,6 +327,7 @@ fn of_keyspace(keyspace: &Keyspace) -> Details {
 
     Details {
         heading: keyspace.name.clone(),
+        heading_token: Token::Keyspace,
         sections: populated([replication]),
     }
 }
@@ -340,6 +458,126 @@ mod tests {
         state
     }
 
+    /// The fixture with something in every column kind, so the Table columns
+    /// tab has all four to list.
+    fn every_kind() -> Table {
+        Table {
+            static_columns: vec![column("region", "text")],
+            ..orders()
+        }
+    }
+
+    fn columns_tab(state: &State) -> State {
+        let mut state = state.clone();
+        state.ddl.cycle();
+        state
+    }
+
+    #[test]
+    fn the_columns_tab_lists_every_column_with_the_part_it_plays() {
+        let details = details(&columns_tab(&browsing(every_kind())));
+
+        assert_eq!(headings(&details), ["5 columns"]);
+        assert_eq!(
+            details.rows().cloned().collect::<Vec<_>>(),
+            [
+                DetailRow::Column {
+                    name: "customer_id".to_owned(),
+                    cql_type: "uuid".to_owned(),
+                    kind: ColumnKind::Partition,
+                },
+                DetailRow::Column {
+                    name: "order_date".to_owned(),
+                    cql_type: "date".to_owned(),
+                    kind: ColumnKind::Clustering,
+                },
+                DetailRow::Column {
+                    name: "order_id".to_owned(),
+                    cql_type: "timeuuid".to_owned(),
+                    kind: ColumnKind::Clustering,
+                },
+                DetailRow::Column {
+                    name: "region".to_owned(),
+                    cql_type: "text".to_owned(),
+                    kind: ColumnKind::Static,
+                },
+                DetailRow::Column {
+                    name: "status".to_owned(),
+                    cql_type: "text".to_owned(),
+                    kind: ColumnKind::Regular,
+                },
+            ],
+            "key columns first, then static, then regular — Table::columns' order"
+        );
+    }
+
+    #[test]
+    fn the_columns_tab_shows_the_columns_the_ddl_tab_leaves_out() {
+        let ddl = details(&browsing(every_kind()));
+        let columns = details(&columns_tab(&browsing(every_kind())));
+        let named = |details: &Details| -> Vec<String> {
+            details
+                .rows()
+                .filter_map(|row| match row {
+                    DetailRow::KeyColumn { name, .. } | DetailRow::Column { name, .. } => {
+                        Some(name.clone())
+                    }
+                    DetailRow::Property { .. } => None,
+                })
+                .collect()
+        };
+
+        assert_eq!(named(&ddl), ["customer_id", "order_date", "order_id"]);
+        assert_eq!(
+            named(&columns),
+            ["customer_id", "order_date", "order_id", "region", "status"],
+            "the static and regular columns are the point of the tab"
+        );
+    }
+
+    #[test]
+    fn the_columns_tab_of_a_keyspace_says_it_has_none() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.ddl.cycle();
+
+        assert_eq!(
+            ddl_body(&state),
+            PanelBody::Notice {
+                text: "A keyspace has no columns".to_owned(),
+                token: Some(Token::Muted),
+            },
+            "falling back to the other tab's replication would misname what this tab is"
+        );
+    }
+
+    #[test]
+    fn a_filter_narrows_the_columns_tab_too() {
+        let mut state = columns_tab(&browsing(every_kind()));
+        state.apply_filter(Filtered::Ddl, Filter::new("timeuuid"));
+
+        assert_eq!(
+            details(&state).rows().cloned().collect::<Vec<_>>(),
+            [DetailRow::Column {
+                name: "order_id".to_owned(),
+                cql_type: "timeuuid".to_owned(),
+                kind: ColumnKind::Clustering,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_heading_names_what_it_is_so_the_renderer_need_not_guess() {
+        assert_eq!(details(&browsing(orders())).heading_token, Token::Table);
+        assert_eq!(
+            details(&columns_tab(&browsing(orders()))).heading_token,
+            Token::Table
+        );
+        assert_eq!(
+            details(&tabled(&[("shop", &["orders"])])).heading_token,
+            Token::Keyspace
+        );
+    }
+
     #[test]
     fn a_selected_table_is_named_by_its_keyspace_and_its_own_name() {
         assert_eq!(
@@ -365,7 +603,7 @@ mod tests {
 
         assert_eq!(
             section(&details, "Partition Key").rows,
-            [DetailRow::Column {
+            [DetailRow::KeyColumn {
                 name: "customer_id".to_owned(),
                 order: None,
                 cql_type: "uuid".to_owned(),
@@ -374,12 +612,12 @@ mod tests {
         assert_eq!(
             section(&details, "Clustering Key").rows,
             [
-                DetailRow::Column {
+                DetailRow::KeyColumn {
                     name: "order_date".to_owned(),
                     order: Some(ClusteringOrder::Descending),
                     cql_type: "date".to_owned(),
                 },
-                DetailRow::Column {
+                DetailRow::KeyColumn {
                     name: "order_id".to_owned(),
                     order: Some(ClusteringOrder::Ascending),
                     cql_type: "timeuuid".to_owned(),
@@ -590,7 +828,7 @@ mod tests {
         );
         assert_eq!(
             section(&details, "Partition Key").rows,
-            [DetailRow::Column {
+            [DetailRow::KeyColumn {
                 name: "customer_id".to_owned(),
                 order: None,
                 cql_type: "uuid".to_owned(),
@@ -610,7 +848,7 @@ mod tests {
         );
         assert_eq!(
             section(&details, "Clustering Key").rows,
-            [DetailRow::Column {
+            [DetailRow::KeyColumn {
                 name: "order_id".to_owned(),
                 order: Some(ClusteringOrder::Ascending),
                 cql_type: "timeuuid".to_owned(),
@@ -674,7 +912,7 @@ mod tests {
         );
         assert_eq!(
             details.rows().nth(1),
-            Some(&DetailRow::Column {
+            Some(&DetailRow::KeyColumn {
                 name: "order_date".to_owned(),
                 order: Some(ClusteringOrder::Descending),
                 cql_type: "date".to_owned(),

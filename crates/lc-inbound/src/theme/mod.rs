@@ -113,6 +113,11 @@ impl Theme {
         match token {
             Token::PartitionKey => fg(palette.partition).add_modifier(Modifier::BOLD),
             Token::ClusteringKey => fg(palette.clustering),
+            // `accent`, which the loader also spends: they never share a
+            // surface — one is a column in the Table DDL panel, the other the
+            // spinner on the bar row — the same argument that lets `warning`
+            // and `partition` share a yellow in the Catppuccin flavours.
+            Token::StaticColumn => fg(palette.accent),
             Token::Keyspace => fg(palette.keyspace),
             Token::Table => fg(palette.table),
             Token::RegularColumn
@@ -375,9 +380,10 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 23] = [
+    pub(super) const EVERY_TOKEN: [Token; 24] = [
         Token::PartitionKey,
         Token::ClusteringKey,
+        Token::StaticColumn,
         Token::Keyspace,
         Token::Table,
         Token::RegularColumn,

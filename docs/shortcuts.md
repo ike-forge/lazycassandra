@@ -29,7 +29,7 @@ that takes text — see the Queries subsection below.
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
 | `t`¹ | Focus **T**ables. |
-| `a`¹ | Focus T**a**ble DDL. |
+| `a`¹ | Focus T**a**ble DDL; pressed again there, move to its next tab. |
 | `c`¹ | Focus Table **c**ontents. |
 | `u`¹ | Focus Q**u**eries. |
 
@@ -41,6 +41,12 @@ learned by looking at the panel rather than by reading this file (vision.md §4,
 principle 1). Two of them are not leading letters: the panel names are fixed by
 `docs/ui-draft.png`, and no title is renamed to make a key convenient.
 See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design.md).
+
+Table DDL is the one panel with more than one view, so its focus letter does
+double duty: the press that reaches a panel it has already reached walks that
+panel's tabs rather than meaning nothing. A panel with one view is unchanged by
+the repeat.
+See [Table DDL tabs design](specs/2026-08-12-ddl-tabs-design.md) §3.
 
 ### The search prompt
 
@@ -190,8 +196,13 @@ Accepted anywhere, but a no-op unless Table DDL has focus.
 
 | Key | Action |
 |---|---|
+| `a` | Move to the next tab — Table DDL, then Table columns — wrapping. |
 | `ctrl-e` | Scroll the viewport down one line, leaving the cursor where it is. |
 | `ctrl-y` | Scroll it up one line. |
+
+`a` is the panel's own focus letter (§1), and it is a no-op here only in the
+sense that it focuses the panel from anywhere else. A tab change returns the
+cursor and the viewport to the top, and leaves any applied filter in place.
 
 Two of the ctrl layer's three members (§2), and the only panel that needs a
 key to move a viewport on its own: a table option can be taller than the
@@ -496,6 +507,10 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render.rs`) |
 | A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
 | The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something` |
+| `a` at a focused Table DDL walks its tabs | `the_ddl_shortcut_walks_the_panels_tabs_once_it_already_has_focus`, `a_repeated_shortcut_leaves_a_panel_with_one_view_alone` |
+| A tab change resets the cursor and viewport and keeps the filter | `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `a_tab_change_leaves_the_filter_where_it_was` (`ddl.rs`) |
+| The columns tab lists every column with its kind | `the_columns_tab_lists_every_column_with_the_part_it_plays`, `the_columns_tab_shows_the_columns_the_ddl_tab_leaves_out` (`view/details.rs`), `the_columns_tab_draws_every_column_with_its_kind_and_type` (`inbound/render.rs`) |
+| A strip too narrow keeps the drawn tab whole | `a_border_wide_enough_names_both_tabs_and_mutes_the_one_not_drawn`, `a_border_too_narrow_for_the_strip_keeps_the_tab_it_is_drawing_whole` (`inbound/render.rs`) |
 | `q` quits and cancels | `q_quits`, `quitting_cancels_everything_still_in_flight` |
 | `Esc` clears the overlay | `escape_dismisses_the_overlay` |
 | `Tab`/`Shift-Tab` cycle and wrap | `tab_walks_the_panels_in_reading_order_and_wraps`, `shift_tab_walks_them_the_other_way` |

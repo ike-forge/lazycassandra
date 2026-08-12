@@ -11,6 +11,11 @@ use crate::posture::Posture;
 pub enum Token {
     PartitionKey,
     ClusteringKey,
+    /// A column stored once per partition rather than once per row. Worth a
+    /// colour because static-ness changes what a write to it means, and the
+    /// Table columns tab is the one place every column is listed together
+    /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §5).
+    StaticColumn,
     RegularColumn,
     Posture(Posture),
     Severity(Severity),

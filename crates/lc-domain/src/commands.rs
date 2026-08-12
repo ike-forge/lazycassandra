@@ -47,9 +47,13 @@ const GLOBAL: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('t'))],
         action: "focus Tables",
     },
+    // The one focus key that says two things, because it does two: pressing it
+    // at a panel it already focuses walks that panel's tabs
+    // (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §3), and the
+    // palette may not omit what a key does.
     Binding {
         keys: &[KeyPress::new(Key::Char('a'))],
-        action: "focus Table DDL",
+        action: "focus DDL, then tab",
     },
     Binding {
         keys: &[KeyPress::new(Key::Char('c'))],
