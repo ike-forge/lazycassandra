@@ -17,9 +17,10 @@ use lc_domain::view::RowKind;
 /// `nf-md-key`'s: a filled shape reads as the larger glyph at a size no
 /// terminal lets us change (design §7).
 pub(crate) const KEYSPACE: &str = "\u{f084} ";
-/// `nf-md-table_large`, in front of a table — filled, where
-/// `nf-fa-table`'s grid is hairlines.
-pub(crate) const TABLE: &str = "\u{f04f1} ";
+/// `nf-fa-table`, in front of a table. The filled `nf-md-table_large` was
+/// tried and reads as noise at one cell: a glyph this small carries by its
+/// outline, not by how much ink it spends.
+pub(crate) const TABLE: &str = "\u{f0ce} ";
 /// `nf-md-key_variant`, in front of the heading of a key section. Not the
 /// keyspace's key: two different things wearing one glyph would say they are
 /// the same thing.

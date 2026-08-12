@@ -1132,11 +1132,11 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 2),
-            "│    \u{f04f1} orders  ││                      │"
+            "│    \u{f0ce} orders  ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│    \u{f04f1} users   ││                      │"
+            "│    \u{f0ce} users   ││                      │"
         );
         assert_eq!(
             row(&buffer, 4),
