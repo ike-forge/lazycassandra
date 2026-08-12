@@ -13,12 +13,17 @@
 use lc_domain::style::Token;
 use lc_domain::view::RowKind;
 
-/// `nf-md-key`, in front of a keyspace.
-pub(crate) const KEYSPACE: &str = "\u{f0306} ";
-/// `nf-fa-table`, in front of a table.
-pub(crate) const TABLE: &str = "\u{f0ce} ";
-/// `nf-oct-key`, in front of the heading of a key section.
-pub(crate) const KEY: &str = "\u{f43d} ";
+/// `nf-fa-key`, in front of a keyspace. The solid cut rather than
+/// `nf-md-key`'s: a filled shape reads as the larger glyph at a size no
+/// terminal lets us change (design §7).
+pub(crate) const KEYSPACE: &str = "\u{f084} ";
+/// `nf-md-table_large`, in front of a table — filled, where
+/// `nf-fa-table`'s grid is hairlines.
+pub(crate) const TABLE: &str = "\u{f04f1} ";
+/// `nf-md-key_variant`, in front of the heading of a key section. Not the
+/// keyspace's key: two different things wearing one glyph would say they are
+/// the same thing.
+pub(crate) const KEY: &str = "\u{f030b} ";
 
 pub(crate) const fn tree_row(kind: RowKind) -> &'static str {
     match kind {

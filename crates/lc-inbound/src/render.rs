@@ -1039,15 +1039,15 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│  \u{f0306} shop      ││Press Enter on a table│"
+            "│  \u{f084} shop      ││Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│  \u{f0306} typezoo   ││                      │"
+            "│  \u{f084} typezoo   ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│  \u{f0306} system    ││                      │"
+            "│  \u{f084} system    ││                      │"
         );
     }
 
@@ -1128,19 +1128,19 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▾ \u{f0306} shop      ││Press Enter on a table│"
+            "│▾ \u{f084} shop      ││Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│    \u{f0ce} orders  ││                      │"
+            "│    \u{f04f1} orders  ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│    \u{f0ce} users   ││                      │"
+            "│    \u{f04f1} users   ││                      │"
         );
         assert_eq!(
             row(&buffer, 4),
-            "│  \u{f0306} typezoo   ││                      │",
+            "│  \u{f084} typezoo   ││                      │",
             "a keyspace with no tables draws no marker"
         );
     }
@@ -1366,7 +1366,7 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▸ \u{f0306} shop      ││  id email                                │",
+            "│▸ \u{f084} shop      ││  id email                                │",
             "the header leaves the gutter blank"
         );
         assert_eq!(
@@ -1412,7 +1412,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▸ \u{f0306} shop            ││  a                        b                                      │",
+            "│▸ \u{f084} shop            ││  a                        b                                      │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
@@ -1612,7 +1612,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▸ \u{f0306} shop      ││No rows                                   │"
+            "│▸ \u{f084} shop      ││No rows                                   │"
         );
     }
 
@@ -2077,9 +2077,9 @@ mod tests {
             [
                 "shop.orders_by_customer",
                 "",
-                "\u{f43d} Partition Key",
+                "\u{f030b} Partition Key",
                 "  customer_id      uuid",
-                "\u{f43d} Clustering Key",
+                "\u{f030b} Clustering Key",
                 "  order_date ↓     date",
                 "  order_id ↑   timeuuid",
                 // The one blank row, splitting what the table is from what it
@@ -2355,7 +2355,7 @@ mod tests {
         assert_eq!(
             rows,
             [
-                "\u{f0306} shop",
+                "\u{f084} shop",
                 "",
                 "Replication",
                 "class    SimpleStrategy"
@@ -2565,7 +2565,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│  \u{f0306} ks00      ▐│Press Enter on a table│",
+            "│  \u{f084} ks00      ▐│Press Enter on a table│",
             "the row is as wide as it is without a bar; the bar replaced the border"
         );
     }
