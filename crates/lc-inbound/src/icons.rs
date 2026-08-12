@@ -29,7 +29,7 @@ pub(crate) const KEY: &str = "\u{f030b} ";
 pub(crate) const fn tree_row(kind: RowKind) -> &'static str {
     match kind {
         RowKind::Keyspace => KEYSPACE,
-        RowKind::Table => TABLE,
+        RowKind::Table { .. } => TABLE,
     }
 }
 
@@ -38,7 +38,7 @@ pub(crate) const fn tree_row(kind: RowKind) -> &'static str {
 pub(crate) const fn token(kind: RowKind) -> Token {
     match kind {
         RowKind::Keyspace => Token::Keyspace,
-        RowKind::Table => Token::Table,
+        RowKind::Table { .. } => Token::Table,
     }
 }
 

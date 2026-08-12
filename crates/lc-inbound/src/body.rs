@@ -19,7 +19,7 @@
 use lc_domain::grid::{COLUMN_SPACING, available, fitting};
 use lc_domain::state::Span;
 use lc_domain::style::Token;
-use lc_domain::view::{GridCell, GridColumn, Marker, PanelBody, Position, TreeRow};
+use lc_domain::view::{GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
@@ -29,13 +29,10 @@ use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
 use crate::theme::Theme;
 
-const FOLDED: &str = "▸ ";
-const UNFOLDED: &str = "▾ ";
-/// A row with nothing to unfold still spends the marker's width, so names stay
-/// aligned down the panel.
-const LEAF: &str = "  ";
-
-const INDENT: &str = "  ";
+/// The limb a table hangs off its keyspace by, and the one that closes the
+/// run.
+const LIMB: &str = "├─ ";
+const LAST_LIMB: &str = "└─ ";
 
 const ELLIPSIS: char = '…';
 
@@ -380,11 +377,14 @@ fn truncated(text: &str, width: u16) -> String {
 }
 
 fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
-    let indent = INDENT.repeat(usize::from(row.depth));
-    let marker = match row.marker {
-        Marker::Folded => FOLDED,
-        Marker::Unfolded => UNFOLDED,
-        Marker::Leaf => LEAF,
+    // A keyspace opens at the margin and its tables hang off it, so the shape
+    // of the tree is the indentation and no separate fold marker is spent on
+    // saying what the drawn rows already say
+    // (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §9).
+    let limb = match row.kind {
+        RowKind::Keyspace => "",
+        RowKind::Table { last: false } => LIMB,
+        RowKind::Table { last: true } => LAST_LIMB,
     };
 
     // The icon carries BOLD and the rest of the row does not: a terminal that
@@ -404,7 +404,7 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
     );
 
     ListItem::new(Line::from(vec![
-        TextSpan::raw(format!("{indent}{marker}")),
+        TextSpan::raw(limb),
         icon,
         TextSpan::raw(row.label.clone()),
     ]))

@@ -1039,15 +1039,15 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│  \u{f084} shop      ││Press Enter on a table│"
+            "│\u{f084} shop        ││Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│  \u{f084} typezoo   ││                      │"
+            "│\u{f084} typezoo     ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│  \u{f084} system    ││                      │"
+            "│\u{f084} system      ││                      │"
         );
     }
 
@@ -1128,19 +1128,19 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▾ \u{f084} shop      ││Press Enter on a table│"
+            "│\u{f084} shop        ││Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│    \u{f0ce} orders  ││                      │"
+            "│├─ \u{f0ce} orders   ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│    \u{f0ce} users   ││                      │"
+            "│└─ \u{f0ce} users    ││                      │"
         );
         assert_eq!(
             row(&buffer, 4),
-            "│  \u{f084} typezoo   ││                      │",
+            "│\u{f084} typezoo     ││                      │",
             "a keyspace with no tables draws no marker"
         );
     }
@@ -1148,7 +1148,10 @@ mod tests {
     #[test]
     fn the_clusters_own_keyspaces_are_dimmed() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-        let fg = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
+        // Column 3: the name, past the border and the icon it opens with. The
+        // icon carries its own colour (design §8), which is not what this is
+        // about.
+        let fg = |y: u16| buffer.cell((3, y)).expect("inside the panel").fg;
         let muted = Theme::default()
             .style(Token::Muted)
             .fg
@@ -1161,8 +1164,8 @@ mod tests {
     #[test]
     fn a_dimmed_rows_icon_keeps_the_colour_of_what_it_names() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-        // Column 3: the border, then the two the fold marker spends.
-        let icon = |y: u16| buffer.cell((3, y)).expect("inside the panel").fg;
+        // Column 1: a keyspace opens at the margin, right after the border.
+        let icon = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
         let theme = Theme::default();
         let muted = theme.style(Token::Muted).fg.expect("muted spends a colour");
         let keyspace = theme
@@ -1172,7 +1175,7 @@ mod tests {
 
         assert_eq!(icon(2), keyspace, "the icon says what the row is");
         assert_eq!(
-            buffer.cell((5, 2)).expect("inside the panel").fg,
+            buffer.cell((3, 2)).expect("inside the panel").fg,
             muted,
             "the name it precedes stays the cluster's"
         );
@@ -1386,7 +1389,7 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▸ \u{f084} shop      ││  id email                                │",
+            "│\u{f084} shop        ││  id email                                │",
             "the header leaves the gutter blank"
         );
         assert_eq!(
@@ -1432,7 +1435,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▸ \u{f084} shop            ││  a                        b                                      │",
+            "│\u{f084} shop              ││  a                        b                                      │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
@@ -1632,7 +1635,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▸ \u{f084} shop      ││No rows                                   │"
+            "│\u{f084} shop        ││No rows                                   │"
         );
     }
 
@@ -2585,7 +2588,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│  \u{f084} ks00      ▐│Press Enter on a table│",
+            "│\u{f084} ks00        ▐│Press Enter on a table│",
             "the row is as wide as it is without a bar; the bar replaced the border"
         );
     }
