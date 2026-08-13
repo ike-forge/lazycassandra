@@ -297,16 +297,21 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
                 .zip(&drawn_widths)
                 .enumerate()
                 .map(|(index, (heading_column, width))| {
-                    let cell = styled(&heading_column.name, heading_column.token, *width, theme);
+                    // A projection's columns carry no token at all, and
+                    // claiming one for them under the wash would be a
+                    // decoration the schema does not support
+                    // (`view::contents`): the wash composes onto whatever the
+                    // heading already draws, which for those is nothing.
+                    let base = heading_column
+                        .token
+                        .map_or_else(Style::new, |token| theme.style(token));
 
-                    match heading.filter(|_| first_column + index == column) {
-                        Some(style) => cell.style(
-                            theme
-                                .style(heading_column.token.unwrap_or(Token::RegularColumn))
-                                .patch(style),
-                        ),
-                        None => cell,
-                    }
+                    let style = match heading.filter(|_| first_column + index == column) {
+                        Some(wash) => base.patch(wash),
+                        None => base,
+                    };
+
+                    styled_cell(&heading_column.name, Some(style), *width)
                 }),
         ),
     );
@@ -395,10 +400,6 @@ fn cell_style(cell: &GridCell, theme: Theme) -> Option<Style> {
 
     let matched = theme.style(Token::Match);
     Some(base.map_or(matched, |base| base.patch(matched)))
-}
-
-fn styled(text: &str, token: Option<Token>, width: u16, theme: Theme) -> Cell<'static> {
-    styled_cell(text, token.map(|token| theme.style(token)), width)
 }
 
 fn styled_cell(text: &str, style: Option<Style>, width: u16) -> Cell<'static> {
