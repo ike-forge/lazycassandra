@@ -23,11 +23,16 @@ pub const MAX_COLUMN_WIDTH: u16 = 24;
 /// column.
 pub const COLUMN_SPACING: u16 = 1;
 
-/// The cursor row's mark, a column of its own ahead of the row-number gutter.
+/// The cursor row's mark, merged into the same widget column as the
+/// row-number gutter rather than a structural column of its own — the mark
+/// costs one content column in the densest panel in the app, not two
+/// (design §4.2).
 ///
 /// Defined here rather than beside the renderer's `Token::SelectionBar` so
 /// the domain's column-follow arithmetic and the renderer's layout share the
-/// one width, the same reason [`available`] exists (design §6).
+/// one width, the same reason [`available`] exists (design §6). The renderer
+/// draws it unconditionally — a row with no cursor on it still spends the
+/// column on a blank — so [`available`] subtracts it unconditionally too.
 pub const BAR: u16 = 1;
 
 /// Each column's natural width: the widest of its heading and its values,
@@ -54,24 +59,22 @@ pub fn widths(page: &Page) -> Vec<u16> {
         .collect()
 }
 
-/// The width left for value columns once the bar, the gutter, and the two
-/// spacing columns between them and the first value column are taken off.
+/// The width left for value columns once the bar+gutter block and the one
+/// spacing column ahead of the first value column are taken off.
 ///
 /// One home for arithmetic the domain and the renderer must agree on exactly:
 /// a disagreement scrolls the cell cursor and the drawn window to different
-/// places, and no test can see it (design §6). The bar and the gutter are
-/// never drawn one without the other, so their overhead is one figure rather
-/// than two the caller could apply out of step.
+/// places, and no test can see it (design §6). The bar is unconditional —
+/// the renderer draws it whether or not `gutter` is nonzero — so its column
+/// is subtracted unconditionally; only the gutter's own width is
+/// conditional on `gutter`, and the one spacing column belongs to the
+/// bar+gutter block as a whole rather than to the gutter alone.
 #[must_use]
 pub const fn available(width: u16, gutter: u16) -> u16 {
-    if gutter == 0 {
-        return width;
-    }
-
     width
-        .saturating_sub(gutter)
         .saturating_sub(BAR)
-        .saturating_sub(COLUMN_SPACING * 2)
+        .saturating_sub(gutter)
+        .saturating_sub(COLUMN_SPACING)
 }
 
 /// How many columns fit in `available`, drawing from `first`.
@@ -211,13 +214,14 @@ mod tests {
     }
 
     #[test]
-    fn the_gutter_and_the_bar_cost_their_own_width_and_two_spacing_columns() {
-        assert_eq!(available(22, 1), 22 - 1 - BAR - COLUMN_SPACING * 2);
-        assert_eq!(available(22, 4), 22 - 4 - BAR - COLUMN_SPACING * 2);
+    fn the_bar_gutter_block_costs_its_own_width_and_one_spacing_column() {
+        assert_eq!(available(22, 1), 22 - BAR - 1 - COLUMN_SPACING);
+        assert_eq!(available(22, 4), 22 - BAR - 4 - COLUMN_SPACING);
         assert_eq!(
             available(22, 0),
-            22,
-            "no gutter, no bar and no spacing beside either"
+            22 - BAR - COLUMN_SPACING,
+            "the bar is unconditional, so it and its spacing still cost a column \
+             even with no gutter beside it"
         );
         assert_eq!(available(1, 4), 0, "a body narrower than its own gutter");
     }

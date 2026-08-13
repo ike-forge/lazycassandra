@@ -282,30 +282,24 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         .map(|width| (*width).min(available))
         .collect();
 
-    let constraints = std::iter::once(Constraint::Length(BAR))
-        .chain(std::iter::once(Constraint::Length(gutter)))
+    let constraints = std::iter::once(Constraint::Length(BAR + gutter))
         .chain(drawn_widths.iter().copied().map(Constraint::Length));
 
     let header = Row::new(
-        std::iter::once(Cell::from(Text::raw(" ")))
-            .chain(std::iter::once(Cell::from(Text::raw(
-                " ".repeat(usize::from(gutter)),
-            ))))
-            .chain(
-                columns[drawn.clone()]
-                    .iter()
-                    .zip(&drawn_widths)
-                    .map(|(column, width)| styled(&column.name, column.token, *width, theme)),
-            ),
+        std::iter::once(Cell::from(Text::raw(" ".repeat(usize::from(BAR + gutter))))).chain(
+            columns[drawn.clone()]
+                .iter()
+                .zip(&drawn_widths)
+                .map(|(column, width)| styled(&column.name, column.token, *width, theme)),
+        ),
     );
 
     let body = rows.iter().enumerate().map(|(index, cells)| {
         Row::new(
-            std::iter::once(Cell::from(Line::from(selection_bar(
-                index == selected,
-                theme,
-            ))))
-            .chain(std::iter::once(number(index, gutter, theme)))
+            std::iter::once(Cell::from(Line::from(vec![
+                selection_bar(index == selected, theme),
+                number(index, gutter, theme),
+            ])))
             .chain(
                 cells
                     .get(drawn.clone())
@@ -322,11 +316,11 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         .column_spacing(COLUMN_SPACING)
         .row_highlight_style(theme.style(Token::Selected))
         .cell_highlight_style(theme.style(Token::SelectedCell));
-    // The bar and the row number are columns of the widget but not of the
-    // page, so the selected column is two further right than the domain's
-    // index.
+    // The bar and the row number share one widget column that is not a
+    // column of the page, so the selected column is one further right than
+    // the domain's index.
     let cell =
-        visible(selected, offset, height).map(|row| (row, column.saturating_sub(first_column) + 2));
+        visible(selected, offset, height).map(|row| (row, column.saturating_sub(first_column) + 1));
     let mut state = TableState::default()
         .with_offset(offset)
         .with_selected_cell(cell);
@@ -348,10 +342,10 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
 }
 
 /// A row's number, right-aligned in the gutter.
-fn number(index: usize, gutter: u16, theme: Theme) -> Cell<'static> {
+fn number(index: usize, gutter: u16, theme: Theme) -> TextSpan<'static> {
     let text = format!("{:>width$}", index + 1, width = usize::from(gutter));
 
-    Cell::from(Text::raw(text)).style(theme.style(Token::Muted))
+    TextSpan::styled(text, theme.style(Token::Muted))
 }
 
 /// A matched cell composes `Token::Match` onto whatever `token` already

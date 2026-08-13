@@ -1399,16 +1399,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop       ││    id email                              │",
-            "the header leaves the bar and the gutter blank"
+            "│▌\u{f084} shop       ││   id email                               │",
+            "the header leaves the bar+gutter block blank"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││▌ 1 1  ada@example.com                    │"
+            "│              ││▌1 1  ada@example.com                     │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││  2 2  bob@example.com                    │"
+            "│              ││ 2 2  bob@example.com                     │"
         );
     }
 
@@ -1424,7 +1424,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 2),
-            "│              ││▌ 1 8f14e45f-ceea-467a-9c2b…              │",
+            "│              ││▌1 8f14e45f-ceea-467a-9c2b…               │",
             "a silently clipped value looks like a shorter value"
         );
     }
@@ -1445,12 +1445,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop             ││    a                        b                                    │",
+            "│▌\u{f084} shop             ││   a                        b                                     │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│                    ││▌ 1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…             │",
+            "│                    ││▌1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…              │",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -1466,12 +1466,13 @@ mod tests {
             .fg
             .expect("the partition key spends a colour");
 
-        // Column 16 is the bar and 17 the gutter, so the first heading starts
-        // three along from the bar.
-        assert_eq!(header(21).fg, partition, "id is the partition key");
-        assert!(header(21).modifier.contains(Modifier::BOLD));
+        // Column 16 is the Contents panel's left border. The bar and the
+        // gutter share one two-wide block (17-18), then one spacing column
+        // (19), so the first heading starts at 20.
+        assert_eq!(header(20).fg, partition, "id is the partition key");
+        assert!(header(20).modifier.contains(Modifier::BOLD));
         assert_eq!(
-            header(24).fg,
+            header(23).fg,
             Theme::default()
                 .style(Token::RegularColumn)
                 .fg
@@ -1551,12 +1552,22 @@ mod tests {
             .style(Token::Faint)
             .fg
             .expect("faint spends a colour");
+        let muted = Theme::default()
+            .style(Token::Muted)
+            .fg
+            .expect("muted spends a colour");
 
         assert_eq!(cell(24).fg, faint, "the null is faint");
+        assert_eq!(
+            cell(18).fg,
+            muted,
+            "the gutter digit shares the bar+gutter block's column and is muted, not faint"
+        );
         assert_ne!(
             cell(21).fg,
             faint,
-            "the value beside it is not — the gutter at 18 is muted, not faint, and is not what this is about"
+            "the value beside it is not — column 21 is inside the id value's own \
+             column, not the gutter, and is not what this is about"
         );
     }
 
@@ -1707,9 +1718,9 @@ mod tests {
         };
         // The top border, then the grid's header row, then the first row —
         // the one the cursor is on, at its first column. That column is two
-        // wide and sits past the bar, the one-digit gutter, and the two
-        // spacing columns between them and it.
-        let first = area.x + 5;
+        // wide and sits past the merged bar+gutter block (bar plus a
+        // one-digit gutter) and the one spacing column beside it.
+        let first = area.x + 4;
         let selected = area.y + 2;
 
         assert!(underlined(first, selected), "the cell the cursor is on");
@@ -1737,7 +1748,7 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
-        let first = area.x + 5;
+        let first = area.x + 4;
         let highlight = Theme::default()
             .style(Token::Selected)
             .bg
@@ -1765,12 +1776,12 @@ mod tests {
             .expect("muted spends a colour");
 
         assert_eq!(
-            fg(area.x + 3),
+            fg(area.x + 2),
             muted,
             "the row number is chrome, not a value"
         );
         assert_ne!(
-            fg(area.x + 5),
+            fg(area.x + 4),
             muted,
             "and the value beside it reads at full weight"
         );
@@ -1780,8 +1791,9 @@ mod tests {
     /// the horizontal viewport following it the way `update` does.
     ///
     /// Twelve two-wide columns in the 22-column body a 40x12 frame gives the
-    /// Contents panel, less the bar, the one-digit gutter, and their spacing:
-    /// six fit, so anything past the sixth has to be reached by scrolling.
+    /// Contents panel, less the merged bar+gutter block and its one spacing
+    /// column: six fit, so anything past the sixth has to be reached by
+    /// scrolling.
     fn showing_column_path(path: &[usize]) -> State {
         let page = sized_page(12, 3);
         let widths = lc_domain::grid::widths(&page);
@@ -1796,11 +1808,11 @@ mod tests {
         state
     }
 
-    /// The x of the `index`th drawn column's first cell: the bar, the
-    /// one-digit gutter and their spacing, then two-wide columns each
-    /// followed by a spacing one.
+    /// The x of the `index`th drawn column's first cell: the merged
+    /// bar+gutter block and its one spacing column, then two-wide columns
+    /// each followed by a spacing one.
     const fn drawn_column(area: Rect, index: u16) -> u16 {
-        area.x + 5 + index * 3
+        area.x + 4 + index * 3
     }
 
     #[test]
@@ -1911,10 +1923,10 @@ mod tests {
     fn a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed() {
         // `lc_domain::grid::widths` caps a column at 24 and not at the panel,
         // which leaves the renderer a length the area cannot satisfy: 22
-        // columns of body, less the bar, the one-wide gutter and their
-        // spacing, is 18. Handed one it cannot honour, ratatui shrinks every
-        // column — the bar and the gutter among them — and truncates with no
-        // ellipsis to say so.
+        // columns of body, less the merged bar+gutter block and its one
+        // spacing column, is 19. Handed one it cannot honour, ratatui shrinks
+        // every column — the bar+gutter block among them — and truncates
+        // with no ellipsis to say so.
         let state = showing(page_of(
             &["id"],
             &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
@@ -1924,7 +1936,7 @@ mod tests {
         let drawn = block_row(&buffer, "Table contents", 1);
 
         assert!(
-            drawn.starts_with("▌ 1 "),
+            drawn.starts_with("▌1 "),
             "the bar and the gutter keep their own width: {drawn:?}"
         );
         assert!(
