@@ -25,6 +25,7 @@ const GREY: Color = Color::Rgb(0x7a, 0x7f, 0x8f);
 const GREEN: Color = Color::Rgb(0x2e, 0x8b, 0x4f);
 const OCHRE: Color = Color::Rgb(0xa8, 0x78, 0x1a);
 const RED: Color = Color::Rgb(0xc8, 0x32, 0x2f);
+const WASH: Color = Color::Rgb(0x2c, 0x2e, 0x3a);
 
 pub(crate) const DEFAULT: Palette = Palette {
     base: None,
@@ -33,6 +34,7 @@ pub(crate) const DEFAULT: Palette = Palette {
     panel_border: None,
     highlight: Color::Rgb(0x45, 0x48, 0x5a),
     highlight_text: Some(Color::Rgb(0xe8, 0xea, 0xf2)),
+    crosshair: WASH,
     focus: BLUE,
     // The same amber as `partition`. They never share a surface — one is a
     // grid column, the other a letter in a panel title.

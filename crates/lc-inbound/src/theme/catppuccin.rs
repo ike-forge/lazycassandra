@@ -42,6 +42,7 @@ impl Flavour {
             panel_border: Some(self.subtext1),
             highlight: self.surface1,
             highlight_text: None,
+            crosshair: self.surface0,
             focus: self.blue,
             shortcut: self.yellow,
             muted: self.overlay1,

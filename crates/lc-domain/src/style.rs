@@ -43,6 +43,10 @@ pub enum Token {
     /// where you are, the cell says what a command would act on
     /// (docs/superpowers/specs/2026-08-10-table-display-design.md §3).
     SelectedCell,
+    /// The faint wash across a selected cell's row and column, so a cell in
+    /// the middle of a wide grid can be traced back to its heading and its row
+    /// number (docs/superpowers/specs/2026-08-13-selection-modes-design.md §4).
+    Crosshair,
     /// A keyspace the user made, in the Tables tree.
     Keyspace,
     /// A table the user made, in the Tables tree.

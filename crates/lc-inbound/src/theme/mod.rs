@@ -37,6 +37,9 @@ pub(crate) struct Palette {
     /// read against `highlight` (design §3.1). `None` keeps the row's own
     /// column colours; `Some` flattens them for legibility.
     pub(crate) highlight_text: Option<Color>,
+    /// The wash under a selected cell's row and column: the shade between the
+    /// field and `highlight` (selection modes design §5).
+    pub(crate) crosshair: Color,
     /// The focused panel's border and title.
     pub(crate) focus: Color,
     /// The letter that focuses a panel, inside that panel's title. Read
@@ -150,6 +153,7 @@ impl Theme {
             // glance the way btop's and Midnight Commander's do.
             Token::Shortcut => fg(palette.shortcut).add_modifier(Modifier::BOLD),
             Token::Selected => selected(palette),
+            Token::Crosshair => crosshair(palette),
             // `fg` and `BOLD` both: where a palette declines
             // `highlight_text`, the colour survives being patched under the
             // row's highlight style; where it spends one, that fg overwrites
@@ -176,6 +180,19 @@ impl Theme {
 /// one row (design §3.1).
 fn selected(palette: &Palette) -> Style {
     let style = Style::new().bg(palette.highlight);
+
+    match palette.highlight_text {
+        Some(color) => style.fg(color),
+        None => style,
+    }
+}
+
+/// The cursor row and column in cell mode. `highlight_text` for the reason
+/// [`selected`] spends it: a theme that cannot know what it is drawn over gives
+/// the row's own colours up for legibility, and one that can keeps them
+/// (selection modes design §4).
+fn crosshair(palette: &Palette) -> Style {
+    let style = Style::new().bg(palette.crosshair);
 
     match palette.highlight_text {
         Some(color) => style.fg(color),
@@ -227,6 +244,7 @@ pub(crate) mod tests {
             panel_border: _,
             highlight: _,
             highlight_text: _,
+            crosshair: _,
             focus: _,
             shortcut,
             muted,
@@ -278,17 +296,18 @@ pub(crate) mod tests {
     /// through `ground`, and a token that painted a background of its own
     /// would put a patch of some other colour over it — which is the same
     /// defect in a flavour as it is in the theme that leaves the field to the
-    /// terminal (design §2, §3).
+    /// terminal (design §2, §3). The crosshair is the second exception, and a
+    /// bar is what it is (selection modes design §5).
     #[test]
-    fn the_cursor_row_is_the_only_token_that_paints_a_background() {
+    fn only_the_cursor_row_and_its_crosshair_paint_a_background() {
         for choice in ThemeChoice::ALL {
             let theme = Theme::of(choice);
 
             for token in EVERY_TOKEN {
                 let background = theme.style(token).bg;
 
-                if matches!(token, Token::Selected) {
-                    assert!(background.is_some(), "{choice:?}: the cursor row is a bar");
+                if matches!(token, Token::Selected | Token::Crosshair) {
+                    assert!(background.is_some(), "{choice:?}: {token:?} is a bar");
                 } else {
                     assert_eq!(
                         background, None,
@@ -296,6 +315,42 @@ pub(crate) mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The wash sits between the field and the cursor bar, so it must be
+    /// neither: equal to `highlight` it would make cell mode look like row
+    /// mode, and equal to the ground it would not be visible at all.
+    #[test]
+    fn the_crosshair_is_fainter_than_the_cursor_row() {
+        for choice in ThemeChoice::ALL {
+            let theme = Theme::of(choice);
+            let palette = theme.palette();
+
+            assert_ne!(
+                palette.crosshair, palette.highlight,
+                "{choice:?}: a crosshair indistinguishable from the cursor row \
+                 says nothing about which mode is up"
+            );
+            if let Some(base) = palette.base {
+                assert_ne!(palette.crosshair, base, "{choice:?}: an invisible wash");
+            }
+        }
+    }
+
+    /// The wash's whole purpose is to leave the column colouring readable
+    /// under it (vision.md §2). A theme may give that up only where it has
+    /// already given it up for the cursor row, by declaring `highlight_text`.
+    #[test]
+    fn the_crosshair_flattens_no_colour_the_cursor_row_keeps() {
+        for choice in ThemeChoice::ALL {
+            let theme = Theme::of(choice);
+
+            assert_eq!(
+                theme.style(Token::Crosshair).fg,
+                theme.style(Token::Selected).fg,
+                "{choice:?}: the crosshair spends a foreground the cursor row does not"
+            );
         }
     }
 
@@ -396,7 +451,7 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 24] = [
+    pub(super) const EVERY_TOKEN: [Token; 25] = [
         Token::PartitionKey,
         Token::ClusteringKey,
         Token::StaticColumn,
@@ -413,6 +468,7 @@ pub(crate) mod tests {
         Token::Focused,
         Token::Selected,
         Token::SelectedCell,
+        Token::Crosshair,
         Token::Shortcut,
         Token::HintKey,
         Token::HintAction,
