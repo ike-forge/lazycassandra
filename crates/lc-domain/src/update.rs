@@ -3572,6 +3572,51 @@ mod tests {
     }
 
     #[test]
+    fn a_yanked_row_carries_every_column_of_the_page() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec![
+                    "c0".to_owned(),
+                    "c1".to_owned(),
+                    "c2".to_owned(),
+                    "c3".to_owned(),
+                ],
+                rows: vec![Row {
+                    values: vec![
+                        CqlValue::Text("v0".to_owned()),
+                        CqlValue::Text("v1".to_owned()),
+                        CqlValue::Text("v2".to_owned()),
+                        CqlValue::Text("v3".to_owned()),
+                    ],
+                }],
+                next: None,
+            },
+        );
+        state.focus = Panel::Contents;
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(7)),
+        );
+
+        let (widths, available) = grid_columns(&state).expect("a page is loaded");
+        assert!(
+            grid::fitting(widths, 0, available) < widths.len(),
+            "the viewport must hide at least one column for this test to prove anything"
+        );
+
+        assert_eq!(
+            press(&mut state, Key::Char('y')),
+            vec![Effect::Yank("v0,v1,v2,v3".to_owned())]
+        );
+    }
+
+    #[test]
     fn y_on_an_empty_panel_yanks_nothing() {
         let mut state = browsing_a_table();
         state.focus = Panel::Contents;

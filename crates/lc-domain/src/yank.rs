@@ -112,7 +112,8 @@ const fn part(kind: ColumnKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::model::{
-        ClusteringOrder, CqlValue, Keyspace, PrimaryKey, Replication, Row, Table, TableOptions,
+        ClusteringOrder, CqlValue, Keyspace, Page, PrimaryKey, Replication, Row, Table,
+        TableOptions,
     };
     use crate::tree::Node;
     use crate::view::{ColumnKind, DetailRow, IdentityKind};
@@ -166,6 +167,31 @@ mod tests {
         };
 
         assert_eq!(grid_row(&row), "null");
+    }
+
+    #[test]
+    fn a_yanked_value_is_not_ellipsised() {
+        let value = "x".repeat(usize::from(crate::grid::MAX_COLUMN_WIDTH) + 10);
+        let page = Page {
+            columns: vec!["blob".to_owned()],
+            rows: vec![Row {
+                values: vec![CqlValue::Text(value.clone())],
+            }],
+            next: None,
+        };
+
+        let drawn_width = crate::grid::widths(&page)[0];
+        assert_eq!(
+            drawn_width,
+            crate::grid::MAX_COLUMN_WIDTH,
+            "the grid draws this column capped, not at the value's full length"
+        );
+
+        assert_eq!(
+            grid_row(&page.rows[0]),
+            value,
+            "the yanked field keeps what the capped column the grid draws would have to ellipsise"
+        );
     }
 
     #[test]

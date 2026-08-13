@@ -712,6 +712,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The bar names it after `ctrl-r run` | `the_queries_bar_names_the_editor_binding_after_run` (`view/hints.rs`) |
 | No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
 | `y` yanks the focused row, per panel | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
+| A yank carries the columns the viewport hides | `a_yanked_row_carries_every_column_of_the_page` |
+| A yank carries the value, not the drawn cell | `a_yanked_value_is_not_ellipsised` (`yank.rs`) |
 | A null yanks as nothing, and the word does not | `a_null_yanks_as_an_empty_field`, `a_text_null_yanks_as_the_word` (`yank.rs`) |
 | A column and a DDL row carry their own fields | `a_column_row_carries_the_part_it_plays`, `a_partition_column_yanks_without_an_order`, `a_property_and_an_identity_row_yank_their_two_fields`, `a_keyspace_yanks_its_name_and_a_table_its_qualified_one` (`yank.rs`) |
 | Nothing under the cursor yanks nothing | `y_on_an_empty_panel_yanks_nothing` |
