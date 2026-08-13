@@ -225,7 +225,7 @@ fn style_of(background: Option<Color>, foreground: Option<Color>) -> Style {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::theme::contrast::{BLACK, WHITE, ratio};
+    use crate::theme::contrast::{BLACK, WHITE, luminance, ratio};
 
     /// Every role a theme can spend on text, and the input to both contrast
     /// tests. `base`, `surface` and `highlight` are what text is drawn *on*.
@@ -318,23 +318,50 @@ pub(crate) mod tests {
         }
     }
 
-    /// The wash sits between the field and the cursor bar, so it must be
-    /// neither: equal to `highlight` it would make cell mode look like row
-    /// mode, and equal to the ground it would not be visible at all.
+    /// The wash sits between the field and the cursor bar, in luminance and
+    /// not merely in intent: on the far side of `highlight` it would be the
+    /// louder of the two bands and cell mode would shout over row mode, and on
+    /// the ground it would not be visible at all.
+    ///
+    /// The ordering runs upwards for a dark flavour and downwards for Latte,
+    /// so what is asserted is that `crosshair` lies strictly between the two —
+    /// `base`'s side of `highlight`, by a margin. The floor is 0.015 rather
+    /// than the 0.02 `a_highlight_bar_is_distinct_from_its_field` holds
+    /// `highlight` to: Mocha's `surface0` clears its own base by 0.0195, and
+    /// upstream Catppuccin's spacing of its surfaces is not ours to retune
+    /// (catppuccin design §8).
+    ///
+    /// The terminal-default theme declares no `base` — it cannot see the
+    /// ground it is drawn on — so there it is only the gap to `highlight` that
+    /// can be checked.
     #[test]
     fn the_crosshair_is_fainter_than_the_cursor_row() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
-            let palette = theme.palette();
+        const FLOOR: f64 = 0.015;
 
-            assert_ne!(
-                palette.crosshair, palette.highlight,
-                "{choice:?}: a crosshair indistinguishable from the cursor row \
+        for choice in ThemeChoice::ALL {
+            let palette = Theme::of(choice).palette();
+            let (crosshair, highlight) =
+                (luminance(palette.crosshair), luminance(palette.highlight));
+
+            assert!(
+                (highlight - crosshair).abs() >= FLOOR,
+                "{choice:?}: a crosshair this close to the cursor row \
                  says nothing about which mode is up"
             );
-            if let Some(base) = palette.base {
-                assert_ne!(palette.crosshair, base, "{choice:?}: an invisible wash");
-            }
+
+            let Some(base) = palette.base.map(luminance) else {
+                continue;
+            };
+
+            assert!(
+                (crosshair - base).abs() >= FLOOR,
+                "{choice:?}: an invisible wash"
+            );
+            assert!(
+                (base < crosshair && crosshair < highlight)
+                    || (base > crosshair && crosshair > highlight),
+                "{choice:?}: the wash is not between the field and the cursor bar"
+            );
         }
     }
 
