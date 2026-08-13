@@ -311,7 +311,7 @@ async fn pressing_enter_on_a_table_fills_the_contents_panel() {
             .collect::<Vec<_>>(),
         [["8f14e45f", "ada@example.com"], ["c9f0f895", "null"]]
     );
-    assert_eq!(rows[1][1].token, Some(Token::Muted), "the null is muted");
+    assert_eq!(rows[1][1].token, Some(Token::Faint), "the null is faint");
     assert_eq!(*selected, 0);
 }
 

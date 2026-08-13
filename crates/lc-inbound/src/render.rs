@@ -1158,13 +1158,13 @@ mod tests {
         // icon carries its own colour (design §8), which is not what this is
         // about.
         let fg = |y: u16| buffer.cell((3, y)).expect("inside the panel").fg;
-        let muted = Theme::default()
-            .style(Token::Muted)
+        let faint = Theme::default()
+            .style(Token::Faint)
             .fg
-            .expect("muted spends a colour");
+            .expect("faint spends a colour");
 
-        assert_ne!(fg(1), muted, "shop is the user's");
-        assert_eq!(fg(2), muted, "system is the cluster's");
+        assert_ne!(fg(1), faint, "shop is the user's");
+        assert_eq!(fg(2), faint, "system is the cluster's");
     }
 
     #[test]
@@ -1173,7 +1173,7 @@ mod tests {
         // Column 1: a keyspace opens at the margin, right after the border.
         let icon = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
         let theme = Theme::default();
-        let muted = theme.style(Token::Muted).fg.expect("muted spends a colour");
+        let faint = theme.style(Token::Faint).fg.expect("faint spends a colour");
         let keyspace = theme
             .style(Token::Keyspace)
             .fg
@@ -1182,7 +1182,7 @@ mod tests {
         assert_eq!(icon(2), keyspace, "the icon says what the row is");
         assert_eq!(
             buffer.cell((3, 2)).expect("inside the panel").fg,
-            muted,
+            faint,
             "the name it precedes stays the cluster's"
         );
     }
@@ -1528,7 +1528,7 @@ mod tests {
     }
 
     #[test]
-    fn a_null_is_dimmed_so_it_reads_apart_from_the_word() {
+    fn a_null_is_faint_so_it_reads_apart_from_the_word() {
         // Row 1 (not the cursor's row) so the row's own colours are not
         // flattened under `Token::Selected`'s highlight text.
         let mut state = showing(page_of(
@@ -1542,28 +1542,28 @@ mod tests {
 
         let buffer = draw_state(60, 12, &state);
         let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
-        let muted = Theme::default()
-            .style(Token::Muted)
+        let faint = Theme::default()
+            .style(Token::Faint)
             .fg
-            .expect("muted spends a colour");
+            .expect("faint spends a colour");
 
-        assert_eq!(cell(22).fg, muted, "the null is muted");
+        assert_eq!(cell(22).fg, faint, "the null is faint");
         assert_ne!(
             cell(19).fg,
-            muted,
-            "the value beside it is not — the gutter at 17 is, and is not what this is about"
+            faint,
+            "the value beside it is not — the gutter at 17 is muted, not faint, and is not what this is about"
         );
     }
 
     #[test]
     fn a_matched_null_still_carries_the_match_colour() {
-        // The ramp carries the tier now, not a modifier (design §4.1), so
-        // `Token::Muted`'s colour is the only thing `Style::patch` had to
-        // survive `Token::Match` overwriting `fg` with — and `fg` is exactly
-        // what `Token::Match` overwrites. A matched null and a matched word
-        // both end up drawn as a plain match, indistinguishable from each
-        // other; telling a matched null apart from a matched word again is
-        // future work, not this token's job.
+        // The ramp carries the tier now, not a modifier (design §4.1), so a
+        // null's own token (`Token::Faint`) has no modifier for
+        // `Style::patch` to carry through `Token::Match` overwriting `fg`. A
+        // matched null and a matched word both end up drawn as a plain
+        // match, indistinguishable from each other; telling a matched null
+        // apart from a matched word again is future work, not this token's
+        // job.
         let mut state = showing(page_of(
             &["id", "value", "note"],
             &[&[CqlValue::Int(1), CqlValue::Null, text("null")]],

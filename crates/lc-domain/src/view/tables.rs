@@ -13,9 +13,9 @@ pub struct TreeRow {
     pub label: String,
     /// What the row names, and where it sits under its keyspace. Not derivable
     /// from [`TreeRow::token`]: a system keyspace and its tables are both
-    /// [`Token::Muted`].
+    /// [`Token::Faint`].
     pub kind: RowKind,
-    /// [`Token::Muted`] for the cluster's own keyspaces and their tables.
+    /// [`Token::Faint`] for the cluster's own keyspaces and their tables.
     /// A user keyspace and a user table are told apart, which is the
     /// distinction the panel exists for.
     pub token: Token,
@@ -99,7 +99,7 @@ fn tree_row(node: &Node<'_>, followed: bool) -> TreeRow {
     };
 
     let token = match (keyspace.kind(), kind) {
-        (KeyspaceKind::System, _) => Token::Muted,
+        (KeyspaceKind::System, _) => Token::Faint,
         (KeyspaceKind::User, RowKind::Keyspace) => Token::Keyspace,
         (KeyspaceKind::User, RowKind::Table { .. }) => Token::Table,
     };
@@ -186,7 +186,7 @@ mod tests {
             Token::Keyspace,
             "a user keyspace is told apart from a user table"
         );
-        assert_eq!(rows[2].token, Token::Muted);
+        assert_eq!(rows[2].token, Token::Faint);
         assert_eq!(selected, 0);
     }
 
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn a_table_is_muted_exactly_when_its_keyspace_is() {
+    fn a_table_is_faint_exactly_when_its_keyspace_is() {
         let mut state = tabled(&[("system_schema", &["tables"])]);
         let schema = state.schema().cloned().expect("loaded");
         state.tables.open(&schema);
@@ -243,10 +243,10 @@ mod tests {
             panic!("a loaded schema lists its keyspaces");
         };
 
-        assert_eq!(rows[0].token, Token::Muted);
+        assert_eq!(rows[0].token, Token::Faint);
         assert_eq!(
             rows[1].token,
-            Token::Muted,
+            Token::Faint,
             "one rule per row, not two rules that can drift"
         );
     }
@@ -341,7 +341,7 @@ mod tests {
         };
 
         assert!(
-            rows.iter().all(|row| row.token == Token::Muted),
+            rows.iter().all(|row| row.token == Token::Faint),
             "a system keyspace and its tables are the cluster's, not the user's"
         );
     }
