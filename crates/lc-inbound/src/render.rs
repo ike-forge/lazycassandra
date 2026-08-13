@@ -280,9 +280,12 @@ fn inset(columns: usize, border: Style) -> Span<'static> {
 }
 
 /// The shortcut span keeps its own `Token::Shortcut` style regardless of
-/// focus; the plain text around it takes `Token::Focused`'s colour when its
-/// panel is focused, matching the border. An inactive tab is muted whether or
-/// not its panel has focus: it names something the panel is not showing.
+/// focus. The active tab takes `Token::Focused`'s colour when its panel is
+/// focused, matching the border, and drops one tier to `Token::Muted` when it
+/// is not — an unfocused panel's active tab still names what it is showing,
+/// but not as loudly as body text. An inactive tab sits a further tier down
+/// at `Token::Faint`, whether or not its panel has focus: it names something
+/// the panel is not showing.
 fn panel_title<'a>(
     tabs: &[&'a Tab],
     form: Strip,
@@ -293,11 +296,11 @@ fn panel_title<'a>(
 ) -> Line<'a> {
     let shortcut = theme.style(Token::Shortcut);
     let separator = theme.style(Token::Faint);
-    let muted = theme.style(Token::Muted);
+    let inactive = theme.style(Token::Faint);
     let active = if is_focused_panel {
         theme.style(Token::Focused)
     } else {
-        Style::new()
+        theme.style(Token::Muted)
     };
 
     let mut spans = vec![inset(lead, border), Span::raw(TITLE_PAD)];
@@ -307,7 +310,7 @@ fn panel_title<'a>(
             spans.push(Span::styled(lc_domain::view::TAB_SEPARATOR, separator));
         }
 
-        let style = if tab.active { active } else { muted };
+        let style = if tab.active { active } else { inactive };
         let (before, mark, after) = match form {
             Strip::Short => tab.split_short(),
             Strip::Full | Strip::Active => tab.split(),
@@ -316,7 +319,7 @@ fn panel_title<'a>(
         spans.push(Span::styled(before, style));
         // The active tab's mark spends no colour of its own, so it inherits
         // whatever the border or the focus style put under it; an inactive
-        // tab's is muted with the rest of that tab, or the strip would mark a
+        // tab's is faint with the rest of that tab, or the strip would mark a
         // tab the panel is not showing more strongly than the one it is.
         spans.push(Span::styled(mark, style.patch(shortcut)));
         spans.push(Span::styled(after, style));
@@ -2057,7 +2060,7 @@ mod tests {
     }
 
     #[test]
-    fn a_border_wide_enough_names_both_tabs_and_mutes_the_one_not_drawn() {
+    fn a_border_wide_enough_names_both_tabs_and_fades_the_one_not_drawn() {
         // 120 columns puts the sidebar at 30, which holds the whole strip.
         let buffer = draw_state(120, 41, &describing(orders()));
         let border = row(&buffer, top_border(&buffer, "DDL").1);
@@ -2067,10 +2070,10 @@ mod tests {
         // Past its 'C', which wears the shortcut colour whether or not its tab
         // is the one drawn.
         let (fg, _, modifier) = style_of_first(&buffer, "olumns");
-        let muted = Theme::default().style(Token::Muted);
+        let faint = Theme::default().style(Token::Faint);
 
-        assert_eq!(fg, muted.fg.expect("muted spends a colour"));
-        assert_eq!(modifier, muted.add_modifier, "the tab is not the one drawn");
+        assert_eq!(fg, faint.fg.expect("faint spends a colour"));
+        assert_eq!(modifier, faint.add_modifier, "the tab is not the one drawn");
     }
 
     #[test]

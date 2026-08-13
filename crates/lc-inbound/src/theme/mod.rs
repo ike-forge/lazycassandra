@@ -168,11 +168,15 @@ impl Theme {
             // a panel border the theme may have coloured already, because
             // `Style::patch` lets this `fg` overwrite `border`'s.
             Token::Focused => fg(palette.focus).add_modifier(Modifier::BOLD),
-            Token::HintKey => Style::new().add_modifier(Modifier::BOLD),
-            // A colour rather than an underline: the mark has to survive
-            // terminals that draw no underline at all, and it reads at a
-            // glance the way btop's and Midnight Commander's do.
-            Token::Shortcut => fg(palette.shortcut).add_modifier(Modifier::BOLD),
+            // Underlined as well as coloured, in every state: the letter sits
+            // inside a title whose colour changes with focus, `focus` and
+            // `shortcut` are one hex in Beacon, and colour is the channel a
+            // user may have remapped or be unable to see. This withdraws
+            // 2026-08-11-panel-focus-contrast-design.md §2's "a colour rather
+            // than an underline" (design §3.1, rule 5).
+            Token::Shortcut | Token::HintKey => fg(palette.shortcut)
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::UNDERLINED),
             Token::Selected => selected(palette),
             Token::Match => fg(palette.match_).add_modifier(Modifier::BOLD),
             // A modifier rather than a colour, because it has to read
@@ -412,6 +416,33 @@ pub(crate) mod tests {
             "a match must carry something the row's own highlight does not, \
              so it still reads once patched under it"
         );
+    }
+
+    /// Rule 5: colour alone cannot carry the hot key. The letter sits inside a
+    /// title whose colour changes with focus, and in Beacon `focus` and
+    /// `shortcut` are the same amber — underline is the channel that survives
+    /// both, and nothing else in the UI spends it (design §3.1).
+    #[test]
+    fn a_hot_key_is_underlined_and_nothing_else_is() {
+        for choice in ThemeChoice::ALL {
+            let theme = Theme::of(choice);
+
+            for token in EVERY_TOKEN {
+                let underlined = theme
+                    .style(token)
+                    .add_modifier
+                    .contains(Modifier::UNDERLINED);
+
+                if matches!(token, Token::Shortcut | Token::HintKey) {
+                    assert!(underlined, "{choice:?}: {token:?} is not underlined");
+                } else {
+                    assert!(
+                        !underlined || matches!(token, Token::SelectedCell),
+                        "{choice:?}: {token:?} spends the underline a hot key needs"
+                    );
+                }
+            }
+        }
     }
 
     /// Every token, so a new one cannot be added without deciding what the
