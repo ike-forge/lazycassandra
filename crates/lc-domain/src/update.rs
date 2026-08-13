@@ -329,9 +329,16 @@ fn quit(state: &mut State) -> Vec<Effect> {
     cancels.chain(std::iter::once(Effect::Quit)).collect()
 }
 
-/// The focused panel's selected row, as a CSV line. Nothing under the cursor
-/// yanks nothing: there is no row, so there is nothing to say about one
-/// (yank design §1).
+/// What the focused panel has under its cursor, as one line — which of the
+/// panel's contents that is, and whether it is CSV, is the panel's answer.
+/// Nothing under the cursor yanks nothing: there is nothing there to say
+/// anything about (yank design §1).
+///
+/// An empty line raises no effect either. `Effect::Yank` becomes an OSC 52
+/// sequence, and an empty payload asks the terminal to clear its clipboard, so
+/// a projection with nothing to say must say nothing rather than wipe what the
+/// user had copied (selection-modes design §4). Every projection converges
+/// here, so no shape can reach the clipboard empty.
 fn yank(state: &State) -> Vec<Effect> {
     let line = match state.focus {
         Panel::Contents => contents(state),
