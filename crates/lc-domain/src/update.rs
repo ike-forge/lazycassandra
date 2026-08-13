@@ -340,7 +340,10 @@ fn yank(state: &State) -> Vec<Effect> {
         Panel::Queries => None,
     };
 
-    line.map(Effect::Yank).into_iter().collect()
+    line.filter(|line| !line.is_empty())
+        .map(Effect::Yank)
+        .into_iter()
+        .collect()
 }
 
 /// Which of the grid's two cursors `y` means is what the selection mode
@@ -363,10 +366,10 @@ fn contents(state: &State) -> Option<String> {
 
             crate::yank::grid_cell(value)
         }
-        // An empty page would encode to the empty string, and handing that to
-        // `Effect::Yank` asks the terminal to clear its clipboard (design §4).
-        SelectionMode::Column => (!page.rows.is_empty())
-            .then(|| crate::yank::grid_column(&page.rows, state.contents.column.index())),
+        SelectionMode::Column => Some(crate::yank::grid_column(
+            &page.rows,
+            state.contents.column.index(),
+        )),
     }
 }
 
@@ -3748,6 +3751,63 @@ mod tests {
         let effects = press(&mut state, Key::Char('y'));
 
         assert!(effects.is_empty(), "an empty column is nothing to yank");
+    }
+
+    #[test]
+    fn y_in_column_mode_on_a_column_of_one_null_yanks_nothing() {
+        let mut state = browsing_a_table();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page {
+                    columns: vec!["id".to_owned()],
+                    rows: vec![Row {
+                        values: vec![CqlValue::Null],
+                    }],
+                    next: None,
+                }),
+            },
+        );
+        state.contents.mode = SelectionMode::Column;
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(
+            effects.is_empty(),
+            "a lone null field is an empty line, which would wipe the clipboard"
+        );
+    }
+
+    /// An empty text is a value Cassandra holds and a null is not, but neither
+    /// has anything to put on the clipboard (design §4).
+    #[test]
+    fn y_on_a_cell_holding_the_empty_string_raises_no_effect() {
+        let mut state = browsing_a_table();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page {
+                    columns: vec!["name".to_owned()],
+                    rows: vec![Row {
+                        values: vec![CqlValue::Text(String::new())],
+                    }],
+                    next: None,
+                }),
+            },
+        );
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(
+            effects.is_empty(),
+            "an empty payload would ask the terminal to clear its clipboard"
+        );
     }
 
     /// What is drawn is a window; what is yanked is the column (design §6).
