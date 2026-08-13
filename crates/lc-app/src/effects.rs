@@ -12,10 +12,13 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::input::Incoming;
 
-/// The effects that still have no port behind them are inert, and so is
-/// `OpenEditor` — the main loop will run that one itself, before anything
-/// reaches here (external editor design §4). `Quit` needs no work here —
-/// `update` has already set `State::should_quit`.
+/// The effects that still have no port behind them are inert. `OpenEditor`
+/// is the one exception the main loop runs itself, before anything reaches
+/// here — the child process takes the terminal away from us (external editor
+/// design §4). `Yank` is not like that: it is an OSC 52 sequence written to
+/// the same stream every frame is, so it is handled below like the rest.
+/// `Quit` needs no work here — `update` has already set
+/// `State::should_quit`.
 pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, effect: &Effect) {
     match effect {
         Effect::Connect(conn) => {
@@ -64,11 +67,23 @@ pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, ef
             });
         }
 
+        // OSC 52 asks the terminal to set its clipboard, and the terminal
+        // does not answer: a terminal that ignores the sequence is
+        // indistinguishable from one that honoured it, so there is nothing
+        // to report and nothing to send back (yank design §3, §4). Unlike
+        // `OpenEditor` this does not take the terminal away from us — it is
+        // written to the same stream every frame is written to.
+        Effect::Yank(line) => {
+            let _written = crossterm::execute!(
+                std::io::stdout(),
+                crossterm::clipboard::CopyToClipboard::to_clipboard_from(line)
+            );
+        }
+
         Effect::FetchNextPage { .. }
         | Effect::Cancel(_)
         | Effect::RecordHistory(_)
         | Effect::OpenEditor { .. }
-        | Effect::Yank(_)
         | Effect::Quit => {}
     }
 }
