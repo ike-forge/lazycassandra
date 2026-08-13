@@ -335,6 +335,7 @@ fn quit(state: &mut State) -> Vec<Effect> {
 fn yank(state: &State) -> Vec<Effect> {
     let line = match state.focus {
         Panel::Contents => grid_row(state),
+        Panel::Tables => tree_node(state),
         _ => None,
     };
 
@@ -349,6 +350,12 @@ fn grid_row(state: &State) -> Option<String> {
     let row = page.page().rows.get(state.contents.cursor.index())?;
 
     Some(crate::yank::grid_row(row))
+}
+
+fn tree_node(state: &State) -> Option<String> {
+    let schema = state.schema()?;
+
+    Some(crate::yank::node(&state.tables.selected(schema)?))
 }
 
 #[derive(Clone, Copy)]
@@ -3558,6 +3565,24 @@ mod tests {
         state.focus = Panel::Contents;
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
+    }
+
+    #[test]
+    fn y_yanks_a_tree_node() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+
+        assert_eq!(
+            press(&mut state, Key::Char('y')),
+            vec![Effect::Yank("shop".to_owned())]
+        );
+
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            press(&mut state, Key::Char('y')),
+            vec![Effect::Yank("shop.orders".to_owned())]
+        );
     }
 
     #[test]
