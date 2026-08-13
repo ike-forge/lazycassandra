@@ -395,6 +395,11 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('l') | Key::Right => go_right(state),
         Key::Char('h') | Key::Left => go_left(state),
         Key::Char('/') => open_prompt(state),
+        Key::Char('m') => {
+            if state.focus == Panel::Contents {
+                state.contents.mode = state.contents.mode.next();
+            }
+        }
         // Last, so every binding above keeps precedence over a panel key. A
         // DDL tab is a place the same way a panel is, so its key both focuses
         // the panel and draws the tab — one press to arrive, whichever tab was
@@ -1308,7 +1313,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 mod tests {
     use super::*;
     use crate::commands::{CATALOGUE, CommandsPanel};
-    use crate::contents::ContentsState;
+    use crate::contents::{ContentsState, SelectionMode};
     use crate::ddl::DdlTab;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
@@ -5459,5 +5464,49 @@ mod tests {
             "an open palette is what the user is looking at, and it claims every key"
         );
         assert_eq!(state.contents.outstanding(), None);
+    }
+
+    #[test]
+    fn m_cycles_the_contents_selection_mode() {
+        let mut state = populated(Panel::Contents);
+
+        press(&mut state, Key::Char('m'));
+        assert_eq!(state.contents.mode, SelectionMode::Row);
+
+        press(&mut state, Key::Char('m'));
+        assert_eq!(state.contents.mode, SelectionMode::Column);
+
+        press(&mut state, Key::Char('m'));
+        assert_eq!(state.contents.mode, SelectionMode::Cell);
+    }
+
+    /// The grid is the only body with two cursors to choose between. `m` is
+    /// not a focus letter, so in the other panels it must fall through to the
+    /// arm that answers those and do nothing.
+    #[test]
+    fn m_does_nothing_outside_the_grid() {
+        for panel in [Panel::Tables, Panel::Ddl] {
+            let mut state = populated(panel);
+            let before = crate::view::view_model(&state);
+
+            let effects = press(&mut state, Key::Char('m'));
+
+            assert!(
+                effects.is_empty() && crate::view::view_model(&state) == before,
+                "{panel:?} has no grid for a mode to apply to"
+            );
+            assert_eq!(state.contents.mode, SelectionMode::Cell);
+        }
+    }
+
+    #[test]
+    fn m_types_an_m_in_queries() {
+        let mut state = populated(Panel::Queries);
+        let before = state.queries.text();
+
+        press(&mut state, Key::Char('m'));
+
+        assert_eq!(state.queries.text(), format!("{before}m"));
+        assert_eq!(state.contents.mode, SelectionMode::Cell);
     }
 }

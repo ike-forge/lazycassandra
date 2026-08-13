@@ -135,6 +135,7 @@ pub(crate) fn render(
             offset,
             first_column,
             column,
+            mode: _,
             gutter,
         } => {
             let (extent, horizontal) = grid(

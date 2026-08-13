@@ -221,6 +221,10 @@ const CONTENTS_HINTS: &[Binding] = &[
         action: "ends",
     },
     Binding {
+        keys: &[KeyPress::new(Key::Char('m'))],
+        action: "mode",
+    },
+    Binding {
         keys: &[KeyPress::new(Key::Char('/'))],
         action: "search",
     },
