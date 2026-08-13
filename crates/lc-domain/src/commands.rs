@@ -65,7 +65,7 @@ const GLOBAL: &[Binding] = &[
     },
     Binding {
         keys: &[KeyPress::new(Key::Char('y'))],
-        action: "yank the row",
+        action: "yank",
     },
 ];
 

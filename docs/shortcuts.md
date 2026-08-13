@@ -27,7 +27,7 @@ panel that takes text (§2).
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
-| `y`¹ ² | Yank the focused row to the clipboard, as one CSV line. |
+| `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. |
 | `Esc` | Dismiss the overlay, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
@@ -751,7 +751,11 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The palette lists it | `the_catalogue_lists_the_external_editor` (`commands.rs`) |
 | The bar names it after `ctrl-r run` | `the_queries_bar_names_the_editor_binding_after_run` (`view/hints.rs`) |
 | No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
-| `y` yanks the focused row, per panel | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
+| `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
+| `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_still_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
+| A cell yanks its value, unescaped and untruncated | `a_cell_yanks_without_quoting`, `a_cell_yank_is_not_ellipsised` (`yank.rs`) |
+| A null cell and an empty column yank nothing at all | `a_null_cell_yanks_nothing` (`yank.rs`), `y_on_a_null_cell_raises_no_effect`, `y_in_column_mode_on_a_page_with_no_rows_yanks_nothing` |
+| A column yank carries every row, in order, with no heading | `a_column_yanks_every_row_in_order_and_no_heading`, `a_null_in_a_column_yanks_as_an_empty_field`, `a_column_field_is_escaped_the_way_a_row_field_is`, `a_row_too_short_contributes_an_empty_field` (`yank.rs`), `a_column_yank_carries_rows_the_viewport_hides` |
 | A yank carries the columns the viewport hides | `a_yanked_row_carries_every_column_of_the_page` |
 | A yank carries the value, not the drawn cell | `a_yanked_value_is_not_ellipsised` (`yank.rs`) |
 | A null yanks as nothing, and the word does not | `a_null_yanks_as_an_empty_field`, `a_text_null_yanks_as_the_word` (`yank.rs`) |
