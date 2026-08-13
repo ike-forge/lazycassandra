@@ -508,7 +508,7 @@ fn bar(
 mod tests {
     use lc_domain::ThemeChoice;
     use lc_domain::commands::CommandsPanel;
-    use lc_domain::contents::{Subject, TableRef};
+    use lc_domain::contents::{SelectionMode, Subject, TableRef};
     use lc_domain::ddl::DdlTab;
     use lc_domain::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
@@ -1013,12 +1013,16 @@ mod tests {
     }
 
     fn draw_state(width: u16, height: u16, state: &State) -> Buffer {
+        draw_state_with(width, height, state, Theme::default())
+    }
+
+    fn draw_state_with(width: u16, height: u16, state: &State, theme: Theme) -> Buffer {
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 
         terminal
             .draw(|frame| {
-                render(frame, &view_model(state), Theme::default());
+                render(frame, &view_model(state), theme);
             })
             .expect("TestBackend always draws");
 
@@ -1313,9 +1317,9 @@ mod tests {
         state.contents.scroll.follow(12, 1);
 
         let highlight = Theme::default()
-            .style(Token::Selected)
+            .style(Token::Crosshair)
             .bg
-            .expect("the cursor row spends a background");
+            .expect("the cell mode's crosshair spends a background");
 
         let buffer = draw_state(60, 12, &state);
         let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
@@ -1451,7 +1455,15 @@ mod tests {
 
     #[test]
     fn the_key_columns_are_drawn_in_the_styles_that_carry_the_physical_shape() {
-        let state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
+        let mut state = showing(page_of(
+            &["id", "email", "note"],
+            &[&[CqlValue::Int(1), text("a"), text("b")]],
+        ));
+        // A third column for the cursor to sit on: in the default cell mode
+        // the crosshair washes the heading of the column the cursor is in, and
+        // the terminal-default theme flattens the text under its wash — so the
+        // two headings under test have to be ones the cursor is not on.
+        state.contents.column.go_to(2, 3);
 
         let buffer = draw_state(60, 12, &state);
         let header = |x: u16| buffer.cell((x, 1)).expect("inside the panel");
@@ -1597,15 +1609,109 @@ mod tests {
         state.contents.cursor.down(2);
 
         let highlight = Theme::default()
-            .style(Token::Selected)
+            .style(Token::Crosshair)
             .bg
-            .expect("the cursor row spends a background");
+            .expect("the cell mode's crosshair spends a background");
         let buffer = draw_state(60, 12, &state);
         let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
 
         assert!(!selected(1), "the header is never the selection");
         assert!(!selected(2), "nor is the first row");
         assert!(selected(3), "the second row is");
+    }
+
+    #[test]
+    fn row_mode_lights_the_whole_row_and_no_column() {
+        let mut state = showing(page_of(
+            &["id", "name"],
+            &[
+                &[CqlValue::Int(1), text("alice")],
+                &[CqlValue::Int(2), text("bob")],
+            ],
+        ));
+        state.contents.mode = SelectionMode::Row;
+        state.contents.cursor.down(2);
+
+        let theme = Theme::default();
+        let selected = theme
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
+        let buffer = draw_state(60, 12, &state);
+        let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
+
+        assert_eq!(bg(17, 3), selected, "the row the cursor is on is lit");
+        assert_ne!(
+            bg(17, 2),
+            selected,
+            "and the row above it is not — row mode lights one row"
+        );
+        assert_ne!(
+            bg(17, 1),
+            selected,
+            "the header is never part of the selection in row mode"
+        );
+    }
+
+    #[test]
+    fn column_mode_lights_the_column_and_its_heading() {
+        let mut state = showing(page_of(
+            &["id", "name"],
+            &[
+                &[CqlValue::Int(1), text("alice")],
+                &[CqlValue::Int(2), text("bob")],
+            ],
+        ));
+        state.contents.mode = SelectionMode::Column;
+        state.contents.column.go_to(1, 2);
+
+        let theme = Theme::default();
+        let selected = theme
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor column spends a background");
+        let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
+        // The gutter is one digit wide for a two-row page, then one column of
+        // spacing, then `id` (two wide), then one more spacing column: the
+        // second column's first cell is five in from the panel's inner edge.
+        let name = area.x + 1 + 5;
+
+        assert_eq!(bg(name, 2), selected, "every row of the column is lit");
+        assert_eq!(bg(name, 3), selected, "including the last one");
+        assert_eq!(
+            bg(name, 1),
+            selected,
+            "and its heading, which ratatui leaves to us (design §4)"
+        );
+    }
+
+    /// The wash is a background alone wherever the theme keeps its colours, so
+    /// a null under the crosshair is still drawn as a null (design §4).
+    #[test]
+    fn the_crosshair_leaves_a_flavours_column_colours_alone() {
+        let theme = Theme::of(ThemeChoice::CatppuccinMocha);
+        let mut state = showing(page_of(
+            &["id", "value"],
+            &[&[CqlValue::Int(1), CqlValue::Null]],
+        ));
+        state.contents.column.go_to(1, 2);
+
+        let buffer = draw_state_with(60, 12, &state, theme);
+        let area = block_area(&buffer, "Table contents");
+        let cell = buffer.cell((area.x + 1 + 5, 2)).expect("inside the panel");
+
+        assert_eq!(
+            cell.bg,
+            theme.palette().crosshair,
+            "the selected cell's column is washed"
+        );
+        assert_eq!(
+            cell.fg,
+            theme.style(Token::Muted).fg.expect("a null is muted"),
+            "and the null under it keeps its own colour"
+        );
     }
 
     #[test]
@@ -1732,9 +1838,9 @@ mod tests {
         let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
         let first = area.x + 3;
         let highlight = Theme::default()
-            .style(Token::Selected)
+            .style(Token::Crosshair)
             .bg
-            .expect("the cursor row spends a background");
+            .expect("the cell mode's crosshair spends a background");
 
         assert!(
             cell(first).modifier.contains(Modifier::UNDERLINED),
