@@ -247,7 +247,7 @@ enum Token {
 }
 ```
 
-A theme is a `Palette` — a struct of 29 plain `Color` fields, no
+A theme is a `Palette` — a struct of 28 plain `Color` fields, no
 `Option<Color>` — plus one `Token -> ratatui::Style` function shared by every
 theme, both in `lc-inbound`. `ThemeChoice` lives in `lc-domain` instead,
 because a theme *name* is not a colour: `State.theme` holds one, and
@@ -257,13 +257,20 @@ because a theme *name* is not a colour: `State.theme` holds one, and
 `Ours` holds the eight palettes we author — Default, Ash, Beacon and Quill,
 each light and dark — and `Ported` holds the four Catppuccin flavours we take
 as given. The split is structural rather than a naming convention because the
-contrast sweep in `contrast.rs` is written against `Ours::ALL`: it takes an
-`Ours` and cannot name a `Ported` theme by type, so "we impose no contrast
-requirement on a ported palette" is a fact the compiler enforces, not a
-policy someone could forget to apply. Adding a ported theme is one enum
-variant and one `const`, with no test to appease; adding one of ours cannot
-skip the sweep, because there is no path from a bare `Color` into `Ours::ALL`
-that bypasses it.
+contrast sweep — in `theme::tests`, over the ratios `contrast.rs` computes —
+is written against `Ours::ALL`: it takes an `Ours` and cannot name a `Ported`
+theme by type, so "we impose no contrast requirement on a ported palette" is a
+fact the compiler enforces, not a policy someone could forget to apply. Adding
+a ported theme is one enum variant and one `const`, with no test to appease.
+
+Adding one of ours is not enforced by the type system, because `Ours::ALL` is
+a hand-written array and the compiler cannot check that it lists every
+variant. What catches an omission is `Ours::next`, an exhaustive match each
+variant of which names the one declared after it: a ninth variant fails to
+compile until `next` is extended, and `walking_from_the_first_theme_of_ours_reaches_every_one`
+then fails until `ALL` lists it too. Two steps, both of which have to be taken
+before the build is green again — but a deliberate edit to both could still
+leave a palette unswept.
 
 Practical consequence: nothing in the domain has to change to add a theme,
 and no theme can invent a meaning the domain didn't define. See

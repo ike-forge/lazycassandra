@@ -103,10 +103,10 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
             .map_or_else(Style::new, |token| theme.style(token));
 
         if let Some(heading) = &section.heading {
-            let icon = crate::icons::section(section.token);
+            let icon = crate::icons::section(heading.token);
             lines.push(Line::styled(
-                truncate(&prefixed(icon, heading, width), width),
-                style,
+                truncate(&prefixed(icon, &heading.text, width), width),
+                theme.style(heading.token),
             ));
         }
 
@@ -388,7 +388,7 @@ fn count(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use lc_domain::style::Token;
-    use lc_domain::view::{IdentityKind, Section};
+    use lc_domain::view::{Heading, IdentityKind, Section};
 
     use super::*;
 
@@ -666,7 +666,10 @@ mod tests {
                     }],
                 },
                 Section {
-                    heading: Some("Partition Key".to_owned()),
+                    heading: Some(Heading {
+                        text: "Partition Key".to_owned(),
+                        token: Token::PartitionKey,
+                    }),
                     group: Group::Shape,
                     token: Some(Token::PartitionKey),
                     rows: vec![DetailRow::KeyColumn {
@@ -676,7 +679,10 @@ mod tests {
                     }],
                 },
                 Section {
-                    heading: Some("Options".to_owned()),
+                    heading: Some(Heading {
+                        text: "Options".to_owned(),
+                        token: Token::Section,
+                    }),
                     group: Group::Settings,
                     token: None,
                     rows: vec![DetailRow::Property {
@@ -709,6 +715,40 @@ mod tests {
             laid.selection.first + laid.selection.lines,
             laid.lines.len(),
             "the last row's span ends where the body does"
+        );
+    }
+
+    /// A heading is coloured by what it names and its rows by what they are.
+    /// `Section` on the rows would repaint every option value in the heading's
+    /// colour, which is why the two tokens are separate fields.
+    #[test]
+    fn a_heading_naming_no_schema_concept_is_the_only_part_of_its_group_in_the_section_colour() {
+        let theme = Theme::default();
+        let details = Details {
+            sections: vec![Section {
+                heading: Some(Heading {
+                    text: "Options".to_owned(),
+                    token: Token::Section,
+                }),
+                group: Group::Settings,
+                token: None,
+                rows: vec![DetailRow::Property {
+                    name: "gc_grace_seconds".to_owned(),
+                    value: "864000".to_owned(),
+                }],
+            }],
+        };
+
+        let laid = lay_out(&details, usize::MAX, 28, theme);
+        let section = theme.style(Token::Section);
+
+        assert_eq!(laid.lines[0].style, section);
+        assert!(
+            laid.lines[1]
+                .spans
+                .iter()
+                .all(|span| span.style.fg != section.fg),
+            "the section colour must not bleed onto the rows"
         );
     }
 

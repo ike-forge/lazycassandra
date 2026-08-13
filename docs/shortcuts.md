@@ -591,10 +591,10 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A click dismisses the picker and restores the theme | `a_click_dismisses_the_picker_and_restores_the_theme` |
 | The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
 | The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
-| The default theme paints no panel field, and the cursor row is the one token that paints a background | `the_default_theme_paints_no_panel_field`, `the_cursor_row_is_the_only_token_that_paints_a_background` (`inbound/theme/mod.rs`) |
-| The default palette reads on black and on white | `the_default_palette_reads_on_black_and_on_white` (`inbound/theme/mod.rs`) |
-| Every flavour reads against its own base, and a highlight bar is distinct from its field | `every_flavour_reads_against_its_own_base`, `a_highlight_bar_is_distinct_from_its_field` (`inbound/theme/catppuccin.rs`) |
-| Every flavour sets every surface | `every_flavour_paints_every_surface` (`inbound/theme/catppuccin.rs`) |
+| The cursor row is the one token that paints a background, and it spends no foreground | `the_cursor_row_is_a_bar_and_spends_no_foreground` (`inbound/theme/mod.rs`) |
+| Every palette of ours reads on every ground it declares | `every_palette_of_ours_reads_on_every_ground_it_declares`, `the_neutral_ramp_of_ours_is_a_staircase`, `every_border_of_ours_is_perceptible` (`inbound/theme/mod.rs`) |
+| Every flavour reads against its own base, and a highlight bar is distinct from its field | `every_flavour_reads_against_its_own_base`, `a_highlight_bar_is_distinct_from_its_field` (`inbound/theme/ported/catppuccin.rs`) |
+| Every palette sets every surface | `Palette` holds plain `Color`s and no `Option<Color>`, so nothing can decline one and there is nothing left to test (`inbound/theme/mod.rs`) |
 | Focus letters are distinct and total | `every_panel_has_a_distinct_shortcut`, `a_shortcut_leads_back_to_the_panel_that_claims_it`, `the_shortcuts_are_the_ones_the_design_names` — all in `state.rs` |
 | No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` |
 | A focus letter is text in a panel that takes text | `a_shortcut_is_text_in_a_panel_that_takes_text` |
@@ -604,7 +604,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A keyspace is offered no Columns tab, and `c` stores none | `a_keyspace_is_offered_no_columns_tab_and_keeps_describing_itself` (`view/details.rs`), `c_on_a_keyspace_focuses_the_panel_and_draws_no_columns_tab` |
 | A tab change restarts the cursor; arriving at the tab drawn does not | `showing_a_tab_draws_it`, `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone`, `a_tab_change_leaves_the_filter_where_it_was` (`ddl.rs`) |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
-| The marked cell, and only it, wears the shortcut colour | `each_panel_colours_the_key_that_focuses_it`, `nothing_but_the_shortcut_wears_the_shortcut_colour` (`inbound/render.rs`), `a_shortcut_is_a_colour_of_its_own_on_a_focused_title` (`inbound/theme/mod.rs`) |
+| The marked cell, and only it, wears the shortcut colour in a title | `each_panel_colours_the_key_that_focuses_it`, `nothing_but_the_shortcut_wears_the_shortcut_colour_in_a_title` (`inbound/render.rs`), `a_hot_key_is_underlined_and_nothing_else_is` (`inbound/theme/mod.rs`) |
 | A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |
 | A click focuses what it lands in | `a_click_focuses_the_panel_it_landed_in`, `a_click_on_chrome_focuses_and_does_nothing_else` |
 | A stale row is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped` |

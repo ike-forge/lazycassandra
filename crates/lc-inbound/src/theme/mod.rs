@@ -33,7 +33,8 @@ pub(super) const fn rgb(value: u32) -> Color {
 pub(crate) struct Palette {
     /// The terminal background this theme assumes, painted before anything else.
     pub(crate) base: Color,
-    /// Panel fill, one step up from `base`.
+    /// An overlay's fill, one step up from `base`. Panels sit on `base`; this
+    /// is what separates a floating block from the field it covers.
     pub(crate) surface: Color,
     /// Primary text: column values, table names in focus.
     pub(crate) text: Color,
@@ -43,8 +44,6 @@ pub(crate) struct Palette {
     pub(crate) faint: Color,
     /// An unfocused panel's frame, and a scrollbar's track.
     pub(crate) border: Color,
-    /// A focused panel's frame.
-    pub(crate) border_focus: Color,
     /// The focused panel's accent: its border, its title, its active tab.
     pub(crate) focus: Color,
     /// The cursor row's background.
@@ -219,15 +218,14 @@ pub(crate) mod tests {
     /// Destructured with every field named and no `..`, so a new role cannot
     /// enter the palette without the compiler asking here whether it is text.
     /// `base`, `surface` and `selection_bg` are what text is drawn *on*, and
-    /// `border`/`border_focus` are not text — each is answered by the test
-    /// that knows what to ask of it rather than swept in here.
+    /// `border` is not text — each is answered by the test that knows what to
+    /// ask of it rather than swept in here.
     pub(super) fn foregrounds(palette: &Palette) -> Vec<(&'static str, Color)> {
         let Palette {
             base: _,
             surface: _,
             selection_bg: _,
             border: _,
-            border_focus: _,
             text,
             dim,
             faint,
@@ -329,13 +327,15 @@ pub(crate) mod tests {
         }
     }
 
-    /// A border is not text: it only has to be seen.
+    /// A border is not text: it only has to be seen. Both the colours a frame
+    /// can wear — `border` unfocused, `focus` patched over it by
+    /// `Token::Focused` when the panel has focus.
     #[test]
     fn every_border_of_ours_is_perceptible() {
         for choice in Ours::ALL {
             let palette = Theme::of(ThemeChoice::Ours(choice)).palette();
 
-            for (role, colour) in [("border", palette.border), ("focus", palette.border_focus)] {
+            for (role, colour) in [("border", palette.border), ("focus", palette.focus)] {
                 let ratio = ratio(colour, palette.base);
                 assert!(ratio >= 1.5, "{}: {role} is {ratio:.2}:1", choice.label());
             }
@@ -345,8 +345,13 @@ pub(crate) mod tests {
     /// Every theme, ported ones included: a palette paints its field once,
     /// through `ground`, and a token that painted a background of its own
     /// would put a patch of some other colour over it (design §4.2).
+    ///
+    /// The cursor row is the one that does, and it spends nothing else: a
+    /// foreground there would overwrite every role colour on the row through
+    /// `Style::patch`, flattening `partition`, `table` and the rest — which is
+    /// why `selection_fg` exists as a measured colour the token never spends.
     #[test]
-    fn the_cursor_row_is_the_only_token_that_paints_a_background() {
+    fn the_cursor_row_is_a_bar_and_spends_no_foreground() {
         for choice in ThemeChoice::ALL {
             let theme = Theme::of(choice);
 
@@ -355,6 +360,11 @@ pub(crate) mod tests {
 
                 if matches!(token, Token::Selected) {
                     assert!(background.is_some(), "{choice:?}: the cursor row is a bar");
+                    assert_eq!(
+                        theme.style(Token::Selected).fg,
+                        None,
+                        "{choice:?}: the cursor row overwrote its row's colours"
+                    );
                 } else {
                     assert_eq!(
                         background, None,

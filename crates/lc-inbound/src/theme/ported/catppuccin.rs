@@ -43,7 +43,6 @@ impl Flavour {
             dim: self.subtext1,
             faint: self.subtext0,
             border: self.surface1,
-            border_focus: self.blue,
             focus: self.blue,
             selection_bg: self.surface1,
             selection_fg: self.text,
@@ -203,7 +202,7 @@ mod tests {
         for (name, palette) in flavours() {
             let base = palette.base;
 
-            for (role, color) in super::super::super::tests::foregrounds(&palette) {
+            for (role, color) in crate::theme::tests::foregrounds(&palette) {
                 let floor = if role == "comment" { 2.0 } else { 2.3 };
                 let ratio = ratio(color, base);
 

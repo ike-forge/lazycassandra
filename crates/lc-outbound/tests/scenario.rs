@@ -425,7 +425,12 @@ fn headings(details: &Details) -> Vec<&str> {
     details
         .sections
         .iter()
-        .filter_map(|section| section.heading.as_deref())
+        .filter_map(|section| {
+            section
+                .heading
+                .as_ref()
+                .map(|heading| heading.text.as_str())
+        })
         .collect()
 }
 
@@ -433,7 +438,12 @@ fn section<'a>(details: &'a Details, heading: &str) -> &'a Section {
     details
         .sections
         .iter()
-        .find(|section| section.heading.as_deref() == Some(heading))
+        .find(|section| {
+            section
+                .heading
+                .as_ref()
+                .is_some_and(|own| own.text == heading)
+        })
         .unwrap_or_else(|| panic!("{heading} is missing"))
 }
 

@@ -405,7 +405,8 @@ fn render_prompt(frame: &mut Frame, hint_bar: Rect, query: &str, view: &ViewMode
 /// Over the block's right border, so it spends no content width — and only
 /// when something is hidden, so its absence says nothing is.
 ///
-/// The track is the border glyph, muted, so it reads as part of the border
+/// The track is the border glyph at `Token::Faint`, so it reads as part of the
+/// border
 /// rather than a second bar beside it; the thumb takes the border's own
 /// (possibly focus-patched) style, so the scroll position — not the
 /// unscrolled rest of the column — carries the stronger colour
@@ -851,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_but_the_shortcut_wears_the_shortcut_colour() {
+    fn nothing_but_the_shortcut_wears_the_shortcut_colour_in_a_title() {
         let buffer = draw(40, 12);
         let marked = |x, y| {
             buffer.cell((x, y)).expect("cell is in bounds").fg
@@ -1477,7 +1478,7 @@ mod tests {
                 .style(Token::RegularColumn)
                 .fg
                 .expect("a regular column reads as body text"),
-            "a regular column carries no colour of its own — it is the baseline"
+            "a regular column reads as body text rather than as a key"
         );
     }
 
@@ -1922,11 +1923,11 @@ mod tests {
     #[test]
     fn a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed() {
         // `lc_domain::grid::widths` caps a column at 24 and not at the panel,
-        // which leaves the renderer a length the area cannot satisfy: 22
-        // columns of body, less the merged bar+gutter block and its one
-        // spacing column, is 19. Handed one it cannot honour, ratatui shrinks
-        // every column — the bar+gutter block among them — and truncates
-        // with no ellipsis to say so.
+        // so the natural width outruns the 19 columns of body left once the
+        // merged bar+gutter block and its spacing column are taken. `drawn_widths`
+        // caps each width against what is left, so ratatui is never
+        // overcommitted and the bar keeps its own cells; the value is cut by
+        // `styled_cell`, which is where the ellipsis below comes from.
         let state = showing(page_of(
             &["id"],
             &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
@@ -2381,16 +2382,19 @@ mod tests {
         // 34 is the blank row the settings group opens with.
         assert_eq!(
             colour(35),
-            Theme::default().palette().text,
-            "an option is not part of the key structure and must not read as one"
+            theme
+                .style(Token::Section)
+                .fg
+                .expect("a section heading spends a colour"),
+            "Options names a group rather than a schema concept"
         );
         assert_eq!(
             colour(36),
-            Theme::default()
+            theme
                 .style(Token::PropertyName)
                 .fg
                 .expect("a property name is highlighted"),
-            "the property name carries the accent its heading does not"
+            "and its rows keep their own colours rather than the heading's"
         );
     }
 

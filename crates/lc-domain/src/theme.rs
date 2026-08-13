@@ -63,6 +63,27 @@ impl Ours {
         Self::QuillLight,
     ];
 
+    /// The variant declared after `self`, and `None` after the last.
+    ///
+    /// `ALL` is hand-written, and a ninth variant added without extending it
+    /// would never reach the contrast sweep. This match is exhaustive, so the
+    /// variant breaks it at compile time, and
+    /// `walking_from_the_first_theme_of_ours_reaches_every_one` fails until
+    /// `ALL` names it too.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self {
+            Self::DefaultDark => Some(Self::DefaultLight),
+            Self::DefaultLight => Some(Self::AshDark),
+            Self::AshDark => Some(Self::AshLight),
+            Self::AshLight => Some(Self::BeaconDark),
+            Self::BeaconDark => Some(Self::BeaconLight),
+            Self::BeaconLight => Some(Self::QuillDark),
+            Self::QuillDark => Some(Self::QuillLight),
+            Self::QuillLight => None,
+        }
+    }
+
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -137,6 +158,23 @@ impl ThemeChoice {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walking_from_the_first_theme_of_ours_reaches_every_one() {
+        let mut walked = Vec::new();
+        let mut current = Some(Ours::DefaultDark);
+
+        while let Some(choice) = current {
+            walked.push(choice);
+            current = choice.next();
+        }
+
+        assert_eq!(
+            walked,
+            Ours::ALL,
+            "a palette of ours that ALL does not list is never swept for contrast"
+        );
+    }
 
     #[test]
     fn every_theme_is_listed_once() {
