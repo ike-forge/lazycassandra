@@ -240,7 +240,7 @@ struct GridView<'a> {
 enum Selection {
     Cell(Option<(usize, usize)>),
     Row(Option<usize>),
-    Column(usize),
+    Column(Option<usize>),
 }
 
 fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent, Extent) {
@@ -336,6 +336,13 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     // The gutter is a column of the widget but not of the page, so the
     // selected column is one further right than the domain's index.
     let drawn_column = column.saturating_sub(first_column) + 1;
+    // `None` where the cursor is off the right of what fits: ratatui clamps
+    // `selected_column` to the last column it drew, so column mode would lay a
+    // full-height band over a column the heading gate — which asks the same
+    // question of the page's own indices — does not match. `follow_grid_columns`
+    // runs against the geometry of the frame before this one, so a resize that
+    // narrows the panel reaches this state for a frame.
+    let selected_column = drawn.contains(&column).then_some(drawn_column);
 
     let (table, selection) = match mode {
         SelectionMode::Cell => (
@@ -351,7 +358,7 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         ),
         SelectionMode::Column => (
             table.column_highlight_style(theme.style(Token::Selected)),
-            Selection::Column(drawn_column),
+            Selection::Column(selected_column),
         ),
     };
 
@@ -359,7 +366,7 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     state = match selection {
         Selection::Cell(cell) => state.with_selected_cell(cell),
         Selection::Row(row) => state.with_selected(row),
-        Selection::Column(column) => state.with_selected_column(Some(column)),
+        Selection::Column(column) => state.with_selected_column(column),
     };
 
     frame.render_stateful_widget(table, area, &mut state);

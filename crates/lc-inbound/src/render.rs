@@ -1702,6 +1702,40 @@ mod tests {
         );
     }
 
+    /// `follow_grid_columns` pulls the viewport over the column cursor against
+    /// the geometry of the frame *before* this one, so a resize that narrows
+    /// the panel draws one frame whose cursor is off the right of what fits.
+    /// ratatui clamps `selected_column` to the last column it drew, which would
+    /// band a column the heading gate does not agree with.
+    #[test]
+    fn column_mode_lights_nothing_when_its_cursor_is_off_the_columns_drawn() {
+        let mut state = showing(sized_page(12, 3));
+        state.contents.mode = SelectionMode::Column;
+        state.contents.column.go_to(11, 12);
+
+        let buffer = draw_state(40, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let selected = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor column spends a background");
+
+        assert_eq!(
+            state.contents.columns.first(),
+            0,
+            "the viewport has not followed the cursor, which is the state under test"
+        );
+        for y in area.y + 1..area.y + area.height - 1 {
+            for x in area.x + 1..area.x + area.width - 1 {
+                assert_ne!(
+                    buffer.cell((x, y)).expect("inside the panel").bg,
+                    selected,
+                    "({x}, {y}) is lit for a column the grid is not drawing"
+                );
+            }
+        }
+    }
+
     /// The heading's wash is the crosshair's, and a row cursor scrolled out of
     /// view leaves the widget painting no crosshair at all — so the heading
     /// cannot stay lit on its own (design §4).
