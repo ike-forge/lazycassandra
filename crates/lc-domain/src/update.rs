@@ -3646,58 +3646,83 @@ mod tests {
         );
     }
 
+    /// A page whose cell at row `r`, column `c` reads `r{r}c{c}`, so that a
+    /// yank names which cell, row or column it came from rather than only how
+    /// many commas it holds.
+    fn grid_of_named_cells(columns: usize, rows: usize) -> State {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: (0..columns).map(|c| format!("c{c}")).collect(),
+                rows: (0..rows)
+                    .map(|r| Row {
+                        values: (0..columns)
+                            .map(|c| CqlValue::Text(format!("r{r}c{c}")))
+                            .collect(),
+                    })
+                    .collect(),
+                next: None,
+            },
+        );
+        state.focus = Panel::Contents;
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
+        );
+        state
+    }
+
     /// The panel opens in cell mode, so this is what `y` now does by default
     /// (design §1).
     #[test]
     fn y_yanks_the_cell_in_cell_mode() {
-        let mut state = grid_of_rows(3, 2, 80);
+        let mut state = grid_of_named_cells(3, 2);
         state.contents.cursor.go_to(1, 2);
         state.contents.column.go_to(2, 3);
 
         let effects = press(&mut state, Key::Char('y'));
 
-        let Some(Effect::Yank(line)) = effects.first() else {
-            panic!("cell mode yanks the value under the two cursors, got {effects:?}");
-        };
-        assert!(
-            !line.contains(','),
-            "a cell carries one value and no delimiter, got {line:?}"
+        assert_eq!(
+            effects,
+            vec![Effect::Yank("r1c2".to_owned())],
+            "cell mode yanks the value the two cursors name, and no delimiter"
         );
     }
 
     #[test]
     fn y_still_yanks_the_row_in_row_mode() {
-        let mut state = grid_of_rows(3, 2, 80);
+        let mut state = grid_of_named_cells(3, 2);
         state.contents.mode = SelectionMode::Row;
-        state.contents.cursor.go_to(0, 2);
+        state.contents.cursor.go_to(1, 2);
+        state.contents.column.go_to(2, 3);
 
         let effects = press(&mut state, Key::Char('y'));
 
-        let Some(Effect::Yank(line)) = effects.first() else {
-            panic!("row mode yanks the row, got {effects:?}");
-        };
         assert_eq!(
-            line.matches(',').count(),
-            2,
-            "three columns make two separators, got {line:?}"
+            effects,
+            vec![Effect::Yank("r1c0,r1c1,r1c2".to_owned())],
+            "row mode yanks every column of the row the row cursor names"
         );
     }
 
     #[test]
     fn y_yanks_the_column_in_column_mode() {
-        let mut state = grid_of_rows(3, 2, 80);
+        let mut state = grid_of_named_cells(3, 2);
         state.contents.mode = SelectionMode::Column;
-        state.contents.column.go_to(1, 3);
+        state.contents.cursor.go_to(1, 2);
+        state.contents.column.go_to(2, 3);
 
         let effects = press(&mut state, Key::Char('y'));
 
-        let Some(Effect::Yank(line)) = effects.first() else {
-            panic!("column mode yanks the column, got {effects:?}");
-        };
         assert_eq!(
-            line.matches(',').count(),
-            1,
-            "two rows make one separator, got {line:?}"
+            effects,
+            vec![Effect::Yank("r0c2,r1c2".to_owned())],
+            "column mode yanks every row of the column the column cursor names"
         );
     }
 
