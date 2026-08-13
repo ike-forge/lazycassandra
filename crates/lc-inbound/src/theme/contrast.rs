@@ -33,16 +33,17 @@ pub(crate) fn ratio(a: Color, b: Color) -> f64 {
     (lighter + 0.05) / (darker + 0.05)
 }
 
-pub(crate) const BLACK: Color = Color::Rgb(0x00, 0x00, 0x00);
-pub(crate) const WHITE: Color = Color::Rgb(0xff, 0xff, 0xff);
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const WHITE: Color = Color::Rgb(0xff, 0xff, 0xff);
+
     #[test]
     fn black_against_white_is_the_maximum_ratio() {
-        assert!((ratio(BLACK, WHITE) - 21.0).abs() < 0.01);
+        let black = Color::Rgb(0x00, 0x00, 0x00);
+
+        assert!((ratio(black, WHITE) - 21.0).abs() < 0.01);
     }
 
     #[test]

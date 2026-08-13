@@ -506,7 +506,6 @@ fn bar(
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::ThemeChoice;
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{Subject, TableRef};
     use lc_domain::ddl::DdlTab;
@@ -522,6 +521,7 @@ mod tests {
     };
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
+    use lc_domain::{Ported, ThemeChoice};
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -570,7 +570,7 @@ mod tests {
                 render(
                     frame,
                     &view_model(&state),
-                    Theme::of(ThemeChoice::CatppuccinMocha),
+                    Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha)),
                 );
             })
             .expect("TestBackend always draws");
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn focus_wins_over_a_flavours_own_panel_border() {
-        let theme = Theme::of(ThemeChoice::CatppuccinMocha);
+        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut terminal =
             Terminal::new(TestBackend::new(40, 12)).expect("TestBackend always initialises");
         let state = State {
@@ -627,7 +627,7 @@ mod tests {
                 render(
                     frame,
                     &view_model(&state),
-                    Theme::of(ThemeChoice::CatppuccinMocha),
+                    Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha)),
                 );
             })
             .expect("TestBackend always draws");
@@ -641,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_theme_leaves_the_field_alone() {
+    fn the_default_theme_paints_the_field_too() {
         let mut terminal =
             Terminal::new(TestBackend::new(80, 24)).expect("TestBackend always initialises");
         let state = State::default();
@@ -658,8 +658,9 @@ mod tests {
                 .buffer()
                 .content()
                 .iter()
-                .all(|cell| cell.bg == Color::Reset),
-            "the background is the user's (vision.md §4, principle 5)"
+                .all(|cell| cell.bg != Color::Reset),
+            "the default theme declares its own base, corners included \
+             (docs/superpowers/specs/2026-08-13-colour-palettes-design.md §1)"
         );
     }
 
@@ -1465,8 +1466,11 @@ mod tests {
         assert!(header(19).modifier.contains(Modifier::BOLD));
         assert_eq!(
             header(22).fg,
-            Color::Reset,
-            "a regular column spends no colour — it is the baseline"
+            Theme::default()
+                .style(Token::RegularColumn)
+                .fg
+                .expect("a regular column reads as body text"),
+            "a regular column carries no colour of its own — it is the baseline"
         );
     }
 
@@ -2360,7 +2364,7 @@ mod tests {
         // 34 is the blank row the settings group opens with.
         assert_eq!(
             colour(35),
-            Color::Reset,
+            Theme::default().palette().text,
             "an option is not part of the key structure and must not read as one"
         );
         assert_eq!(
@@ -3062,19 +3066,15 @@ mod tests {
         state.apply_filter(Filtered::Ddl, Filter::new("ord"));
 
         let buffer = draw_state(80, 24, &state);
-        let (fg, bg, modifier) = style_of_first(&buffer, "/ord");
+        let (fg, _bg, modifier) = style_of_first(&buffer, "/ord");
         let expected = Theme::default().style(Token::Muted);
 
         assert_eq!(
             fg,
-            expected.fg.unwrap_or(Color::Reset),
+            expected.fg.expect("muted spends a colour"),
             "no colour override"
         );
-        assert_eq!(
-            bg,
-            expected.bg.unwrap_or(Color::Reset),
-            "no colour override"
-        );
+        assert_eq!(expected.bg, None, "muted paints no background of its own");
         assert_eq!(
             modifier, expected.add_modifier,
             "the dim modifier, and only that"

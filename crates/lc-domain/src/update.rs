@@ -1314,6 +1314,7 @@ mod tests {
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::search::{Filter, Filtered, Prompt};
     use crate::state::{Connection, Span};
+    use crate::theme::Ported;
     use crate::tree::tests_support::schema_of as tabled_schema;
     use crate::view::tests_support::tabled;
 
@@ -1921,13 +1922,13 @@ mod tests {
     #[test]
     fn the_picker_opens_on_the_theme_in_force() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinFrappe;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinFrappe);
 
         ctrl(&mut state, Key::Char('t'));
 
         assert_eq!(
             theme_picker(&state),
-            Some(ThemeChoice::CatppuccinFrappe.index())
+            Some(ThemeChoice::Ported(Ported::CatppuccinFrappe).index())
         );
     }
 
@@ -1960,13 +1961,13 @@ mod tests {
     #[test]
     fn escape_restores_the_theme_the_picker_opened_on() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinMocha;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
 
         ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.theme, ThemeChoice::CatppuccinMocha);
+        assert_eq!(state.theme, ThemeChoice::Ported(Ported::CatppuccinMocha));
         assert!(state.overlay.is_none());
     }
 
@@ -2134,13 +2135,13 @@ mod tests {
     #[test]
     fn a_frame_that_shrinks_below_the_picker_closes_it_and_restores_the_theme() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinMocha;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
 
         ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
         assert_ne!(
             state.theme,
-            ThemeChoice::CatppuccinMocha,
+            ThemeChoice::Ported(Ported::CatppuccinMocha),
             "previewing a different theme before the frame shrinks"
         );
 
@@ -2155,7 +2156,7 @@ mod tests {
         );
         assert_eq!(
             state.theme,
-            ThemeChoice::CatppuccinMocha,
+            ThemeChoice::Ported(Ported::CatppuccinMocha),
             "the preview must not strand itself when its own room disappears"
         );
     }
@@ -2163,11 +2164,11 @@ mod tests {
     #[test]
     fn a_message_arriving_over_an_open_picker_restores_the_theme() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinMocha;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
 
         ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
-        assert_ne!(state.theme, ThemeChoice::CatppuccinMocha);
+        assert_ne!(state.theme, ThemeChoice::Ported(Ported::CatppuccinMocha));
 
         raise(
             &mut state,
@@ -2180,7 +2181,7 @@ mod tests {
 
         assert_eq!(
             state.theme,
-            ThemeChoice::CatppuccinMocha,
+            ThemeChoice::Ported(Ported::CatppuccinMocha),
             "the half-previewed theme must not strand itself under the failure"
         );
         assert!(matches!(state.overlay, Some(Overlay::Message(_))));
@@ -2189,16 +2190,16 @@ mod tests {
     #[test]
     fn a_click_dismisses_the_picker_and_restores_the_theme() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinMocha;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
 
         ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
-        assert_ne!(state.theme, ThemeChoice::CatppuccinMocha);
+        assert_ne!(state.theme, ThemeChoice::Ported(Ported::CatppuccinMocha));
 
         point(&mut state, Pointer::Click(Click::Panel(Panel::Tables)));
 
         assert!(state.overlay.is_none());
-        assert_eq!(state.theme, ThemeChoice::CatppuccinMocha);
+        assert_eq!(state.theme, ThemeChoice::Ported(Ported::CatppuccinMocha));
     }
 
     #[test]
