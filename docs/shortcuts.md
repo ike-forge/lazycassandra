@@ -40,12 +40,16 @@ panel that takes text (§2).
 ¹ Not reachable from Queries. A panel that takes text claims every printable
 key before this table is consulted, so these type themselves there instead.
 
-² "One CSV line" holds for three of the four panels `y` reaches; Tables is the
-exception, and gets a bare name instead:
+² "One CSV line" holds for DDL's two tabs, and for two of Table contents'
+three selection modes. Tables is the exception it always was, with a bare
+name instead; Table contents' cell mode is a second exception, conditional
+on the mode rather than fixed to the panel:
 
 | Panel | What `y` puts on the clipboard |
 |---|---|
-| Table contents | Every column of the row, as one CSV line |
+| Table contents, cell mode | The cell's value, bare and unescaped |
+| Table contents, row mode | Every column of the row, as one CSV line |
+| Table contents, column mode | Every row's value in the column, as one CSV line, no heading |
 | DDL, DDL tab | The row's fields for its kind, as one CSV line |
 | DDL, Columns tab | `name,type,kind`, as one CSV line |
 | Tables | The node's bare name — `shop`, `shop.orders` — not a CSV line |
