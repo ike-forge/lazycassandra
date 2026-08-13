@@ -101,6 +101,10 @@ pub enum Effect {
     OpenEditor {
         buffer: String,
     },
+    /// Put `0` on the system clipboard. Write-only: OSC 52 gives no answer, so
+    /// there is no `Msg` back and nothing to report
+    /// (docs/superpowers/specs/2026-08-13-yank-design.md §3, §4).
+    Yank(String),
     Quit,
 }
 
@@ -325,6 +329,28 @@ fn quit(state: &mut State) -> Vec<Effect> {
     cancels.chain(std::iter::once(Effect::Quit)).collect()
 }
 
+/// The focused panel's selected row, as a CSV line. Nothing under the cursor
+/// yanks nothing: there is no row, so there is nothing to say about one
+/// (yank design §1).
+fn yank(state: &State) -> Vec<Effect> {
+    let line = match state.focus {
+        Panel::Contents => grid_row(state),
+        _ => None,
+    };
+
+    line.map(Effect::Yank).into_iter().collect()
+}
+
+fn grid_row(state: &State) -> Option<String> {
+    let ContentsState::Loaded { page, .. } = state.contents.state() else {
+        return None;
+    };
+
+    let row = page.page().rows.get(state.contents.cursor.index())?;
+
+    Some(crate::yank::grid_row(row))
+}
+
 #[derive(Clone, Copy)]
 enum Motion {
     Up,
@@ -395,6 +421,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('l') | Key::Right => go_right(state),
         Key::Char('h') | Key::Left => go_left(state),
         Key::Char('/') => open_prompt(state),
+        Key::Char('y') => return yank(state),
         // Last, so every binding above keeps precedence over a panel key. A
         // DDL tab is a place the same way a panel is, so its key both focuses
         // the panel and draws the tab — one press to arrive, whichever tab was
@@ -3502,6 +3529,38 @@ mod tests {
     }
 
     #[test]
+    fn y_yanks_a_grid_row() {
+        let mut state = browsing_a_table();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page {
+                    columns: vec!["id".to_owned(), "name".to_owned()],
+                    rows: vec![Row {
+                        values: vec![CqlValue::Int(7), CqlValue::Text("ada".to_owned())],
+                    }],
+                    next: None,
+                }),
+            },
+        );
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(effects, vec![Effect::Yank("7,ada".to_owned())]);
+    }
+
+    #[test]
+    fn y_on_an_empty_panel_yanks_nothing() {
+        let mut state = browsing_a_table();
+        state.focus = Panel::Contents;
+
+        assert!(press(&mut state, Key::Char('y')).is_empty());
+    }
+
+    #[test]
     fn a_page_for_a_cancelled_query_never_reaches_the_panel() {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
@@ -4715,7 +4774,29 @@ mod tests {
         ctrl(&mut picker_open, Key::Char('t'));
         press(&mut picker_open, Key::Char('j'));
 
-        vec![covered, elsewhere, moved, palette_open, picker_open]
+        // A loaded grid, for `y` to have a row under the cursor.
+        let mut yankable = read_shop_orders();
+        press(&mut yankable, Key::Enter);
+        let query = yankable
+            .contents
+            .outstanding()
+            .expect("the panel is waiting");
+        update(
+            &mut yankable,
+            Msg::PageReady {
+                query,
+                page: Box::new(page_of(3)),
+            },
+        );
+
+        vec![
+            covered,
+            elsewhere,
+            moved,
+            palette_open,
+            picker_open,
+            yankable,
+        ]
     }
 
     /// Whether pressing `key` changes anything a user could observe.

@@ -27,6 +27,7 @@ panel that takes text (§2).
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
+| `y`¹ | Yank the focused row to the clipboard, as one CSV line. |
 | `Esc` | Dismiss the overlay, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
@@ -486,11 +487,11 @@ means once a panel can carry state of its own (panel search design §6).
 
 ## 3. The key budget
 
-Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `q` `u`, plus `?` and `/`.
+Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `q` `u` `y`, plus `?` and `/`.
 Taken, uppercase: none — no shifted letter is bound (§2).
 
 Free, lowercase: `e` `f` `g` `i` `m` `n` `o` `p` `r` `s` `t` `v` `w` `x`
-`y` `z`, every digit, every uppercase letter, and `Space`.
+`z`, every digit, every uppercase letter, and `Space`.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the

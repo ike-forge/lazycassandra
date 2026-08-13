@@ -68,6 +68,7 @@ pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, ef
         | Effect::Cancel(_)
         | Effect::RecordHistory(_)
         | Effect::OpenEditor { .. }
+        | Effect::Yank(_)
         | Effect::Quit => {}
     }
 }
