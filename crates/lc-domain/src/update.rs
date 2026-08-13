@@ -101,8 +101,8 @@ pub enum Effect {
     OpenEditor {
         buffer: String,
     },
-    /// Put `0` on the system clipboard. Write-only: OSC 52 gives no answer, so
-    /// there is no `Msg` back and nothing to report
+    /// Put the yanked line on the system clipboard. Write-only: OSC 52 gives
+    /// no answer, so there is no `Msg` back and nothing to report
     /// (docs/superpowers/specs/2026-08-13-yank-design.md §3, §4).
     Yank(String),
     Quit,
@@ -2533,9 +2533,12 @@ mod tests {
 
     #[test]
     fn y_is_text_in_the_editor() {
-        let state = editing("y");
+        let mut state = editing("");
+
+        let effects = press(&mut state, Key::Char('y'));
 
         assert_eq!(state.queries.text(), "y");
+        assert!(effects.is_empty(), "not reachable from Queries (§1)");
     }
 
     /// `?` is a CQL bind marker before it is a shortcut, so the editor has to
@@ -3620,6 +3623,14 @@ mod tests {
     fn y_on_an_empty_panel_yanks_nothing() {
         let mut state = browsing_a_table();
         state.focus = Panel::Contents;
+
+        assert!(press(&mut state, Key::Char('y')).is_empty());
+    }
+
+    #[test]
+    fn y_on_a_filter_that_matched_nothing_yanks_nothing() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.apply_filter(Filtered::Tables, Filter::new("zzz"));
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
     }

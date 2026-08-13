@@ -27,7 +27,7 @@ panel that takes text (§2).
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
-| `y`¹ | Yank the focused row to the clipboard, as one CSV line. |
+| `y`¹ ² | Yank the focused row to the clipboard, as one CSV line. |
 | `Esc` | Dismiss the overlay, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
@@ -39,6 +39,18 @@ panel that takes text (§2).
 
 ¹ Not reachable from Queries. A panel that takes text claims every printable
 key before this table is consulted, so these type themselves there instead.
+
+² "One CSV line" holds for three of the four panels `y` reaches; Tables is the
+exception, and gets a bare name instead:
+
+| Panel | What `y` puts on the clipboard |
+|---|---|
+| Table contents | Every column of the row, as one CSV line |
+| DDL, DDL tab | The row's fields for its kind, as one CSV line |
+| DDL, Columns tab | `name,type,kind`, as one CSV line |
+| Tables | The node's bare name — `shop`, `shop.orders` — not a CSV line |
+
+See [yank design](specs/2026-08-13-yank-design.md) §2.
 
 The four focus letters are drawn in a colour of their own in their panel's
 title, so the binding is learned by looking at the panel rather than by reading
@@ -716,8 +728,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A yank carries the value, not the drawn cell | `a_yanked_value_is_not_ellipsised` (`yank.rs`) |
 | A null yanks as nothing, and the word does not | `a_null_yanks_as_an_empty_field`, `a_text_null_yanks_as_the_word` (`yank.rs`) |
 | A column and a DDL row carry their own fields | `a_column_row_carries_the_part_it_plays`, `a_partition_column_yanks_without_an_order`, `a_property_and_an_identity_row_yank_their_two_fields`, `a_keyspace_yanks_its_name_and_a_table_its_qualified_one` (`yank.rs`) |
-| Nothing under the cursor yanks nothing | `y_on_an_empty_panel_yanks_nothing` |
-| `y` types itself in Queries | `y_is_text_in_the_editor` |
+| Nothing under the cursor yanks nothing | `y_on_an_empty_panel_yanks_nothing`, `y_on_a_filter_that_matched_nothing_yanks_nothing` |
+| `y` types itself in Queries, and yanks nothing | `y_is_text_in_the_editor` |
 | The encoder quotes exactly what it must | `a_field_is_quoted_only_when_it_has_to_be`, `an_embedded_quote_is_doubled`, `a_line_ends_without_a_newline` (`yank.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
