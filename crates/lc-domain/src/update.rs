@@ -3846,6 +3846,11 @@ mod tests {
     #[test]
     fn a_column_yank_carries_rows_the_viewport_hides() {
         let mut state = grid_of_rows(1, 20, 80);
+        assert!(
+            state.geometry.height(Panel::Contents) < state.contents.row_count(),
+            "the viewport must hide at least one row for this test to prove anything"
+        );
+
         state.contents.mode = SelectionMode::Column;
 
         let effects = press(&mut state, Key::Char('y'));
