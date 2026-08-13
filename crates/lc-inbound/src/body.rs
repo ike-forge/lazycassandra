@@ -279,8 +279,14 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     let constraints = std::iter::once(Constraint::Length(gutter))
         .chain(drawn_widths.iter().copied().map(Constraint::Length));
 
+    let row = visible(selected, offset, height);
+    // The heading's wash belongs to the crosshair, and the crosshair goes with
+    // the selection: a row cursor scrolled out of view leaves the widget
+    // painting neither band, so a heading lit on its own would be the only mark
+    // on an unlit grid (design §4). A column selection does not depend on where
+    // the row viewport sits.
     let heading = match mode {
-        SelectionMode::Cell => Some(theme.style(Token::Crosshair)),
+        SelectionMode::Cell => row.is_some().then(|| theme.style(Token::Crosshair)),
         SelectionMode::Column => Some(theme.style(Token::Selected)),
         SelectionMode::Row => None,
     };
@@ -325,7 +331,6 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     // The gutter is a column of the widget but not of the page, so the
     // selected column is one further right than the domain's index.
     let drawn_column = column.saturating_sub(first_column) + 1;
-    let row = visible(selected, offset, height);
 
     let (table, selection) = match mode {
         SelectionMode::Cell => (
