@@ -409,14 +409,14 @@ conditionally, and naming it there would still be a lie in most frames
 (design §3). A binding that is in none of a title, the bar, or the palette is
 a binding only this file knows about.
 
-**Motion is assumed, not taught.** `j`/`k`, `h`/`l`, the arrows and
-`PageUp`/`PageDown` are off every panel's bar: a user of a terminal list
+**Motion is assumed, not taught.** `j`/`k`, `h`/`l`, `Home`/`End`, the arrows
+and `PageUp`/`PageDown` are off every panel's bar: a user of a terminal list
 reaches for them before reading anything, and a bar that spends its width on
 them has none left for what is particular to the panel — which is the only
 thing a *contextual* bar is for. `Shift-Tab` is `Tab`'s inverse and is off it
-for the same reason. The two exceptions are `Home`/`End`, which are exact
-where paging is not, and the theme picker's `j/k preview`, where what the hint
-teaches is the side effect rather than the motion (§1's picker subsection).
+for the same reason. The one exception is the theme picker's `j/k preview`,
+where what the hint teaches is the side effect rather than the motion (§1's
+picker subsection).
 The palette lists every one of them regardless — that is the division of
 labour the next paragraph states.
 

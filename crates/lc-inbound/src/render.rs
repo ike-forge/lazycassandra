@@ -725,7 +725,7 @@ mod tests {
         let drawn = row(&buffer, 23);
         let hints: String = drawn.chars().skip(taken).collect();
 
-        assert_eq!(hints.trim_end(), " home/end ends │ ?/esc close  q quit");
+        assert_eq!(hints.trim_end(), " ?/esc close  q quit");
     }
 
     #[test]
@@ -738,8 +738,8 @@ mod tests {
         assert!(bars[0].contains("⏎ open"), "Tables opens: {:?}", bars[0]);
         assert!(bars[1].contains("/ search"), "Ddl filters: {:?}", bars[1]);
         assert!(
-            bars[2].contains("home/end ends"),
-            "Contents moves: {:?}",
+            bars[2].contains("/ search"),
+            "Contents filters: {:?}",
             bars[2]
         );
         assert!(

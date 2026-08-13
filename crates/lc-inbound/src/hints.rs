@@ -229,7 +229,12 @@ mod tests {
 
     #[test]
     fn the_widest_bar_still_fits_the_narrowest_legal_frame() {
-        assert_eq!(drawn(Panel::Ddl, 40), " home/end ends │ tab panel  q quit");
+        // Tables, now that no bar teaches motion: two panel hints and the
+        // global tail a 40-column frame carries (`?` needs a taller one).
+        assert_eq!(
+            drawn(Panel::Tables, 40),
+            " ⏎ open  / search │ tab panel  q quit"
+        );
     }
 
     #[test]

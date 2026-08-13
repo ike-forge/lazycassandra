@@ -184,10 +184,11 @@ pub enum Panel {
     Queries,
 }
 
-// Motion is not here, in any panel's bar: `j`/`k`, the arrows and
-// `pgup`/`pgdn` are what a user of a terminal list already reaches for, and a
-// bar that spends its width teaching them has none left for what is particular
-// to the panel (docs/shortcuts.md §2). The palette still lists every one.
+// Motion is not here, in any panel's bar: `j`/`k`, `home`/`end`, the arrows
+// and `pgup`/`pgdn` are what a user of a terminal list already reaches for,
+// and a bar that spends its width teaching them has none left for what is
+// particular to the panel (docs/shortcuts.md §2). The palette still lists
+// every one.
 const TABLES_HINTS: &[Binding] = &[
     // `⏎` on a keyspace folds it and on a table reads it. The bar names the
     // focused panel and nothing finer (design §1), so one label has to cover
@@ -204,27 +205,15 @@ const TABLES_HINTS: &[Binding] = &[
     },
 ];
 
-const DDL_HINTS: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
-        action: "ends",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('/'))],
-        action: "search",
-    },
-];
+const DDL_HINTS: &[Binding] = &[Binding {
+    keys: &[KeyPress::new(Key::Char('/'))],
+    action: "search",
+}];
 
-const CONTENTS_HINTS: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
-        action: "ends",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('/'))],
-        action: "search",
-    },
-];
+const CONTENTS_HINTS: &[Binding] = &[Binding {
+    keys: &[KeyPress::new(Key::Char('/'))],
+    action: "search",
+}];
 
 const QUERIES_HINTS: &[Binding] = &[
     // First: it is what the panel is for. `⏎ newline` and `esc leave` are what

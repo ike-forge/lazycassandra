@@ -72,16 +72,6 @@ pub(crate) const QUIT: Binding = Binding {
     action: "quit",
 };
 
-/// What the bar names in place of the focused panel's group while the palette
-/// is open (design §7). One row: `esc`/`q` are `PALETTE_GLOBAL`'s below, `⏎`
-/// is inert until the palette can run a command (design §10), and moving by a
-/// row or a screen is assumed rather than taught, in here as in every panel
-/// bar (docs/shortcuts.md §2) — which leaves the ends.
-const PALETTE: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
-    action: "ends",
-}];
-
 /// `esc` is named only here. The bar leaves it out everywhere else because it
 /// does something only when an overlay is up, and naming it always would be a
 /// lie in most frames (hint bar design §3). With the palette open it is never
@@ -150,9 +140,14 @@ const CLEAR: Binding = Binding {
 };
 
 pub(crate) fn bar(state: &State) -> HintBar {
+    // No panel group: `⏎` is inert until the palette can run a command
+    // (design §10), and moving — by a row, by a screen, or to an end — is
+    // assumed rather than taught, in here as in every panel bar
+    // (docs/shortcuts.md §2). That leaves nothing the palette alone responds
+    // to, so the bar names only the ways out.
     if matches!(state.overlay, Some(Overlay::Commands(_))) {
         return HintBar {
-            panel: PALETTE.iter().map(rendered).collect(),
+            panel: Vec::new(),
             global: PALETTE_GLOBAL.iter().map(rendered).collect(),
         };
     }
@@ -402,7 +397,11 @@ mod tests {
 
         let bar = bar(&state);
 
-        assert_eq!(bar.panel[0].action, "ends");
+        assert!(
+            bar.panel.is_empty(),
+            "the palette answers to nothing a terminal list does not: {:?}",
+            bar.panel
+        );
         assert_eq!(bar.global[0].keys, "?/esc");
         assert_eq!(bar.global[0].action, "close");
         assert_eq!(bar.global.last().expect("q is last").action, "quit");
