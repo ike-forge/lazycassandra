@@ -526,7 +526,7 @@ which is a spec-level change.
 | `A` `B` `C` `D` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. `T` opened the theme picker until the picker moved to `ctrl-t`, and is free again. |
 | `t` focus | Was Tables until the focus letters moved to four adjacent keys (§1). Free, and deliberately left so for a while — a finger that learnt it should find nothing rather than something else. |
 | `Space` | Was `Enter`'s synonym on a tree row. One key, one action (§2). |
-| `ctrl-e` / `ctrl-y` | Moved the DDL viewport a line without its cursor. Reading a panel from its heading down needs a design, not two chords. |
+| `ctrl-e` / `ctrl-y` | Moved the DDL viewport a line without its cursor. Reading a panel from its heading down needs a design, not two chords. The yank slice did not claim `ctrl-y`: `y` was free as a plain key, and a yank in Queries needs a selection first (yank design §1). |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
 | Horizontal wheel | Dropped at the edge, and this slice did not pick it up. A notch moves the row viewport; columns are reached with the keys §1 names. |
@@ -711,6 +711,12 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The palette lists it | `the_catalogue_lists_the_external_editor` (`commands.rs`) |
 | The bar names it after `ctrl-r run` | `the_queries_bar_names_the_editor_binding_after_run` (`view/hints.rs`) |
 | No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
+| `y` yanks the focused row, per panel | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
+| A null yanks as nothing, and the word does not | `a_null_yanks_as_an_empty_field`, `a_text_null_yanks_as_the_word` (`yank.rs`) |
+| A column and a DDL row carry their own fields | `a_column_row_carries_the_part_it_plays`, `a_partition_column_yanks_without_an_order`, `a_property_and_an_identity_row_yank_their_two_fields`, `a_keyspace_yanks_its_name_and_a_table_its_qualified_one` (`yank.rs`) |
+| Nothing under the cursor yanks nothing | `y_on_an_empty_panel_yanks_nothing` |
+| `y` types itself in Queries | `y_is_text_in_the_editor` |
+| The encoder quotes exactly what it must | `a_field_is_quoted_only_when_it_has_to_be`, `an_embedded_quote_is_doubled`, `a_line_ends_without_a_newline` (`yank.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an

@@ -2531,6 +2531,13 @@ mod tests {
         assert_eq!(state.queries.text(), "tacujkhlq");
     }
 
+    #[test]
+    fn y_is_text_in_the_editor() {
+        let state = editing("y");
+
+        assert_eq!(state.queries.text(), "y");
+    }
+
     /// `?` is a CQL bind marker before it is a shortcut, so the editor has to
     /// win it. Neither parent of the merge that brought the palette and the
     /// editor together could test this: each was the only mode in its branch.

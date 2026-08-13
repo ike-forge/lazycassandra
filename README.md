@@ -26,6 +26,12 @@ mise run check   # fmt, clippy with warnings denied, licences and advisories
 mise run ci      # everything CI gates on
 ```
 
+## Clipboard
+
+`y` copies the focused row through OSC 52, which needs a terminal that
+supports it (Windows Terminal, WezTerm, kitty, alacritty; tmux with
+`set-clipboard on`). On a terminal without it, `y` does nothing observable.
+
 ## Fixture cluster
 
 A single-node Cassandra with three keyspaces covering the nominal case, every
