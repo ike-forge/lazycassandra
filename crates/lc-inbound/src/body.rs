@@ -16,6 +16,7 @@
 //! several wrapped lines, which only the renderer that wrapped them can
 //! measure (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4).
 
+use lc_domain::contents::SelectionMode;
 use lc_domain::grid::{COLUMN_SPACING, available, fitting};
 use lc_domain::state::Span;
 use lc_domain::style::Token;
@@ -135,6 +136,7 @@ pub(crate) fn render(
             offset,
             first_column,
             column,
+            mode,
             gutter,
         } => {
             let (extent, horizontal) = grid(
@@ -147,6 +149,7 @@ pub(crate) fn render(
                     offset: *offset,
                     first_column: *first_column,
                     column: *column,
+                    mode: *mode,
                     gutter: *gutter,
                 },
                 theme,
@@ -227,7 +230,17 @@ struct GridView<'a> {
     offset: usize,
     first_column: usize,
     column: usize,
+    mode: SelectionMode,
     gutter: u16,
+}
+
+/// Which of `TableState`'s three selections this frame carries. A row scrolled
+/// out of view is `None` in `Cell` and `Row` alike; a column selection does not
+/// depend on where the row viewport sits (design §4).
+enum Selection {
+    Cell(Option<(usize, usize)>),
+    Row(Option<usize>),
+    Column(Option<usize>),
 }
 
 fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent, Extent) {
@@ -238,6 +251,7 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         offset,
         first_column,
         column,
+        mode,
         gutter,
     } = *view;
 
@@ -265,12 +279,40 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     let constraints = std::iter::once(Constraint::Length(gutter))
         .chain(drawn_widths.iter().copied().map(Constraint::Length));
 
+    let row = visible(selected, offset, height);
+    // The heading's wash belongs to the crosshair, and the crosshair goes with
+    // the selection: a row cursor scrolled out of view leaves the widget
+    // painting neither band, so a heading lit on its own would be the only mark
+    // on an unlit grid (design §4). A column selection does not depend on where
+    // the row viewport sits.
+    let heading = match mode {
+        SelectionMode::Cell => row.is_some().then(|| theme.style(Token::Crosshair)),
+        SelectionMode::Column => Some(theme.style(Token::Selected)),
+        SelectionMode::Row => None,
+    };
     let header = Row::new(
         std::iter::once(Cell::from(Text::raw(" ".repeat(usize::from(gutter))))).chain(
             columns[drawn.clone()]
                 .iter()
                 .zip(&drawn_widths)
-                .map(|(column, width)| styled(&column.name, column.token, *width, theme)),
+                .enumerate()
+                .map(|(index, (heading_column, width))| {
+                    // A projection's columns carry no token at all, and
+                    // claiming one for them under the wash would be a
+                    // decoration the schema does not support
+                    // (`view::contents`): the wash composes onto whatever the
+                    // heading already draws, which for those is nothing.
+                    let base = heading_column
+                        .token
+                        .map_or_else(Style::new, |token| theme.style(token));
+
+                    let style = match heading.filter(|_| first_column + index == column) {
+                        Some(wash) => base.patch(wash),
+                        None => base,
+                    };
+
+                    styled_cell(&heading_column.name, Some(style), *width)
+                }),
         ),
     );
 
@@ -289,16 +331,43 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
 
     let table = Table::new(body, constraints)
         .header(header)
-        .column_spacing(COLUMN_SPACING)
-        .row_highlight_style(theme.style(Token::Selected))
-        .cell_highlight_style(theme.style(Token::SelectedCell));
+        .column_spacing(COLUMN_SPACING);
+
     // The gutter is a column of the widget but not of the page, so the
     // selected column is one further right than the domain's index.
-    let cell =
-        visible(selected, offset, height).map(|row| (row, column.saturating_sub(first_column) + 1));
-    let mut state = TableState::default()
-        .with_offset(offset)
-        .with_selected_cell(cell);
+    let drawn_column = column.saturating_sub(first_column) + 1;
+    // `None` where the cursor is off the right of what fits: ratatui clamps
+    // `selected_column` to the last column it drew, so column mode would lay a
+    // full-height band over a column the heading gate — which asks the same
+    // question of the page's own indices — does not match. `follow_grid_columns`
+    // runs against the geometry of the frame before this one, so a resize that
+    // narrows the panel reaches this state for a frame.
+    let selected_column = drawn.contains(&column).then_some(drawn_column);
+
+    let (table, selection) = match mode {
+        SelectionMode::Cell => (
+            table
+                .row_highlight_style(theme.style(Token::Crosshair))
+                .column_highlight_style(theme.style(Token::Crosshair))
+                .cell_highlight_style(theme.style(Token::SelectedCell)),
+            Selection::Cell(row.map(|row| (row, drawn_column))),
+        ),
+        SelectionMode::Row => (
+            table.row_highlight_style(theme.style(Token::Selected)),
+            Selection::Row(row),
+        ),
+        SelectionMode::Column => (
+            table.column_highlight_style(theme.style(Token::Selected)),
+            Selection::Column(selected_column),
+        ),
+    };
+
+    let mut state = TableState::default().with_offset(offset);
+    state = match selection {
+        Selection::Cell(cell) => state.with_selected_cell(cell),
+        Selection::Row(row) => state.with_selected(row),
+        Selection::Column(column) => state.with_selected_column(column),
+    };
 
     frame.render_stateful_widget(table, area, &mut state);
 
@@ -338,10 +407,6 @@ fn cell_style(cell: &GridCell, theme: Theme) -> Option<Style> {
 
     let matched = theme.style(Token::Match);
     Some(base.map_or(matched, |base| base.patch(matched)))
-}
-
-fn styled(text: &str, token: Option<Token>, width: u16, theme: Theme) -> Cell<'static> {
-    styled_cell(text, token.map(|token| theme.style(token)), width)
 }
 
 fn styled_cell(text: &str, style: Option<Style>, width: u16) -> Cell<'static> {

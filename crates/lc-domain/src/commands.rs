@@ -138,6 +138,10 @@ const CONTENTS: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('h')), KeyPress::new(Key::Left)],
         action: "previous column",
     },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('m'))],
+        action: "cycle selection mode",
+    },
 ];
 
 // The editor's printable keys are not rows: every one of them types itself,
@@ -355,6 +359,7 @@ fn seek(from: usize, direction: Direction) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::Panel;
 
     /// The widest row `MIN_W` in the renderer is derived from
     /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §5): a
@@ -458,6 +463,39 @@ mod tests {
                 .any(|binding| binding.keys.contains(&KeyPress::new(Key::Char('/')))),
             "no row binds /"
         );
+    }
+
+    #[test]
+    fn the_catalogue_lists_the_selection_mode_key() {
+        assert!(
+            commands()
+                .iter()
+                .any(|binding| binding.keys.contains(&KeyPress::new(Key::Char('m')))),
+            "no row binds m"
+        );
+    }
+
+    /// A hint is the half of the pair that chooses what to teach; the palette
+    /// is the half with no discretion (docs/shortcuts.md §5). So a key a bar
+    /// names is by construction a key that does something, and the catalogue
+    /// owes it a row. `m` reached a bar and no group, which is what this
+    /// catches without anyone having to read the document.
+    #[test]
+    fn the_catalogue_lists_every_key_a_panel_hints_at() {
+        let catalogued = commands();
+
+        for panel in Panel::ALL {
+            for hint in panel.hints() {
+                for press in hint.keys {
+                    assert!(
+                        catalogued
+                            .iter()
+                            .any(|binding| binding.keys.contains(press)),
+                        "{panel:?} hints at {press:?} and no group lists it"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

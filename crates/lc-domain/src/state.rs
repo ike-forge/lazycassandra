@@ -210,10 +210,16 @@ const DDL_HINTS: &[Binding] = &[Binding {
     action: "search",
 }];
 
-const CONTENTS_HINTS: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Char('/'))],
-    action: "search",
-}];
+const CONTENTS_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Char('m'))],
+        action: "mode",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('/'))],
+        action: "search",
+    },
+];
 
 const QUERIES_HINTS: &[Binding] = &[
     // First: it is what the panel is for. `⏎ newline` and `esc leave` are what

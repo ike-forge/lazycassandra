@@ -18,6 +18,9 @@ pub struct ContentsPanel {
     /// which is what a future delete or edit acts on
     /// (docs/superpowers/specs/2026-08-10-table-display-design.md §2).
     pub column: Cursor,
+    /// How the two cursors above are drawn
+    /// (docs/superpowers/specs/2026-08-13-selection-modes-design.md §2).
+    pub mode: SelectionMode,
     /// The first row drawn (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
     /// The first column drawn (docs/superpowers/specs/2026-08-10-table-display-design.md §5).
@@ -30,6 +33,32 @@ pub struct ContentsPanel {
     /// filters, not because setting it here owes a repair — Contents filters
     /// nothing, so there is no clamp to skip.
     filter: Option<Filter>,
+}
+
+/// Which of the grid's two cursors is painted, and how.
+///
+/// Changes nothing but the highlight: both cursors move on the same keys in
+/// every mode, so no key changes meaning and docs/shortcuts.md §2 stands
+/// (design §3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SelectionMode {
+    /// The cell, over a faint wash across its row and its column.
+    #[default]
+    Cell,
+    Row,
+    Column,
+}
+
+impl SelectionMode {
+    /// The next mode `m` reaches, wrapping.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Cell => Self::Row,
+            Self::Row => Self::Column,
+            Self::Column => Self::Cell,
+        }
+    }
 }
 
 /// How far along the panel's one request is.
@@ -552,5 +581,44 @@ mod tests {
 
         assert_eq!(panel.column.index(), 0);
         assert_eq!(panel.columns.first(), 0);
+    }
+
+    #[test]
+    fn a_fresh_panel_selects_a_cell() {
+        assert_eq!(ContentsPanel::default().mode, SelectionMode::Cell);
+    }
+
+    #[test]
+    fn the_mode_cycles_cell_row_column_and_wraps() {
+        let mut mode = SelectionMode::Cell;
+
+        mode = mode.next();
+        assert_eq!(mode, SelectionMode::Row);
+        mode = mode.next();
+        assert_eq!(mode, SelectionMode::Column);
+        mode = mode.next();
+        assert_eq!(mode, SelectionMode::Cell, "the third press comes home");
+    }
+
+    /// The mode is how the user reads a grid, not something about this page.
+    /// `requested` clears the cursors because a new page has different rows to
+    /// point at; it has no reason to un-choose the way they are drawn.
+    #[test]
+    fn a_new_request_keeps_the_mode_and_clears_the_cursors() {
+        let mut panel = ContentsPanel {
+            mode: SelectionMode::Column,
+            ..Default::default()
+        };
+        panel.cursor.go_to(3, 10);
+        panel.column.go_to(2, 5);
+
+        panel.requested(
+            QueryId::next(),
+            Subject::Table(TableRef::new("shop", "orders")),
+        );
+
+        assert_eq!(panel.mode, SelectionMode::Column);
+        assert_eq!(panel.cursor.index(), 0);
+        assert_eq!(panel.column.index(), 0);
     }
 }

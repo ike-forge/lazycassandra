@@ -37,6 +37,9 @@ pub(crate) struct Palette {
     /// read against `highlight` (design §3.1). `None` keeps the row's own
     /// column colours; `Some` flattens them for legibility.
     pub(crate) highlight_text: Option<Color>,
+    /// The wash under a selected cell's row and column: the shade between the
+    /// field and `highlight` (selection modes design §5).
+    pub(crate) crosshair: Color,
     /// The focused panel's border and title.
     pub(crate) focus: Color,
     /// The letter that focuses a panel, inside that panel's title. Read
@@ -150,6 +153,7 @@ impl Theme {
             // glance the way btop's and Midnight Commander's do.
             Token::Shortcut => fg(palette.shortcut).add_modifier(Modifier::BOLD),
             Token::Selected => selected(palette),
+            Token::Crosshair => crosshair(palette),
             // `fg` and `BOLD` both: where a palette declines
             // `highlight_text`, the colour survives being patched under the
             // row's highlight style; where it spends one, that fg overwrites
@@ -183,6 +187,19 @@ fn selected(palette: &Palette) -> Style {
     }
 }
 
+/// The cursor row and column in cell mode. `highlight_text` for the reason
+/// [`selected`] spends it: a theme that cannot know what it is drawn over gives
+/// the row's own colours up for legibility, and one that can keeps them
+/// (selection modes design §4).
+fn crosshair(palette: &Palette) -> Style {
+    let style = Style::new().bg(palette.crosshair);
+
+    match palette.highlight_text {
+        Some(color) => style.fg(color),
+        None => style,
+    }
+}
+
 fn fg(color: Color) -> Style {
     Style::new().fg(color)
 }
@@ -208,7 +225,7 @@ fn style_of(background: Option<Color>, foreground: Option<Color>) -> Style {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::theme::contrast::{BLACK, WHITE, ratio};
+    use crate::theme::contrast::{BLACK, WHITE, luminance, ratio};
 
     /// Every role a theme can spend on text, and the input to both contrast
     /// tests. `base`, `surface` and `highlight` are what text is drawn *on*.
@@ -227,6 +244,7 @@ pub(crate) mod tests {
             panel_border: _,
             highlight: _,
             highlight_text: _,
+            crosshair: _,
             focus: _,
             shortcut,
             muted,
@@ -278,17 +296,18 @@ pub(crate) mod tests {
     /// through `ground`, and a token that painted a background of its own
     /// would put a patch of some other colour over it — which is the same
     /// defect in a flavour as it is in the theme that leaves the field to the
-    /// terminal (design §2, §3).
+    /// terminal (design §2, §3). The crosshair is the second exception, and a
+    /// bar is what it is (selection modes design §5).
     #[test]
-    fn the_cursor_row_is_the_only_token_that_paints_a_background() {
+    fn only_the_cursor_row_and_its_crosshair_paint_a_background() {
         for choice in ThemeChoice::ALL {
             let theme = Theme::of(choice);
 
             for token in EVERY_TOKEN {
                 let background = theme.style(token).bg;
 
-                if matches!(token, Token::Selected) {
-                    assert!(background.is_some(), "{choice:?}: the cursor row is a bar");
+                if matches!(token, Token::Selected | Token::Crosshair) {
+                    assert!(background.is_some(), "{choice:?}: {token:?} is a bar");
                 } else {
                     assert_eq!(
                         background, None,
@@ -296,6 +315,69 @@ pub(crate) mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The wash sits between the field and the cursor bar, in luminance and
+    /// not merely in intent: on the far side of `highlight` it would be the
+    /// louder of the two bands and cell mode would shout over row mode, and on
+    /// the ground it would not be visible at all.
+    ///
+    /// The ordering runs upwards for a dark flavour and downwards for Latte,
+    /// so what is asserted is that `crosshair` lies strictly between the two —
+    /// `base`'s side of `highlight`, by a margin. The floor is 0.015 rather
+    /// than the 0.02 `a_highlight_bar_is_distinct_from_its_field` holds
+    /// `highlight` to: Mocha's `surface0` clears its own base by 0.0195, and
+    /// upstream Catppuccin's spacing of its surfaces is not ours to retune
+    /// (catppuccin design §8).
+    ///
+    /// The terminal-default theme declares no `base` — it cannot see the
+    /// ground it is drawn on — so there it is only the gap to `highlight` that
+    /// can be checked.
+    #[test]
+    fn the_crosshair_is_fainter_than_the_cursor_row() {
+        const FLOOR: f64 = 0.015;
+
+        for choice in ThemeChoice::ALL {
+            let palette = Theme::of(choice).palette();
+            let (crosshair, highlight) =
+                (luminance(palette.crosshair), luminance(palette.highlight));
+
+            assert!(
+                (highlight - crosshair).abs() >= FLOOR,
+                "{choice:?}: a crosshair this close to the cursor row \
+                 says nothing about which mode is up"
+            );
+
+            let Some(base) = palette.base.map(luminance) else {
+                continue;
+            };
+
+            assert!(
+                (crosshair - base).abs() >= FLOOR,
+                "{choice:?}: an invisible wash"
+            );
+            assert!(
+                (base < crosshair && crosshair < highlight)
+                    || (base > crosshair && crosshair > highlight),
+                "{choice:?}: the wash is not between the field and the cursor bar"
+            );
+        }
+    }
+
+    /// The wash's whole purpose is to leave the column colouring readable
+    /// under it (vision.md §2). A theme may give that up only where it has
+    /// already given it up for the cursor row, by declaring `highlight_text`.
+    #[test]
+    fn the_crosshair_flattens_no_colour_the_cursor_row_keeps() {
+        for choice in ThemeChoice::ALL {
+            let theme = Theme::of(choice);
+
+            assert_eq!(
+                theme.style(Token::Crosshair).fg,
+                theme.style(Token::Selected).fg,
+                "{choice:?}: the crosshair spends a foreground the cursor row does not"
+            );
         }
     }
 
@@ -396,7 +478,7 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 24] = [
+    pub(super) const EVERY_TOKEN: [Token; 25] = [
         Token::PartitionKey,
         Token::ClusteringKey,
         Token::StaticColumn,
@@ -413,6 +495,7 @@ pub(crate) mod tests {
         Token::Focused,
         Token::Selected,
         Token::SelectedCell,
+        Token::Crosshair,
         Token::Shortcut,
         Token::HintKey,
         Token::HintAction,

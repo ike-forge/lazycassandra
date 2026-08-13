@@ -113,6 +113,7 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         offset: state.contents.scroll.offset(),
         first_column: state.contents.columns.first(),
         column: state.contents.column.index(),
+        mode: state.contents.mode,
         gutter: crate::grid::gutter(page.rows.len()),
     }
 }

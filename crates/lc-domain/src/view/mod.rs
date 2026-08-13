@@ -23,6 +23,7 @@ pub use title::{PanelTitle, TAB_SEPARATOR, Tab};
 pub use crate::editor::Position;
 
 use crate::commands::{self, CommandRow};
+use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
 use crate::model::DbError;
 use crate::state::{Message, Overlay, Panel, State};
@@ -183,6 +184,9 @@ pub enum PanelBody {
         first_column: usize,
         /// The selected column, an index into `columns`.
         column: usize,
+        /// Which of `selected` and `column` is drawn, and how
+        /// (docs/superpowers/specs/2026-08-13-selection-modes-design.md §4).
+        mode: SelectionMode,
         /// Character columns the row-number gutter takes, or zero for a grid
         /// with no rows.
         gutter: u16,
