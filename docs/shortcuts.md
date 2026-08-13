@@ -584,6 +584,11 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Unfolding does not move focus, and a read leaves the tree alone | `unfolding_a_keyspace_leaves_focus_in_tables`, `reading_a_table_leaves_the_tree_selection_where_it_was`, `reading_a_table_lands_focus_in_contents_and_j_walks_the_grid_rather_than_the_tree` (`lc-outbound/tests/scenario.rs`) |
 | The cell is drawn over its row, and the gutter numbers the page | `the_selected_cell_is_marked_apart_from_the_rest_of_its_row`, `the_gutter_is_muted_and_the_values_beside_it_are_not`, `rows_are_numbered_from_one`, `the_row_number_is_the_pages_own_index_after_a_scroll` (`inbound/render.rs`) |
 | The cell highlight reads against the row's without a colour | `a_selected_cell_reads_against_the_selected_row_without_spending_a_colour` (`inbound/theme/mod.rs`) |
+| `m` cycles the selection mode, and does so only in Contents | `m_cycles_the_contents_selection_mode`, `m_does_nothing_outside_the_grid`, `m_types_an_m_in_queries` |
+| A fresh panel opens in cell mode, cycling wraps, and a new request keeps the mode | `a_fresh_panel_selects_a_cell`, `the_mode_cycles_cell_row_column_and_wraps`, `a_new_request_keeps_the_mode_and_clears_the_cursors` (`contents.rs`) |
+| Row mode lights the row and column mode lights the column and its heading | `row_mode_lights_the_whole_row_and_no_column`, `column_mode_lights_the_column_and_its_heading`, `a_heading_is_unwashed_once_the_crosshair_scrolls_out_of_view` (`inbound/render.rs`) |
+| The wash leaves a flavour's column colours, and a key column's heading colour, alone | `the_crosshair_leaves_a_flavours_column_colours_alone`, `a_key_columns_heading_keeps_its_colour_under_the_wash` (`inbound/render.rs`) |
+| The crosshair is fainter than the cursor row and flattens no colour the row keeps | `the_crosshair_is_fainter_than_the_cursor_row`, `the_crosshair_flattens_no_colour_the_cursor_row_keeps` (`inbound/theme/mod.rs`) |
 | The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render.rs`) |
 | A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
 | The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something` |
@@ -614,7 +619,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A click dismisses the picker and restores the theme | `a_click_dismisses_the_picker_and_restores_the_theme` |
 | The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
 | The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
-| The default theme paints no panel field, and the cursor row is the one token that paints a background | `the_default_theme_paints_no_panel_field`, `the_cursor_row_is_the_only_token_that_paints_a_background` (`inbound/theme/mod.rs`) |
+| The default theme paints no panel field, and only the cursor row and the crosshair paint a background | `the_default_theme_paints_no_panel_field`, `only_the_cursor_row_and_its_crosshair_paint_a_background` (`inbound/theme/mod.rs`) |
 | The default palette reads on black and on white | `the_default_palette_reads_on_black_and_on_white` (`inbound/theme/mod.rs`) |
 | Every flavour reads against its own base, and a highlight bar is distinct from its field | `every_flavour_reads_against_its_own_base`, `a_highlight_bar_is_distinct_from_its_field` (`inbound/theme/catppuccin.rs`) |
 | Every flavour sets every surface | `every_flavour_paints_every_surface` (`inbound/theme/catppuccin.rs`) |
