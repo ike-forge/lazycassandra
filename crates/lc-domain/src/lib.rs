@@ -20,6 +20,7 @@ pub mod theme;
 pub mod tree;
 pub mod update;
 pub mod view;
+pub mod yank;
 
 pub use posture::Posture;
 pub use state::State;
