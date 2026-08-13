@@ -54,7 +54,8 @@ on the mode rather than fixed to the panel:
 | DDL, Columns tab | `name,type,kind`, as one CSV line |
 | Tables | The node's bare name — `shop`, `shop.orders` — not a CSV line |
 
-See [yank design](specs/2026-08-13-yank-design.md) §2.
+See [yank design](specs/2026-08-13-yank-design.md) §2 and
+[yank selection modes](specs/2026-08-13-yank-selection-modes-design.md) §1.
 
 The four focus letters are drawn in a colour of their own in their panel's
 title, so the binding is learned by looking at the panel rather than by reading
