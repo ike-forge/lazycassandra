@@ -5,7 +5,7 @@
 //! open one with (architecture.md §3).
 
 use crate::commands::CommandsPanel;
-use crate::contents::{ContentsState, Subject, TableRef};
+use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
 use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
@@ -334,7 +334,7 @@ fn quit(state: &mut State) -> Vec<Effect> {
 /// (yank design §1).
 fn yank(state: &State) -> Vec<Effect> {
     let line = match state.focus {
-        Panel::Contents => grid_row(state),
+        Panel::Contents => contents(state),
         Panel::Tables => tree_node(state),
         Panel::Ddl => detail_row(state),
         Panel::Queries => None,
@@ -343,14 +343,31 @@ fn yank(state: &State) -> Vec<Effect> {
     line.map(Effect::Yank).into_iter().collect()
 }
 
-fn grid_row(state: &State) -> Option<String> {
+/// Which of the grid's two cursors `y` means is what the selection mode
+/// answers (docs/superpowers/specs/2026-08-13-yank-selection-modes-design.md §1).
+fn contents(state: &State) -> Option<String> {
     let ContentsState::Loaded { page, .. } = state.contents.state() else {
         return None;
     };
+    let page = page.page();
 
-    let row = page.page().rows.get(state.contents.cursor.index())?;
+    match state.contents.mode {
+        SelectionMode::Row => {
+            let row = page.rows.get(state.contents.cursor.index())?;
 
-    Some(crate::yank::grid_row(row))
+            Some(crate::yank::grid_row(row))
+        }
+        SelectionMode::Cell => {
+            let row = page.rows.get(state.contents.cursor.index())?;
+            let value = row.values.get(state.contents.column.index())?;
+
+            crate::yank::grid_cell(value)
+        }
+        // An empty page would encode to the empty string, and handing that to
+        // `Effect::Yank` asks the terminal to clear its clipboard (design §4).
+        SelectionMode::Column => (!page.rows.is_empty())
+            .then(|| crate::yank::grid_column(&page.rows, state.contents.column.index())),
+    }
 }
 
 fn tree_node(state: &State) -> Option<String> {
@@ -3574,6 +3591,7 @@ mod tests {
             },
         );
 
+        state.contents.mode = SelectionMode::Row;
         let effects = press(&mut state, Key::Char('y'));
 
         assert_eq!(effects, vec![Effect::Yank("7,ada".to_owned())]);
@@ -3618,9 +3636,135 @@ mod tests {
             "the viewport must hide at least one column for this test to prove anything"
         );
 
+        state.contents.mode = SelectionMode::Row;
         assert_eq!(
             press(&mut state, Key::Char('y')),
             vec![Effect::Yank("v0,v1,v2,v3".to_owned())]
+        );
+    }
+
+    /// The panel opens in cell mode, so this is what `y` now does by default
+    /// (design §1).
+    #[test]
+    fn y_yanks_the_cell_in_cell_mode() {
+        let mut state = grid_of_rows(3, 2, 80);
+        state.contents.cursor.go_to(1, 2);
+        state.contents.column.go_to(2, 3);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(line)) = effects.first() else {
+            panic!("cell mode yanks the value under the two cursors, got {effects:?}");
+        };
+        assert!(
+            !line.contains(','),
+            "a cell carries one value and no delimiter, got {line:?}"
+        );
+    }
+
+    #[test]
+    fn y_still_yanks_the_row_in_row_mode() {
+        let mut state = grid_of_rows(3, 2, 80);
+        state.contents.mode = SelectionMode::Row;
+        state.contents.cursor.go_to(0, 2);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(line)) = effects.first() else {
+            panic!("row mode yanks the row, got {effects:?}");
+        };
+        assert_eq!(
+            line.matches(',').count(),
+            2,
+            "three columns make two separators, got {line:?}"
+        );
+    }
+
+    #[test]
+    fn y_yanks_the_column_in_column_mode() {
+        let mut state = grid_of_rows(3, 2, 80);
+        state.contents.mode = SelectionMode::Column;
+        state.contents.column.go_to(1, 3);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(line)) = effects.first() else {
+            panic!("column mode yanks the column, got {effects:?}");
+        };
+        assert_eq!(
+            line.matches(',').count(),
+            1,
+            "two rows make one separator, got {line:?}"
+        );
+    }
+
+    /// An empty OSC 52 payload asks the terminal to clear its clipboard, so a
+    /// `y` with nothing to say must say nothing (design §4).
+    #[test]
+    fn y_on_a_null_cell_raises_no_effect() {
+        let mut state = browsing_a_table();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page {
+                    columns: vec!["id".to_owned()],
+                    rows: vec![Row {
+                        values: vec![CqlValue::Null],
+                    }],
+                    next: None,
+                }),
+            },
+        );
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(
+            effects.is_empty(),
+            "a null has no text, and an empty yank would wipe the clipboard"
+        );
+    }
+
+    #[test]
+    fn y_in_column_mode_on_a_page_with_no_rows_yanks_nothing() {
+        let mut state = browsing_a_table();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page {
+                    columns: vec!["id".to_owned()],
+                    rows: Vec::new(),
+                    next: None,
+                }),
+            },
+        );
+        state.contents.mode = SelectionMode::Column;
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(effects.is_empty(), "an empty column is nothing to yank");
+    }
+
+    /// What is drawn is a window; what is yanked is the column (design §6).
+    #[test]
+    fn a_column_yank_carries_rows_the_viewport_hides() {
+        let mut state = grid_of_rows(1, 20, 80);
+        state.contents.mode = SelectionMode::Column;
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(line)) = effects.first() else {
+            panic!("a loaded column yanks, got {effects:?}");
+        };
+        assert_eq!(
+            line.matches(',').count(),
+            19,
+            "twenty rows make nineteen separators, however few are on screen"
         );
     }
 
