@@ -324,11 +324,11 @@ fn number(index: usize, gutter: u16, theme: Theme) -> Cell<'static> {
 }
 
 /// A matched cell composes `Token::Match` onto whatever `token` already
-/// draws, rather than replacing it: `token` is what keeps a null apart from a
-/// text cell holding the word `"null"` (design §4.3), and overwriting it
-/// would lose that distinction for exactly the cells the user just went
-/// looking for. `Style::patch` is the same composition idiom the selected
-/// row already relies on, via `row_highlight_style`.
+/// draws, rather than replacing it, the same composition idiom the selected
+/// row already relies on via `row_highlight_style`. `Token::Match` overwrites
+/// `fg`, so a matched null and a matched cell holding the literal word
+/// `"null"` draw alike; the tokens carry no modifier to tell them apart by
+/// (design §4.1).
 fn cell_style(cell: &GridCell, theme: Theme) -> Option<Style> {
     let base = cell.token.map(|token| theme.style(token));
 

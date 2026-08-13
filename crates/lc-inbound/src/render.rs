@@ -292,7 +292,8 @@ fn panel_title<'a>(
     lead: usize,
 ) -> Line<'a> {
     let shortcut = theme.style(Token::Shortcut);
-    let separator = theme.style(Token::Muted);
+    let separator = theme.style(Token::Faint);
+    let muted = theme.style(Token::Muted);
     let active = if is_focused_panel {
         theme.style(Token::Focused)
     } else {
@@ -306,7 +307,7 @@ fn panel_title<'a>(
             spans.push(Span::styled(lc_domain::view::TAB_SEPARATOR, separator));
         }
 
-        let style = if tab.active { active } else { separator };
+        let style = if tab.active { active } else { muted };
         let (before, mark, after) = match form {
             Strip::Short => tab.split_short(),
             Strip::Full | Strip::Active => tab.split(),
@@ -496,7 +497,7 @@ fn bar(
             .begin_symbol(None)
             .end_symbol(None)
             .track_symbol(Some(track))
-            .track_style(theme.style(Token::Muted))
+            .track_style(theme.style(Token::Faint))
             .thumb_symbol(thumb)
             .thumb_style(border),
         area.inner(margin),
@@ -1555,11 +1556,14 @@ mod tests {
     }
 
     #[test]
-    fn a_matched_null_composes_match_with_muted_rather_than_losing_either() {
-        // Design §4.3 (amended): `Token::Muted` spends `DIM` alongside its
-        // colour precisely so `Style::patch` keeps it under `Token::Match`'s
-        // own colour, and a matched null stays tellable apart from a matched
-        // cell whose text is literally the word "null".
+    fn a_matched_null_still_carries_the_match_colour() {
+        // The ramp carries the tier now, not a modifier (design §4.1), so
+        // `Token::Muted`'s colour is the only thing `Style::patch` had to
+        // survive `Token::Match` overwriting `fg` with — and `fg` is exactly
+        // what `Token::Match` overwrites. A matched null and a matched word
+        // both end up drawn as a plain match, indistinguishable from each
+        // other; telling a matched null apart from a matched word again is
+        // future work, not this token's job.
         let mut state = showing(page_of(
             &["id", "value", "note"],
             &[&[CqlValue::Int(1), CqlValue::Null, text("null")]],
@@ -1573,22 +1577,14 @@ mod tests {
         let null_cell = cell(23);
         let word_cell = cell(29);
 
-        assert!(
-            null_cell.modifier.contains(Modifier::DIM),
-            "the matched null must still read as a null"
-        );
         assert_eq!(
             null_cell.fg, word_cell.fg,
             "both are matches, so they carry the same match colour"
         );
         assert!(
-            !word_cell.modifier.contains(Modifier::DIM),
-            "the matched word is not a null and must not be dimmed"
-        );
-        assert_ne!(
-            (null_cell.fg, null_cell.modifier),
-            (word_cell.fg, word_cell.modifier),
-            "a matched null must still draw differently from a matched non-null cell"
+            !null_cell.modifier.contains(Modifier::DIM)
+                && !word_cell.modifier.contains(Modifier::DIM),
+            "no token recedes with a modifier now that the ramp carries the tier"
         );
     }
 
@@ -2074,10 +2070,7 @@ mod tests {
         let muted = Theme::default().style(Token::Muted);
 
         assert_eq!(fg, muted.fg.expect("muted spends a colour"));
-        assert!(
-            modifier.contains(Modifier::DIM),
-            "the tab is not the one drawn"
-        );
+        assert_eq!(modifier, muted.add_modifier, "the tab is not the one drawn");
     }
 
     #[test]
@@ -3075,10 +3068,7 @@ mod tests {
             "no colour override"
         );
         assert_eq!(expected.bg, None, "muted paints no background of its own");
-        assert_eq!(
-            modifier, expected.add_modifier,
-            "the dim modifier, and only that"
-        );
+        assert_eq!(modifier, expected.add_modifier, "no modifier override");
     }
 
     #[test]

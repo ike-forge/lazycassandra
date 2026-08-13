@@ -19,7 +19,22 @@ pub enum Token {
     RegularColumn,
     Posture(Posture),
     Severity(Severity),
+    /// One step below body text: option names, column headers, footer
+    /// actions. [`Token::Faint`] is the step below that.
     Muted,
+    /// Two steps below body text: system keyspaces, nulls, separators,
+    /// counts, and a hint the focused panel does not answer.
+    Faint,
+    /// A heading that names no schema concept — Options, Indexes. Named for
+    /// what it marks rather than for the colour it gets (architecture.md §6).
+    Section,
+    /// The one-cell mark in the gutter of the row the cursor is on.
+    SelectionBar,
+    /// A comment inside a statement.
+    ///
+    /// Defined and themed but not yet emitted: there is no highlighter, the
+    /// status [`Token::Keyword`] already has.
+    Comment,
     /// The panel accepting input.
     Focused,
     /// The key that focuses a panel, inside that panel's title.

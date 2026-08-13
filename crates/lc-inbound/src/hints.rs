@@ -49,12 +49,12 @@ impl Segment {
 
     /// An inert hint keeps its width — `fit` drops hints whole and must not
     /// see a different bar — and gives up the bold that says the key is live:
-    /// both halves go to `Muted`, so the whole segment recedes together
+    /// both halves go to `Faint`, so the whole segment recedes together
     /// whatever `HintAction` is later drawn as.
     fn spans(&self, theme: Theme) -> Vec<Span<'static>> {
         let (keys, action) = match self.liveness {
             Liveness::Live => (Token::HintKey, Token::HintAction),
-            Liveness::Inert => (Token::Muted, Token::Muted),
+            Liveness::Inert => (Token::Faint, Token::Faint),
         };
 
         vec![
@@ -311,7 +311,7 @@ mod tests {
             live.spans[1].style, inert.spans[1].style,
             "an inert key must not read as pressable"
         );
-        assert_eq!(inert.spans[1].style, Theme::default().style(Token::Muted));
+        assert_eq!(inert.spans[1].style, Theme::default().style(Token::Faint));
     }
 
     #[test]

@@ -150,21 +150,19 @@ impl Theme {
             Token::StaticColumn => fg(palette.accent),
             Token::Keyspace => fg(palette.keyspace),
             Token::Table => fg(palette.table),
-            Token::RegularColumn
-            | Token::Severity(Severity::Info)
-            | Token::Posture(Posture::ReadOnly) => fg(palette.text),
+            Token::RegularColumn | Token::Posture(Posture::ReadOnly) => fg(palette.text),
             Token::Posture(Posture::Writable) => fg(palette.success),
             Token::Posture(Posture::Protected) | Token::Severity(Severity::Danger) => {
                 fg(palette.danger).add_modifier(Modifier::BOLD)
             }
             Token::Severity(Severity::Warning) => fg(palette.warning),
+            Token::Severity(Severity::Info) => fg(palette.info),
             Token::PropertyName => fg(palette.label),
-            // `DIM` alongside the colour, not the colour alone: `Style::patch`
-            // merges `add_modifier` by insertion rather than overwriting it,
-            // so a muted cell composed with `Token::Match` keeps `DIM` even
-            // though its colour is overwritten — the same distinction the
-            // pre-`Palette` theme drew with `DIM` alone (design §4.3).
-            Token::Muted | Token::HintAction => fg(palette.dim).add_modifier(Modifier::DIM),
+            Token::Muted | Token::HintAction => fg(palette.dim),
+            Token::Faint => fg(palette.faint),
+            Token::Section => fg(palette.section).add_modifier(Modifier::BOLD),
+            Token::SelectionBar => fg(palette.selection_bar),
+            Token::Comment => fg(palette.comment),
             // A colour of its own now (2026-08-11-panel-focus-contrast-design.md
             // §2 withdraws the earlier "bold only" decision): it still reads on
             // a panel border the theme may have coloured already, because
@@ -418,7 +416,7 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 24] = [
+    pub(super) const EVERY_TOKEN: [Token; 28] = [
         Token::PartitionKey,
         Token::ClusteringKey,
         Token::StaticColumn,
@@ -432,6 +430,10 @@ pub(crate) mod tests {
         Token::Severity(Severity::Warning),
         Token::Severity(Severity::Danger),
         Token::Muted,
+        Token::Faint,
+        Token::Section,
+        Token::SelectionBar,
+        Token::Comment,
         Token::Focused,
         Token::Selected,
         Token::SelectedCell,
@@ -444,4 +446,38 @@ pub(crate) mod tests {
         Token::Reference,
         Token::Literal,
     ];
+
+    /// The palette ranks by lightness, so nothing needs a modifier to recede.
+    /// `DIM` is a terminal-dependent multiplier and would invalidate every
+    /// ratio `every_palette_of_ours_reads_on_every_ground_it_declares`
+    /// measures (design §4.1).
+    #[test]
+    fn no_token_recedes_with_a_modifier() {
+        for choice in ThemeChoice::ALL {
+            let theme = Theme::of(choice);
+
+            for token in EVERY_TOKEN {
+                assert!(
+                    !theme.style(token).add_modifier.contains(Modifier::DIM),
+                    "{choice:?}: {token:?} spends DIM instead of the ramp"
+                );
+            }
+        }
+    }
+
+    /// Two tiers below `text`, and they are distinct: a call site that meant
+    /// "recede one step" and one that meant "recede two" must not draw the
+    /// same.
+    #[test]
+    fn the_two_de_emphasis_tokens_are_different_colours() {
+        for choice in ThemeChoice::ALL {
+            let theme = Theme::of(choice);
+
+            assert_ne!(
+                theme.style(Token::Muted).fg,
+                theme.style(Token::Faint).fg,
+                "{choice:?}"
+            );
+        }
+    }
 }
