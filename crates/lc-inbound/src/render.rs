@@ -1036,15 +1036,15 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││Press Enter on a table│"
+            "│▌\u{f084} shop       ││Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│\u{f084} typezoo     ││                      │"
+            "│ \u{f084} typezoo    ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│\u{f084} system      ││                      │"
+            "│ \u{f084} system     ││                      │"
         );
     }
 
@@ -1137,19 +1137,19 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││Press Enter on a table│"
+            "│▌\u{f084} shop       ││Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│├─ \u{f0ce} orders   ││                      │"
+            "│ ├─ \u{f0ce} orders  ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│└─ \u{f0ce} users    ││                      │"
+            "│ └─ \u{f0ce} users   ││                      │"
         );
         assert_eq!(
             row(&buffer, 4),
-            "│\u{f084} typezoo     ││                      │",
+            "│ \u{f084} typezoo    ││                      │",
             "a keyspace with no tables draws no marker"
         );
     }
@@ -1157,10 +1157,10 @@ mod tests {
     #[test]
     fn the_clusters_own_keyspaces_are_dimmed() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-        // Column 3: the name, past the border and the icon it opens with. The
-        // icon carries its own colour (design §8), which is not what this is
-        // about.
-        let fg = |y: u16| buffer.cell((3, y)).expect("inside the panel").fg;
+        // Column 4: the name, past the border, the gutter bar and the icon it
+        // opens with. The icon carries its own colour (design §8), which is
+        // not what this is about.
+        let fg = |y: u16| buffer.cell((4, y)).expect("inside the panel").fg;
         let faint = Theme::default()
             .style(Token::Faint)
             .fg
@@ -1173,8 +1173,9 @@ mod tests {
     #[test]
     fn a_dimmed_rows_icon_keeps_the_colour_of_what_it_names() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-        // Column 1: a keyspace opens at the margin, right after the border.
-        let icon = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
+        // Column 2: a keyspace opens right after the border and the gutter
+        // bar.
+        let icon = |y: u16| buffer.cell((2, y)).expect("inside the panel").fg;
         let theme = Theme::default();
         let faint = theme.style(Token::Faint).fg.expect("faint spends a colour");
         let keyspace = theme
@@ -1184,7 +1185,7 @@ mod tests {
 
         assert_eq!(icon(2), keyspace, "the icon says what the row is");
         assert_eq!(
-            buffer.cell((3, 2)).expect("inside the panel").fg,
+            buffer.cell((4, 2)).expect("inside the panel").fg,
             faint,
             "the name it precedes stays the cluster's"
         );
@@ -1398,16 +1399,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││  id email                                │",
-            "the header leaves the gutter blank"
+            "│▌\u{f084} shop       ││    id email                              │",
+            "the header leaves the bar and the gutter blank"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││1 1  ada@example.com                      │"
+            "│              ││▌ 1 1  ada@example.com                    │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││2 2  bob@example.com                      │"
+            "│              ││  2 2  bob@example.com                    │"
         );
     }
 
@@ -1423,7 +1424,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 2),
-            "│              ││1 8f14e45f-ceea-467a-9c2b…                │",
+            "│              ││▌ 1 8f14e45f-ceea-467a-9c2b…              │",
             "a silently clipped value looks like a shorter value"
         );
     }
@@ -1444,12 +1445,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop              ││  a                        b                                      │",
+            "│▌\u{f084} shop             ││    a                        b                                    │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│                    ││1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…               │",
+            "│                    ││▌ 1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…             │",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -1465,11 +1466,12 @@ mod tests {
             .fg
             .expect("the partition key spends a colour");
 
-        // Column 17 is the gutter, so the first heading starts two along.
-        assert_eq!(header(19).fg, partition, "id is the partition key");
-        assert!(header(19).modifier.contains(Modifier::BOLD));
+        // Column 16 is the bar and 17 the gutter, so the first heading starts
+        // three along from the bar.
+        assert_eq!(header(21).fg, partition, "id is the partition key");
+        assert!(header(21).modifier.contains(Modifier::BOLD));
         assert_eq!(
-            header(22).fg,
+            header(24).fg,
             Theme::default()
                 .style(Token::RegularColumn)
                 .fg
@@ -1501,11 +1503,11 @@ mod tests {
             let cell = buffer.cell((x, y)).expect("inside the panel");
             (cell.fg, cell.bg, cell.modifier)
         };
-        // Gutter, then `id` (one digit, the cursor's cell at column 0), then
-        // `email` (matched): 19 lands on the digit, 22 on `email`'s first
-        // character.
-        let unmatched_id = 19;
-        let matched_email = 22;
+        // Bar, then gutter, then `id` (one digit, the cursor's cell at column
+        // 0), then `email` (matched): 21 lands on the digit, 24 on `email`'s
+        // first character.
+        let unmatched_id = 21;
+        let matched_email = 24;
 
         assert_ne!(
             style(matched_email, 2),
@@ -1550,11 +1552,11 @@ mod tests {
             .fg
             .expect("faint spends a colour");
 
-        assert_eq!(cell(22).fg, faint, "the null is faint");
+        assert_eq!(cell(24).fg, faint, "the null is faint");
         assert_ne!(
-            cell(19).fg,
+            cell(21).fg,
             faint,
-            "the value beside it is not — the gutter at 17 is muted, not faint, and is not what this is about"
+            "the value beside it is not — the gutter at 18 is muted, not faint, and is not what this is about"
         );
     }
 
@@ -1574,11 +1576,12 @@ mod tests {
         state.apply_filter(Filtered::Contents, Filter::new("null"));
 
         let buffer = draw_state(70, 12, &state);
-        // Shifted right by the row-number gutter and its spacing: one digit
-        // for a one-row page, plus one column (table display design §4).
+        // Shifted right by the bar, the row-number gutter and their spacing:
+        // one digit for a one-row page, plus one column each (table display
+        // design §4, design §4.2).
         let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
-        let null_cell = cell(23);
-        let word_cell = cell(29);
+        let null_cell = cell(25);
+        let word_cell = cell(31);
 
         assert_eq!(
             null_cell.fg, word_cell.fg,
@@ -1642,7 +1645,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││No rows                                   │"
+            "│▌\u{f084} shop       ││No rows                                   │"
         );
     }
 
@@ -1704,8 +1707,9 @@ mod tests {
         };
         // The top border, then the grid's header row, then the first row —
         // the one the cursor is on, at its first column. That column is two
-        // wide and sits past the one-digit gutter and its spacing.
-        let first = area.x + 3;
+        // wide and sits past the bar, the one-digit gutter, and the two
+        // spacing columns between them and it.
+        let first = area.x + 5;
         let selected = area.y + 2;
 
         assert!(underlined(first, selected), "the cell the cursor is on");
@@ -1733,7 +1737,7 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
-        let first = area.x + 3;
+        let first = area.x + 5;
         let highlight = Theme::default()
             .style(Token::Selected)
             .bg
@@ -1761,12 +1765,12 @@ mod tests {
             .expect("muted spends a colour");
 
         assert_eq!(
-            fg(area.x + 1),
+            fg(area.x + 3),
             muted,
             "the row number is chrome, not a value"
         );
         assert_ne!(
-            fg(area.x + 3),
+            fg(area.x + 5),
             muted,
             "and the value beside it reads at full weight"
         );
@@ -1776,8 +1780,8 @@ mod tests {
     /// the horizontal viewport following it the way `update` does.
     ///
     /// Twelve two-wide columns in the 22-column body a 40x12 frame gives the
-    /// Contents panel, less the one-digit gutter and its spacing: seven fit, so
-    /// anything past the seventh has to be reached by scrolling.
+    /// Contents panel, less the bar, the one-digit gutter, and their spacing:
+    /// six fit, so anything past the sixth has to be reached by scrolling.
     fn showing_column_path(path: &[usize]) -> State {
         let page = sized_page(12, 3);
         let widths = lc_domain::grid::widths(&page);
@@ -1792,10 +1796,11 @@ mod tests {
         state
     }
 
-    /// The x of the `index`th drawn column's first cell: the one-digit gutter,
-    /// a spacing column, then two-wide columns each followed by a spacing one.
+    /// The x of the `index`th drawn column's first cell: the bar, the
+    /// one-digit gutter and their spacing, then two-wide columns each
+    /// followed by a spacing one.
     const fn drawn_column(area: Rect, index: u16) -> u16 {
-        area.x + 3 + index * 3
+        area.x + 5 + index * 3
     }
 
     #[test]
@@ -1824,25 +1829,25 @@ mod tests {
         };
 
         assert!(
-            heading.trim_start().starts_with("c2"),
+            heading.trim_start().starts_with("c3"),
             "the drawn window starts at the offset, got {heading:?}"
         );
         assert!(
-            first.starts_with('1'),
-            "the gutter is pinned and never scrolls off, got {first:?}"
+            first.starts_with('▌'),
+            "the bar is pinned and never scrolls off, got {first:?}"
         );
-        // c2 is drawn first, so the cursor's c5 is the fourth column drawn.
+        // c3 is drawn first, so the cursor's c5 is the third column drawn.
         assert!(
-            underlined(drawn_column(area, 3)) && underlined(drawn_column(area, 3) + 1),
+            underlined(drawn_column(area, 2)) && underlined(drawn_column(area, 2) + 1),
             "the cell cursor is on c5, counted from the drawn window rather \
              than from the page: {heading:?}"
         );
         assert!(
-            !underlined(drawn_column(area, 4)),
+            !underlined(drawn_column(area, 3)),
             "and not on the column beside it"
         );
         assert!(
-            !underlined(drawn_column(area, 6)),
+            !underlined(drawn_column(area, 5)),
             "nor on the last column drawn, where an index blind to the offset \
              would land"
         );
@@ -1884,7 +1889,10 @@ mod tests {
         let buffer = frame_showing_grid(2, 200, 20);
         let text = block_row(&buffer, "Table contents", 1);
 
-        assert!(text.trim_start().starts_with('1'), "got {text:?}");
+        assert!(
+            text.trim_start_matches(['▌', ' ']).starts_with('1'),
+            "got {text:?}"
+        );
     }
 
     #[test]
@@ -1903,9 +1911,10 @@ mod tests {
     fn a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed() {
         // `lc_domain::grid::widths` caps a column at 24 and not at the panel,
         // which leaves the renderer a length the area cannot satisfy: 22
-        // columns of body, less the one-wide gutter and its spacing, is 20.
-        // Handed one it cannot honour, ratatui shrinks every column — the
-        // gutter among them — and truncates with no ellipsis to say so.
+        // columns of body, less the bar, the one-wide gutter and their
+        // spacing, is 18. Handed one it cannot honour, ratatui shrinks every
+        // column — the bar and the gutter among them — and truncates with no
+        // ellipsis to say so.
         let state = showing(page_of(
             &["id"],
             &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
@@ -1915,8 +1924,8 @@ mod tests {
         let drawn = block_row(&buffer, "Table contents", 1);
 
         assert!(
-            drawn.starts_with("1 "),
-            "the gutter keeps its own width: {drawn:?}"
+            drawn.starts_with("▌ 1 "),
+            "the bar and the gutter keep their own width: {drawn:?}"
         );
         assert!(
             drawn.trim_end().ends_with('…'),
@@ -2599,8 +2608,8 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} ks00        ▐│Press Enter on a table│",
-            "the row is as wide as it is without a bar; the bar replaced the border"
+            "│▌\u{f084} ks00       ▐│Press Enter on a table│",
+            "the row is as wide as it is without a scrollbar; the scrollbar replaced the border"
         );
     }
 

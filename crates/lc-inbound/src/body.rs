@@ -16,7 +16,7 @@
 //! several wrapped lines, which only the renderer that wrapped them can
 //! measure (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4).
 
-use lc_domain::grid::{COLUMN_SPACING, available, fitting};
+use lc_domain::grid::{BAR, COLUMN_SPACING, available, fitting};
 use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow};
@@ -38,6 +38,22 @@ const ELLIPSIS: char = '…';
 
 /// Rows of a grid spent on its header rather than on a row.
 const HEADER_ROWS: u16 = 1;
+
+/// The mark in the cursor row's gutter.
+///
+/// A left half-block rather than an arrow: it reads as a bar running down the
+/// edge of the row, and it is one column wide in every font we can assume.
+const SELECTION_BAR: char = '▌';
+
+/// The cursor row's mark, reserved as a column of its own on every row so
+/// unselected rows never shift sideways as the cursor moves (design §4.2).
+fn selection_bar(is_selected: bool, theme: Theme) -> TextSpan<'static> {
+    if is_selected {
+        TextSpan::styled(SELECTION_BAR.to_string(), theme.style(Token::SelectionBar))
+    } else {
+        TextSpan::raw(" ")
+    }
+}
 
 /// What a scrollbar needs, in whatever unit the panel scrolls in.
 pub(crate) struct Extent {
@@ -195,7 +211,11 @@ fn tree(
     offset: usize,
     theme: Theme,
 ) -> Extent {
-    let items: Vec<ListItem> = rows.iter().map(|row| item(row, theme)).collect();
+    let items: Vec<ListItem> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| item(row, index == selected, theme))
+        .collect();
     let height = usize::from(area.height);
 
     let list = List::new(items).highlight_style(theme.style(Token::Selected));
@@ -262,21 +282,31 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         .map(|width| (*width).min(available))
         .collect();
 
-    let constraints = std::iter::once(Constraint::Length(gutter))
+    let constraints = std::iter::once(Constraint::Length(BAR))
+        .chain(std::iter::once(Constraint::Length(gutter)))
         .chain(drawn_widths.iter().copied().map(Constraint::Length));
 
     let header = Row::new(
-        std::iter::once(Cell::from(Text::raw(" ".repeat(usize::from(gutter))))).chain(
-            columns[drawn.clone()]
-                .iter()
-                .zip(&drawn_widths)
-                .map(|(column, width)| styled(&column.name, column.token, *width, theme)),
-        ),
+        std::iter::once(Cell::from(Text::raw(" ")))
+            .chain(std::iter::once(Cell::from(Text::raw(
+                " ".repeat(usize::from(gutter)),
+            ))))
+            .chain(
+                columns[drawn.clone()]
+                    .iter()
+                    .zip(&drawn_widths)
+                    .map(|(column, width)| styled(&column.name, column.token, *width, theme)),
+            ),
     );
 
     let body = rows.iter().enumerate().map(|(index, cells)| {
         Row::new(
-            std::iter::once(number(index, gutter, theme)).chain(
+            std::iter::once(Cell::from(Line::from(selection_bar(
+                index == selected,
+                theme,
+            ))))
+            .chain(std::iter::once(number(index, gutter, theme)))
+            .chain(
                 cells
                     .get(drawn.clone())
                     .unwrap_or_default()
@@ -292,10 +322,11 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         .column_spacing(COLUMN_SPACING)
         .row_highlight_style(theme.style(Token::Selected))
         .cell_highlight_style(theme.style(Token::SelectedCell));
-    // The gutter is a column of the widget but not of the page, so the
-    // selected column is one further right than the domain's index.
+    // The bar and the row number are columns of the widget but not of the
+    // page, so the selected column is two further right than the domain's
+    // index.
     let cell =
-        visible(selected, offset, height).map(|row| (row, column.saturating_sub(first_column) + 1));
+        visible(selected, offset, height).map(|row| (row, column.saturating_sub(first_column) + 2));
     let mut state = TableState::default()
         .with_offset(offset)
         .with_selected_cell(cell);
@@ -376,7 +407,7 @@ fn truncated(text: &str, width: u16) -> String {
     out
 }
 
-fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
+fn item(row: &TreeRow, is_selected: bool, theme: Theme) -> ListItem<'static> {
     // A keyspace opens at the margin and its tables hang off it, so the shape
     // of the tree is the indentation and no separate fold marker is spent on
     // saying what the drawn rows already say
@@ -404,6 +435,7 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
     );
 
     ListItem::new(Line::from(vec![
+        selection_bar(is_selected, theme),
         TextSpan::raw(limb),
         icon,
         TextSpan::raw(row.label.clone()),
@@ -513,4 +545,25 @@ fn shifted(line: &str, columns: usize) -> String {
 /// fallback is unreachable rather than a silent clamp.
 fn narrowed(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reserved rather than inserted: an unselected row pays the same column, or
+    /// every row would shift sideways as the cursor moved (design §4.2).
+    #[test]
+    fn the_gutter_is_one_column_on_every_row_and_marked_on_one() {
+        let selected = selection_bar(true, Theme::default());
+        let unselected = selection_bar(false, Theme::default());
+
+        assert_eq!(selected.content.chars().count(), 1);
+        assert_eq!(unselected.content.chars().count(), 1);
+        assert_ne!(selected.content, unselected.content);
+        assert_eq!(
+            selected.style.fg,
+            Some(Theme::default().palette().selection_bar)
+        );
+    }
 }
