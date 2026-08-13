@@ -690,7 +690,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open  / search │ tab panel  q quit",
+            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open | / search | tab panel | q quit",
             "the loader takes the leading cells and the hints follow it"
         );
         assert!(
@@ -730,7 +730,7 @@ mod tests {
         let drawn = row(&buffer, 23);
         let hints: String = drawn.chars().skip(taken).collect();
 
-        assert_eq!(hints.trim_end(), " ?/esc close  q quit");
+        assert_eq!(hints.trim_end(), " ?/esc close | q quit");
     }
 
     #[test]
@@ -760,7 +760,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 11).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open │ tab panel  q quit",
+            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open | tab panel | q quit",
             "the cells the loader took come out of the hints, lowest value first"
         );
     }
