@@ -336,7 +336,8 @@ fn yank(state: &State) -> Vec<Effect> {
     let line = match state.focus {
         Panel::Contents => grid_row(state),
         Panel::Tables => tree_node(state),
-        _ => None,
+        Panel::Ddl => detail_row(state),
+        Panel::Queries => None,
     };
 
     line.map(Effect::Yank).into_iter().collect()
@@ -356,6 +357,10 @@ fn tree_node(state: &State) -> Option<String> {
     let schema = state.schema()?;
 
     Some(crate::yank::node(&state.tables.selected(schema)?))
+}
+
+fn detail_row(state: &State) -> Option<String> {
+    Some(crate::yank::detail_row(&crate::view::ddl_row(state)?))
 }
 
 #[derive(Clone, Copy)]
@@ -3565,6 +3570,37 @@ mod tests {
         state.focus = Panel::Contents;
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
+    }
+
+    #[test]
+    fn y_yanks_a_ddl_row() {
+        let mut state = browsing_a_table();
+        state.focus = Panel::Ddl;
+
+        assert_eq!(
+            press(&mut state, Key::Char('y')),
+            vec![Effect::Yank("Keyspace,shop".to_owned())]
+        );
+    }
+
+    #[test]
+    fn y_yanks_a_column_row() {
+        let mut state = browsing_a_table();
+        press(&mut state, Key::Char('c'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            press(&mut state, Key::Char('y')),
+            vec![Effect::Yank("id,uuid,partition".to_owned())]
+        );
+
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            press(&mut state, Key::Char('y')),
+            vec![Effect::Yank("created_at,timestamp,clustering".to_owned())]
+        );
     }
 
     #[test]
