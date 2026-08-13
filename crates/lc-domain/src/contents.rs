@@ -38,7 +38,7 @@ pub struct ContentsPanel {
 /// Which of the grid's two cursors is painted, and how.
 ///
 /// Changes nothing but the highlight: both cursors move on the same keys in
-/// every mode, so no key changes meaning and docs/shortcuts.md §5 stands
+/// every mode, so no key changes meaning and docs/shortcuts.md §2 stands
 /// (design §3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SelectionMode {

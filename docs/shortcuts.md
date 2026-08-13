@@ -244,6 +244,22 @@ from Queries and is inert everywhere else (§1's Queries subsection). Losing
 the DDL half is what "one key, one action" costs and buys here — a chord
 whose meaning depended on focus was the last of its kind (§2).
 
+### Table contents panel
+
+Accepted anywhere, but a no-op unless Table contents has focus — except in
+Queries, which takes text: there `m` types itself. See the Queries subsection
+below.
+
+| Key | Action |
+|---|---|
+| `m` | Cycle the selection mode: cell → row → column, wrapping. |
+
+The panel opens in cell mode, which draws the selected cell over a faint wash
+across its row and its column. Row mode lights the whole row instead, and
+column mode lights the column and its heading. Whichever mode is up, `j`/`k`
+still move the row cursor and `h`/`l` the column cursor exactly as the Motion
+table above says — the mode changes what is painted, not what a key does.
+
 ### Queries panel
 
 The panel takes text, so while it has focus every printable key is a
@@ -449,6 +465,13 @@ a key means, so the regime is always the focused border — which is on screen
 and already means something. This replaces the older "no modes" rule, which
 held only until the Queries panel took text.
 
+The Table contents selection mode does not touch this. `m` changes what the
+grid highlights — a row, a column, or the cell they cross — and no key changes
+meaning: `j`/`k` move the row cursor and `h`/`l` the column cursor in all three
+modes, exactly as they did when there was only one way to draw them
+([design](specs/2026-08-13-selection-modes-design.md) §3). A mode that rebound
+those keys would break this rule, and is not what this is.
+
 The command palette sits above that. It is opened deliberately with `?`, closes
 with either `?` or `esc` — both named on its bar
 ([design](specs/2026-08-09-command-palette-design.md) §7) — and while it is up it
@@ -486,10 +509,10 @@ means once a panel can carry state of its own (panel search design §6).
 
 ## 3. The key budget
 
-Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `q` `u`, plus `?` and `/`.
+Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `m` `q` `u`, plus `?` and `/`.
 Taken, uppercase: none — no shifted letter is bound (§2).
 
-Free, lowercase: `e` `f` `g` `i` `m` `n` `o` `p` `r` `s` `t` `v` `w` `x`
+Free, lowercase: `e` `f` `g` `i` `n` `o` `p` `r` `s` `t` `v` `w` `x`
 `y` `z`, every digit, every uppercase letter, and `Space`.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
