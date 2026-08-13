@@ -32,6 +32,31 @@ pub fn grid_row(row: &Row) -> String {
     line(&fields)
 }
 
+/// One cell, raw: a lone value has no delimiter to protect, so the encoder
+/// would only add characters the user then deletes (design §3).
+///
+/// `None` for a null, so "a null is inert" lives in the type rather than in a
+/// check at the call site (design §4).
+#[must_use]
+pub fn grid_cell(value: &CqlValue) -> Option<String> {
+    match value {
+        CqlValue::Null => None,
+        value => Some(cell::text(value)),
+    }
+}
+
+/// One column of a page, top to bottom, as one CSV line — no heading, because
+/// a heading is not a value (design §1).
+#[must_use]
+pub fn grid_column(rows: &[Row], column: usize) -> String {
+    let fields: Vec<String> = rows
+        .iter()
+        .map(|row| row.values.get(column).map_or_else(String::new, value))
+        .collect();
+
+    line(&fields)
+}
+
 #[must_use]
 pub fn detail_row(row: &DetailRow) -> String {
     let fields = match row {
@@ -263,5 +288,111 @@ mod tests {
             }),
             "demo.users"
         );
+    }
+
+    #[test]
+    fn a_cell_yanks_without_quoting() {
+        assert_eq!(
+            grid_cell(&CqlValue::Text("Smith, John".to_owned())),
+            Some("Smith, John".to_owned()),
+            "a lone value has no delimiter to protect"
+        );
+        assert_eq!(
+            grid_cell(&CqlValue::Text("he said \"hi\"".to_owned())),
+            Some("he said \"hi\"".to_owned()),
+            "nor any quote to double"
+        );
+    }
+
+    #[test]
+    fn a_cell_yank_is_not_ellipsised() {
+        let long = "x".repeat(usize::from(crate::grid::MAX_COLUMN_WIDTH) * 2);
+
+        assert_eq!(
+            grid_cell(&CqlValue::Text(long.clone())),
+            Some(long),
+            "what is drawn is a window, what is yanked is the value"
+        );
+    }
+
+    #[test]
+    fn a_null_cell_yanks_nothing() {
+        assert_eq!(
+            grid_cell(&CqlValue::Null),
+            None,
+            "an empty payload would ask the terminal to clear its clipboard"
+        );
+    }
+
+    #[test]
+    fn a_column_yanks_every_row_in_order_and_no_heading() {
+        let rows = vec![
+            Row {
+                values: vec![CqlValue::Int(1), CqlValue::Text("alice".to_owned())],
+            },
+            Row {
+                values: vec![CqlValue::Int(2), CqlValue::Text("bob".to_owned())],
+            },
+            Row {
+                values: vec![CqlValue::Int(3), CqlValue::Text("carol".to_owned())],
+            },
+        ];
+
+        assert_eq!(
+            grid_column(&rows, 1),
+            "alice,bob,carol",
+            "the values, top to bottom, and nothing in front of them"
+        );
+        assert_eq!(grid_column(&rows, 0), "1,2,3");
+    }
+
+    #[test]
+    fn a_null_in_a_column_yanks_as_an_empty_field() {
+        let rows = vec![
+            Row {
+                values: vec![CqlValue::Text("alice".to_owned())],
+            },
+            Row {
+                values: vec![CqlValue::Null],
+            },
+            Row {
+                values: vec![CqlValue::Text("carol".to_owned())],
+            },
+        ];
+
+        assert_eq!(
+            grid_column(&rows, 0),
+            "alice,,carol",
+            "between delimiters, empty means absent"
+        );
+    }
+
+    #[test]
+    fn a_column_field_is_escaped_the_way_a_row_field_is() {
+        let rows = vec![Row {
+            values: vec![CqlValue::Text("Smith, John".to_owned())],
+        }];
+
+        assert_eq!(
+            grid_column(&rows, 0),
+            "\"Smith, John\"",
+            "here the comma is structural, so the field has to say it is not"
+        );
+    }
+
+    /// Unreachable through the driver — every row of a `Page` carries one
+    /// value per column — but `grid_column` takes a slice and cannot check
+    /// that. Dropping the row would shorten the line with nothing to account
+    /// for it (design §5).
+    #[test]
+    fn a_row_too_short_contributes_an_empty_field() {
+        let rows = vec![
+            Row {
+                values: vec![CqlValue::Text("alice".to_owned())],
+            },
+            Row { values: Vec::new() },
+        ];
+
+        assert_eq!(grid_column(&rows, 0), "alice,");
     }
 }
