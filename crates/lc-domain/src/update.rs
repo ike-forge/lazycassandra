@@ -4677,7 +4677,9 @@ mod tests {
     /// and `home` all have somewhere to go; and one with the palette open and
     /// one with the theme picker open, the states that capture keys rather
     /// than passing them to a panel — a sweep that never opens one cannot see
-    /// what it captures.
+    /// what it captures; and one focused on a loaded grid, without which the
+    /// `Table contents` group's keys are only ever answered by the tree and
+    /// `m` would go unswept.
     ///
     /// The unfold in `covered` matters: with every keyspace already folded,
     /// `h` and `←` would be a no-op in all four and the sweep would call them
@@ -4720,7 +4722,9 @@ mod tests {
         ctrl(&mut picker_open, Key::Char('t'));
         press(&mut picker_open, Key::Char('j'));
 
-        vec![covered, elsewhere, moved, palette_open, picker_open]
+        let grid = grid_of_rows(4, 5, 80);
+
+        vec![covered, elsewhere, moved, palette_open, picker_open, grid]
     }
 
     /// Whether pressing `key` changes anything a user could observe.

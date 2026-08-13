@@ -134,6 +134,10 @@ const CONTENTS: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('h')), KeyPress::new(Key::Left)],
         action: "previous column",
     },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('m'))],
+        action: "cycle selection mode",
+    },
 ];
 
 // The editor's printable keys are not rows: every one of them types itself,
@@ -453,6 +457,16 @@ mod tests {
                 .iter()
                 .any(|binding| binding.keys.contains(&KeyPress::new(Key::Char('/')))),
             "no row binds /"
+        );
+    }
+
+    #[test]
+    fn the_catalogue_lists_the_selection_mode_key() {
+        assert!(
+            commands()
+                .iter()
+                .any(|binding| binding.keys.contains(&KeyPress::new(Key::Char('m')))),
+            "no row binds m"
         );
     }
 
