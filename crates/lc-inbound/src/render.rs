@@ -1772,26 +1772,38 @@ mod tests {
 
     /// The wash is a background alone wherever the theme keeps its colours, so
     /// a null under the crosshair is still drawn as a null (design §4).
+    ///
+    /// The null sits off the cursor row on purpose: on it, the row arm of the
+    /// crosshair would paint the same background, and dropping the column arm
+    /// entirely would go unnoticed.
     #[test]
     fn the_crosshair_leaves_a_flavours_column_colours_alone() {
         let theme = Theme::of(ThemeChoice::CatppuccinMocha);
         let mut state = showing(page_of(
             &["id", "value"],
-            &[&[CqlValue::Int(1), CqlValue::Null]],
+            &[
+                &[CqlValue::Int(1), CqlValue::Int(2)],
+                &[CqlValue::Int(3), CqlValue::Null],
+            ],
         ));
         state.contents.column.go_to(1, 2);
 
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
-        let cell = buffer.cell((area.x + 1 + 5, 2)).expect("inside the panel");
+        let null = buffer.cell((area.x + 1 + 5, 3)).expect("inside the panel");
 
-        assert_eq!(
-            cell.bg,
+        assert_ne!(
+            buffer.cell((area.x + 1, 3)).expect("inside the panel").bg,
             theme.palette().crosshair,
-            "the selected cell's column is washed"
+            "the second row is not the cursor row, so only the column arm can wash it"
         );
         assert_eq!(
-            cell.fg,
+            null.bg,
+            theme.palette().crosshair,
+            "the selected column is washed down its whole height"
+        );
+        assert_eq!(
+            null.fg,
             theme.style(Token::Muted).fg.expect("a null is muted"),
             "and the null under it keeps its own colour"
         );
