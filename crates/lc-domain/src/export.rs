@@ -258,7 +258,10 @@ impl Line {
     /// than asserting what should be (design §2.1).
     pub fn set_extension(&mut self, extension: &str) {
         let last_separator = self.text.rfind(['/', '\\']).map_or(0, |at| at + 1);
-        let Some(dot) = self.text[last_separator..].rfind('.') else {
+        let Some(dot) = self.text[last_separator..]
+            .rfind('.')
+            .filter(|dot| *dot > 0)
+        else {
             return;
         };
 
@@ -526,5 +529,24 @@ mod tests {
         line.set_extension("json");
 
         assert_eq!(line.text(), "/home/v1.2/orders");
+    }
+
+    /// A leading dot is part of the name, not an extension separator: a
+    /// destination field that rewrote `.bashrc` to `.json` would destroy the
+    /// filename the user typed.
+    #[test]
+    fn a_dotfile_has_no_extension_to_replace() {
+        let mut line = Line::new("/home/ike/.bashrc".to_owned());
+        line.set_extension("json");
+
+        assert_eq!(line.text(), "/home/ike/.bashrc");
+    }
+
+    #[test]
+    fn a_dotfile_with_a_real_extension_keeps_its_leading_dot() {
+        let mut line = Line::new("/home/ike/.config.csv".to_owned());
+        line.set_extension("json");
+
+        assert_eq!(line.text(), "/home/ike/.config.json");
     }
 }
