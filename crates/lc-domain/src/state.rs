@@ -668,6 +668,13 @@ impl Selection {
 
     /// Pulls a selection back over a list that shrank.
     pub fn clamp_to(&mut self, len: usize) {
+        // Found before `self.groups` is clamped: afterwards every surviving
+        // group is a candidate to "contain" the pulled-back anchor, even one
+        // that never held it (multi-group design §2).
+        let held = self
+            .anchor
+            .and_then(|anchor| self.groups.groups().find(|group| group.contains(anchor)));
+
         self.groups.clamp_to(len);
 
         let Some(last) = len.checked_sub(1) else {
@@ -677,13 +684,12 @@ impl Selection {
 
         self.anchor = match self.anchor {
             Some(anchor) if self.extending => Some(anchor.min(last)),
-            // Frozen, the anchor is pulled back the same way the group is;
-            // only a group dropped outright takes its anchor with it
+            // Frozen, the anchor is pulled back the same way its own group
+            // is; only that group dropping outright takes the anchor with it
             // (design §2).
-            Some(anchor) => {
-                let anchor = anchor.min(last);
-                self.groups.contains(anchor).then_some(anchor)
-            }
+            Some(anchor) => held.and_then(|group| {
+                (group.first() <= last).then(|| anchor.min(group.last().min(last)))
+            }),
             None => None,
         };
     }
