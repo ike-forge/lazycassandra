@@ -392,4 +392,85 @@ mod tests {
 
         assert_eq!(keys.style, Theme::default().style(Token::HintKey));
     }
+
+    /// One panel hint and one global hint — small enough that `composed`'s
+    /// arithmetic is checkable by hand, which is what the widths below are
+    /// chosen from rather than by trial.
+    fn export_bar(export: Option<String>) -> HintBar {
+        HintBar {
+            panel: vec![Hint {
+                keys: "⏎".to_owned(),
+                action: "open",
+                liveness: Liveness::Live,
+            }],
+            global: vec![Hint {
+                keys: "q".to_owned(),
+                action: "quit",
+                liveness: Liveness::Live,
+            }],
+            export,
+        }
+    }
+
+    /// `composed`'s own arithmetic for [`export_bar`]'s hints with no export
+    /// text at all: `INDENT` (1) + `⏎ open` (6) + `SEPARATOR` (3) + `q quit`
+    /// (6).
+    const HINTS_ONLY: u16 = 16;
+    const EXPORT_TEXT: &str = "exporting 41203 rows…";
+    /// [`HINTS_ONLY`] plus what `composed` adds for the export text once
+    /// hints are present: `SEPARATOR` (3) + `EXPORT_TEXT`'s own 21
+    /// characters.
+    const WITH_EXPORT: u16 = HINTS_ONLY + 3 + 21;
+
+    fn text_of(bar: &HintBar, width: u16) -> String {
+        line(bar, width, Theme::default())
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn a_running_exports_count_is_drawn_when_present_and_absent_when_not() {
+        let with = text_of(&export_bar(Some(EXPORT_TEXT.to_owned())), 60);
+        let without = text_of(&export_bar(None), 60);
+
+        assert!(with.contains(EXPORT_TEXT));
+        assert!(!without.contains(EXPORT_TEXT));
+    }
+
+    #[test]
+    fn the_export_segment_is_drawn_muted() {
+        let bar = export_bar(Some(EXPORT_TEXT.to_owned()));
+        let line = line(&bar, 60, Theme::default());
+        let export_span = line
+            .spans
+            .iter()
+            .find(|span| span.content.as_ref() == EXPORT_TEXT)
+            .expect("the export text is drawn");
+
+        assert_eq!(export_span.style, Theme::default().style(Token::Muted));
+    }
+
+    #[test]
+    fn the_export_text_is_the_first_thing_dropped_and_takes_no_hint_with_it() {
+        let bar = export_bar(Some(EXPORT_TEXT.to_owned()));
+
+        let with_room = text_of(&bar, WITH_EXPORT);
+        assert!(
+            with_room.contains(EXPORT_TEXT),
+            "at its own width the export text fits: {with_room:?}"
+        );
+        assert!(with_room.contains("⏎ open") && with_room.contains("q quit"));
+
+        let one_narrower = text_of(&bar, WITH_EXPORT - 1);
+        assert!(
+            !one_narrower.contains(EXPORT_TEXT),
+            "one column short, the export text is what goes: {one_narrower:?}"
+        );
+        assert_eq!(
+            one_narrower, " ⏎ open | q quit",
+            "both hints survive untouched — export is dropped before either is"
+        );
+    }
 }
