@@ -3,6 +3,15 @@
 //! Everything here but `discover` is pure, so the merge rules are tested in
 //! the fast tier over inline strings
 //! (docs/superpowers/specs/2026-08-14-configuration-design.md §7).
+//!
+//! `parse` and `merge`, and the wire types they pass between them, have no
+//! caller yet outside their own tests: the crate exposes no configuration
+//! source that reads a file and runs the pipeline. Until one exists, this
+//! module is dead code by construction.
+#![allow(
+    dead_code,
+    reason = "no caller yet outside its own tests, until the crate exposes a configuration source"
+)]
 
 mod merge;
 mod wire;
