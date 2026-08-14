@@ -392,19 +392,13 @@ fn yank(state: &mut State) -> Vec<Effect> {
 /// gone (visual mode design §6.1).
 fn lit(state: &State) -> Flash {
     let (rows, columns) = match state.focus() {
-        Panel::Contents => {
-            let (rows, columns) = grid_extent(state);
-            (
-                rows.map_or_else(Ranges::default, Ranges::of),
-                columns.map_or_else(Ranges::default, Ranges::of),
-            )
-        }
+        Panel::Contents => grid_extent(state),
         Panel::Tables => (
-            Ranges::of(spanned(state.tables.selection, state.tables.cursor.index())),
+            spanned(&state.tables.selection, state.tables.cursor.index()),
             Ranges::default(),
         ),
         Panel::Ddl => (
-            Ranges::of(spanned(state.ddl.selection, state.ddl.cursor.index())),
+            spanned(&state.ddl.selection, state.ddl.cursor.index()),
             Ranges::default(),
         ),
         // Unreachable: the editor yanks nothing, so `yank` has already
@@ -415,28 +409,32 @@ fn lit(state: &State) -> Flash {
     Flash::lit(state.focus(), rows, columns)
 }
 
-/// The range, or the one row the cursor is on when nothing is selected.
-fn spanned(selection: Selection, cursor: usize) -> Range {
-    selection
-        .range(cursor)
-        .unwrap_or_else(|| Range::new(cursor, cursor))
+/// The groups, or the one row the cursor is on when nothing is selected.
+fn spanned(selection: &Selection, cursor: usize) -> Ranges {
+    let ranges = selection.ranges(cursor);
+
+    if ranges.is_empty() {
+        Ranges::of(Range::new(cursor, cursor))
+    } else {
+        ranges
+    }
 }
 
 /// The rectangle `y` reads out of the grid, on each of its two axes.
 ///
-/// `None` on an axis is the whole of it — the convention the view model's
+/// Empty on an axis is the whole of it — the convention the view model's
 /// `rows_ranges` and `columns_ranges` already carry, empty for `None`, and
 /// what row mode and column mode take. The one place the mode decides which
 /// axes it bounds, so what is copied and what is lit afterwards cannot answer
 /// differently.
-fn grid_extent(state: &State) -> (Option<Range>, Option<Range>) {
-    let rows = spanned(state.contents.rows, state.contents.cursor.index());
-    let columns = spanned(state.contents.columns, state.contents.column.index());
+fn grid_extent(state: &State) -> (Ranges, Ranges) {
+    let rows = spanned(&state.contents.rows, state.contents.cursor.index());
+    let columns = spanned(&state.contents.columns, state.contents.column.index());
 
     match state.contents.mode {
-        SelectionMode::Row => (Some(rows), None),
-        SelectionMode::Column => (None, Some(columns)),
-        SelectionMode::Cell => (Some(rows), Some(columns)),
+        SelectionMode::Row => (rows, Ranges::default()),
+        SelectionMode::Column => (Ranges::default(), columns),
+        SelectionMode::Cell => (rows, columns),
     }
 }
 
@@ -449,8 +447,8 @@ fn contents(state: &State) -> Option<String> {
     let page = page.page();
     let (rows, columns) = grid_extent(state);
     let whole = |len: usize| Range::new(0, len.saturating_sub(1));
-    let rows = rows.unwrap_or_else(|| whole(page.rows.len()));
-    let columns = columns.unwrap_or_else(|| whole(page.columns.len()));
+    let rows = rows.first().unwrap_or_else(|| whole(page.rows.len()));
+    let columns = columns.first().unwrap_or_else(|| whole(page.columns.len()));
 
     match state.contents.mode {
         SelectionMode::Cell if rows.rows() == 1 && columns.rows() == 1 => {
@@ -469,7 +467,9 @@ fn contents(state: &State) -> Option<String> {
 fn tree_nodes(state: &State) -> Option<String> {
     let schema = state.schema()?;
     let rows = state.tables.rows(schema);
-    let range = spanned(state.tables.selection, state.tables.cursor.index());
+    let range = spanned(&state.tables.selection, state.tables.cursor.index())
+        .first()
+        .unwrap_or_else(|| Range::new(0, 0));
 
     Some(crate::yank::lines(
         rows.iter()
@@ -481,7 +481,9 @@ fn tree_nodes(state: &State) -> Option<String> {
 
 fn detail_rows(state: &State) -> Option<String> {
     let details = crate::view::details_of(state)?;
-    let range = spanned(state.ddl.selection, state.ddl.cursor.index());
+    let range = spanned(&state.ddl.selection, state.ddl.cursor.index())
+        .first()
+        .unwrap_or_else(|| Range::new(0, 0));
 
     Some(crate::yank::lines(
         details
@@ -1239,7 +1241,7 @@ fn clear_selection(state: &mut State) -> bool {
     let mut cleared = false;
 
     for axis in axes(state, state.focus()).into_iter().flatten() {
-        if axis.selection.range(0).is_some() {
+        if axis.selection.is_active() {
             axis.selection.clear();
             cleared = true;
         }
@@ -3137,9 +3139,8 @@ mod tests {
             })),
         );
 
-        assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            None,
+        assert!(
+            !state.tables.selection.is_active(),
             "pointing at one row is saying: this one"
         );
         assert_eq!(state.tables.cursor.index(), 2);
@@ -3822,9 +3823,8 @@ mod tests {
                 continue;
             }
 
-            assert_eq!(
-                state.tables.selection.range(state.tables.cursor.index()),
-                None,
+            assert!(
+                !state.tables.selection.is_active(),
                 "{name} left Tables holding a selection"
             );
         }
@@ -3842,8 +3842,8 @@ mod tests {
         let _ = press(&mut state, Key::Char('a'));
 
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 1)),
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 1)),
             "`a` on Tables is not a panel switch"
         );
     }
@@ -3859,10 +3859,9 @@ mod tests {
 
         state.focus_on(Panel::Tables);
 
-        assert_eq!(state.contents.rows.range(0), None, "the row axis survived");
-        assert_eq!(
-            state.contents.columns.range(0),
-            None,
+        assert!(!state.contents.rows.is_active(), "the row axis survived");
+        assert!(
+            !state.contents.columns.is_active(),
             "the column axis survived"
         );
     }
@@ -3876,7 +3875,7 @@ mod tests {
 
         click_row(&mut state, Panel::Contents, 0);
 
-        assert_eq!(state.tables.selection.range(0), None);
+        assert!(!state.tables.selection.is_active());
     }
 
     #[test]
@@ -3894,7 +3893,7 @@ mod tests {
         let _ = press(&mut state, Key::Enter);
 
         assert_eq!(state.focus(), Panel::Contents);
-        assert_eq!(state.tables.selection.range(1), None);
+        assert!(!state.tables.selection.is_active());
     }
 
     #[test]
@@ -4247,7 +4246,7 @@ mod tests {
 
         press(&mut state, Key::Char('y'));
 
-        assert_eq!(state.contents.rows, Selection::None);
+        assert_eq!(state.contents.rows, Selection::default());
         assert_eq!(
             state.contents.cursor.index(),
             1,
@@ -4270,8 +4269,8 @@ mod tests {
         assert_eq!(state.contents.cursor.index(), 3);
     }
 
-    /// Frozen by a second `v`, so the range is `Held` and the cursor has
-    /// already left the anchor by the time `y` asks for it.
+    /// Frozen by a second `v`, so the group is no longer extending and the
+    /// cursor has already left the anchor by the time `y` asks for it.
     #[test]
     fn a_frozen_range_still_knows_where_to_send_the_cursor() {
         let mut state = grid_of_named_cells(3, 4);
@@ -4283,7 +4282,7 @@ mod tests {
 
         press(&mut state, Key::Char('y'));
 
-        assert_eq!(state.contents.rows, Selection::None);
+        assert_eq!(state.contents.rows, Selection::default());
         assert_eq!(state.contents.cursor.index(), 1);
     }
 
@@ -4299,8 +4298,8 @@ mod tests {
 
         press(&mut state, Key::Char('y'));
 
-        assert_eq!(state.contents.rows, Selection::None);
-        assert_eq!(state.contents.columns, Selection::None);
+        assert_eq!(state.contents.rows, Selection::default());
+        assert_eq!(state.contents.columns, Selection::default());
         assert_eq!(
             (state.contents.cursor.index(), state.contents.column.index()),
             (1, 1),
@@ -4316,7 +4315,7 @@ mod tests {
 
         press(&mut state, Key::Char('y'));
 
-        assert_eq!(state.tables.selection, Selection::None);
+        assert_eq!(state.tables.selection, Selection::default());
         assert_eq!(state.tables.cursor.index(), 0);
     }
 
@@ -4332,9 +4331,10 @@ mod tests {
         let effects = press(&mut state, Key::Char('y'));
 
         assert!(effects.is_empty());
+        let mut extending_from_zero = Selection::default();
+        extending_from_zero.start(0);
         assert_eq!(
-            state.tables.selection,
-            Selection::Extending { anchor: 0 },
+            state.tables.selection, extending_from_zero,
             "a panel that yanks nothing has nothing to reset"
         );
     }
@@ -5108,14 +5108,13 @@ mod tests {
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('v'));
-        assert!(state.ddl.selection.range(0).is_some());
+        assert!(state.ddl.selection.is_active());
 
         state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
 
-        assert_eq!(
-            state.ddl.selection.range(state.ddl.cursor.index()),
-            None,
+        assert!(
+            !state.ddl.selection.is_active(),
             "the rows the range addressed belong to the node that was on screen"
         );
     }
@@ -5154,17 +5153,11 @@ mod tests {
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('v'));
-        assert!(
-            state
-                .ddl
-                .selection
-                .range(state.ddl.cursor.index())
-                .is_some()
-        );
+        assert!(state.ddl.selection.is_active());
 
         state.focus_on(Panel::Tables);
 
-        assert_eq!(state.ddl.selection.range(state.ddl.cursor.index()), None);
+        assert!(!state.ddl.selection.is_active());
     }
 
     #[test]
@@ -6517,8 +6510,8 @@ mod tests {
         press(&mut state, Key::Char('j'));
 
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(1, 3))
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(1, 3))
         );
     }
 
@@ -6533,8 +6526,8 @@ mod tests {
 
         assert_eq!(state.tables.cursor.index(), 2);
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 1)),
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 1)),
             "a frozen range does not follow the cursor"
         );
     }
@@ -6547,17 +6540,13 @@ mod tests {
 
         press(&mut state, Key::Escape);
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 1)),
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 1)),
             "the first press leaves visual mode and keeps the range"
         );
 
         press(&mut state, Key::Escape);
-        assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            None,
-            "the second clears it"
-        );
+        assert!(!state.tables.selection.is_active(), "the second clears it");
     }
 
     #[test]
@@ -6569,7 +6558,7 @@ mod tests {
 
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.tables.selection.range(0), None);
+        assert!(!state.tables.selection.is_active());
         assert!(
             state.filter(Filtered::Tables).is_some(),
             "the range came off first; the filter is still applied"
@@ -6583,7 +6572,7 @@ mod tests {
 
         press(&mut state, Key::Char('v'));
 
-        assert_eq!(state.tables.selection.range(0), None);
+        assert!(!state.tables.selection.is_active());
         assert!(state.ddl.selection.is_extending());
     }
 
@@ -6606,7 +6595,7 @@ mod tests {
 
         state.apply_filter(Filtered::Tables, Filter::new("a"));
 
-        assert_eq!(state.tables.selection.range(0), None);
+        assert!(!state.tables.selection.is_active());
     }
 
     #[test]
@@ -6617,16 +6606,16 @@ mod tests {
         press(&mut state, Key::End);
         press(&mut state, Key::Char('v'));
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 2))
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 2))
         );
 
         press(&mut state, Key::Home);
         press(&mut state, Key::Char('h'));
 
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 0)),
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 0)),
             "folding the keyspace took the two table rows with it"
         );
     }
@@ -7155,10 +7144,10 @@ mod tests {
         press(&mut state, Key::Char('j'));
 
         assert_eq!(
-            state.contents.rows.range(state.contents.cursor.index()),
-            Some(Range::new(0, 1))
+            state.contents.rows.ranges(state.contents.cursor.index()),
+            Ranges::of(Range::new(0, 1))
         );
-        assert_eq!(state.contents.columns.range(0), None);
+        assert!(!state.contents.columns.is_active());
     }
 
     #[test]
@@ -7170,10 +7159,10 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(
-            state.contents.columns.range(state.contents.column.index()),
-            Some(Range::new(0, 1))
+            state.contents.columns.ranges(state.contents.column.index()),
+            Ranges::of(Range::new(0, 1))
         );
-        assert_eq!(state.contents.rows.range(0), None);
+        assert!(!state.contents.rows.is_active());
     }
 
     #[test]
@@ -7187,13 +7176,13 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(
-            state.contents.rows.range(state.contents.cursor.index()),
-            Some(Range::new(0, 1)),
+            state.contents.rows.ranges(state.contents.cursor.index()),
+            Ranges::of(Range::new(0, 1)),
             "the row anchor was set before the column moved off zero"
         );
         assert_eq!(
-            state.contents.columns.range(state.contents.column.index()),
-            Some(Range::new(1, 2)),
+            state.contents.columns.ranges(state.contents.column.index()),
+            Ranges::of(Range::new(1, 2)),
             "the column anchor was set after `l`, not swapped with the row's"
         );
     }
@@ -7208,8 +7197,8 @@ mod tests {
 
         press(&mut state, Key::Char('m'));
 
-        assert_eq!(state.contents.rows.range(0), None);
-        assert_eq!(state.contents.columns.range(0), None);
+        assert!(!state.contents.rows.is_active());
+        assert!(!state.contents.columns.is_active());
         assert_eq!(
             state.contents.mode,
             SelectionMode::Row,
@@ -7225,10 +7214,10 @@ mod tests {
 
         press(&mut state, Key::Escape);
         assert!(!state.contents.rows.is_extending());
-        assert!(state.contents.rows.range(0).is_some());
+        assert!(state.contents.rows.is_active());
 
         press(&mut state, Key::Escape);
-        assert_eq!(state.contents.rows.range(0), None);
-        assert_eq!(state.contents.columns.range(0), None);
+        assert!(!state.contents.rows.is_active());
+        assert!(!state.contents.columns.is_active());
     }
 }

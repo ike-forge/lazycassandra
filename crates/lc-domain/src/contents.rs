@@ -642,7 +642,7 @@ mod tests {
 
         panel.requested(QueryId::next(), Subject::Typed("select 1".to_owned()));
 
-        assert_eq!(panel.rows.range(0), None);
-        assert_eq!(panel.columns.range(0), None);
+        assert!(!panel.rows.is_active());
+        assert!(!panel.columns.is_active());
     }
 }

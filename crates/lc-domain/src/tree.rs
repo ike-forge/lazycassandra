@@ -238,9 +238,7 @@ impl TablesPanel {
     /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §4).
     #[must_use]
     pub fn selects_many(&self) -> bool {
-        self.selection
-            .range(self.cursor.index())
-            .is_some_and(|range| range.rows() > 1)
+        self.selection.ranges(self.cursor.index()).rows() > 1
     }
 }
 

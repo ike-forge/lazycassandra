@@ -203,28 +203,9 @@ pub(crate) fn bar(state: &State) -> HintBar {
 /// on the bar for a panel carrying a filter.
 fn selected(state: &State) -> bool {
     match state.focus() {
-        Panel::Tables => state
-            .tables
-            .selection
-            .range(state.tables.cursor.index())
-            .is_some(),
-        Panel::Ddl => state
-            .ddl
-            .selection
-            .range(state.ddl.cursor.index())
-            .is_some(),
-        Panel::Contents => {
-            state
-                .contents
-                .rows
-                .range(state.contents.cursor.index())
-                .is_some()
-                || state
-                    .contents
-                    .columns
-                    .range(state.contents.column.index())
-                    .is_some()
-        }
+        Panel::Tables => state.tables.selection.is_active(),
+        Panel::Ddl => state.ddl.selection.is_active(),
+        Panel::Contents => state.contents.rows.is_active() || state.contents.columns.is_active(),
         Panel::Queries => false,
     }
 }

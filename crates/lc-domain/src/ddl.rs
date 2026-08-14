@@ -130,7 +130,7 @@ impl DdlPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Range;
+    use crate::state::{Range, Ranges};
 
     #[test]
     fn a_panel_opens_on_the_tab_that_describes_the_table() {
@@ -198,7 +198,7 @@ mod tests {
 
         panel.show(DdlTab::Columns);
 
-        assert_eq!(panel.selection.range(0), None);
+        assert!(!panel.selection.is_active());
     }
 
     #[test]
@@ -209,7 +209,7 @@ mod tests {
 
         panel.show(DdlTab::Ddl);
 
-        assert_eq!(panel.selection.range(0), Some(Range::new(1, 3)));
+        assert_eq!(panel.selection.ranges(0), Ranges::of(Range::new(1, 3)));
     }
 
     #[test]

@@ -93,32 +93,16 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         Some(flash) => (flash.rows().clone(), flash.columns().clone()),
         None => match state.contents.mode {
             SelectionMode::Row => (
-                state
-                    .contents
-                    .rows
-                    .range(state.contents.cursor.index())
-                    .map_or_else(Ranges::default, Ranges::of),
+                state.contents.rows.ranges(state.contents.cursor.index()),
                 Ranges::default(),
             ),
             SelectionMode::Column => (
                 Ranges::default(),
-                state
-                    .contents
-                    .columns
-                    .range(state.contents.column.index())
-                    .map_or_else(Ranges::default, Ranges::of),
+                state.contents.columns.ranges(state.contents.column.index()),
             ),
             SelectionMode::Cell => (
-                state
-                    .contents
-                    .rows
-                    .range(state.contents.cursor.index())
-                    .map_or_else(Ranges::default, Ranges::of),
-                state
-                    .contents
-                    .columns
-                    .range(state.contents.column.index())
-                    .map_or_else(Ranges::default, Ranges::of),
+                state.contents.rows.ranges(state.contents.cursor.index()),
+                state.contents.columns.ranges(state.contents.column.index()),
             ),
         },
     };

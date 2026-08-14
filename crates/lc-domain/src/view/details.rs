@@ -11,7 +11,7 @@ use crate::model::{
     ClassKind, ClassOption, ClusteringOrder, Column, Keyspace, Replication, Setting, Table,
 };
 use crate::search::Filter;
-use crate::state::{Panel, Ranges, State};
+use crate::state::{Panel, State};
 use crate::style::Token;
 use crate::tree::Node;
 
@@ -288,13 +288,7 @@ fn scrolled(state: &State, details: Details) -> PanelBody {
         selected: state.ddl.cursor.index(),
         offset: state.ddl.scroll.offset(),
         ranges: flash.map_or_else(
-            || {
-                state
-                    .ddl
-                    .selection
-                    .range(state.ddl.cursor.index())
-                    .map_or_else(Ranges::default, Ranges::of)
-            },
+            || state.ddl.selection.ranges(state.ddl.cursor.index()),
             |flash| flash.rows().clone(),
         ),
         flash: flash.is_some(),

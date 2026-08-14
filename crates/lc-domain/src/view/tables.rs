@@ -1,7 +1,7 @@
 //! The Tables panel's projection: the keyspace/table tree as drawable rows.
 
 use crate::model::{KeyspaceKind, Schema};
-use crate::state::{ConnectionState, Flash, Panel, Ranges, SchemaState, State};
+use crate::state::{ConnectionState, Flash, Panel, SchemaState, State};
 use crate::style::Token;
 use crate::tree::{Node, TablesPanel};
 
@@ -86,12 +86,7 @@ fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<&Flash>) -> PanelBo
         selected: tables.cursor.index(),
         offset: tables.scroll.offset(),
         ranges: flash.map_or_else(
-            || {
-                tables
-                    .selection
-                    .range(tables.cursor.index())
-                    .map_or_else(Ranges::default, Ranges::of)
-            },
+            || tables.selection.ranges(tables.cursor.index()),
             |flash| flash.rows().clone(),
         ),
         flash: flash.is_some(),
@@ -125,7 +120,7 @@ fn tree_row(node: &Node<'_>, followed: bool) -> TreeRow {
 mod tests {
     use crate::model::{ConnId, DbError};
     use crate::posture::Posture;
-    use crate::state::{Connection, ConnectionState, SchemaState, State};
+    use crate::state::{Connection, ConnectionState, Ranges, SchemaState, State};
     use crate::style::{Severity, Token};
 
     use crate::search::{Filter, Filtered};

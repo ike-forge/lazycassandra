@@ -564,120 +564,99 @@ impl Ranges {
     }
 }
 
-/// A run of rows a panel has selected, and whether the cursor is still one end
-/// of it (docs/superpowers/specs/2026-08-14-visual-mode-design.md §2).
+/// The rows a panel has selected, as groups, and whether the cursor is still
+/// extending one of them
+/// (docs/superpowers/specs/2026-08-14-multi-group-selection-design.md §2).
 ///
-/// While extending, the far end is the panel's own cursor rather than a second
-/// index stored here: a range that is a function of the cursor cannot fall out
-/// of step with it. Freezing is the one moment the derived range is written
-/// down, and it is written down exactly because the cursor is about to stop
-/// meaning it.
+/// While extending, the far end of the live group is the panel's own cursor
+/// rather than a second index stored here: a group that is a function of the
+/// cursor cannot fall out of step with it. Freezing is the one moment the
+/// derived group is written down, and it is written down exactly because the
+/// cursor is about to stop meaning it.
 ///
-/// A frozen range keeps its anchor beside it rather than only its ends. The
-/// two are not the same question — the ends say which rows are selected, the
-/// anchor says which of them the user started from — and `y` sends the cursor
-/// home to the anchor, so a range that only knew its ends could not answer it
-/// once the cursor had left (visual mode design §5.1).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Selection {
-    #[default]
-    None,
-    Extending {
-        anchor: usize,
-    },
-    Held {
-        anchor: usize,
-        range: Range,
-    },
+/// The anchor is kept beside the groups and outlives the extension. The two
+/// are not the same question — the groups say which rows are selected, the
+/// anchor says which row the user last pressed `v` on — and `y` sends the
+/// cursor home to the anchor (visual mode design §5.1).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Selection {
+    groups: Ranges,
+    anchor: Option<usize>,
+    extending: bool,
 }
 
 impl Selection {
-    /// A frozen range between the two ends, in either order.
-    #[must_use]
-    pub const fn held(anchor: usize, cursor: usize) -> Self {
-        Self::Held {
-            anchor,
-            range: Range::new(anchor, cursor),
-        }
+    /// Opens a group at `cursor` and starts extending it, keeping what is
+    /// already held.
+    pub fn start(&mut self, cursor: usize) {
+        self.anchor = Some(cursor);
+        self.extending = true;
     }
 
-    /// Starts extending from `cursor`, discarding whatever was held.
-    pub const fn start(&mut self, cursor: usize) {
-        *self = Self::Extending { anchor: cursor };
-    }
-
-    /// Freezes the range the cursor currently makes, so the cursor can leave
-    /// it. Does nothing to a range already frozen.
-    pub const fn stop(&mut self, cursor: usize) {
-        if let Self::Extending { anchor } = *self {
-            *self = Self::held(anchor, cursor);
-        }
-    }
-
-    pub const fn clear(&mut self) {
-        *self = Self::None;
-    }
-
-    #[must_use]
-    pub const fn is_extending(self) -> bool {
-        matches!(self, Self::Extending { .. })
-    }
-
-    /// The rows selected, given where the cursor is now. The one way out, so
-    /// no caller can read an anchor and forget the cursor.
-    #[must_use]
-    pub const fn range(self, cursor: usize) -> Option<Range> {
-        match self {
-            Self::None => None,
-            Self::Extending { anchor } => Some(Range::new(anchor, cursor)),
-            Self::Held { range, .. } => Some(range),
-        }
-    }
-
-    /// The end the user started from, which `y` sends the cursor back to.
-    #[must_use]
-    pub const fn anchor(self) -> Option<usize> {
-        match self {
-            Self::None => None,
-            Self::Extending { anchor } | Self::Held { anchor, .. } => Some(anchor),
-        }
-    }
-
-    /// Pulls a selection back over a list that shrank.
-    ///
-    /// An end past the last row comes back onto it; a held range whose *first*
-    /// row has gone clears instead, because a range that slid down onto the
-    /// survivors would address rows the user never pointed at — the rule the
-    /// pointer already follows for a stale row (mouse input design §6).
-    pub const fn clamp_to(&mut self, len: usize) {
-        if len == 0 {
-            *self = Self::None;
+    /// Freezes the group the cursor is making, merging it into what is held.
+    pub fn stop(&mut self, cursor: usize) {
+        if !self.extending {
             return;
         }
 
-        let last = len - 1;
-
-        match *self {
-            Self::None => {}
-            Self::Extending { anchor } => {
-                if anchor > last {
-                    *self = Self::Extending { anchor: last };
-                }
-            }
-            Self::Held { anchor, range } => {
-                if range.first > last {
-                    *self = Self::None;
-                } else if range.last > last {
-                    *self = Self::Held {
-                        anchor: if anchor > last { last } else { anchor },
-                        range: Range {
-                            first: range.first,
-                            last,
-                        },
-                    };
-                }
-            }
+        if let Some(anchor) = self.anchor {
+            self.groups.insert(Range::new(anchor, cursor));
         }
+
+        self.extending = false;
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    #[must_use]
+    pub const fn is_extending(&self) -> bool {
+        self.extending
+    }
+
+    /// Whether anything is selected at all.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.extending || !self.groups.is_empty()
+    }
+
+    /// The rows selected, given where the cursor is now. The one way out, so
+    /// no caller can read the groups and forget the cursor, and none is handed
+    /// a seam between a group and the extension running into it.
+    #[must_use]
+    pub fn ranges(&self, cursor: usize) -> Ranges {
+        let mut ranges = self.groups.clone();
+
+        if let (true, Some(anchor)) = (self.extending, self.anchor) {
+            ranges.insert(Range::new(anchor, cursor));
+        }
+
+        ranges
+    }
+
+    /// The row `v` was last pressed on, which `y` sends the cursor back to.
+    #[must_use]
+    pub const fn anchor(&self) -> Option<usize> {
+        self.anchor
+    }
+
+    /// Pulls a selection back over a list that shrank.
+    pub fn clamp_to(&mut self, len: usize) {
+        self.groups.clamp_to(len);
+
+        let Some(last) = len.checked_sub(1) else {
+            self.clear();
+            return;
+        };
+
+        self.anchor = match self.anchor {
+            Some(anchor) if self.extending => Some(anchor.min(last)),
+            // Frozen, the anchor lives inside a group; when the group holding
+            // it goes, so does it (design §3).
+            Some(anchor) if self.groups.contains(anchor) => Some(anchor),
+            _ => None,
+        };
     }
 }
 
@@ -1663,146 +1642,73 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_selection_selects_nothing() {
-        assert_eq!(Selection::default().range(3), None);
-        assert!(!Selection::default().is_extending());
-    }
-
-    #[test]
-    fn an_extending_selection_follows_the_cursor_in_both_directions() {
+    fn freezing_writes_down_the_range_the_cursor_made() {
         let mut selection = Selection::default();
-        selection.start(4);
-
-        assert_eq!(selection.range(4), Some(Range::new(4, 4)));
-        assert_eq!(selection.range(9), Some(Range::new(4, 9)));
-        assert_eq!(selection.range(0), Some(Range::new(0, 4)));
-    }
-
-    #[test]
-    fn stopping_freezes_the_range_the_cursor_had() {
-        let mut selection = Selection::default();
-        selection.start(4);
-
-        selection.stop(9);
-
-        assert!(!selection.is_extending());
-        assert_eq!(
-            selection.range(0),
-            Some(Range::new(4, 9)),
-            "the cursor has left the range behind, and it stays where it was"
-        );
-    }
-
-    #[test]
-    fn starting_again_over_a_held_range_replaces_it() {
-        let mut selection = Selection::default();
-        selection.start(4);
-        selection.stop(9);
-
-        selection.start(1);
-
-        assert_eq!(selection.range(2), Some(Range::new(1, 2)));
-    }
-
-    #[test]
-    fn clearing_leaves_nothing_selected() {
-        let mut selection = Selection::default();
-        selection.start(4);
-        selection.stop(9);
-
-        selection.clear();
-
-        assert_eq!(selection.range(9), None);
-    }
-
-    #[test]
-    fn a_truncated_range_keeps_the_rows_that_survive() {
-        let mut selection = Selection::default();
-        selection.start(2);
-        selection.stop(9);
-
-        selection.clamp_to(5);
-
-        assert_eq!(selection.range(0), Some(Range::new(2, 4)));
-    }
-
-    #[test]
-    fn a_range_whose_first_row_is_gone_clears_rather_than_sliding() {
-        let mut selection = Selection::default();
-        selection.start(7);
-        selection.stop(9);
-
-        selection.clamp_to(5);
+        selection.start(5);
 
         assert_eq!(
-            selection.range(0),
-            None,
-            "a range that slid onto surviving rows would address rows nobody chose"
+            selection.ranges(2),
+            Ranges::of(Range::new(2, 5)),
+            "while extending, the far end is the cursor"
         );
-    }
 
-    #[test]
-    fn an_extending_anchor_is_pulled_back_into_the_list() {
-        let mut selection = Selection::default();
-        selection.start(9);
-
-        selection.clamp_to(5);
-
-        assert_eq!(selection.range(0), Some(Range::new(0, 4)));
-        assert!(selection.is_extending());
-    }
-
-    #[test]
-    fn a_selection_remembers_which_end_it_grew_from() {
-        let mut upwards = Selection::default();
-        upwards.start(9);
-
-        assert_eq!(upwards.anchor(), Some(9));
-
-        upwards.stop(2);
-
-        assert_eq!(
-            upwards.anchor(),
-            Some(9),
-            "freezing the range must not lose which end the cursor came from"
-        );
-        assert_eq!(upwards.range(0), Some(Range::new(2, 9)));
-    }
-
-    #[test]
-    fn nothing_selected_anchors_nowhere() {
-        assert_eq!(Selection::None.anchor(), None);
-    }
-
-    #[test]
-    fn a_truncated_range_pulls_its_anchor_back_too() {
-        let mut selection = Selection::default();
-        selection.start(9);
         selection.stop(2);
 
-        selection.clamp_to(5);
-
-        assert_eq!(selection.range(0), Some(Range::new(2, 4)));
         assert_eq!(
-            selection.anchor(),
-            Some(4),
-            "an anchor left past the end would send a cursor off the list"
+            selection.ranges(9),
+            Ranges::of(Range::new(2, 5)),
+            "frozen, the cursor walks free"
+        );
+        assert_eq!(selection.anchor(), Some(5), "the anchor is where v was");
+    }
+
+    #[test]
+    fn an_extension_running_into_a_group_shows_no_seam() {
+        let mut selection = Selection::default();
+        selection.start(0);
+        selection.stop(2);
+        selection.start(4);
+
+        assert_eq!(
+            selection.ranges(3),
+            Ranges::of(Range::new(0, 4)),
+            "the extension touched the frozen group, so the two are one"
         );
     }
 
     #[test]
-    fn an_empty_list_holds_no_selection() {
-        let mut extending = Selection::default();
-        extending.start(3);
-        let mut held = Selection::default();
-        held.start(0);
-        held.stop(3);
+    fn nothing_selected_is_an_empty_set_and_no_anchor() {
+        let selection = Selection::default();
 
-        extending.clamp_to(0);
-        held.clamp_to(0);
+        assert!(selection.ranges(4).is_empty());
+        assert!(!selection.is_active());
+        assert_eq!(selection.anchor(), None);
+    }
 
-        assert_eq!(extending.range(0), None);
-        assert_eq!(held.range(0), None);
+    #[test]
+    fn clamping_pulls_an_extending_anchor_back_into_the_list() {
+        let mut selection = Selection::default();
+        selection.start(9);
+
+        selection.clamp_to(5);
+
+        assert_eq!(selection.anchor(), Some(4));
+        assert_eq!(selection.ranges(0), Ranges::of(Range::new(0, 4)));
+    }
+
+    #[test]
+    fn clamping_away_the_group_holding_the_anchor_takes_the_anchor() {
+        // `y` sends the cursor home to the anchor. An anchor whose rows are
+        // gone would send it somewhere the user never was
+        // (multi-group selection design §3).
+        let mut selection = Selection::default();
+        selection.start(8);
+        selection.stop(9);
+
+        selection.clamp_to(4);
+
+        assert!(selection.ranges(0).is_empty());
+        assert_eq!(selection.anchor(), None);
     }
 
     #[test]
