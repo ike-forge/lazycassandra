@@ -7,7 +7,7 @@
 
 use crate::cell;
 use crate::model::{ClusteringOrder, CqlValue, Row};
-use crate::state::Range;
+use crate::state::Ranges;
 use crate::tree::Node;
 use crate::view::{ColumnKind, DetailRow};
 
@@ -111,34 +111,32 @@ pub fn lines(items: impl Iterator<Item = String>) -> String {
     items.collect::<Vec<_>>().join("\n")
 }
 
-/// A rectangle of the page: one line per row, holding the columns inside
-/// `columns` and no others. A range spanning every column is the rows
-/// themselves, which is what row mode yanks (design §5).
+/// A block of the page: one line per selected row, holding the selected
+/// columns and no others. Empty column groups are every column, which is what
+/// row mode yanks (multi-group selection design §5).
 #[must_use]
-pub fn grid_block(rows: &[Row], selected: Range, columns: Range) -> String {
-    lines(
-        rows.iter()
-            .enumerate()
-            .filter(|(index, _)| selected.contains(*index))
-            .map(|(_, row)| {
-                let fields: Vec<String> = (columns.first()..=columns.last())
-                    .filter_map(|column| row.values.get(column))
-                    .map(value)
-                    .collect();
+pub fn grid_block(rows: &[Row], selected: &Ranges, columns: &Ranges) -> String {
+    lines(selected.indices().filter_map(|index| {
+        let row = rows.get(index)?;
+        let fields: Vec<String> = columns
+            .indices()
+            .filter_map(|column| row.values.get(column))
+            .map(value)
+            .collect();
 
-                line(&fields)
-            }),
-    )
+        Some(line(&fields))
+    }))
 }
 
-/// One line per column, each being that column's values top to bottom.
+/// One line per selected column, each being that column's values top to
+/// bottom.
 ///
-/// Not the rectangle read row-wise: a column already yanks as its values in
-/// order (yank design §1), and a range of columns is that, once per column
-/// (design §5).
+/// Not the block read row-wise: a column already yanks as its values in order
+/// (yank design §1), and a set of columns is that, once per column, left to
+/// right (multi-group selection design §5).
 #[must_use]
-pub fn grid_columns(rows: &[Row], columns: Range) -> String {
-    lines((columns.first()..=columns.last()).map(|column| grid_column(rows, column)))
+pub fn grid_columns(rows: &[Row], columns: &Ranges) -> String {
+    lines(columns.indices().map(|column| grid_column(rows, column)))
 }
 
 fn escaped(field: &str) -> String {
@@ -182,9 +180,20 @@ mod tests {
         ClusteringOrder, CqlValue, Keyspace, Page, PrimaryKey, Replication, Row, Setting, Table,
         TableOptions,
     };
+    use crate::state::Range;
     use crate::tree::Node;
     use crate::view::{ColumnKind, DetailRow, IdentityKind};
     use std::collections::BTreeMap;
+
+    fn sample_rows(rows: usize, columns: usize) -> Vec<Row> {
+        (0..rows)
+            .map(|row| Row {
+                values: (0..columns)
+                    .map(|column| CqlValue::Text(format!("r{row}c{column}")))
+                    .collect(),
+            })
+            .collect()
+    }
 
     fn table(name: &str) -> Table {
         Table {
@@ -494,7 +503,11 @@ mod tests {
         ];
 
         assert_eq!(
-            grid_block(&rows, Range::new(0, 1), Range::new(1, 2)),
+            grid_block(
+                &rows,
+                &Ranges::of(Range::new(0, 1)),
+                &Ranges::of(Range::new(1, 2))
+            ),
             "alice,x\nbob,y"
         );
     }
@@ -511,7 +524,11 @@ mod tests {
         ];
 
         assert_eq!(
-            grid_block(&rows, Range::new(0, 1), Range::new(0, 1)),
+            grid_block(
+                &rows,
+                &Ranges::of(Range::new(0, 1)),
+                &Ranges::of(Range::new(0, 1))
+            ),
             "1,\n2,bob"
         );
     }
@@ -528,7 +545,7 @@ mod tests {
         ];
 
         assert_eq!(
-            grid_columns(&rows, Range::new(0, 1)),
+            grid_columns(&rows, &Ranges::of(Range::new(0, 1))),
             "1,2\nalice,bob",
             "a column is its values top to bottom, and a range of columns is that once per column"
         );
@@ -540,6 +557,51 @@ mod tests {
             values: vec![CqlValue::Int(1)],
         }];
 
-        assert_eq!(grid_block(&rows, Range::new(0, 4), Range::new(0, 4)), "1");
+        assert_eq!(
+            grid_block(
+                &rows,
+                &Ranges::of(Range::new(0, 4)),
+                &Ranges::of(Range::new(0, 4))
+            ),
+            "1"
+        );
+    }
+
+    #[test]
+    fn a_block_of_two_groups_yanks_one_line_per_row_with_no_separator() {
+        // The groups leave no trace in the output: a separator would be this
+        // program describing its own selection to a spreadsheet that did not
+        // ask (multi-group selection design §5).
+        let rows = sample_rows(4, 2);
+        let mut selected = Ranges::of(Range::new(0, 0));
+        selected.insert(Range::new(3, 3));
+
+        assert_eq!(
+            grid_block(&rows, &selected, &Ranges::of(Range::new(0, 1))),
+            format!("{}\n{}", grid_row(&rows[0]), grid_row(&rows[3]))
+        );
+    }
+
+    #[test]
+    fn a_block_takes_only_the_columns_the_groups_hold() {
+        let rows = sample_rows(2, 4);
+        let mut columns = Ranges::of(Range::new(0, 0));
+        columns.insert(Range::new(3, 3));
+
+        let yanked = grid_block(&rows, &Ranges::of(Range::new(0, 0)), &columns);
+
+        assert_eq!(yanked.split(',').count(), 2, "two columns, one line");
+    }
+
+    #[test]
+    fn disjoint_columns_yank_one_line_each_left_to_right() {
+        let rows = sample_rows(3, 4);
+        let mut columns = Ranges::of(Range::new(0, 0));
+        columns.insert(Range::new(2, 2));
+
+        assert_eq!(
+            grid_columns(&rows, &columns),
+            format!("{}\n{}", grid_column(&rows, 0), grid_column(&rows, 2))
+        );
     }
 }

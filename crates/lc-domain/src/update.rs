@@ -446,51 +446,55 @@ fn contents(state: &State) -> Option<String> {
     };
     let page = page.page();
     let (rows, columns) = grid_extent(state);
-    let whole = |len: usize| Range::new(0, len.saturating_sub(1));
-    let rows = rows.first().unwrap_or_else(|| whole(page.rows.len()));
-    let columns = columns.first().unwrap_or_else(|| whole(page.columns.len()));
+    let whole = |len: usize| Ranges::of(Range::new(0, len.saturating_sub(1)));
+    let rows = if rows.is_empty() {
+        whole(page.rows.len())
+    } else {
+        rows
+    };
+    let columns = if columns.is_empty() {
+        whole(page.columns.len())
+    } else {
+        columns
+    };
 
     match state.contents.mode {
         SelectionMode::Cell if rows.rows() == 1 && columns.rows() == 1 => {
-            let row = page.rows.get(rows.first())?;
-            let value = row.values.get(columns.first())?;
+            let row = page.rows.get(rows.first()?.first())?;
+            let value = row.values.get(columns.first()?.first())?;
 
             crate::yank::grid_cell(value)
         }
         SelectionMode::Row | SelectionMode::Cell => {
-            Some(crate::yank::grid_block(&page.rows, rows, columns))
+            Some(crate::yank::grid_block(&page.rows, &rows, &columns))
         }
-        SelectionMode::Column => Some(crate::yank::grid_columns(&page.rows, columns)),
+        SelectionMode::Column => Some(crate::yank::grid_columns(&page.rows, &columns)),
     }
 }
 
 fn tree_nodes(state: &State) -> Option<String> {
     let schema = state.schema()?;
     let rows = state.tables.rows(schema);
-    let range = spanned(&state.tables.selection, state.tables.cursor.index())
-        .first()
-        .unwrap_or_else(|| Range::new(0, 0));
+    let selected = spanned(&state.tables.selection, state.tables.cursor.index());
 
     Some(crate::yank::lines(
-        rows.iter()
-            .enumerate()
-            .filter(|(index, _)| range.contains(*index))
-            .map(|(_, node)| crate::yank::node(node)),
+        selected
+            .indices()
+            .filter_map(|index| rows.get(index))
+            .map(crate::yank::node),
     ))
 }
 
 fn detail_rows(state: &State) -> Option<String> {
     let details = crate::view::details_of(state)?;
-    let range = spanned(&state.ddl.selection, state.ddl.cursor.index())
-        .first()
-        .unwrap_or_else(|| Range::new(0, 0));
+    let selected = spanned(&state.ddl.selection, state.ddl.cursor.index());
+    let rows: Vec<_> = details.rows().collect();
 
     Some(crate::yank::lines(
-        details
-            .rows()
-            .enumerate()
-            .filter(|(index, _)| range.contains(*index))
-            .map(|(_, row)| crate::yank::detail_row(row)),
+        selected
+            .indices()
+            .filter_map(|index| rows.get(index))
+            .map(|row| crate::yank::detail_row(row)),
     ))
 }
 
@@ -4711,6 +4715,91 @@ mod tests {
         let effects = press(&mut state, Key::Char('y'));
 
         assert_eq!(yanked(&effects), Some("shop\nshop.orders\nshop.users"));
+    }
+
+    #[test]
+    fn y_over_two_groups_yanks_their_rows_in_drawn_order() {
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(2);
+        state.tables.selection.stop(2);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(0);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(payload)) = effects.into_iter().next() else {
+            panic!("y raised no yank");
+        };
+
+        assert_eq!(payload.lines().count(), 2);
+        assert!(
+            !payload.contains("\n\n"),
+            "no separator between groups (design §5)"
+        );
+    }
+
+    #[test]
+    fn y_sends_the_cursor_home_to_the_last_v_and_spends_every_group() {
+        // The last press is where the user last was, and it is the only one of the
+        // three candidate rows still true after a group has been dropped from the
+        // middle (design §3).
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(1);
+        state.tables.selection.start(3);
+        state.tables.selection.stop(3);
+        state.tables.cursor.go_to(3, 4);
+
+        let _ = press(&mut state, Key::Char('y'));
+
+        assert_eq!(state.tables.cursor.index(), 3, "home is the last v");
+        assert!(
+            !state.tables.selection.is_active(),
+            "a yank spends every group, not just the last"
+        );
+    }
+
+    #[test]
+    fn y_over_a_selection_whose_anchor_was_dropped_moves_no_cursor() {
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        // Two groups; the second one's row is where `v` was last pressed, and
+        // dropping it takes the anchor with it. The first group still stands.
+        state.tables.selection.toggle(0);
+        state.tables.selection.toggle(1);
+        state.tables.selection.toggle(3);
+        state.tables.selection.toggle(3);
+        state.tables.selection.toggle(3);
+        state.tables.cursor.go_to(1, 4);
+
+        assert_eq!(state.tables.selection.anchor(), None);
+
+        let _ = press(&mut state, Key::Char('y'));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "there is no row the anchor could send it to that the user chose"
+        );
+    }
+
+    #[test]
+    fn a_single_cell_in_one_group_each_way_still_yanks_bare() {
+        // "One" is now "one row and one column in one group each"; the bare,
+        // unescaped value must survive that rewording (design §5).
+        let mut state = contents_state();
+        state.focus_on(Panel::Contents);
+        state.contents.mode = SelectionMode::Cell;
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(payload)) = effects.into_iter().next() else {
+            panic!("y raised no yank");
+        };
+
+        assert!(!payload.contains(','), "a bare cell takes no delimiter");
     }
 
     #[test]
