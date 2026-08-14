@@ -179,6 +179,107 @@ fn json_string(text: &str) -> String {
     out
 }
 
+/// One line of editable text with a cursor into it.
+///
+/// The cursor counts characters, not bytes, so no motion can leave it inside
+/// one — the invariant that keeps every slice below safe. Neither
+/// [`crate::editor::Editor`] (multi-line, and a panel's) nor
+/// [`crate::search::Prompt`] (appends at the end only) fits a path that
+/// arrives prefilled and is edited in the middle (design §2.1).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Line {
+    text: String,
+    cursor: usize,
+}
+
+impl Line {
+    /// Opens with the cursor at the end, where the filename is.
+    #[must_use]
+    pub fn new(text: String) -> Self {
+        let cursor = text.chars().count();
+
+        Self { text, cursor }
+    }
+
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// A character index, which is what a renderer measures a column with.
+    #[must_use]
+    pub const fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    pub fn insert(&mut self, character: char) {
+        let at = self.byte_offset(self.cursor);
+        self.text.insert(at, character);
+        self.cursor += 1;
+    }
+
+    pub fn delete_back(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+
+        self.cursor -= 1;
+        let at = self.byte_offset(self.cursor);
+        self.text.remove(at);
+    }
+
+    pub fn delete_forward(&mut self) {
+        if self.cursor >= self.len() {
+            return;
+        }
+
+        let at = self.byte_offset(self.cursor);
+        self.text.remove(at);
+    }
+
+    pub const fn left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    pub fn right(&mut self) {
+        self.cursor = self.cursor.saturating_add(1).min(self.len());
+    }
+
+    pub const fn home(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn end(&mut self) {
+        self.cursor = self.len();
+    }
+
+    /// Replaces the trailing extension, if there is one. A path with no
+    /// extension gains none: the format radio rewrites what is there rather
+    /// than asserting what should be (design §2.1).
+    pub fn set_extension(&mut self, extension: &str) {
+        let last_separator = self.text.rfind(['/', '\\']).map_or(0, |at| at + 1);
+        let Some(dot) = self.text[last_separator..].rfind('.') else {
+            return;
+        };
+
+        self.text.truncate(last_separator + dot + 1);
+        self.text.push_str(extension);
+        self.cursor = self.len();
+    }
+
+    fn len(&self) -> usize {
+        self.text.chars().count()
+    }
+
+    /// The byte offset of character `index`, or the end of the string.
+    fn byte_offset(&self, index: usize) -> usize {
+        self.text
+            .char_indices()
+            .nth(index)
+            .map_or(self.text.len(), |(at, _)| at)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,5 +429,102 @@ mod tests {
         assert_eq!(Format::Json.extension(), "json");
         assert_eq!(Format::Csv.next(), Format::Json);
         assert_eq!(Format::Json.next(), Format::Csv);
+    }
+
+    #[test]
+    fn a_line_opens_with_its_cursor_at_the_end_where_a_filename_is_edited() {
+        let line = Line::new("shop.orders.csv".to_owned());
+
+        assert_eq!(line.text(), "shop.orders.csv");
+        assert_eq!(line.cursor(), 15);
+    }
+
+    #[test]
+    fn typing_inserts_at_the_cursor() {
+        let mut line = Line::new("ab".to_owned());
+        line.left();
+        line.insert('X');
+
+        assert_eq!(line.text(), "aXb");
+        assert_eq!(line.cursor(), 2);
+    }
+
+    #[test]
+    fn backspace_takes_the_character_behind_the_cursor_and_delete_the_one_under_it() {
+        let mut line = Line::new("abc".to_owned());
+        line.left();
+        line.delete_back();
+
+        assert_eq!(line.text(), "ac");
+        assert_eq!(line.cursor(), 1);
+
+        line.delete_forward();
+        assert_eq!(line.text(), "a");
+        assert_eq!(line.cursor(), 1);
+    }
+
+    #[test]
+    fn neither_delete_runs_off_its_end() {
+        let mut line = Line::new(String::new());
+        line.delete_back();
+        line.delete_forward();
+
+        assert_eq!(line.text(), "");
+        assert_eq!(line.cursor(), 0);
+    }
+
+    #[test]
+    fn the_cursor_stops_at_both_ends() {
+        let mut line = Line::new("ab".to_owned());
+        line.right();
+        line.right();
+        assert_eq!(line.cursor(), 2);
+
+        line.home();
+        line.left();
+        assert_eq!(line.cursor(), 0);
+
+        line.end();
+        assert_eq!(line.cursor(), 2);
+    }
+
+    /// The cursor counts characters, not bytes: a path can hold anything a
+    /// filesystem accepts, and slicing one mid-character panics.
+    #[test]
+    fn a_multi_byte_character_is_one_step_and_one_delete() {
+        let mut line = Line::new("aéb".to_owned());
+        line.home();
+        line.right();
+        line.delete_forward();
+
+        assert_eq!(line.text(), "ab");
+        assert_eq!(line.cursor(), 1);
+    }
+
+    #[test]
+    fn setting_the_extension_replaces_the_one_that_is_there() {
+        let mut line = Line::new("/home/ike/shop.orders.csv".to_owned());
+        line.set_extension("json");
+
+        assert_eq!(line.text(), "/home/ike/shop.orders.json");
+    }
+
+    /// A path the user has retyped to end in nothing keeps ending in nothing:
+    /// the rewrite replaces an extension, it does not append one (design §2.1).
+    #[test]
+    fn setting_the_extension_leaves_a_path_that_has_none_alone() {
+        let mut line = Line::new("/dev/stdout".to_owned());
+        line.set_extension("json");
+
+        assert_eq!(line.text(), "/dev/stdout");
+    }
+
+    /// A dot in a directory name is not an extension.
+    #[test]
+    fn a_dot_before_the_last_separator_is_not_an_extension() {
+        let mut line = Line::new("/home/v1.2/orders".to_owned());
+        line.set_extension("json");
+
+        assert_eq!(line.text(), "/home/v1.2/orders");
     }
 }
