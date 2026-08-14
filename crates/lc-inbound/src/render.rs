@@ -1909,6 +1909,37 @@ mod tests {
         );
     }
 
+    /// A band drawn cell by cell breaks at every column spacing, so a held
+    /// range reads as one stripe per column instead of one selection.
+    #[test]
+    fn a_row_range_bands_the_spacing_between_its_columns_too() {
+        let mut state = showing(sized_page(2, 4));
+        state.contents.mode = SelectionMode::Row;
+        state.contents.cursor.down(4);
+        state.contents.rows = Selection::held(0, 2);
+
+        let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let bg = |row: u16, x: u16| {
+            buffer
+                .cell((area.x + x, area.y + 2 + row))
+                .expect("inside the panel")
+                .bg
+        };
+
+        // A two-wide value column starts four in from the inner edge, so the
+        // spacing before the second column is the sixth cell; the gutter's row
+        // number is the second.
+        for x in [2, 6] {
+            assert_eq!(
+                bg(0, x),
+                bg(0, 4),
+                "the band runs the width of the row, gutter and spacing included"
+            );
+            assert_ne!(bg(3, x), bg(0, x), "and stops at the range's last row");
+        }
+    }
+
     #[test]
     fn a_cell_block_bands_the_rectangle_and_nothing_outside_it() {
         let mut state = showing(sized_page(3, 3));

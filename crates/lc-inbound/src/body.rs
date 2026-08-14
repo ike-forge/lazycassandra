@@ -585,10 +585,17 @@ impl Marked {
 /// `layout.drawn` names, each patched with `Token::Ranged` where [`ranged`]
 /// says its page column falls inside the block.
 fn grid_row(index: usize, cells: &[GridCell], layout: &GridRow, theme: Theme) -> Row<'static> {
-    let marked = index == layout.selected
-        || layout
-            .rows_range
-            .is_some_and(|rows_range| rows_range.contains(index));
+    let held = layout
+        .rows_range
+        .is_some_and(|rows_range| rows_range.contains(index));
+    let marked = index == layout.selected || held;
+
+    // A row range unconstrained on the column axis holds the whole row, and
+    // the row's own style is the only thing ratatui paints under the column
+    // spacing. Left to the cells, the band would break at every gap and read
+    // as one stripe per column rather than one selection — the same continuity
+    // `row_highlight_style` gives the cursor row.
+    let whole_row = held && layout.columns_range.is_none();
 
     Row::new(
         std::iter::once(Cell::from(Line::from(vec![
@@ -626,6 +633,11 @@ fn grid_row(index: usize, cells: &[GridCell], layout: &GridRow, theme: Theme) ->
                 }),
         ),
     )
+    .style(if whole_row {
+        theme.style(layout.band)
+    } else {
+        Style::default()
+    })
 }
 
 /// Where each drawn column of the grid landed, in absolute frame columns.
