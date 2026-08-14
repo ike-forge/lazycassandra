@@ -574,7 +574,8 @@ mod tests {
     use lc_domain::posture::Posture;
     use lc_domain::search::{Filter, Filtered, Prompt};
     use lc_domain::state::{
-        Connection, ConnectionState, Geometry, Message, Overlay, Panel, SchemaState,
+        Connection, ConnectionState, Geometry, Message, Overlay, Panel, Range, SchemaState,
+        Selection,
     };
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
@@ -1264,6 +1265,25 @@ mod tests {
     }
 
     #[test]
+    fn a_ranged_tree_row_carries_the_bar_and_the_band() {
+        let mut state = browsing(&["shop", "typezoo", "system"], 0);
+        state.tables.selection = Selection::Held(Range::new(0, 1));
+
+        let buffer = draw_state(40, 12, &state);
+
+        assert_eq!(
+            row(&buffer, 2).chars().nth(1),
+            Some('▌'),
+            "row 1 carries the bar though the cursor is on row 0"
+        );
+        assert_ne!(
+            buffer.cell((1, 2)).expect("inside the panel").bg,
+            buffer.cell((1, 3)).expect("inside the panel").bg,
+            "row 1 is inside the range and banded, row 2 is not"
+        );
+    }
+
+    #[test]
     fn a_panel_with_nothing_to_list_says_what_it_is_waiting_for() {
         let state = State {
             connection: ConnectionState::Connecting(ConnId::next()),
@@ -1774,6 +1794,84 @@ mod tests {
         );
     }
 
+    #[test]
+    fn every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them() {
+        let mut state = showing(sized_page(1, 4));
+        state.contents.mode = SelectionMode::Row;
+        state.contents.cursor.down(4);
+        state.contents.rows = Selection::Held(Range::new(0, 2));
+
+        let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        // The bar+gutter block for a 4-row page is two columns wide, then one
+        // of spacing: the one data column starts four in from the inner edge.
+        let bg = |row: u16| {
+            buffer
+                .cell((area.x + 4, area.y + 2 + row))
+                .expect("inside the panel")
+                .bg
+        };
+
+        let banded = bg(0);
+        let cursor = bg(1);
+        let plain = bg(3);
+
+        assert_ne!(banded, plain, "a row in the range is banded");
+        assert_ne!(
+            banded, cursor,
+            "and the cursor row still reads apart from it"
+        );
+    }
+
+    #[test]
+    fn a_cell_block_bands_the_rectangle_and_nothing_outside_it() {
+        let mut state = showing(sized_page(3, 3));
+        state.contents.rows = Selection::Held(Range::new(0, 1));
+        state.contents.columns = Selection::Held(Range::new(0, 1));
+
+        let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let bg = |row: u16, column: u16| {
+            buffer
+                .cell((area.x + 4 + column * 3, area.y + 2 + row))
+                .expect("inside the panel")
+                .bg
+        };
+
+        assert_ne!(
+            bg(1, 1),
+            bg(1, 2),
+            "the block ends at the column range's edge"
+        );
+        // Columns 1 and 2 rather than 0 and 2: the cursor's own column is 0,
+        // and cell mode washes it down every row regardless of the range —
+        // reading it here would prove nothing about the range.
+        assert_eq!(
+            bg(2, 1),
+            bg(2, 2),
+            "outside the row range, neither cell is banded"
+        );
+    }
+
+    #[test]
+    fn a_column_range_bands_its_columns_and_lights_no_gutter_bar() {
+        let mut state = showing(sized_page(2, 3));
+        state.contents.mode = SelectionMode::Column;
+        state.contents.columns = Selection::Held(Range::new(0, 1));
+
+        let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let bar = buffer
+            .cell((area.x + 1, area.y + 3))
+            .expect("inside the panel");
+
+        assert_eq!(
+            bar.symbol(),
+            " ",
+            "the range is columns; a bar down every row would claim the rows were selected"
+        );
+    }
+
     /// `follow_grid_columns` pulls the viewport over the column cursor against
     /// the geometry of the frame *before* this one, so a resize that narrows
     /// the panel draws one frame whose cursor is off the right of what fits.
@@ -2159,6 +2257,43 @@ mod tests {
         );
     }
 
+    /// The trap `body.rs::grid` documents around `selected_column`: a range
+    /// held over the *page*'s column indices must be tested against the page
+    /// column a drawn cell names, not the position it happens to draw at.
+    #[test]
+    fn a_scrolled_grids_column_range_bands_the_page_column_not_the_drawn_position() {
+        let mut state = showing_column_path(&[8, 5]);
+        assert_eq!(
+            state.contents.column_scroll.first(),
+            3,
+            "the fixture must scroll to c3 or this test proves nothing about \
+             page indices"
+        );
+        // Page column 6 — drawn third in this window (c3, c4, c5, c6, …). A
+        // check keyed on the drawn position rather than the page column would
+        // either band the wrong cell or, since no drawn position is 6, band
+        // nothing at all in a window this size.
+        state.contents.columns = Selection::Held(Range::new(6, 6));
+
+        let buffer = draw_state(40, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        // Row 1, not the cursor's row 0: the cursor's own row would be washed
+        // by the crosshair regardless of the range, and prove nothing here.
+        let bg = |index: u16| {
+            buffer
+                .cell((drawn_column(area, index), area.y + 3))
+                .expect("inside the panel")
+                .bg
+        };
+
+        assert_ne!(
+            bg(3),
+            bg(0),
+            "page column 6 draws third in this scrolled window and must be \
+             banded there, keyed on its page index rather than its position"
+        );
+    }
+
     /// The Contents panel's bottom border at 40x12, between its corners.
     fn contents_bottom(buffer: &Buffer) -> String {
         let area = block_area(buffer, "Table contents");
@@ -2525,6 +2660,25 @@ mod tests {
                 "row {row} is a heading: {text:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_ranged_ddl_row_is_banded_without_a_bar() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        state.ddl.cursor.to_start();
+        // Row 1 is the table identity row, which wraps to two lines
+        // (`a_selected_tables_shape_is_drawn_above_its_options`); row 2 is
+        // `customer_id`, outside the range.
+        state.ddl.selection = Selection::Held(Range::new(0, 1));
+
+        let buffer = draw_state(100, 41, &state);
+
+        assert_ne!(
+            buffer.cell((1, 26)).expect("inside the panel").bg,
+            buffer.cell((1, 30)).expect("inside the panel").bg,
+            "the line row 1 wrapped to is banded, row 2's is not"
+        );
     }
 
     #[test]

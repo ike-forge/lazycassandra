@@ -47,10 +47,12 @@ const HEADER_ROWS: u16 = 1;
 /// edge of the row, and it is one column wide in every font we can assume.
 const SELECTION_BAR: char = '▌';
 
-/// The cursor row's mark, reserved as a column of its own on every row so
-/// unselected rows never shift sideways as the cursor moves (design §4.2).
-fn selection_bar(is_selected: bool, theme: Theme) -> TextSpan<'static> {
-    if is_selected {
+/// The mark, reserved as a column of its own on every row so unselected rows
+/// never shift sideways as the cursor moves (design §4.2). Lit for the cursor
+/// row or, when `v` has extended one, any row a held range covers — the
+/// caller decides which (design §6 rule 4).
+fn selection_bar(marked: bool, theme: Theme) -> TextSpan<'static> {
+    if marked {
         TextSpan::styled(SELECTION_BAR.to_string(), theme.style(Token::SelectionBar))
     } else {
         TextSpan::raw(" ")
@@ -180,8 +182,8 @@ pub(crate) fn render(
                     column: *column,
                     mode: *mode,
                     gutter: *gutter,
-                    _rows_range: *rows_range,
-                    _columns_range: *columns_range,
+                    rows_range: *rows_range,
+                    columns_range: *columns_range,
                 },
                 theme,
             );
@@ -228,13 +230,16 @@ fn tree(
     rows: &[TreeRow],
     selected: usize,
     offset: usize,
-    _range: Option<Range>,
+    range: Option<Range>,
     theme: Theme,
 ) -> Extent {
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
-        .map(|(index, row)| item(row, index == selected, theme))
+        .map(|(index, row)| {
+            let ranged = range.is_some_and(|range| range.contains(index));
+            item(row, index == selected || ranged, ranged, theme)
+        })
         .collect();
     let height = usize::from(area.height);
 
@@ -269,9 +274,11 @@ struct GridView<'a> {
     column: usize,
     mode: SelectionMode,
     gutter: u16,
-    /// Unused until Task 9 paints the rectangle these two axes describe.
-    _rows_range: Option<Range>,
-    _columns_range: Option<Range>,
+    /// The rows `v` has selected while extending the row axis, as
+    /// [`PanelBody::Grid::rows_range`].
+    rows_range: Option<Range>,
+    /// [`GridView::rows_range`]'s counterpart for the column axis.
+    columns_range: Option<Range>,
 }
 
 /// Which of `TableState`'s three selections this frame carries. A row scrolled
@@ -298,7 +305,8 @@ fn grid(
         column,
         mode,
         gutter,
-        ..
+        rows_range,
+        columns_range,
     } = *view;
 
     // Both the window `visible` judges against and the extent the scrollbar is
@@ -344,22 +352,19 @@ fn grid(
         theme,
     );
 
-    let body = rows.iter().enumerate().map(|(index, cells)| {
-        Row::new(
-            std::iter::once(Cell::from(Line::from(vec![
-                selection_bar(index == selected, theme),
-                number(index, gutter, theme),
-            ])))
-            .chain(
-                cells
-                    .get(drawn.clone())
-                    .unwrap_or_default()
-                    .iter()
-                    .zip(&drawn_widths)
-                    .map(|(cell, width)| styled_cell(&cell.text, cell_style(cell, theme), *width)),
-            ),
-        )
-    });
+    let row_layout = GridRow {
+        drawn: drawn.clone(),
+        drawn_widths: &drawn_widths,
+        first_column,
+        selected,
+        gutter,
+        rows_range,
+        columns_range,
+    };
+    let body = rows
+        .iter()
+        .enumerate()
+        .map(|(index, cells)| grid_row(index, cells, &row_layout, theme));
 
     let table = Table::new(body, constraints)
         .header(header)
@@ -416,6 +421,85 @@ fn grid(
             visible: shown,
         },
         bands(area, &drawn_widths, first_column, gutter),
+    )
+}
+
+/// Whether the cell at `row, column` — both counted in the page's own
+/// indices, never the drawn window's — falls inside the rectangle
+/// `rows_range` and `columns_range` describe.
+///
+/// `None` on an axis means that axis was never extended, so it constrains
+/// nothing: a row range with no column range is the whole row, and a column
+/// range with no row range is the whole column. The two together are painted
+/// only when at least one of them is `Some` (design §6).
+fn ranged(
+    row: usize,
+    column: usize,
+    rows_range: Option<Range>,
+    columns_range: Option<Range>,
+) -> bool {
+    (rows_range.is_some() || columns_range.is_some())
+        && rows_range.is_none_or(|range| range.contains(row))
+        && columns_range.is_none_or(|range| range.contains(column))
+}
+
+/// What one row of the grid's body needs, gathered here rather than passed as
+/// seven more parameters of `grid_row` (the reason [`GridView`] itself is a
+/// struct).
+struct GridRow<'a> {
+    drawn: std::ops::Range<usize>,
+    drawn_widths: &'a [u16],
+    first_column: usize,
+    selected: usize,
+    gutter: u16,
+    rows_range: Option<Range>,
+    columns_range: Option<Range>,
+}
+
+/// One row of the grid's body: the bar-and-gutter cell, then the columns
+/// `layout.drawn` names, each patched with `Token::Ranged` where [`ranged`]
+/// says its page column falls inside the block.
+fn grid_row(index: usize, cells: &[GridCell], layout: &GridRow, theme: Theme) -> Row<'static> {
+    let marked = index == layout.selected
+        || layout
+            .rows_range
+            .is_some_and(|rows_range| rows_range.contains(index));
+
+    Row::new(
+        std::iter::once(Cell::from(Line::from(vec![
+            selection_bar(marked, theme),
+            number(index, layout.gutter, theme),
+        ])))
+        .chain(
+            cells
+                .get(layout.drawn.clone())
+                .unwrap_or_default()
+                .iter()
+                .zip(layout.drawn_widths)
+                .enumerate()
+                // `drawn` starts at `first_column`, not at the page's own
+                // origin: the offset here names a position in the window
+                // drawn, and only adding it back to `first_column` gives the
+                // page column `ranged` means.
+                .map(|(offset, (cell, width))| {
+                    let style = if ranged(
+                        index,
+                        layout.first_column + offset,
+                        layout.rows_range,
+                        layout.columns_range,
+                    ) {
+                        Some(
+                            cell_style(cell, theme)
+                                .unwrap_or_default()
+                                .patch(theme.style(Token::Ranged)),
+                        )
+                    } else {
+                        cell_style(cell, theme)
+                    };
+
+                    styled_cell(&cell.text, style, *width)
+                }),
+        ),
     )
 }
 
@@ -547,7 +631,7 @@ fn truncated(text: &str, width: u16) -> String {
     out
 }
 
-fn item(row: &TreeRow, is_selected: bool, theme: Theme) -> ListItem<'static> {
+fn item(row: &TreeRow, marked: bool, ranged: bool, theme: Theme) -> ListItem<'static> {
     // A keyspace opens at the margin and its tables hang off it, so the shape
     // of the tree is the indentation and no separate fold marker is spent on
     // saying what the drawn rows already say
@@ -574,13 +658,21 @@ fn item(row: &TreeRow, is_selected: bool, theme: Theme) -> ListItem<'static> {
             .add_modifier(Modifier::BOLD),
     );
 
-    ListItem::new(Line::from(vec![
-        selection_bar(is_selected, theme),
+    let line = Line::from(vec![
+        selection_bar(marked, theme),
         TextSpan::raw(limb),
         icon,
         TextSpan::raw(row.label.clone()),
-    ]))
-    .style(theme.style(row.token))
+    ])
+    .style(theme.style(row.token));
+
+    let item = ListItem::new(line);
+
+    if ranged {
+        item.style(theme.style(Token::Ranged))
+    } else {
+        item
+    }
 }
 
 /// One buffer line is one screen row: long lines scroll sideways rather than

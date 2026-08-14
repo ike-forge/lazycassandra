@@ -96,7 +96,7 @@ pub(crate) fn render(
 pub(crate) fn lay_out(
     details: &Details,
     selected: usize,
-    _range: Option<Range>,
+    range: Option<Range>,
     width: usize,
     theme: Theme,
 ) -> Laid {
@@ -142,6 +142,9 @@ pub(crate) fn lay_out(
                     first: lines.len(),
                     lines: drawn.len(),
                 };
+            } else if range.is_some_and(|range| range.contains(row)) {
+                let band = theme.style(Token::Ranged);
+                drawn = drawn.into_iter().map(|line| patched(line, band)).collect();
             }
 
             rows.extend(std::iter::repeat_n(Some(row), drawn.len()));
