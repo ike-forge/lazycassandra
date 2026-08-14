@@ -11,8 +11,12 @@ mod ported;
 #[cfg(test)]
 mod contrast;
 
+use std::collections::BTreeMap;
+
+use lc_domain::config::CustomTheme;
 use lc_domain::posture::Posture;
 use lc_domain::style::{Severity, Token};
+use lc_domain::theme::{Role, ThemeName};
 use lc_domain::{Ours, Ported, ThemeChoice};
 use ratatui::style::{Color, Modifier, Style};
 
@@ -88,9 +92,51 @@ pub(crate) struct Palette {
     pub(crate) comment: Color,
 }
 
+impl Palette {
+    /// Overwrites one role, for a palette a config file supplied.
+    ///
+    /// Exhaustive, so a [`Role`] this does not handle fails to compile. The
+    /// reverse — a field here that `Role` does not name — is not caught, the
+    /// same limit `Ours::ALL` carries (design §8).
+    pub(crate) const fn set(&mut self, role: Role, color: Color) {
+        match role {
+            Role::Base => self.base = color,
+            Role::Surface => self.surface = color,
+            Role::Text => self.text = color,
+            Role::Dim => self.dim = color,
+            Role::Faint => self.faint = color,
+            Role::Border => self.border = color,
+            Role::Focus => self.focus = color,
+            Role::SelectionBg => self.selection_bg = color,
+            Role::Crosshair => self.crosshair = color,
+            Role::Ranged => self.ranged = color,
+            Role::SelectionFg => self.selection_fg = color,
+            Role::SelectionBar => self.selection_bar = color,
+            Role::Shortcut => self.shortcut = color,
+            Role::Keyspace => self.keyspace = color,
+            Role::Table => self.table = color,
+            Role::Partition => self.partition = color,
+            Role::Clustering => self.clustering = color,
+            Role::Column => self.column = color,
+            Role::Label => self.label = color,
+            Role::Section => self.section = color,
+            Role::Accent => self.accent = color,
+            Role::Match => self.match_ = color,
+            Role::Success => self.success = color,
+            Role::Warning => self.warning = color,
+            Role::Danger => self.danger = color,
+            Role::Info => self.info = color,
+            Role::Keyword => self.keyword = color,
+            Role::Reference => self.reference = color,
+            Role::Literal => self.literal = color,
+            Role::Comment => self.comment = color,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
-    palette: &'static Palette,
+    palette: Palette,
 }
 
 impl Default for Theme {
@@ -103,36 +149,39 @@ impl Theme {
     /// The palette `choice` names. The one place a theme name becomes a
     /// colour (architecture.md §6).
     ///
-    /// `Custom` falls back to the default palette: resolving a config's
-    /// custom theme against its declared roles is `lc-app`'s wiring to do,
-    /// not this lookup's — nothing in this crate can see the config that
-    /// would answer it.
+    /// `Custom` falls back to the default palette: this lookup has no config
+    /// to resolve a custom theme's declared roles against. [`Themes::get`] is
+    /// where a `Custom` name actually resolves; this arm exists so `Theme::of`
+    /// stays total for callers — tests among them — that have no `Themes`
+    /// table.
     #[must_use]
-    // `DefaultDark` and `Custom` share a body by coincidence, not by design —
-    // the latter is a stand-in for resolution a later task adds, and merging
-    // the two arms would read as if that were intentional aliasing.
+    // `DefaultDark` and `Custom` share a body: the latter never resolves here
+    // in practice (`Themes::get` is where a `Custom` name is actually
+    // resolved, and `validate` refuses a dangling one before it can reach
+    // `State`), so there is no real palette to give it and it borrows the
+    // default's rather than invent one.
     #[allow(clippy::match_same_arms)]
     pub fn of(choice: &ThemeChoice) -> Self {
         Self {
             palette: match choice {
-                ThemeChoice::Ours(Ours::DefaultDark) => &ours::default::DARK,
-                ThemeChoice::Ours(Ours::DefaultLight) => &ours::default::LIGHT,
-                ThemeChoice::Ours(Ours::AshDark) => &ours::ash::DARK,
-                ThemeChoice::Ours(Ours::AshLight) => &ours::ash::LIGHT,
-                ThemeChoice::Ours(Ours::BeaconDark) => &ours::beacon::DARK,
-                ThemeChoice::Ours(Ours::BeaconLight) => &ours::beacon::LIGHT,
-                ThemeChoice::Ours(Ours::QuillDark) => &ours::quill::DARK,
-                ThemeChoice::Ours(Ours::QuillLight) => &ours::quill::LIGHT,
-                ThemeChoice::Ported(Ported::CatppuccinLatte) => &ported::catppuccin::LATTE,
-                ThemeChoice::Ported(Ported::CatppuccinFrappe) => &ported::catppuccin::FRAPPE,
-                ThemeChoice::Ported(Ported::CatppuccinMacchiato) => &ported::catppuccin::MACCHIATO,
-                ThemeChoice::Ported(Ported::CatppuccinMocha) => &ported::catppuccin::MOCHA,
-                ThemeChoice::Custom(_) => &ours::default::DARK,
+                ThemeChoice::Ours(Ours::DefaultDark) => ours::default::DARK,
+                ThemeChoice::Ours(Ours::DefaultLight) => ours::default::LIGHT,
+                ThemeChoice::Ours(Ours::AshDark) => ours::ash::DARK,
+                ThemeChoice::Ours(Ours::AshLight) => ours::ash::LIGHT,
+                ThemeChoice::Ours(Ours::BeaconDark) => ours::beacon::DARK,
+                ThemeChoice::Ours(Ours::BeaconLight) => ours::beacon::LIGHT,
+                ThemeChoice::Ours(Ours::QuillDark) => ours::quill::DARK,
+                ThemeChoice::Ours(Ours::QuillLight) => ours::quill::LIGHT,
+                ThemeChoice::Ported(Ported::CatppuccinLatte) => ported::catppuccin::LATTE,
+                ThemeChoice::Ported(Ported::CatppuccinFrappe) => ported::catppuccin::FRAPPE,
+                ThemeChoice::Ported(Ported::CatppuccinMacchiato) => ported::catppuccin::MACCHIATO,
+                ThemeChoice::Ported(Ported::CatppuccinMocha) => ported::catppuccin::MOCHA,
+                ThemeChoice::Custom(_) => ours::default::DARK,
             },
         }
     }
 
-    pub(crate) const fn palette(self) -> &'static Palette {
+    pub(crate) const fn palette(self) -> Palette {
         self.palette
     }
 
@@ -197,9 +246,9 @@ impl Theme {
             Token::Shortcut | Token::HintKey => fg(palette.shortcut)
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(Modifier::UNDERLINED),
-            Token::Selected => selected(palette),
-            Token::Crosshair => crosshair(palette),
-            Token::Ranged => ranged(palette),
+            Token::Selected => selected(&palette),
+            Token::Crosshair => crosshair(&palette),
+            Token::Ranged => ranged(&palette),
             Token::Match => fg(palette.match_).add_modifier(Modifier::BOLD),
             // A modifier rather than a colour, because it has to read
             // *against* the highlighted row whatever colour that row is.
@@ -210,6 +259,57 @@ impl Theme {
             Token::Reference => fg(palette.reference),
             Token::Literal => fg(palette.literal),
         }
+    }
+}
+
+/// Every palette a name can resolve to, built once at startup.
+///
+/// Resolution happens here rather than per frame: a custom palette is
+/// `extends`' palette with the stated roles overwritten, and that is a fixed
+/// computation over data that does not change while the tool runs (design §8).
+#[derive(Debug, Clone, Default)]
+pub struct Themes {
+    custom: BTreeMap<ThemeName, Palette>,
+}
+
+impl Themes {
+    #[must_use]
+    pub fn new(themes: &[CustomTheme]) -> Self {
+        let custom = themes
+            .iter()
+            .map(|theme| {
+                let mut palette = Theme::of(&ThemeChoice::from(theme.extends)).palette();
+
+                for (role, colour) in &theme.colors {
+                    palette.set(*role, Color::Rgb(colour.red, colour.green, colour.blue));
+                }
+
+                (theme.name.clone(), palette)
+            })
+            .collect();
+
+        Self { custom }
+    }
+
+    /// The palette `choice` names.
+    ///
+    /// A name no theme claims falls back to the default. `validate` resolves
+    /// dangling names before one can reach `State`, so this is defence rather
+    /// than a path anything takes.
+    #[must_use]
+    pub fn get(&self, choice: &ThemeChoice) -> Theme {
+        match choice {
+            ThemeChoice::Custom(name) => self.custom.get(name).map_or_else(
+                || Theme::of(&ThemeChoice::default()),
+                |palette| Theme { palette: *palette },
+            ),
+            built_in => Theme::of(built_in),
+        }
+    }
+
+    /// The names the picker lists after the built-ins, in config order.
+    pub fn names(&self) -> impl Iterator<Item = &ThemeName> {
+        self.custom.keys()
     }
 }
 
@@ -247,7 +347,10 @@ fn fg(color: Color) -> Style {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::collections::BTreeMap;
+
     use lc_domain::BuiltIn;
+    use lc_domain::config::Rgb;
 
     use super::*;
     use crate::theme::contrast::{luminance, ratio};
@@ -334,7 +437,7 @@ pub(crate) mod tests {
         for choice in Ours::ALL {
             let palette = Theme::of(&ThemeChoice::Ours(choice)).palette();
 
-            for (role, colour) in foregrounds(palette) {
+            for (role, colour) in foregrounds(&palette) {
                 for (ground, name) in [
                     (palette.base, "base"),
                     (palette.surface, "surface"),
@@ -490,7 +593,7 @@ pub(crate) mod tests {
     fn every_choice_maps_to_a_palette_of_its_own() {
         let palettes: Vec<Palette> = BuiltIn::ALL
             .iter()
-            .map(|built_in| *Theme::of(&(*built_in).into()).palette())
+            .map(|built_in| Theme::of(&(*built_in).into()).palette())
             .collect();
 
         for (index, palette) in palettes.iter().enumerate() {
@@ -631,6 +734,74 @@ pub(crate) mod tests {
                 theme.style(Token::Muted).fg,
                 theme.style(Token::Faint).fg,
                 "{choice:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_custom_palette_inherits_every_role_it_does_not_state() {
+        let custom = CustomTheme {
+            name: ThemeName::try_new("midnight").expect("valid"),
+            extends: BuiltIn::Ours(Ours::AshDark),
+            colors: BTreeMap::from([(
+                Role::Base,
+                Rgb {
+                    red: 0x0b,
+                    green: 0x0d,
+                    blue: 0x12,
+                },
+            )]),
+        };
+        let themes = Themes::new(std::slice::from_ref(&custom));
+        let resolved = themes
+            .get(&ThemeChoice::Custom(custom.name.clone()))
+            .palette();
+        let inherited = Theme::of(&ThemeChoice::Ours(Ours::AshDark)).palette();
+
+        assert_eq!(resolved.base, rgb(0x000b_0d12));
+        assert_eq!(
+            resolved.focus, inherited.focus,
+            "an unstated role comes from `extends`"
+        );
+        assert_eq!(resolved.danger, inherited.danger);
+    }
+
+    #[test]
+    fn a_built_in_resolves_the_same_through_the_table_as_it_does_directly() {
+        let themes = Themes::new(&[]);
+
+        for built_in in BuiltIn::ALL {
+            let choice = ThemeChoice::from(built_in);
+
+            assert_eq!(themes.get(&choice).palette(), Theme::of(&choice).palette());
+        }
+    }
+
+    #[test]
+    fn a_name_no_theme_claims_falls_back_to_the_default_rather_than_panicking() {
+        let themes = Themes::new(&[]);
+        let missing = ThemeChoice::Custom(ThemeName::try_new("nowhere").expect("valid"));
+
+        assert_eq!(
+            themes.get(&missing).palette(),
+            Theme::of(&ThemeChoice::default()).palette(),
+            "validation resolves dangling names, so this is defence rather than a path"
+        );
+    }
+
+    #[test]
+    fn every_role_reaches_a_field_of_the_palette() {
+        let marker = Color::Rgb(1, 2, 3);
+
+        for role in Role::ALL {
+            let mut palette = ours::default::DARK;
+            palette.set(role, marker);
+
+            assert_ne!(
+                palette,
+                ours::default::DARK,
+                "`{}` set nothing — Role and Palette have drifted",
+                role.key()
             );
         }
     }

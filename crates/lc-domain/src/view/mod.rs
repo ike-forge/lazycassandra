@@ -148,6 +148,13 @@ fn overlay(state: &State) -> Option<OverlayView> {
             labels: BuiltIn::ALL
                 .iter()
                 .map(|built_in| built_in.label().to_owned())
+                .chain(
+                    state
+                        .config
+                        .themes
+                        .iter()
+                        .map(|theme| theme.name.as_str().to_owned()),
+                )
                 .collect(),
             selected: cursor.index(),
         }),
@@ -408,13 +415,17 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::tests_support::{loaded, tabled};
     use super::*;
     use crate::commands::CommandsPanel;
+    use crate::config::{Config, CustomTheme};
     use crate::contents::{Subject, TableRef};
-    use crate::model::{DbError, Page, QueryId};
-    use crate::state::{Message, Overlay};
-    use crate::theme::Ported;
+    use crate::model::{ConnId, DbError, Page, QueryId};
+    use crate::state::{Cursor, Message, Overlay};
+    use crate::theme::{Ours, Ported, ThemeName};
+    use crate::update::init;
 
     #[test]
     fn every_panel_is_projected_in_reading_order() {
@@ -559,6 +570,31 @@ mod tests {
                 selected: index,
             })
         );
+    }
+
+    #[test]
+    fn the_picker_lists_the_built_ins_and_then_the_config_s_own() {
+        let midnight = ThemeName::try_new("midnight").expect("valid");
+        let config = Config {
+            themes: vec![CustomTheme {
+                name: midnight.clone(),
+                extends: BuiltIn::Ours(Ours::AshDark),
+                colors: BTreeMap::new(),
+            }],
+            ..Config::default()
+        };
+        let (mut state, _) = init(ConnId::next(), config, Vec::new());
+        state.overlay = Some(Overlay::Themes {
+            cursor: Cursor::default(),
+            restored: ThemeChoice::default(),
+        });
+
+        let Some(OverlayView::Themes { labels, .. }) = view_model(&state).overlay else {
+            panic!("the picker is up");
+        };
+
+        assert_eq!(labels.len(), BuiltIn::ALL.len() + 1);
+        assert_eq!(labels.last().map(String::as_str), Some("midnight"));
     }
 
     /// Every `ContentsState`, because that panel's title is built per frame

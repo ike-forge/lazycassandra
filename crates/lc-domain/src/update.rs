@@ -978,17 +978,46 @@ fn diagnostics_key(state: &mut State, key: Key) -> Vec<Effect> {
 /// ctrl layer is dispatched above every overlay, so this is the one opener a
 /// prompt cannot swallow, and replacing one would strand the panel under a
 /// half-typed query with nothing left holding the filter it had.
+/// Where `choice` sits in the picker's list: the built-ins, then the
+/// config's own, in config order — the same order [`crate::view`] labels it.
+fn theme_picker_index(config: &Config, choice: &ThemeChoice) -> Option<usize> {
+    BuiltIn::ALL
+        .iter()
+        .position(|built_in| ThemeChoice::from(*built_in) == *choice)
+        .or_else(|| {
+            config
+                .themes
+                .iter()
+                .position(
+                    |theme| matches!(choice, ThemeChoice::Custom(name) if *name == theme.name),
+                )
+                .map(|index| index + BuiltIn::ALL.len())
+        })
+}
+
+/// The choice the picker's `index`th row names, or `None` past the end of
+/// the built-ins and the config's own.
+fn theme_at_picker_index(config: &Config, index: usize) -> Option<ThemeChoice> {
+    BuiltIn::ALL
+        .get(index)
+        .map(|built_in| ThemeChoice::from(*built_in))
+        .or_else(|| {
+            config
+                .themes
+                .get(index - BuiltIn::ALL.len())
+                .map(|theme| ThemeChoice::Custom(theme.name.clone()))
+        })
+}
+
 fn open_themes(state: &mut State) {
     if state.geometry.command_rows() == 0 || matches!(state.overlay, Some(Overlay::Search(_))) {
         return;
     }
 
     let mut cursor = Cursor::default();
-    let index = BuiltIn::ALL
-        .iter()
-        .position(|built_in| ThemeChoice::from(*built_in) == state.theme)
-        .unwrap_or(0);
-    cursor.go_to(index, BuiltIn::ALL.len());
+    let index = theme_picker_index(&state.config, &state.theme).unwrap_or(0);
+    let last = BuiltIn::ALL.len() + state.config.themes.len();
+    cursor.go_to(index, last);
 
     state.overlay = Some(Overlay::Themes {
         cursor,
@@ -1021,7 +1050,7 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
         _ => {}
     }
 
-    let last = BuiltIn::ALL.len();
+    let last = BuiltIn::ALL.len() + state.config.themes.len();
     let height = state.geometry.command_rows();
     let Some(Overlay::Themes { cursor, .. }) = &mut state.overlay else {
         return Vec::new();
@@ -1036,9 +1065,9 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 
     if let Some(Overlay::Themes { cursor, .. }) = &state.overlay
-        && let Some(built_in) = BuiltIn::ALL.get(cursor.index())
+        && let Some(choice) = theme_at_picker_index(&state.config, cursor.index())
     {
-        state.theme = ThemeChoice::from(*built_in);
+        state.theme = choice;
     }
 
     Vec::new()

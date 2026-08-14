@@ -25,4 +25,4 @@ mod too_small;
 
 pub use hit::FrameMap;
 pub use render::{Rendered, render};
-pub use theme::Theme;
+pub use theme::{Theme, Themes};
