@@ -4544,6 +4544,26 @@ mod tests {
     }
 
     #[test]
+    fn unfolding_a_keyspace_leaves_the_ddl_range_alone() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+        let range = state.ddl.selection.range(state.ddl.cursor.index());
+        assert!(range.is_some());
+        state.focus = Panel::Tables;
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(
+            state.ddl.selection.range(state.ddl.cursor.index()),
+            range,
+            "unfolding leaves the panel on the same subject, so it is not a change the range should die on"
+        );
+    }
+
+    #[test]
     fn a_measurement_pulls_a_stale_scroll_offset_back_inside_the_panel() {
         let mut state = browsing(&["a", "b", "c"]);
         state.focus = Panel::Ddl;
