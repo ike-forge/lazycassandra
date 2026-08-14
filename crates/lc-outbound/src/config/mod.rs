@@ -4,10 +4,13 @@
 //! the fast tier over inline strings
 //! (docs/superpowers/specs/2026-08-14-configuration-design.md §7).
 //!
-//! `parse` and `wire::Layer` have no caller yet outside their own tests:
-//! `merge` (task 4) and `validate` (task 5) are what wire them into the rest
-//! of the crate. Until then the module is dead code by construction.
-#![allow(dead_code, reason = "consumed by merge and validate, tasks 4 and 5")]
+//! `parse` and `wire::Layer` have no caller yet outside their own tests: they
+//! gain one once the merge and validation stages that consume a parsed layer
+//! exist. Until then the module is dead code by construction.
+#![allow(
+    dead_code,
+    reason = "no caller yet outside its own tests, until merge and validation exist"
+)]
 
 mod wire;
 
