@@ -56,6 +56,72 @@ fn selection_bar(is_selected: bool, theme: Theme) -> TextSpan<'static> {
     }
 }
 
+/// The columns a body keeps back so the cursor row's band can end in a
+/// rounded cap, and what is left for the widget to draw in.
+///
+/// The caps have to be drawn on the panel's ground rather than on the band,
+/// and `ratatui` fills a highlighted row's whole rect — so the two columns
+/// have to be kept out of the widget's area rather than written into its rows.
+#[derive(Clone, Copy)]
+struct Band {
+    widget: Rect,
+    /// The two columns the caps are drawn in, or `None` where the body is too
+    /// narrow to spend them and the band runs to the border square.
+    ends: Option<(u16, u16)>,
+}
+
+/// The columns a body spends on the two caps.
+pub(crate) const CAPS: u16 = 2;
+
+impl Band {
+    fn new(area: Rect) -> Self {
+        if area.width <= CAPS {
+            return Self {
+                widget: area,
+                ends: None,
+            };
+        }
+
+        Self {
+            widget: Rect {
+                x: area.x + 1,
+                width: area.width - CAPS,
+                ..area
+            },
+            ends: Some((area.x, area.right() - 1)),
+        }
+    }
+
+    /// The cursor row's band closed off at both ends, on the screen row `y`.
+    ///
+    /// The caps take the band's background as their foreground and leave the
+    /// cell's own background alone: whatever the panel painted there is the
+    /// ground the semicircle is cut out of.
+    fn cap(self, frame: &mut Frame, y: u16, band: Style) {
+        let (Some((left, right)), Some(colour)) = (self.ends, band.bg) else {
+            return;
+        };
+
+        let buffer = frame.buffer_mut();
+        for (x, glyph) in [
+            (left, crate::icons::CAP_LEFT),
+            (right, crate::icons::CAP_RIGHT),
+        ] {
+            if let Some(cell) = buffer.cell_mut((x, y)) {
+                cell.set_char(glyph).set_fg(colour);
+            }
+        }
+    }
+}
+
+/// The width a body has for its own text, once the caps are taken out of it.
+///
+/// What the domain is told the Contents panel is worth, so the columns it
+/// decides would fit are the ones the grid is actually drawn in.
+pub(crate) fn text_width(area: Rect) -> u16 {
+    Band::new(area).widget.width
+}
+
 /// What a scrollbar needs, in whatever unit the panel scrolls in.
 pub(crate) struct Extent {
     pub(crate) position: usize,
@@ -206,6 +272,14 @@ const fn visible(selected: usize, offset: usize, height: usize) -> Option<usize>
     }
 }
 
+/// How far below the first drawn row a row index falls, in screen rows.
+///
+/// Only ever called on a pair [`visible`] has already bounded, so the
+/// saturation is unreachable rather than a policy.
+fn drawn_at(row: usize, offset: usize) -> u16 {
+    u16::try_from(row.saturating_sub(offset)).unwrap_or(u16::MAX)
+}
+
 fn tree(
     frame: &mut Frame,
     area: Rect,
@@ -220,13 +294,22 @@ fn tree(
         .map(|(index, row)| item(row, index == selected, theme))
         .collect();
     let height = usize::from(area.height);
+    let band = Band::new(area);
 
     let list = List::new(items).highlight_style(theme.style(Token::Selected));
     let mut state = ListState::default()
         .with_offset(offset)
         .with_selected(visible(selected, offset, height));
 
-    frame.render_stateful_widget(list, area, &mut state);
+    frame.render_stateful_widget(list, band.widget, &mut state);
+
+    if let Some(row) = visible(selected, state.offset(), height) {
+        band.cap(
+            frame,
+            band.widget.y + drawn_at(row, state.offset()),
+            theme.style(Token::Selected),
+        );
+    }
 
     // Read back rather than assumed: the offset handed in is what the widget
     // draws from, and reading it out keeps the hit map assembled from what
@@ -263,6 +346,16 @@ enum Selection {
     Column(Option<usize>),
 }
 
+/// The band a mode lays across the cursor's row, and `None` for the mode that
+/// lays none.
+fn row_band(mode: SelectionMode, theme: Theme) -> Option<Style> {
+    match mode {
+        SelectionMode::Cell => Some(theme.style(Token::Crosshair)),
+        SelectionMode::Row => Some(theme.style(Token::Selected)),
+        SelectionMode::Column => None,
+    }
+}
+
 fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent, Extent) {
     let GridView {
         columns,
@@ -281,8 +374,9 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     // stored offset.
     let height = usize::from(area.height).saturating_sub(usize::from(HEADER_ROWS));
 
+    let band = Band::new(area);
     let widths: Vec<u16> = columns.iter().map(|column| column.width).collect();
-    let available = available(area.width, gutter);
+    let available = available(band.widget.width, gutter);
     let first_column = first_column.min(columns.len());
     let shown = fitting(&widths, first_column, available);
     let drawn = first_column..first_column + shown;
@@ -376,7 +470,17 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         Selection::Column(column) => state.with_selected_column(column),
     };
 
-    frame.render_stateful_widget(table, area, &mut state);
+    frame.render_stateful_widget(table, band.widget, &mut state);
+
+    // The column band runs the height of the grid, and its ends are the top
+    // and bottom of a cell rather than its sides: nothing to round.
+    if let (Some(row), Some(style)) = (row, row_band(mode, theme)) {
+        band.cap(
+            frame,
+            band.widget.y + HEADER_ROWS + drawn_at(row, offset),
+            style,
+        );
+    }
 
     (
         Extent {
@@ -645,5 +749,27 @@ mod tests {
             selected.style.fg,
             Some(Theme::default().palette().selection_bar)
         );
+    }
+
+    #[test]
+    fn a_band_takes_one_column_off_each_side_for_its_caps() {
+        let band = Band::new(Rect::new(4, 2, 20, 6));
+
+        assert_eq!(band.widget, Rect::new(5, 2, 18, 6));
+        assert_eq!(band.ends, Some((4, 23)));
+    }
+
+    /// A body with no room to spend two columns keeps its text and gives up
+    /// the rounding: an abbreviated name costs the reader more than a square
+    /// corner does.
+    #[test]
+    fn a_body_too_narrow_for_the_caps_keeps_its_whole_width() {
+        for width in 0..=CAPS {
+            let area = Rect::new(0, 0, width, 3);
+            let band = Band::new(area);
+
+            assert_eq!(band.widget, area, "{width} columns");
+            assert_eq!(band.ends, None, "{width} columns");
+        }
     }
 }
