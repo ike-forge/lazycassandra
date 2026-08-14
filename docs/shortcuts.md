@@ -28,7 +28,7 @@ panel that takes text (§2).
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
-| `v`¹ | Start or freeze a selection of whole rows in the focused list panel. |
+| `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
 | `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
 | `Tab` | Focus the next panel — Tables, Table contents, DDL, Queries — wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
@@ -54,7 +54,7 @@ on the mode rather than fixed to the panel:
 | DDL, DDL tab | The row's fields for its kind, as one CSV line |
 | DDL, Columns tab | `name,type,kind`, as one CSV line |
 | Tables | The node's bare name — `shop`, `shop.orders` — not a CSV line |
-| Any panel, a range selected | Every row in the range — every column in column mode, every row of the rectangle in cell mode — as one line each, joined with `\n`, no trailing newline. A single cell in cell mode still yanks bare. |
+| Any panel, a selection held | Every selected row, in the order the rows are drawn — every column in column mode, every row of the rectangle in cell mode — one line each, joined with `\n`, no trailing newline and nothing between the groups. A single cell in cell mode still yanks bare. |
 
 See [yank design](specs/2026-08-13-yank-design.md) §2 and
 [yank selection modes](specs/2026-08-13-yank-selection-modes-design.md) §1.
@@ -64,6 +64,12 @@ title, so the binding is learned by looking at the panel rather than by reading
 this file (vision.md §4, principle 1). Two of them are not leading letters: the panel names are fixed by
 `docs/ui-draft.png`, and no title is renamed to make a key convenient.
 See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design.md).
+
+Moving focus — by `Tab`, `Shift-Tab`, a focus letter, `Enter` on a table or a
+click — drops the selection of the panel being left, so only the focused panel
+ever holds one: a selection says what the next command acts on, and the next
+command acts on what has focus
+([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §4).
 
 `a` `b` `c` `d` are four adjacent letters for the four places a reader moves
 between while browsing a schema — the tree, the rows, the DDL and the column
@@ -218,42 +224,54 @@ freezes what is extending — the range stops following the cursor, which is
 then free to walk off it without losing what was marked
 ([visual mode design](specs/2026-08-14-visual-mode-design.md) §2).
 
+`v` reads as one verb with three arms, decided by where the cursor is when it
+is pressed: extending a group freezes it, as above; a row no group holds opens
+a new group there and starts extending it, beside whatever is already frozen;
+a row a group already holds drops that group. There is no way to restart a
+selection from scratch with `v` alone — `Esc` first is the route, since it is
+already the key that means *drop what is held*
+([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §1).
+
 `Esc` is a chain of five rungs now rather than three, first hit wins: an
 overlay dismisses; failing that, an extending range freezes exactly the way
 a second `v` would, so a reflex `esc` never discards a range still growing;
-failing that, a frozen range clears; failing that, the focused panel's
-filter clears; failing that, Queries hands focus back to Tables. §2 restates
-this as the rule it now is.
+failing that, the selection clears — every group at once, however many there
+are, rather than one at a time; failing that, the focused panel's filter
+clears; failing that, Queries hands focus back to Tables. §2 restates this as
+the rule it now is.
 
 In Table contents, which axis `v` extends is `m`'s to say: cell mode grows
 a rectangle on both cursors at once, row mode a run of rows, column mode a
 run of columns — the same three shapes the panel already draws
 ([selection modes design](specs/2026-08-13-selection-modes-design.md) §2).
-Pressing `m` while a range stands clears it rather than reinterpreting it on
-the mode's new axis: a rectangle read as a column range would name cells
-nobody selected, and a key that quietly repaints what is marked is worse
-than one that asks you to mark it again.
+Pressing `m` while a selection stands clears it, groups and all, rather than
+reinterpreting it on the mode's new axis: a rectangle read as a column range
+would name cells nobody selected, and a key that quietly repaints what is
+marked is worse than one that asks you to mark it again.
 
-A Tables range of more than one row makes `Enter` inert and leaves the DDL
-panel describing nothing — reading a table needs one table, and a range of
-several says which rows are of interest, not which one to open. A range of
-exactly one row is Tables as it always was: `Enter` still reads it.
+A Tables selection of more than one row — one range of several, or several
+groups of one — makes `Enter` inert and leaves the DDL panel describing
+nothing: reading a table needs one table, and a selection of several rows says
+which rows are of interest, not which one to open. A selection of exactly one
+row is Tables as it always was: `Enter` still reads it.
 
-A range does not outlive what it was drawn against. The DDL range clears
-when the panel's subject or its tab changes, since a range describes rows on
-a tab about a table and neither survives a change to either. Tables' and
-DDL's ranges also clear when their filter changes, for the same reason a
-cursor already does: a range is a set of positions in a list, and a filter
-that renumbers rows changes what a position addresses. Table contents is the
-exception — its filter only flags matching cells and never renumbers a row,
-so a range there survives its filter changing. A click clears the range in
-whichever panel it lands in, alongside everything else a click already
-resets.
+A selection does not outlive what it was drawn against, groups and all. The
+DDL selection clears when the panel's subject or its tab changes, since a
+group describes rows on a tab about a table and neither survives a change to
+either. Tables' and DDL's selections also clear when their filter changes,
+for the same reason a cursor already does: a group is a set of positions in a
+list, and a filter that renumbers rows changes what a position addresses.
+Table contents is the exception — its filter only flags matching cells and
+never renumbers a row, so a selection there survives its filter changing. A
+click clears the whole selection in whichever panel it lands in, alongside
+everything else a click already resets.
 
-`y` over a range yanks every row it holds — every column, in column mode —
-as one line each, joined with `\n` and no trailing newline; a single cell in
-cell mode still yanks bare, unescaped, exactly as it always did. §1's `y`
-footnote table carries the row-by-row shape.
+`y` over a selection yanks every row it holds, across every group — every
+column, in column mode — as one line each, in the order the rows are drawn,
+joined with `\n` and no trailing newline, with nothing between the groups; a
+single cell in cell mode still yanks bare, unescaped, exactly as it always
+did. §1's `y` footnote table carries the row-by-row shape
+([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §5).
 
 ### Tables panel
 
@@ -566,9 +584,10 @@ looking, so an overlay that changes that meaning has to say so.
 first — a search prompt cancels, restoring the filter it found applied; the
 palette just closes. Failing that, an extending range in the focused panel
 freezes, the way a second `v` would, so `Esc` never discards a range that is
-still growing. Failing that, a frozen range clears. Failing that, the focused
-panel's filter, if it has one, clears. Failing that, Queries hands focus back
-to Tables. Failing all five, `Esc` does nothing. The first rung preserves
+still growing. Failing that, the selection clears — every group at once,
+however many are held. Failing that, the focused panel's filter, if it has
+one, clears. Failing that, Queries hands focus back to Tables. Failing all
+five, `Esc` does nothing. The first rung preserves
 `escape_dismisses_the_overlay_before_it_leaves_the_editor`; extending it down
 the chain is what "the thing most recently put on screen comes off first"
 means once a panel can carry state of its own (panel search design §6, visual
@@ -846,12 +865,17 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `y` on a single cell still yanks it bare | `y_on_a_single_cell_still_yanks_it_bare` |
 | Every row of a range is banded, and the cursor row reads apart from them | `every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them` (`inbound/render.rs`) |
 | `y` drops the range and sends each cursor back to its anchor | `y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor`, `a_selection_grown_upwards_sends_the_cursor_back_down`, `a_frozen_range_still_knows_where_to_send_the_cursor`, `cell_mode_sends_both_cursors_home`, `the_tree_collapses_its_selection_on_y_too` |
-| A frozen range keeps the end it grew from | `a_selection_remembers_which_end_it_grew_from`, `a_truncated_range_pulls_its_anchor_back_too` (`state.rs`) |
+| A frozen group keeps the end it grew from, pulled back the same way on a clamp | `clamping_pulls_an_extending_anchor_back_into_the_list`, `clamping_a_frozen_group_pulls_its_surviving_anchor_back_too` (`state.rs`) |
 | A `y` that yanks nothing resets nothing and lights nothing | `a_y_that_yanks_nothing_leaves_the_selection_alone`, `a_y_that_yanks_nothing_lights_nothing` |
 | `y` lights what it took, on the axes its mode bounds | `y_lights_up_what_it_yanked`, `row_mode_lights_the_whole_row_and_column_mode_the_whole_column`, `a_bare_y_lights_the_row_it_took` |
 | The flash fades, costs one repaint doing it, and the next key ends it | `the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint`, `the_next_key_ends_the_flash` |
 | The flash inverts the rows it took, and reaches one panel | `a_yanks_afterglow_inverts_the_rows_it_took`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render.rs`) |
 | The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a filter | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter` (`view/hints.rs`) |
+| `v` on an unheld row opens a second group beside what is frozen, and `Esc` takes both at once | `v_builds_two_groups_and_esc_takes_both` |
+| `v` on a held row drops that group and no other | `v_on_a_selected_row_drops_that_group_only`, `v_freezes_then_opens_a_second_group_then_drops_one` (`state.rs`) |
+| Dropping a group takes the anchor with it only when the anchor was inside it | `dropping_the_group_holding_the_anchor_takes_the_anchor`, `dropping_another_group_keeps_the_anchor`, `clamping_away_the_group_holding_the_anchor_takes_the_anchor` (`state.rs`) |
+| `y` over several groups yanks their rows in the order they are drawn, with nothing between the groups, and sends the cursor home to the last `v` | `y_over_two_groups_yanks_their_rows_in_drawn_order`, `y_sends_the_cursor_home_to_the_last_v_and_spends_every_group`, `a_single_cell_in_one_group_each_way_still_yanks_bare` |
+| Switching panels clears the selection of the panel left behind, by every route, and re-focusing the same panel does not | `switching_panels_clears_the_selection_of_the_panel_left_behind`, `re_focusing_the_focused_panel_keeps_its_selection`, `leaving_contents_clears_both_of_its_axes`, `a_click_clears_the_selection_of_the_panel_it_leaves`, `enter_on_a_table_leaves_no_selection_behind_in_tables`, `esc_out_of_queries_clears_what_queries_left_behind` |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an
