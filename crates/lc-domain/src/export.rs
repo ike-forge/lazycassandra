@@ -145,7 +145,13 @@ fn json_value(value: &CqlValue) -> String {
         }
         // No JSON type of its own: a blob, a uuid, a timestamp and the
         // collections travel as the text the grid already draws.
-        value => json_string(&cell::text(value)),
+        CqlValue::Text(_)
+        | CqlValue::Blob(_)
+        | CqlValue::Uuid(_)
+        | CqlValue::Timestamp(_)
+        | CqlValue::List(_)
+        | CqlValue::Set(_)
+        | CqlValue::Map(_) => json_string(&cell::text(value)),
     }
 }
 
