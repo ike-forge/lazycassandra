@@ -39,6 +39,8 @@ pub struct Hint {
 pub struct HintBar {
     pub panel: Vec<Hint>,
     pub global: Vec<Hint>,
+    /// A running export's count, drawn on the bar's right (export design §5).
+    pub export: Option<String>,
 }
 
 /// Bindings every panel answers to. Repeated in each panel's bar rather than
@@ -140,6 +142,11 @@ const CLEAR: Binding = Binding {
 };
 
 pub(crate) fn bar(state: &State) -> HintBar {
+    let export = state
+        .export
+        .as_ref()
+        .map(|job| format!("exporting {} rows…", job.rows()));
+
     // No panel group: `⏎` is inert until the palette can run a command
     // (design §10), and moving — by a row, by a screen, or to an end — is
     // assumed rather than taught, in here as in every panel bar
@@ -149,6 +156,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: Vec::new(),
             global: PALETTE_GLOBAL.iter().map(rendered).collect(),
+            export,
         };
     }
 
@@ -156,6 +164,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: THEMES.iter().map(rendered).collect(),
             global: THEMES_GLOBAL.iter().map(rendered).collect(),
+            export,
         };
     }
 
@@ -163,6 +172,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: Vec::new(),
             global: SEARCH_GLOBAL.iter().map(rendered).collect(),
+            export,
         };
     }
 
@@ -173,6 +183,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: Vec::new(),
             global: Vec::new(),
+            export,
         };
     }
 
@@ -204,7 +215,11 @@ pub(crate) fn bar(state: &State) -> HintBar {
         panel.push(rendered(&CLEAR));
     }
 
-    HintBar { panel, global }
+    HintBar {
+        panel,
+        global,
+        export,
+    }
 }
 
 /// Whether the focused panel is carrying a live range. A hint must be true in

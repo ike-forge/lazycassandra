@@ -127,7 +127,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         Some(OverlayView::Themes { labels, selected }) => {
             crate::themes::render(frame, labels, *selected, theme);
         }
-        None => {}
+        // Drawing the form is a later task's.
+        Some(OverlayView::Export(_)) | None => {}
     }
 
     Rendered {

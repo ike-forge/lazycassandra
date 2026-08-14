@@ -268,6 +268,7 @@ mod tests {
                     liveness: Liveness::Live,
                 },
             ],
+            export: None,
         };
 
         assert_eq!(
@@ -290,6 +291,7 @@ mod tests {
                     liveness,
                 }],
                 global: vec![],
+                export: None,
             };
             line(&bar, 80, Theme::default())
         };

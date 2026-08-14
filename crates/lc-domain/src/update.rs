@@ -6043,6 +6043,16 @@ mod tests {
         // Measured, so the columns `m` cycles the highlight over are drawn.
         let grid = grid_of_rows(4, 5, 80);
 
+        // The export form, open on its first stop. Every key `export_key`
+        // claims there — `esc`, `tab`/`backtab`, `j`/`k`/`↓`/`↑`, `⏎` — is
+        // already catalogued elsewhere (`Global`, `Motion`, `Tables`), so
+        // this adds no key the negative sweep has to worry about; only
+        // `Export`'s own `space` needs a state where it does something, and
+        // this is that state (`toggle_scope` only fires with a scope to
+        // toggle to, hence `ROW_LIMIT` rather than a smaller page).
+        let mut export_open = contents_showing(ROW_LIMIT);
+        ctrl(&mut export_open, Key::Char('e'));
+
         vec![
             covered,
             elsewhere,
@@ -6051,6 +6061,7 @@ mod tests {
             picker_open,
             yankable,
             grid,
+            export_open,
         ]
     }
 

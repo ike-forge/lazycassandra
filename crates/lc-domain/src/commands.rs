@@ -148,6 +148,29 @@ const CONTENTS: &[Binding] = &[
     },
 ];
 
+/// The form's own keys. `Tab` and `Esc` also appear under `Global` meaning
+/// something else, exactly as `l`/`h` appear under two panels: the palette may
+/// not omit what a key does somewhere
+/// (docs/superpowers/specs/2026-08-09-command-palette-design.md §2).
+const EXPORT: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::ctrl(Key::Char('e'))],
+        action: "export these rows",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Tab), KeyPress::new(Key::BackTab)],
+        action: "next/previous field",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char(' '))],
+        action: "select, or export",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Escape)],
+        action: "close the form",
+    },
+];
+
 // The editor's printable keys are not rows: every one of them types itself,
 // which is the panel's whole rule rather than a list of bindings
 // (docs/shortcuts.md §2). What is listed is what a key does *not* do elsewhere.
@@ -199,6 +222,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Table contents",
         bindings: CONTENTS,
+    },
+    Group {
+        heading: "Export",
+        bindings: EXPORT,
     },
     Group {
         heading: "Queries",
@@ -423,6 +450,20 @@ mod tests {
             }),
             "the palette claims to be complete"
         );
+    }
+
+    #[test]
+    fn the_palette_lists_the_export_form() {
+        let rows = rows();
+        let headings: Vec<&str> = rows
+            .iter()
+            .filter_map(|row| match row {
+                CommandRow::Heading(heading) => Some(*heading),
+                CommandRow::Command { .. } => None,
+            })
+            .collect();
+
+        assert!(headings.contains(&"Export"));
     }
 
     #[test]
