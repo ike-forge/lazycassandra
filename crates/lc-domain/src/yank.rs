@@ -112,8 +112,7 @@ pub fn lines(items: impl Iterator<Item = String>) -> String {
 }
 
 /// A block of the page: one line per selected row, holding the selected
-/// columns and no others. Empty column groups are every column, which is what
-/// row mode yanks (multi-group selection design §5).
+/// columns and no others (multi-group selection design §5).
 #[must_use]
 pub fn grid_block(rows: &[Row], selected: &Ranges, columns: &Ranges) -> String {
     lines(selected.indices().filter_map(|index| {

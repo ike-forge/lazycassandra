@@ -275,7 +275,7 @@ struct GridView<'a> {
     /// [`GridView::rows_ranges`]'s counterpart for the column axis.
     columns_ranges: &'a Ranges,
     /// What the two ranges are painted with — [`Token::Ranged`] for a live
-    /// selection, the louder [`Token::Selected`] for a yank's afterglow.
+    /// selection, the louder [`Token::Flash`] for a yank's afterglow.
     band: Token,
 }
 
