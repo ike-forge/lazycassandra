@@ -3,15 +3,8 @@
 //! Everything here but `discover` is pure, so the merge rules are tested in
 //! the fast tier over inline strings
 //! (docs/superpowers/specs/2026-08-14-configuration-design.md §7).
-//!
-//! `parse` and `wire::Layer` have no caller yet outside their own tests: they
-//! gain one once the merge and validation stages that consume a parsed layer
-//! exist. Until then the module is dead code by construction.
-#![allow(
-    dead_code,
-    reason = "no caller yet outside its own tests, until merge and validation exist"
-)]
 
+mod merge;
 mod wire;
 
 use lc_domain::config::{Diagnostic, Origin, Span};

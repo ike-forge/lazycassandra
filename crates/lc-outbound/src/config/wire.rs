@@ -22,7 +22,7 @@ use toml::Spanned;
 /// anyway: after the merge a field may have come from either file. So the
 /// position is resolved in `parse`, while the source and the origin are both
 /// in hand, and travels with the value from then on.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Located<T> {
     pub(crate) value: T,
     byte: usize,
