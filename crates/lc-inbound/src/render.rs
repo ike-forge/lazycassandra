@@ -1291,15 +1291,17 @@ mod tests {
     }
 
     /// A tree body drawn with `ranges` in place of whatever the cursor's own
-    /// selection would project — the cursor sits on the gap between two
-    /// groups so it never contends with a band for the same row.
+    /// selection would project — the cursor sits on a fourth row, neither
+    /// group nor the gap under test, so its own highlight can never be
+    /// mistaken for (or hide the absence of) a band. Drawn at a height tall
+    /// enough to show all four rows unscrolled, with `offset` forced to `0`
+    /// rather than `browsing`'s own follow (tuned for a three-row viewport).
     fn render_tree_with(ranges: Ranges) -> Buffer {
-        let state = browsing(&["a", "b", "c"], 1);
+        let state = browsing(&["a", "b", "c", "d"], 3);
         let mut view = view_model(&state);
         let PanelBody::Tree {
             rows,
             selected,
-            offset,
             flash,
             ..
         } = view.panels[0].body.clone()
@@ -1309,12 +1311,12 @@ mod tests {
         view.panels[0].body = PanelBody::Tree {
             rows,
             selected,
-            offset,
+            offset: 0,
             ranges,
             flash,
         };
 
-        draw_view(40, 12, &view)
+        draw_view(40, 14, &view)
     }
 
     fn banded(buffer: &Buffer, row: u16) -> bool {
