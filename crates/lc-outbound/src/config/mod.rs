@@ -3,21 +3,15 @@
 //! Everything here but `discover` is pure, so the merge rules are tested in
 //! the fast tier over inline strings
 //! (docs/superpowers/specs/2026-08-14-configuration-design.md §7).
-//!
-//! `parse` and `merge`, and the wire types they pass between them, have no
-//! caller yet outside their own tests: the crate exposes no configuration
-//! source that reads a file and runs the pipeline. Until one exists, this
-//! module is dead code by construction.
-#![allow(
-    dead_code,
-    reason = "no caller yet outside its own tests, until the crate exposes a configuration source"
-)]
 
+mod discover;
 mod merge;
 mod validate;
 mod wire;
 
-use lc_domain::config::{Diagnostic, Origin, Span};
+use std::path::{Path, PathBuf};
+
+use lc_domain::config::{Config, Diagnostic, Origin, Span};
 use lc_domain::style::Severity;
 
 pub(crate) use wire::Layer;
@@ -102,6 +96,71 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
     }
 
     diagnostics
+}
+
+/// The two files, layered (design §3).
+#[derive(Debug, Clone)]
+pub struct FileConfigSource {
+    global: Option<PathBuf>,
+    local: Option<PathBuf>,
+}
+
+impl FileConfigSource {
+    #[must_use]
+    pub fn new(cwd: &Path, xdg: Option<&Path>, home: Option<&Path>) -> Self {
+        Self {
+            global: discover::global_path(xdg, home).filter(|path| path.is_file()),
+            local: discover::first_existing(&discover::local_candidates(cwd)).cloned(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_env() -> Self {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+
+        Self::new(&cwd, xdg.as_deref(), home.as_deref())
+    }
+
+    fn read(path: &Path, diagnostics: &mut Vec<Diagnostic>) -> Option<Layer> {
+        let origin = Origin::new(&path.display().to_string());
+
+        match std::fs::read_to_string(path) {
+            Ok(source) => {
+                let (layer, more) = parse(&source, &origin);
+                diagnostics.extend(more);
+                layer
+            }
+            Err(error) => {
+                diagnostics.push(Diagnostic {
+                    origin,
+                    span: None,
+                    severity: Severity::Danger,
+                    message: format!("could not be read: {error}"),
+                });
+                None
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl lc_domain::ports::ConfigSource for FileConfigSource {
+    async fn load(&self) -> (Config, Vec<Diagnostic>) {
+        let mut diagnostics = Vec::new();
+        let layers: Vec<Layer> = [self.global.as_deref(), self.local.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter_map(|path| Self::read(path, &mut diagnostics))
+            .collect();
+        let (merged, more) = merge::merge(layers);
+        diagnostics.extend(more);
+        let (config, more) = validate::validate(merged);
+        diagnostics.extend(more);
+
+        (config, diagnostics)
+    }
 }
 
 #[cfg(test)]
