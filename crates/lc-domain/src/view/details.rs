@@ -263,6 +263,7 @@ fn scrolled(state: &State, details: Details) -> PanelBody {
         details,
         selected: state.ddl.cursor.index(),
         offset: state.ddl.scroll.offset(),
+        range: state.ddl.selection.range(state.ddl.cursor.index()),
     }
 }
 

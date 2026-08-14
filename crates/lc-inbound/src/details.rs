@@ -22,7 +22,7 @@
 //! never drawn, and there is nothing here to guard.
 
 use lc_domain::model::ClusteringOrder;
-use lc_domain::state::Span;
+use lc_domain::state::{Range, Span};
 use lc_domain::style::Token;
 use lc_domain::view::{ColumnKind, DetailRow, Details, Group, IdentityKind};
 use ratatui::Frame;
@@ -61,9 +61,10 @@ pub(crate) fn render(
     details: &Details,
     selected: usize,
     offset: usize,
+    range: Option<Range>,
     theme: Theme,
 ) -> (crate::body::Extent, Span, Vec<Option<usize>>) {
-    let laid = lay_out(details, selected, usize::from(area.width), theme);
+    let laid = lay_out(details, selected, range, usize::from(area.width), theme);
     let total = laid.lines.len();
     // `Paragraph::scroll` is u16, and a body past 65535 lines is unreachable;
     // the extent keeps the offset itself, so the thumb stays right regardless.
@@ -92,7 +93,13 @@ pub(crate) fn render(
 /// caller happens to scroll into view — an offset must never feed back into
 /// what is measured, or a redraw could chase its own tail
 /// (architecture.md §3).
-pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: Theme) -> Laid {
+pub(crate) fn lay_out(
+    details: &Details,
+    selected: usize,
+    _range: Option<Range>,
+    width: usize,
+    theme: Theme,
+) -> Laid {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut rows: Vec<Option<usize>> = Vec::new();
     let mut selection = Span::default();
@@ -713,12 +720,12 @@ mod tests {
         };
 
         assert_eq!(
-            lay_out(&details, 0, 28, Theme::default()).selection,
+            lay_out(&details, 0, None, 28, Theme::default()).selection,
             Span { first: 0, lines: 1 },
             "the identity row opens the body, so nothing precedes it"
         );
 
-        let laid = lay_out(&details, 1, 28, Theme::default());
+        let laid = lay_out(&details, 1, None, 28, Theme::default());
 
         assert_eq!(
             laid.selection,
@@ -726,7 +733,13 @@ mod tests {
             "identity, blank, section heading, then the first column"
         );
 
-        let laid = lay_out(&details, details.row_count() - 1, 28, Theme::default());
+        let laid = lay_out(
+            &details,
+            details.row_count() - 1,
+            None,
+            28,
+            Theme::default(),
+        );
         assert!(laid.selection.lines > 1, "the comment wraps");
         assert_eq!(
             laid.selection.first + laid.selection.lines,
@@ -756,7 +769,7 @@ mod tests {
             }],
         };
 
-        let laid = lay_out(&details, usize::MAX, 28, theme);
+        let laid = lay_out(&details, usize::MAX, None, 28, theme);
         let section = theme.style(Token::Section);
 
         assert_eq!(laid.lines[0].style, section);

@@ -18,7 +18,7 @@
 
 use lc_domain::contents::SelectionMode;
 use lc_domain::grid::{BAR, COLUMN_SPACING, available, fitting};
-use lc_domain::state::Span;
+use lc_domain::state::{Range, Span};
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow};
 use ratatui::Frame;
@@ -125,8 +125,9 @@ pub(crate) fn render(
             rows,
             selected,
             offset,
+            range,
         } => Some(Body {
-            extent: tree(frame, area, rows, *selected, *offset, theme),
+            extent: tree(frame, area, rows, *selected, *offset, *range, theme),
             columns: None,
             bands: Vec::new(),
             unit: Unit::Rows { header: 0 },
@@ -136,9 +137,10 @@ pub(crate) fn render(
             details,
             selected,
             offset,
+            range,
         } => {
             let (extent, selection, rows) =
-                crate::details::render(frame, area, details, *selected, *offset, theme);
+                crate::details::render(frame, area, details, *selected, *offset, *range, theme);
             Some(Body {
                 extent,
                 columns: None,
@@ -163,6 +165,8 @@ pub(crate) fn render(
             column,
             mode,
             gutter,
+            rows_range,
+            columns_range,
         } => {
             let (extent, horizontal, bands) = grid(
                 frame,
@@ -176,6 +180,8 @@ pub(crate) fn render(
                     column: *column,
                     mode: *mode,
                     gutter: *gutter,
+                    _rows_range: *rows_range,
+                    _columns_range: *columns_range,
                 },
                 theme,
             );
@@ -222,6 +228,7 @@ fn tree(
     rows: &[TreeRow],
     selected: usize,
     offset: usize,
+    _range: Option<Range>,
     theme: Theme,
 ) -> Extent {
     let items: Vec<ListItem> = rows
@@ -262,6 +269,9 @@ struct GridView<'a> {
     column: usize,
     mode: SelectionMode,
     gutter: u16,
+    /// Unused until Task 9 paints the rectangle these two axes describe.
+    _rows_range: Option<Range>,
+    _columns_range: Option<Range>,
 }
 
 /// Which of `TableState`'s three selections this frame carries. A row scrolled
@@ -288,6 +298,7 @@ fn grid(
         column,
         mode,
         gutter,
+        ..
     } = *view;
 
     // Both the window `visible` judges against and the extent the scrollbar is

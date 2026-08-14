@@ -2540,7 +2540,7 @@ mod tests {
 
         // 40x20: a fourteen-column, five-row Ddl body — narrow enough that
         // `orders()` wraps well past it.
-        let total = crate::details::lay_out(&details, 0, 14, Theme::default())
+        let total = crate::details::lay_out(&details, 0, None, 14, Theme::default())
             .lines
             .len();
         assert!(
@@ -2574,7 +2574,7 @@ mod tests {
         // `comment` is the last row and wraps to three lines at this width.
         // Scrolled until its first line is the fourth of the five visible, two
         // of them are in view and the third is below the fold.
-        let laid = crate::details::lay_out(&details, last, 14, Theme::default());
+        let laid = crate::details::lay_out(&details, last, None, 14, Theme::default());
         let total = laid.lines.len();
         assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
         for _ in 0..laid.selection.first - 3 {
@@ -2758,9 +2758,15 @@ mod tests {
         assert_eq!(geometry.height(Panel::Ddl), 5);
         assert_eq!(
             geometry.ddl_lines(),
-            crate::details::lay_out(&ddl_details(&describing(orders())), 0, 14, Theme::default())
-                .lines
-                .len()
+            crate::details::lay_out(
+                &ddl_details(&describing(orders())),
+                0,
+                None,
+                14,
+                Theme::default()
+            )
+            .lines
+            .len()
         );
     }
 
@@ -2810,7 +2816,8 @@ mod tests {
         const HEIGHT: usize = 5;
 
         let state = describing(orders());
-        let all = crate::details::lay_out(&ddl_details(&state), 0, WIDTH, Theme::default()).lines;
+        let all =
+            crate::details::lay_out(&ddl_details(&state), 0, None, WIDTH, Theme::default()).lines;
         assert!(
             all.len() > HEIGHT,
             "the fixture must overflow the panel or this test proves nothing"

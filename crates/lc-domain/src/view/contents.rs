@@ -115,6 +115,8 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         column: state.contents.column.index(),
         mode: state.contents.mode,
         gutter: crate::grid::gutter(page.rows.len()),
+        rows_range: state.contents.rows.range(state.contents.cursor.index()),
+        columns_range: state.contents.columns.range(state.contents.column.index()),
     }
 }
 
@@ -545,5 +547,31 @@ mod tests {
         };
 
         assert_eq!(gutter, 2, "twelve rows need two digits");
+    }
+
+    #[test]
+    fn a_grid_names_the_range_on_each_axis() {
+        let mut state = showing(page_of(
+            &["id"],
+            &[
+                &[CqlValue::Int(1)],
+                &[CqlValue::Int(2)],
+                &[CqlValue::Int(3)],
+            ],
+        ));
+        state.contents.rows.start(0);
+        state.contents.rows.stop(2);
+
+        let PanelBody::Grid {
+            rows_range,
+            columns_range,
+            ..
+        } = contents_body(&state)
+        else {
+            panic!("a loaded page draws a grid");
+        };
+
+        assert_eq!(rows_range, Some(crate::state::Range::new(0, 2)));
+        assert_eq!(columns_range, None, "column mode never extended");
     }
 }

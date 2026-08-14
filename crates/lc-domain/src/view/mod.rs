@@ -26,7 +26,7 @@ use crate::commands::{self, CommandRow};
 use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
 use crate::model::DbError;
-use crate::state::{Message, Overlay, Panel, State};
+use crate::state::{Message, Overlay, Panel, Range, State};
 use crate::style::{Severity, Token};
 use crate::theme::ThemeChoice;
 
@@ -150,6 +150,9 @@ pub enum PanelBody {
         /// derives, so a wheel can move it without moving `selected`
         /// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §2).
         offset: usize,
+        /// The rows `v` has selected. `None` means no selection is active
+        /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
+        range: Option<Range>,
     },
     /// A heading and grouped rows: what is selected, described.
     ///
@@ -163,6 +166,8 @@ pub enum PanelBody {
         /// [`PanelBody::Grid::selected`] carry.
         selected: usize,
         offset: usize,
+        /// The rows `v` has selected, as [`PanelBody::Tree::range`].
+        range: Option<Range>,
     },
     /// A text buffer and where its cursor is.
     ///
@@ -190,6 +195,13 @@ pub enum PanelBody {
         /// Character columns the row-number gutter takes, or zero for a grid
         /// with no rows.
         gutter: u16,
+        /// The rows `v` has selected while extending the row axis. `None`
+        /// means that axis was never extended — which Task 9 reads as "every
+        /// row" when painting a rectangle and as "no gutter bar" when marking
+        /// rows.
+        rows_range: Option<Range>,
+        /// [`PanelBody::Grid`]'s row range's counterpart for the column axis.
+        columns_range: Option<Range>,
     },
 }
 

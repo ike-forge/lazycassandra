@@ -81,6 +81,7 @@ fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
         rows,
         selected: tables.cursor.index(),
         offset: tables.scroll.offset(),
+        range: tables.selection.range(tables.cursor.index()),
     }
 }
 
@@ -344,5 +345,17 @@ mod tests {
             rows.iter().all(|row| row.token == Token::Faint),
             "a system keyspace and its tables are the cluster's, not the user's"
         );
+    }
+
+    #[test]
+    fn a_tree_names_the_rows_in_range() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.tables.selection.start(0);
+
+        let PanelBody::Tree { range, .. } = tables_body(&state) else {
+            panic!("a loaded schema draws a tree");
+        };
+
+        assert_eq!(range, Some(crate::state::Range::new(0, 0)));
     }
 }

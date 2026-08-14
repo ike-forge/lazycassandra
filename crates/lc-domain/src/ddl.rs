@@ -6,7 +6,7 @@
 //! field on `State` (architecture.md §11).
 
 use crate::search::Filter;
-use crate::state::{Cursor, Scroll};
+use crate::state::{Cursor, Scroll, Selection};
 
 /// Which of the panel's two tabs is drawn.
 ///
@@ -73,6 +73,9 @@ impl DdlTab {
 pub struct DdlPanel {
     pub cursor: Cursor,
     pub scroll: Scroll,
+    /// The rows `v` has selected, if any
+    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
+    pub selection: Selection,
     /// Private for the reason the filter is: a tab change owes a cursor and a
     /// viewport that address the rows of the tab now drawn, and a public field
     /// would let a caller skip that repair.
