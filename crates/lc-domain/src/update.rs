@@ -140,6 +140,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     if described(state) != subject {
         state.ddl.cursor.to_start();
         state.ddl.scroll.to_start();
+        state.ddl.selection.clear();
     }
 
     clamp_lists(state);
@@ -4496,6 +4497,26 @@ mod tests {
             state.ddl.cursor.index(),
             0,
             "users is a document of its own"
+        );
+    }
+
+    #[test]
+    fn a_new_subject_clears_the_ddl_range() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+        assert!(state.ddl.selection.range(0).is_some());
+
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.ddl.selection.range(state.ddl.cursor.index()),
+            None,
+            "the rows the range addressed belong to the node that was on screen"
         );
     }
 
