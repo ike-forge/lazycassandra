@@ -111,37 +111,72 @@ impl Cluster for CassandraCluster {
         let result = session
             .query_unpaged(stmt.cql.as_str(), &[])
             .await
-            .map_err(|error| DbError::Invalid(error.to_string()))?
-            .into_rows_result()
             .map_err(|error| DbError::Invalid(error.to_string()))?;
 
-        let columns = result
-            .column_specs()
-            .iter()
-            .map(|spec| spec.name().to_owned())
-            .collect();
+        to_page(result)
+    }
 
-        let rows = result
-            .rows::<DriverRow>()
-            .map_err(|error| DbError::Invalid(error.to_string()))?
-            .map(|row| {
-                row.map(|row| Row {
-                    values: row.columns.iter().map(|v| to_value(v.as_ref())).collect(),
-                })
-                .map_err(|error| DbError::Invalid(error.to_string()))
+    async fn execute_paged(
+        &self,
+        conn: ConnId,
+        stmt: &Statement,
+        cursor: Option<&PagingState>,
+    ) -> Result<Page, DbError> {
+        let session = self.session(conn).await?;
+        let paging = cursor.map_or(
+            scylla::response::PagingState::start(),
+            |PagingState(bytes)| scylla::response::PagingState::new_from_raw_bytes(bytes.clone()),
+        );
+
+        let (result, response) = session
+            .query_single_page(stmt.cql.as_str(), &[], paging)
+            .await
+            .map_err(|error| DbError::Invalid(error.to_string()))?;
+
+        let next = match response.into_paging_control_flow() {
+            std::ops::ControlFlow::Continue(state) => state
+                .as_bytes_slice()
+                .map(|bytes| PagingState(bytes.to_vec())),
+            std::ops::ControlFlow::Break(()) => None,
+        };
+
+        let mut page = to_page(result)?;
+        page.next = next;
+
+        Ok(page)
+    }
+}
+
+/// Converts a driver result into our own vocabulary. Shared by `execute` and
+/// `execute_paged`, which differ only in how they got the result and what
+/// they do with `Page::next` afterwards.
+fn to_page(result: scylla::response::query_result::QueryResult) -> Result<Page, DbError> {
+    let result = result
+        .into_rows_result()
+        .map_err(|error| DbError::Invalid(error.to_string()))?;
+
+    let columns = result
+        .column_specs()
+        .iter()
+        .map(|spec| spec.name().to_owned())
+        .collect();
+
+    let rows = result
+        .rows::<DriverRow>()
+        .map_err(|error| DbError::Invalid(error.to_string()))?
+        .map(|row| {
+            row.map(|row| Row {
+                values: row.columns.iter().map(|v| to_value(v.as_ref())).collect(),
             })
-            .collect::<Result<Vec<_>, DbError>>()?;
-
-        Ok(Page {
-            columns,
-            rows,
-            next: None,
+            .map_err(|error| DbError::Invalid(error.to_string()))
         })
-    }
+        .collect::<Result<Vec<_>, DbError>>()?;
 
-    async fn fetch_page(&self, _conn: ConnId, _cursor: &PagingState) -> Result<Page, DbError> {
-        Err(DbError::Other("paging is not implemented yet".to_owned()))
-    }
+    Ok(Page {
+        columns,
+        rows,
+        next: None,
+    })
 }
 
 /// The three things `scylla::cluster::metadata` does not carry: clustering

@@ -26,8 +26,9 @@ use crate::commands::{self, CommandRow};
 use crate::config::Diagnostic;
 use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
+use crate::export::{Confirm, Format, Scope, Stop};
 use crate::model::DbError;
-use crate::state::{Message, Overlay, Panel, Range, State};
+use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
 use crate::theme::{BuiltIn, ThemeChoice};
 
@@ -93,6 +94,9 @@ pub enum OverlayView {
         rows: Vec<DiagnosticRow>,
         selected: usize,
     },
+    /// Boxed: `OverlayView`'s other variants are small, and clippy's
+    /// `large_enum_variant` is denied.
+    Export(Box<ExportView>),
 }
 
 /// One diagnostic as a renderer needs it: the location already formatted, so
@@ -122,6 +126,23 @@ fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
         severity: diagnostic.severity,
         message: diagnostic.message.clone(),
     }
+}
+
+/// The export form, flattened for a renderer that never sees an
+/// [`ExportForm`](crate::export::ExportForm).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportView {
+    pub title: String,
+    /// Whole first, fetched second — the order they are drawn in.
+    pub scope_labels: [String; 2],
+    pub scope: Scope,
+    pub fetched_enabled: bool,
+    pub format: Format,
+    pub path: String,
+    /// A character offset into `path`, for the drawn caret.
+    pub cursor: usize,
+    pub stop: Stop,
+    pub confirm: Option<Confirm>,
 }
 
 fn overlay(state: &State) -> Option<OverlayView> {
@@ -158,6 +179,17 @@ fn overlay(state: &State) -> Option<OverlayView> {
                 .collect(),
             selected: cursor.index(),
         }),
+        Overlay::Export(form) => Some(OverlayView::Export(Box::new(ExportView {
+            title: form.title(),
+            scope_labels: form.scope_labels(),
+            scope: form.scope(),
+            fetched_enabled: form.fetched_enabled(),
+            format: form.format(),
+            path: form.path().text().to_owned(),
+            cursor: form.path().cursor(),
+            stop: form.stop(),
+            confirm: form.confirm(),
+        }))),
     }
 }
 
@@ -196,10 +228,10 @@ pub enum PanelBody {
         /// derives, so a wheel can move it without moving `selected`
         /// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §2).
         offset: usize,
-        /// The rows `v` has selected. `None` means no selection is active
-        /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
-        range: Option<Range>,
-        /// Set while `range` is a yank's afterglow rather than a live
+        /// The rows `v` has selected, as groups. Empty means no selection is
+        /// active (multi-group selection design §6).
+        ranges: Ranges,
+        /// Set while `ranges` is a yank's afterglow rather than a live
         /// selection, which the renderer paints louder (visual mode design §6.1).
         flash: bool,
     },
@@ -215,8 +247,8 @@ pub enum PanelBody {
         /// [`PanelBody::Grid::selected`] carry.
         selected: usize,
         offset: usize,
-        /// The rows `v` has selected, as [`PanelBody::Tree::range`].
-        range: Option<Range>,
+        /// The rows `v` has selected, as [`PanelBody::Tree::ranges`].
+        ranges: Ranges,
         /// As [`PanelBody::Tree::flash`].
         flash: bool,
     },
@@ -246,15 +278,15 @@ pub enum PanelBody {
         /// Character columns the row-number gutter takes, or zero for a grid
         /// with no rows.
         gutter: u16,
-        /// The rows `v` has selected while extending the row axis. `None`
+        /// The rows `v` has selected while extending the row axis. Empty
         /// means that axis was never extended, which `body.rs`'s `ranged`
         /// reads as "every row" when painting a rectangle and as "no gutter
         /// bar" when marking rows.
-        rows_range: Option<Range>,
+        rows_ranges: Ranges,
         /// The columns `v` has selected while extending the column axis.
-        /// `None` means that axis was never extended, which `body.rs`'s
+        /// Empty means that axis was never extended, which `body.rs`'s
         /// `ranged` reads as "every column" when painting a rectangle.
-        columns_range: Option<Range>,
+        columns_ranges: Ranges,
         /// Set while the two ranges are a yank's afterglow rather than a live
         /// selection, as [`PanelBody::Tree::flash`].
         flash: bool,
@@ -266,8 +298,8 @@ pub enum PanelBody {
 /// It outranks the selection wherever it is lit, and cannot contend with one:
 /// the yank spent the selection that named it, and the next input puts the
 /// flash out before it can reach a new one (visual mode design §6.1).
-fn flash_over(state: &State, panel: Panel) -> Option<crate::state::Flash> {
-    state.flash.filter(|flash| flash.panel() == panel)
+fn flash_over(state: &State, panel: Panel) -> Option<&crate::state::Flash> {
+    state.flash.as_ref().filter(|flash| flash.panel() == panel)
 }
 
 /// Project `state` into the frame a renderer draws.
@@ -282,7 +314,7 @@ pub fn view_model(state: &State) -> ViewModel {
                 .and_then(|target| state.filter(target))
                 .map(|filter| filter.as_str().to_owned()),
         }),
-        focus: state.focus,
+        focus: state.focus(),
         hints: hints::bar(state),
         overlay: overlay(state),
         activity: if state.is_working() {
@@ -382,10 +414,9 @@ pub(crate) mod tests_support {
     use super::{PanelBody, view_model};
 
     pub(crate) fn state_with(connection: ConnectionState) -> State {
-        State {
-            connection,
-            ..State::default()
-        }
+        let mut state = State::default();
+        state.connection = connection;
+        state
     }
 
     pub(crate) fn connected(schema: Schema) -> State {
@@ -416,14 +447,16 @@ pub(crate) mod tests_support {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
 
     use super::tests_support::{loaded, tabled};
     use super::*;
     use crate::commands::CommandsPanel;
     use crate::config::{Config, CustomTheme};
     use crate::contents::{Subject, TableRef};
-    use crate::model::{ConnId, DbError, Page, QueryId};
-    use crate::state::{Cursor, Message, Overlay};
+    use crate::export::{ExportForm, Fetched, Format, Scope, Stop};
+    use crate::model::{ConnId, DbError, JobId, Page, QueryId};
+    use crate::state::{Cursor, ExportJob, Message, Overlay};
     use crate::theme::{Ours, Ported, ThemeName};
     use crate::update::init;
 
@@ -454,10 +487,8 @@ mod tests {
 
     #[test]
     fn focus_mirrors_the_state() {
-        let state = State {
-            focus: Panel::Contents,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Contents);
 
         assert_eq!(view_model(&state).focus, Panel::Contents);
     }
@@ -483,10 +514,8 @@ mod tests {
             message: "no route".to_owned(),
             severity: Severity::Danger,
         };
-        let state = State {
-            overlay: Some(Overlay::Message(message.clone())),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Message(message.clone()));
 
         assert_eq!(
             view_model(&state).overlay,
@@ -514,10 +543,8 @@ mod tests {
         let mut prompt = crate::search::Prompt::opened(crate::search::Filtered::Tables, None);
         prompt.push('o');
         prompt.push('r');
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         assert_eq!(
             view_model(&state).overlay,
@@ -529,10 +556,8 @@ mod tests {
 
     #[test]
     fn an_open_palette_is_projected_as_rows_and_a_selection() {
-        let state = State {
-            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
 
         assert_eq!(
             view_model(&state).overlay,
@@ -552,13 +577,11 @@ mod tests {
             .expect("listed");
         let mut cursor = crate::state::Cursor::default();
         cursor.go_to(index, BuiltIn::ALL.len());
-        let state = State {
-            overlay: Some(Overlay::Themes {
-                cursor,
-                restored: ThemeChoice::default(),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Themes {
+            cursor,
+            restored: ThemeChoice::default(),
+        });
 
         assert_eq!(
             view_model(&state).overlay,
@@ -613,6 +636,62 @@ mod tests {
         failed.contents.failed(query, DbError::Timeout);
 
         vec![State::default(), loading, loaded, failed]
+    }
+
+    #[test]
+    fn the_export_form_projects_everything_the_renderer_draws() {
+        let form = ExportForm::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Fetched::Some(200),
+            Path::new("/home/ike"),
+        );
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Export(form));
+
+        let Some(OverlayView::Export(view)) = view_model(&state).overlay else {
+            panic!("the form is projected");
+        };
+        assert_eq!(view.title, "Export table shop.orders");
+        assert_eq!(view.scope, Scope::Whole);
+        assert!(view.fetched_enabled);
+        assert_eq!(view.format, Format::Csv);
+        assert_eq!(view.path, "/home/ike/shop.orders.csv");
+        assert_eq!(view.cursor, 25);
+        assert_eq!(view.stop, Stop::Scope);
+        assert_eq!(view.confirm, None);
+    }
+
+    #[test]
+    fn a_running_export_puts_its_count_on_the_bar() {
+        let mut state = State::default();
+        state.focus_on(Panel::Contents);
+        state.export = Some(ExportJob::started(
+            JobId::next(),
+            PathBuf::from("/home/ike/shop.orders.csv"),
+            ExportForm::opened(
+                Subject::Table(TableRef::new("shop", "orders")),
+                Fetched::Some(200),
+                Path::new(""),
+            ),
+            crate::Source::Fetched {
+                columns: Vec::new(),
+                rows: Vec::new(),
+            },
+        ));
+        if let Some(job) = &mut state.export {
+            let id = job.id();
+            job.progressed(id, 41_203);
+        }
+
+        assert_eq!(
+            view_model(&state).hints.export,
+            Some("exporting 41203 rows…".to_owned())
+        );
+    }
+
+    #[test]
+    fn no_export_leaves_the_bar_alone() {
+        assert_eq!(view_model(&State::default()).hints.export, None);
     }
 
     #[test]

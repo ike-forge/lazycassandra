@@ -10,7 +10,12 @@ keypress becomes an `Effect::Execute` and a driver page becomes a grid
 navigable in both axes, a writable CQL buffer in the Queries panel
 (`editor.rs`), a themed renderer with a runtime picker (`ctrl-t`) over twelve built-in
 themes plus whatever a config file adds (§6), and layered TOML configuration
-with startup diagnostics (§7).
+with startup diagnostics (§7). The grid now supports row, column and cell
+selection with yank to the clipboard, a visual range over any of the three
+list panels, and `ctrl-e` over a loaded Contents grid opens a form that writes
+the fetched rows or the whole table to a CSV or JSON file — the one path in
+the program that pages a statement past its first round trip (§5,
+`execute_paged`).
 **Last updated:** 2026-08-15
 
 ---
@@ -220,10 +225,11 @@ async.
 
 | Port | Responsibility |
 |---|---|
-| `Cluster` | connect, describe schema, execute, fetch page, node/table state |
+| `Cluster` | connect, describe schema, execute, execute paged, node/table state |
 | `ConfigSource` | locate, layer and validate config files; never fails |
 | `SecretResolver` | resolve a credential (literal / env / file) to a value |
 | `Store` | query history, saved queries |
+| `Writer` | open a destination and stream an export to it |
 
 Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
 `#[async_trait]` on the async ones until native AFIT is `dyn`-safe.
@@ -231,6 +237,17 @@ Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
 **`Cluster` is defined in our vocabulary, not the driver's.** It returns our
 `Schema` and `Page` types. Driver types stop at the adapter. This is what made
 §8 cheap to close — swapping drivers touches one crate.
+
+**`Cluster` pages through `execute_paged(conn, stmt, cursor)`, not a bare
+`fetch_page(conn, cursor)`.** The second signature was the original port and
+could not be implemented: scylla's `query_single_page` needs the statement
+alongside the paging state to resume a query, and a cursor on its own
+identifies nothing the driver can resume — it names a position, not the
+query that produced it. `execute_paged` carries both, and `execute` is
+untouched: it stays `query_unpaged` with `Page::next` hardcoded to `None`,
+so the Contents panel's one-round-trip behaviour does not move. Only the
+export path pages, starting from `execute_paged(conn, stmt, None)` and
+following `Page::next` until it is empty (export design §6.2).
 
 ## 6. Theme plumbing
 

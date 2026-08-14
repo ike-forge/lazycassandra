@@ -34,3 +34,11 @@ opaque_id!(
     /// cancelled query can be dropped in `update` (architecture.md §3).
     QueryId
 );
+
+opaque_id!(
+    /// Identifies one export.
+    ///
+    /// Distinct from [`QueryId`]: an export outlives the panel's own request
+    /// and is not cancelled by navigating away from it.
+    JobId
+);

@@ -69,6 +69,15 @@ pub enum Token {
     /// louder than the wash that merely traces a cell back to its heading
     /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §6).
     Ranged,
+    /// What a yank took, in the frames the afterglow lasts.
+    ///
+    /// Inverted rather than banded, like [`Token::SelectedCell`] and for the
+    /// same reason: it has to read *against* whatever band was standing there,
+    /// and [`Token::Selected`] — the loudest colour a palette spends — is only
+    /// one step above [`Token::Ranged`], which is a step too quiet to read as
+    /// feedback. Swapping ground for text needs nothing new from a ported
+    /// palette (docs/superpowers/specs/2026-08-14-visual-mode-design.md §6.1).
+    Flash,
     /// A keyspace the user made, in the Tables tree.
     Keyspace,
     /// A table the user made, in the Tables tree.

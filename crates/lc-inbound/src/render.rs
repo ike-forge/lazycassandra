@@ -48,6 +48,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 
     let command_rows = crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count());
     let theme_rows = crate::themes::visible_rows(frame.area());
+    let export_fits = crate::export::fits(frame.area());
     let rects = match layout(frame.area()) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
@@ -131,12 +132,14 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         Some(OverlayView::Diagnostics { rows, selected }) => {
             crate::diagnostics::render(frame, rows, *selected, theme);
         }
+        Some(OverlayView::Export(view)) => crate::export::render(frame, view, theme),
         None => {}
     }
 
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
             .with_ddl_selection(ddl_selection)
+            .with_export_fits(export_fits)
             .with_grid_width(grid_width)
             .with_theme_rows(theme_rows),
         map: FrameMap::new(hits),
@@ -572,6 +575,7 @@ mod tests {
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{SelectionMode, Subject, TableRef};
     use lc_domain::ddl::DdlTab;
+    use lc_domain::grid::{BAR, COLUMN_SPACING};
     use lc_domain::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
@@ -580,8 +584,8 @@ mod tests {
     use lc_domain::posture::Posture;
     use lc_domain::search::{Filter, Filtered, Prompt};
     use lc_domain::state::{
-        Connection, ConnectionState, Flash, Geometry, Message, Overlay, Panel, Range, SchemaState,
-        Selection,
+        Connection, ConnectionState, Flash, Geometry, Message, Overlay, Panel, Range, Ranges,
+        SchemaState, Selection,
     };
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
@@ -595,11 +599,16 @@ mod tests {
 
     use super::*;
 
+    fn held(anchor: usize, cursor: usize) -> Selection {
+        let mut selection = Selection::default();
+        selection.start(anchor);
+        selection.stop(cursor);
+        selection
+    }
+
     fn draw_focused(width: u16, height: u16, focus: Panel) -> Buffer {
-        let state = State {
-            focus,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(focus);
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 
@@ -654,10 +663,8 @@ mod tests {
         let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut terminal =
             Terminal::new(TestBackend::new(40, 12)).expect("TestBackend always initialises");
-        let state = State {
-            focus: Panel::Tables,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Tables);
 
         terminal
             .draw(|frame| {
@@ -764,10 +771,8 @@ mod tests {
     fn the_loader_rests_until_something_is_outstanding() {
         // `State::default` is disconnected with nothing in flight.
         let resting = draw(80, 24);
-        let mut state = State {
-            connection: ConnectionState::Connecting(ConnId::next()),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connecting(ConnId::next());
         state.loader.advance(true);
 
         let working = draw_state(80, 24, &state);
@@ -967,14 +972,12 @@ mod tests {
 
     #[test]
     fn nothing_is_drawn_over_the_notice() {
-        let state = State {
-            overlay: Some(Overlay::Message(Message {
-                title: "Cannot connect".to_owned(),
-                message: "no route to host".to_owned(),
-                severity: Severity::Danger,
-            })),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Message(Message {
+            title: "Cannot connect".to_owned(),
+            message: "no route to host".to_owned(),
+            severity: Severity::Danger,
+        }));
         let mut terminal =
             Terminal::new(TestBackend::new(39, 6)).expect("TestBackend always initialises");
 
@@ -1065,14 +1068,12 @@ mod tests {
     const TABLES_ROWS: usize = 3;
 
     fn browsing(names: &[&str], selected: usize) -> State {
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(schema_of(names)),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(schema_of(names)),
+        });
         state.tables.cursor.go_to(selected, names.len());
         // Set with the cursor for the reason `select_contents` sets it: half a
         // state is not a state (list viewport design §6).
@@ -1117,14 +1118,12 @@ mod tests {
 
     #[test]
     fn a_tree_row_wears_the_icon_of_what_it_names() {
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
+        });
         let schema = state.schema().cloned().expect("loaded");
         state.tables.open(&schema);
 
@@ -1188,17 +1187,15 @@ mod tests {
 
     #[test]
     fn an_unfolded_keyspaces_tables_are_indented_beneath_it() {
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(tabled_schema(&[
-                    ("shop", &["orders", "users"]),
-                    ("typezoo", &[]),
-                ])),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(tabled_schema(&[
+                ("shop", &["orders", "users"]),
+                ("typezoo", &[]),
+            ])),
+        });
         let schema = state.schema().cloned().expect("loaded");
         state.tables.open(&schema);
 
@@ -1274,7 +1271,7 @@ mod tests {
     #[test]
     fn a_ranged_tree_row_carries_the_bar_and_the_band() {
         let mut state = browsing(&["shop", "typezoo", "system"], 0);
-        state.tables.selection = Selection::held(0, 1);
+        state.tables.selection = held(0, 1);
 
         let buffer = draw_state(40, 12, &state);
 
@@ -1295,12 +1292,77 @@ mod tests {
         );
     }
 
+    fn draw_view(width: u16, height: u16, view: &ViewModel) -> Buffer {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| {
+                render(frame, view, Theme::default());
+            })
+            .expect("TestBackend always draws");
+
+        terminal.backend().buffer().clone()
+    }
+
+    /// A tree body drawn with `ranges` in place of whatever the cursor's own
+    /// selection would project — the cursor sits on a fourth row, neither
+    /// group nor the gap under test, so its own highlight can never be
+    /// mistaken for (or hide the absence of) a band. Drawn at a height tall
+    /// enough to show all four rows unscrolled, with `offset` forced to `0`
+    /// rather than `browsing`'s own follow (tuned for a three-row viewport).
+    fn render_tree_with(ranges: Ranges) -> Buffer {
+        let state = browsing(&["a", "b", "c", "d"], 3);
+        let mut view = view_model(&state);
+        let PanelBody::Tree {
+            rows,
+            selected,
+            flash,
+            ..
+        } = view.panels[0].body.clone()
+        else {
+            panic!("a loaded schema draws a tree");
+        };
+        view.panels[0].body = PanelBody::Tree {
+            rows,
+            selected,
+            offset: 0,
+            ranges,
+            flash,
+        };
+
+        draw_view(40, 14, &view)
+    }
+
+    fn banded(buffer: &Buffer, row: u16) -> bool {
+        let band = Theme::default()
+            .style(Token::Ranged)
+            .bg
+            .expect("a ranged row spends a background");
+
+        buffer.cell((1, 1 + row)).expect("inside the panel").bg == band
+    }
+
+    #[test]
+    fn two_groups_band_separately_with_the_gap_left_unpainted() {
+        // A gap is the absence of a band. Giving it one would make a selection of
+        // two groups louder than the same rows selected as one
+        // (multi-group selection design §6).
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 0));
+        ranges.insert(Range::new(2, 2));
+
+        let buffer = render_tree_with(ranges);
+
+        assert!(banded(&buffer, 0), "the first group lost its band");
+        assert!(!banded(&buffer, 1), "the gap took a band");
+        assert!(banded(&buffer, 2), "the second group lost its band");
+    }
+
     #[test]
     fn a_panel_with_nothing_to_list_says_what_it_is_waiting_for() {
-        let state = State {
-            connection: ConnectionState::Connecting(ConnId::next()),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connecting(ConnId::next());
 
         let buffer = draw_state(40, 12, &state);
 
@@ -1309,10 +1371,8 @@ mod tests {
 
     #[test]
     fn a_failure_notice_is_drawn_in_the_danger_style_rather_than_dimmed() {
-        let state = State {
-            connection: ConnectionState::Failed(DbError::Timeout),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Failed(DbError::Timeout);
 
         let buffer = draw_state(40, 12, &state);
         let cell = buffer.cell((1, 1)).expect("inside the panel");
@@ -1333,15 +1393,13 @@ mod tests {
 
     /// A state showing `page` for `shop.orders`, whose partition key is `id`.
     fn showing(page: Page) -> State {
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
-            }),
-            focus: Panel::Contents,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
+        });
+        state.focus_on(Panel::Contents);
         let query = QueryId::next();
         state
             .contents
@@ -1491,16 +1549,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop       ││   id email                               │",
+            "│▌\u{f084} shop       ││    id  email                             │",
             "the header leaves the bar+gutter block blank"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││▌1 1  ada@example.com                     │"
+            "│              ││▌1  1   ada@example.com                   │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││ 2 2  bob@example.com                     │"
+            "│              ││ 2  2   bob@example.com                   │"
         );
     }
 
@@ -1516,7 +1574,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 2),
-            "│              ││▌1 8f14e45f-ceea-467a-9c2b…               │",
+            "│              ││▌1  8f14e45f-ceea-467a-9c2b…              │",
             "a silently clipped value looks like a shorter value"
         );
     }
@@ -1537,12 +1595,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop             ││   a                        b                                     │",
+            "│▌\u{f084} shop             ││    a                         b                                   │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│                    ││▌1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…              │",
+            "│                    ││▌1  8f14e45f-ceea-467a-9c2b…  8f14e45f-ceea-467a-9c2b…            │",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -1560,19 +1618,18 @@ mod tests {
         state.contents.column.go_to(2, 3);
 
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let header = |x: u16| buffer.cell((x, 1)).expect("inside the panel");
         let partition = Theme::default()
             .style(Token::PartitionKey)
             .fg
             .expect("the partition key spends a colour");
 
-        // Column 16 is the Contents panel's left border. The bar and the
-        // gutter share one two-wide block (17-18), then one spacing column
-        // (19), so the first heading starts at 20.
-        assert_eq!(header(20).fg, partition, "id is the partition key");
-        assert!(header(20).modifier.contains(Modifier::BOLD));
+        let id = drawn_column(area, 0);
+        assert_eq!(header(id).fg, partition, "id is the partition key");
+        assert!(header(id).modifier.contains(Modifier::BOLD));
         assert_eq!(
-            header(23).fg,
+            header(drawn_column(area, 1)).fg,
             Theme::default()
                 .style(Token::RegularColumn)
                 .fg
@@ -1600,15 +1657,15 @@ mod tests {
         state.apply_filter(Filtered::Contents, Filter::new("ali"));
 
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let style = |x: u16, y: u16| {
             let cell = buffer.cell((x, y)).expect("inside the panel");
             (cell.fg, cell.bg, cell.modifier)
         };
-        // Bar, then gutter, then `id` (one digit, the cursor's cell at column
-        // 0), then `email` (matched): 21 lands on the digit, 24 on `email`'s
-        // first character.
-        let unmatched_id = 21;
-        let matched_email = 24;
+        // `id` is two wide and holds the cursor's cell; `email`, the matched
+        // one, is the column after it.
+        let unmatched_id = drawn_column(area, 0);
+        let matched_email = drawn_column(area, 1);
 
         assert_ne!(
             style(matched_email, 2),
@@ -1647,6 +1704,7 @@ mod tests {
         state.contents.cursor.go_to(0, 2);
 
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
         let faint = Theme::default()
             .style(Token::Faint)
@@ -1657,17 +1715,17 @@ mod tests {
             .fg
             .expect("muted spends a colour");
 
-        assert_eq!(cell(24).fg, faint, "the null is faint");
+        assert_eq!(cell(drawn_column(area, 1)).fg, faint, "the null is faint");
         assert_eq!(
-            cell(18).fg,
+            cell(area.x + 1 + BAR).fg,
             muted,
             "the gutter digit shares the bar+gutter block's column and is muted, not faint"
         );
         assert_ne!(
-            cell(21).fg,
+            cell(drawn_column(area, 0)).fg,
             faint,
-            "the value beside it is not — column 21 is inside the id value's own \
-             column, not the gutter, and is not what this is about"
+            "the value beside it is not — that column is the id value's own, \
+             not the gutter, and is not what this is about"
         );
     }
 
@@ -1789,11 +1847,7 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
-        // The bar and the gutter share one widget column, two wide for a
-        // two-row page, then one column of spacing, then `id` (two wide), then
-        // one more spacing column: the second column's first cell is six in
-        // from the panel's inner edge.
-        let name = area.x + 1 + 6;
+        let name = drawn_column(area, 1);
 
         assert_eq!(bg(name, 2), selected, "every row of the column is lit");
         assert_eq!(bg(name, 3), selected, "including the last one");
@@ -1803,78 +1857,124 @@ mod tests {
             "and its heading, which ratatui leaves to us (design §4)"
         );
         assert_ne!(
-            bg(area.x + 1 + 3, 2),
+            bg(drawn_column(area, 0), 2),
             selected,
             "the row the cursor is on is not — column mode lights one column"
         );
     }
 
     /// A yank spends the selection that named the rows, so the flash is the
-    /// only thing left saying what was copied — and it has to be louder than
-    /// the band that was standing there a frame ago, or the copy reads as the
-    /// selection simply vanishing (visual mode design §6.1).
+    /// only thing left saying what was copied — and the three bands are one
+    /// ramp apart, so no colour among them reads as a change against the band
+    /// standing there a frame ago. The afterglow inverts instead (visual mode
+    /// design §6.1).
     #[test]
-    fn a_yanks_afterglow_is_louder_than_the_range_it_replaces() {
+    fn a_yanks_afterglow_inverts_the_rows_it_took() {
         let mut ranged = showing(sized_page(2, 4));
         ranged.contents.mode = SelectionMode::Row;
         ranged.contents.cursor.go_to(3, 4);
-        ranged.contents.rows = Selection::held(0, 1);
+        ranged.contents.rows = held(0, 1);
 
         let mut flashed = showing(sized_page(2, 4));
         flashed.contents.mode = SelectionMode::Row;
         flashed.contents.cursor.go_to(3, 4);
-        flashed.flash = Some(Flash::lit(Panel::Contents, Some(Range::new(0, 1)), None));
+        flashed.flash = Some(Flash::lit(
+            Panel::Contents,
+            Ranges::of(Range::new(0, 1)),
+            Ranges::default(),
+        ));
 
-        let bg = |state: &State, row: u16| {
+        let cell = |state: &State, row: u16| {
             let buffer = draw_state(60, 12, state);
             let area = block_area(&buffer, "Table contents");
             buffer
                 .cell((area.x + 4, area.y + 2 + row))
                 .expect("inside the panel")
-                .bg
+                .clone()
         };
-        let palette = Theme::default().palette();
+        let reversed =
+            |state: &State, row: u16| cell(state, row).modifier.contains(Modifier::REVERSED);
 
-        assert_eq!(bg(&ranged, 0), palette.ranged);
-        assert_eq!(
-            bg(&flashed, 0),
-            palette.selection_bg,
-            "the afterglow takes the loudest band, which is the cursor row's"
+        assert_eq!(cell(&ranged, 0).bg, Theme::default().palette().ranged);
+        assert!(
+            !reversed(&ranged, 0),
+            "a held range is banded, not inverted"
+        );
+        assert!(
+            reversed(&flashed, 0),
+            "and the afterglow inverts what it took"
+        );
+        assert!(
+            !reversed(&flashed, 2),
+            "leaving the rows the yank did not take alone"
         );
         assert_eq!(
-            bg(&flashed, 2),
-            bg(&ranged, 2),
-            "and it lights only the rows the yank took"
+            cell(&flashed, 2).bg,
+            cell(&ranged, 2).bg,
+            "in colour as well as in modifier"
         );
+    }
+
+    /// §5.1's inversion is a projection of every group a multi-group `y` took,
+    /// not just the one range the single-group test above pins
+    /// (multi-group selection design §8).
+    #[test]
+    fn a_multi_group_yanks_afterglow_inverts_every_group_it_took() {
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 0));
+        ranges.insert(Range::new(2, 2));
+
+        let mut flashed = showing(sized_page(2, 4));
+        flashed.contents.mode = SelectionMode::Row;
+        flashed.contents.cursor.go_to(3, 4);
+        flashed.flash = Some(Flash::lit(Panel::Contents, ranges, Ranges::default()));
+
+        let cell = |state: &State, row: u16| {
+            let buffer = draw_state(60, 12, state);
+            let area = block_area(&buffer, "Table contents");
+            buffer
+                .cell((area.x + 4, area.y + 2 + row))
+                .expect("inside the panel")
+                .clone()
+        };
+        let reversed =
+            |state: &State, row: u16| cell(state, row).modifier.contains(Modifier::REVERSED);
+
+        assert!(reversed(&flashed, 0), "the first group inverts");
+        assert!(
+            !reversed(&flashed, 1),
+            "the gap between groups stays unpainted"
+        );
+        assert!(reversed(&flashed, 2), "the second group inverts too");
     }
 
     /// The flash reaches the panel whose `y` lit it and no other.
     #[test]
     fn a_yank_in_the_tree_lights_the_tree_alone() {
         let mut state = showing(sized_page(2, 4));
-        state.flash = Some(Flash::lit(Panel::Tables, Some(Range::new(0, 0)), None));
+        state.flash = Some(Flash::lit(
+            Panel::Tables,
+            Ranges::of(Range::new(0, 0)),
+            Ranges::default(),
+        ));
 
         let buffer = draw_state(60, 12, &state);
-        let palette = Theme::default().palette();
         let tree = block_area(&buffer, "Tables");
         let grid = block_area(&buffer, "Table contents");
+        let inverted = |x: u16, y: u16| {
+            buffer
+                .cell((x, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
 
-        assert_eq!(
-            buffer
-                .cell((tree.x + 2, tree.y + 1))
-                .expect("inside the panel")
-                .bg,
-            palette.selection_bg
-        );
-        // Row 2, not the grid's own row 0: that one carries the cursor band in
-        // this palette's loudest colour whether or not anything flashed, and
-        // would pass this assertion for the wrong reason.
-        assert_ne!(
-            buffer
-                .cell((grid.x + 4, grid.y + 4))
-                .expect("inside the panel")
-                .bg,
-            palette.selection_bg,
+        assert!(inverted(tree.x + 2, tree.y + 1));
+        // Row 2, not the grid's own row 0: cell mode inverts the cursor's own
+        // cell whether or not anything flashed, and row 0 would pass this
+        // assertion for the wrong reason.
+        assert!(
+            !inverted(grid.x + 4, grid.y + 4),
             "a flash lit over the tree reaches no other panel"
         );
     }
@@ -1884,16 +1984,13 @@ mod tests {
         let mut state = showing(sized_page(2, 4));
         state.contents.mode = SelectionMode::Row;
         state.contents.cursor.down(4);
-        state.contents.rows = Selection::held(0, 2);
+        state.contents.rows = held(0, 2);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        // The bar+gutter block for a 4-row page is two columns wide, then one
-        // of spacing: the first data column starts four in from the inner
-        // edge, and each further column is three cells wide.
         let bg = |row: u16, column: u16| {
             buffer
-                .cell((area.x + 4 + column * 3, area.y + 2 + row))
+                .cell((drawn_column(area, column), area.y + 2 + row))
                 .expect("inside the panel")
                 .bg
         };
@@ -1914,20 +2011,50 @@ mod tests {
         );
     }
 
+    /// A band drawn cell by cell breaks at every column spacing, so a held
+    /// range reads as one stripe per column instead of one selection.
+    #[test]
+    fn a_row_range_bands_the_spacing_between_its_columns_too() {
+        let mut state = showing(sized_page(2, 4));
+        state.contents.mode = SelectionMode::Row;
+        state.contents.cursor.down(4);
+        state.contents.rows = held(0, 2);
+
+        let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let bg = |row: u16, x: u16| {
+            buffer
+                .cell((x, area.y + 2 + row))
+                .expect("inside the panel")
+                .bg
+        };
+
+        // The row number in the gutter and the blank ahead of the second
+        // column: neither is a cell of the row, and both are inside it.
+        for x in [area.x + 1 + BAR, drawn_column(area, 1) - 1] {
+            assert_eq!(
+                bg(0, x),
+                bg(0, drawn_column(area, 0)),
+                "the band runs the width of the row, gutter and spacing included"
+            );
+            assert_ne!(bg(3, x), bg(0, x), "and stops at the range's last row");
+        }
+    }
+
     #[test]
     fn a_cell_block_bands_the_rectangle_and_nothing_outside_it() {
         let mut state = showing(sized_page(3, 3));
         // The grid opens in row mode, and only cell mode has a rectangle: the
         // projection gives a column range on no other (visual mode design §3).
         state.contents.mode = SelectionMode::Cell;
-        state.contents.rows = Selection::held(0, 1);
-        state.contents.columns = Selection::held(0, 1);
+        state.contents.rows = held(0, 1);
+        state.contents.columns = held(0, 1);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, column: u16| {
             buffer
-                .cell((area.x + 4 + column * 3, area.y + 2 + row))
+                .cell((drawn_column(area, column), area.y + 2 + row))
                 .expect("inside the panel")
                 .bg
         };
@@ -1951,7 +2078,7 @@ mod tests {
     fn a_column_range_bands_its_columns_and_lights_no_gutter_bar() {
         let mut state = showing(sized_page(3, 3));
         state.contents.mode = SelectionMode::Column;
-        state.contents.columns = Selection::held(0, 1);
+        state.contents.columns = held(0, 1);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -1969,7 +2096,7 @@ mod tests {
         // column 2 is not.
         let bg = |column: u16| {
             buffer
-                .cell((area.x + 4 + column * 3, area.y + 3))
+                .cell((drawn_column(area, column), area.y + 3))
                 .expect("inside the panel")
                 .bg
         };
@@ -2029,13 +2156,10 @@ mod tests {
             .style(Token::Crosshair)
             .bg
             .expect("the cell mode's crosshair spends a background");
-        // The bar and the gutter share one widget column, three wide for a
-        // twenty-row page, then a column of spacing: the only heading starts
-        // four in from the panel's inner edge.
         let heading = |buffer: &Buffer| {
             let area = block_area(buffer, "Table contents");
             buffer
-                .cell((area.x + 1 + 4, 1))
+                .cell((first_cell(area, 2), 1))
                 .expect("inside the panel")
                 .bg
         };
@@ -2068,7 +2192,9 @@ mod tests {
 
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
-        let heading = buffer.cell((area.x + 1 + 3, 1)).expect("inside the panel");
+        let heading = buffer
+            .cell((first_cell(area, 1), 1))
+            .expect("inside the panel");
 
         assert_eq!(
             heading.bg,
@@ -2106,7 +2232,9 @@ mod tests {
 
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
-        let null = buffer.cell((area.x + 1 + 6, 3)).expect("inside the panel");
+        let null = buffer
+            .cell((drawn_column(area, 1), 3))
+            .expect("inside the panel");
 
         assert_ne!(
             buffer.cell((area.x + 1, 3)).expect("inside the panel").bg,
@@ -2219,16 +2347,14 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
         // The top border, then the grid's header row, then the first row —
-        // the one the cursor is on, at its first column. That column is two
-        // wide and sits past the merged bar+gutter block (bar plus a
-        // one-digit gutter) and the one spacing column beside it.
-        let first = area.x + 4;
+        // the one the cursor is on, at its first column.
+        let first = drawn_column(area, 0);
         let selected = area.y + 2;
 
         assert!(underlined(first, selected), "the cell the cursor is on");
         assert!(underlined(first + 1, selected), "for its whole width");
         assert!(
-            !underlined(first + 3, selected),
+            !underlined(drawn_column(area, 1), selected),
             "the next column of the same row is not what a command would act on"
         );
         assert!(
@@ -2243,8 +2369,8 @@ mod tests {
     fn a_ranged_cell_keeps_its_band_where_the_crosshair_crosses_it() {
         let mut state = showing(sized_page(4, 3));
         state.contents.mode = SelectionMode::Cell;
-        state.contents.rows = Selection::held(0, 1);
-        state.contents.columns = Selection::held(0, 1);
+        state.contents.rows = held(0, 1);
+        state.contents.columns = held(0, 1);
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -2282,12 +2408,12 @@ mod tests {
         // focus elsewhere would notice a future `if focused`.
         let mut state = showing(sized_page(4, 3));
         state.contents.mode = SelectionMode::Cell;
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
-        let first = area.x + 4;
+        let first = drawn_column(area, 0);
         let highlight = Theme::default()
             .style(Token::Crosshair)
             .bg
@@ -2298,8 +2424,10 @@ mod tests {
             "the selected cell keeps its highlight without focus"
         );
         assert!(
-            cell(first + 3).bg == highlight
-                && !cell(first + 3).modifier.contains(Modifier::UNDERLINED),
+            cell(drawn_column(area, 1)).bg == highlight
+                && !cell(drawn_column(area, 1))
+                    .modifier
+                    .contains(Modifier::UNDERLINED),
             "and the rest of its row keeps the row tint alone"
         );
     }
@@ -2351,11 +2479,24 @@ mod tests {
         state
     }
 
-    /// The x of the `index`th drawn column's first cell: the merged
-    /// bar+gutter block and its one spacing column, then two-wide columns
-    /// each followed by a spacing one.
+    /// The x of the first drawn column's first cell: the panel's own border,
+    /// the merged bar+gutter block, and the spacing that follows it.
+    /// `gutter` is what `lc_domain::grid::gutter` gives the page — the digits
+    /// of its last row number.
+    const fn first_cell(area: Rect, gutter: u16) -> u16 {
+        area.x + 1 + BAR + gutter + COLUMN_SPACING
+    }
+
+    /// The same for the `index`th drawn column, where every column before it
+    /// is `width` wide.
+    const fn nth_cell(area: Rect, gutter: u16, width: u16, index: u16) -> u16 {
+        first_cell(area, gutter) + index * (width + COLUMN_SPACING)
+    }
+
+    /// [`nth_cell`] for the fixtures `sized_page` builds: two-wide columns
+    /// over a page of fewer than ten rows.
     const fn drawn_column(area: Rect, index: u16) -> u16 {
-        area.x + 4 + index * 3
+        nth_cell(area, 1, 2, index)
     }
 
     #[test]
@@ -2384,25 +2525,25 @@ mod tests {
         };
 
         assert!(
-            heading.trim_start().starts_with("c3"),
+            heading.trim_start().starts_with("c4"),
             "the drawn window starts at the offset, got {heading:?}"
         );
         assert!(
             first.starts_with('▌'),
             "the bar is pinned and never scrolls off, got {first:?}"
         );
-        // c3 is drawn first, so the cursor's c5 is the third column drawn.
+        // c4 is drawn first, so the cursor's c5 is the second column drawn.
         assert!(
-            underlined(drawn_column(area, 2)) && underlined(drawn_column(area, 2) + 1),
+            underlined(drawn_column(area, 1)) && underlined(drawn_column(area, 1) + 1),
             "the cell cursor is on c5, counted from the drawn window rather \
              than from the page: {heading:?}"
         );
         assert!(
-            !underlined(drawn_column(area, 3)),
+            !underlined(drawn_column(area, 2)),
             "and not on the column beside it"
         );
         assert!(
-            !underlined(drawn_column(area, 5)),
+            !underlined(drawn_column(area, 4)),
             "nor on the last column drawn, where an index blind to the offset \
              would land"
         );
@@ -2416,15 +2557,15 @@ mod tests {
         let mut state = showing_column_path(&[8, 5]);
         assert_eq!(
             state.contents.column_scroll.first(),
-            3,
-            "the fixture must scroll to c3 or this test proves nothing about \
+            4,
+            "the fixture must scroll to c4 or this test proves nothing about \
              page indices"
         );
-        // Page column 6 — drawn third in this window (c3, c4, c5, c6, …). A
-        // check keyed on the drawn position rather than the page column would
-        // either band the wrong cell or, since no drawn position is 6, band
-        // nothing at all in a window this size.
-        state.contents.columns = Selection::held(6, 6);
+        // Page column 6 — drawn third in this window (c4, c5, c6, …). A check
+        // keyed on the drawn position rather than the page column would either
+        // band the wrong cell or, since no drawn position is 6, band nothing
+        // at all in a window this size.
+        state.contents.columns = held(6, 6);
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -2439,7 +2580,7 @@ mod tests {
         };
 
         assert_ne!(
-            bg(3),
+            bg(2),
             bg(0),
             "page column 6 draws third in this scrolled window and must be \
              banded there, keyed on its page index rather than its position"
@@ -2570,14 +2711,12 @@ mod tests {
                 },
             )]),
         };
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(schema.clone()),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(schema.clone()),
+        });
         state.tables.open(&schema);
         state.tables.open(&schema);
         state
@@ -2776,7 +2915,7 @@ mod tests {
     #[test]
     fn every_line_of_a_selected_property_is_highlighted() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         // `bloom_filter_fp_chance` and its value need 26 of the body's 23
         // columns, so this row is one cursor stop drawn across two lines. Six
         // rows in: the keyspace, the table, one partition and two clustering
@@ -2796,7 +2935,7 @@ mod tests {
     #[test]
     fn a_one_line_property_has_exactly_its_own_line_reversed() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         state.ddl.cursor.go_to(5, lc_domain::view::ddl_rows(&state));
 
         let buffer = draw_state(104, 41, &state);
@@ -2814,7 +2953,7 @@ mod tests {
     #[test]
     fn the_ddl_body_reserves_a_column_for_the_selection_bar() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         // `bloom_filter_fp_chance` and its value need more than the body's 23
         // columns, so this row is one cursor stop drawn across two lines.
         state.ddl.cursor.go_to(6, lc_domain::view::ddl_rows(&state));
@@ -2846,7 +2985,7 @@ mod tests {
     #[test]
     fn a_section_heading_is_never_drawn_as_the_selection() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         state.ddl.cursor.to_start();
 
         let buffer = draw_state(104, 41, &state);
@@ -2868,12 +3007,12 @@ mod tests {
     #[test]
     fn a_ranged_ddl_row_carries_the_bar_and_the_band() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         state.ddl.cursor.to_start();
         // Row 1 is the table identity row, which wraps to two lines
         // (`a_selected_tables_shape_is_drawn_above_its_options`); row 2 is
         // `customer_id`, outside the range.
-        state.ddl.selection = Selection::held(0, 1);
+        state.ddl.selection = held(0, 1);
 
         let buffer = draw_state(100, 41, &state);
         let rows = ddl_rows(&buffer);
@@ -2900,13 +3039,13 @@ mod tests {
         // `Paragraph` needs no such guard because it only ever draws the lines
         // it is scrolled to. This is what checks that argument.
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         let details = ddl_details(&state);
         state.ddl.cursor.go_to(0, details.row_count());
 
         // 40x20: a fourteen-column, nine-row Ddl body — narrow enough that
         // `orders()` wraps well past it.
-        let total = crate::details::lay_out(&details, 0, Marked::none(), 14, Theme::default())
+        let total = crate::details::lay_out(&details, 0, &Marked::none(), 14, Theme::default())
             .lines
             .len();
         assert!(
@@ -2932,7 +3071,7 @@ mod tests {
     #[test]
     fn a_selected_block_scrolled_partly_out_of_view_keeps_its_visible_lines_highlighted() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         let details = ddl_details(&state);
         let last = details.row_count() - 1;
         state.ddl.cursor.go_to(last, details.row_count());
@@ -2940,7 +3079,7 @@ mod tests {
         // `comment` is the last row and wraps to three lines at this width.
         // Scrolled until its first line is the eighth of the nine visible, two
         // of them are in view and the third is below the fold.
-        let laid = crate::details::lay_out(&details, last, Marked::none(), 14, Theme::default());
+        let laid = crate::details::lay_out(&details, last, &Marked::none(), 14, Theme::default());
         let total = laid.lines.len();
         assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
         for _ in 0..laid.selection.first - 7 {
@@ -2975,7 +3114,7 @@ mod tests {
     #[test]
     fn the_reported_span_indexes_the_rows_a_filter_left() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         // The table's own name, `order_date` and `order_id` by name, and
         // `comment` by its value; the keyspace and the partition key's column
         // miss, so the partition section goes with it.
@@ -3129,7 +3268,7 @@ mod tests {
             crate::details::lay_out(
                 &ddl_details(&describing(orders())),
                 0,
-                Marked::none(),
+                &Marked::none(),
                 14,
                 Theme::default()
             )
@@ -3187,7 +3326,7 @@ mod tests {
         let all = crate::details::lay_out(
             &ddl_details(&state),
             0,
-            Marked::none(),
+            &Marked::none(),
             WIDTH,
             Theme::default(),
         )
@@ -3635,10 +3774,8 @@ mod tests {
 
     /// A state focused on `focus`, with `text` in the Queries buffer.
     fn with_query(text: &str, focus: Panel) -> State {
-        let mut state = State {
-            focus,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(focus);
         for character in text.chars() {
             if character == '\n' {
                 state.queries.insert_newline();
@@ -3793,14 +3930,12 @@ mod tests {
 
     #[test]
     fn an_overlay_hides_the_cursor_even_when_the_editor_is_focused() {
-        let state = State {
-            overlay: Some(Overlay::Message(Message {
-                title: "Query failed".to_owned(),
-                message: "boom".to_owned(),
-                severity: Severity::Danger,
-            })),
-            ..with_query("SELECT", Panel::Queries)
-        };
+        let mut state = with_query("SELECT", Panel::Queries);
+        state.overlay = Some(Overlay::Message(Message {
+            title: "Query failed".to_owned(),
+            message: "boom".to_owned(),
+            severity: Severity::Danger,
+        }));
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
@@ -3817,10 +3952,8 @@ mod tests {
         // meant no cursor showed at all. Now the prompt is a text field with
         // a cursor of its own, on the bar row — still not the editor's, for
         // the same reason as before (design §5.2).
-        let state = State {
-            overlay: Some(Overlay::Search(Prompt::opened(Filtered::Tables, None))),
-            ..with_query("SELECT", Panel::Queries)
-        };
+        let mut state = with_query("SELECT", Panel::Queries);
+        state.overlay = Some(Overlay::Search(Prompt::opened(Filtered::Tables, None)));
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
@@ -3935,10 +4068,8 @@ mod tests {
         // The marker's whole point: a filter that survives a focus change
         // has to say so from the panel it is applied to, not from the bar,
         // which only ever describes the focused panel (design §5.1).
-        let mut state = State {
-            focus: Panel::Contents,
-            ..browsing(&["shop"], 0)
-        };
+        let mut state = browsing(&["shop"], 0);
+        state.focus_on(Panel::Contents);
         state.apply_filter(Filtered::Tables, Filter::new("ord"));
 
         let buffer = draw_state(80, 24, &state);
@@ -3954,10 +4085,8 @@ mod tests {
         let mut prompt = Prompt::opened(Filtered::Tables, None);
         prompt.push('o');
         prompt.push('r');
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         let buffer = draw_state(80, 24, &state);
         let bar = row(&buffer, 23);
@@ -3978,10 +4107,8 @@ mod tests {
         let mut prompt = Prompt::opened(Filtered::Tables, None);
         prompt.push('o');
         prompt.push('r');
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
@@ -4002,10 +4129,8 @@ mod tests {
         for c in "a query long enough to overrun a narrow terminal's hint bar".chars() {
             prompt.push(c);
         }
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         let (_, cursor) = drawn_with_cursor(40, 24, &state);
         let cursor = cursor.expect("the prompt draws a cursor");
@@ -4021,10 +4146,8 @@ mod tests {
     fn the_prompts_query_carries_a_theme_token() {
         let mut prompt = Prompt::opened(Filtered::Tables, None);
         prompt.push('o');
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         let buffer = draw_state(80, 24, &state);
         // Column 9: one past the loader and `bar_split`'s gap, landing on
@@ -4052,10 +4175,8 @@ mod tests {
     }
 
     fn with_palette(width: u16, height: u16) -> Buffer {
-        let state = State {
-            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 

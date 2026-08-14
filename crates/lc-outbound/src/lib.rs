@@ -9,4 +9,5 @@
 pub mod cassandra;
 pub mod config;
 pub mod fake;
+pub mod file;
 mod value;

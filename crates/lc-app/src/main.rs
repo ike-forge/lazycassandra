@@ -6,6 +6,7 @@
 mod clipboard;
 mod editor;
 mod effects;
+mod export;
 mod input;
 mod mouse;
 
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use input::Incoming;
 use lc_domain::model::ConnId;
-use lc_domain::ports::{Cluster, ConfigSource};
+use lc_domain::ports::{Cluster, ConfigSource, Writer};
 use lc_domain::posture::Posture;
 use lc_domain::state::Geometry;
 use lc_domain::{Effect, Msg, State, update, view_model};
@@ -133,16 +134,18 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
         contact_point(),
         Posture::ReadOnly,
     ));
+    let writer: Arc<dyn Writer> = Arc::new(lc_outbound::file::FileWriter);
 
     let source = lc_outbound::config::FileConfigSource::from_env();
     let (config, diagnostics) = source.load().await;
     let themes = Themes::new(&config.themes, config.background);
 
     let (mut state, startup) = lc_domain::init(conn, config, diagnostics);
+    state.cwd = std::env::current_dir().unwrap_or_default();
     let mut measured: Option<Geometry> = None;
 
     for effect in &startup {
-        effects::run(&tx, &cluster, effect);
+        effects::run(&tx, &cluster, &writer, effect);
     }
 
     let rendered = draw(&mut terminal, &state, &themes)?;
@@ -166,7 +169,7 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
                 continue;
             }
 
-            effects::run(&tx, &cluster, &effect);
+            effects::run(&tx, &cluster, &writer, &effect);
         }
 
         if state.should_quit {

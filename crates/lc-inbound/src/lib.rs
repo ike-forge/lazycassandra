@@ -10,6 +10,7 @@
 mod body;
 mod details;
 mod diagnostics;
+mod export;
 mod hints;
 pub mod hit;
 mod icons;

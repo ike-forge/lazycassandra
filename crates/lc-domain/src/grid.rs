@@ -19,9 +19,12 @@ use crate::model::Page;
 /// columns, not the tails of values (design §7).
 pub const MAX_COLUMN_WIDTH: u16 = 24;
 
-/// One blank column between cells, and between the gutter and the first
-/// column.
-pub const COLUMN_SPACING: u16 = 1;
+/// Blank columns between cells, and between the gutter and the first column.
+///
+/// Two rather than one: a value that fills its column is ellipsised rather
+/// than padded, so a single blank leaves `…` sitting against the next
+/// column's first character and the two read as one word.
+pub const COLUMN_SPACING: u16 = 2;
 
 /// The cursor row's mark, merged into the same widget column as the
 /// row-number gutter rather than a structural column of its own — the mark
@@ -228,17 +231,17 @@ mod tests {
 
     #[test]
     fn only_the_columns_that_fit_are_counted() {
-        // 5 + 1 + 5 + 1 + 5 = 17 for three, 11 for two.
-        assert_eq!(fitting(&[5, 5, 5], 0, 17), 3);
-        assert_eq!(fitting(&[5, 5, 5], 0, 16), 2);
-        assert_eq!(fitting(&[5, 5, 5], 0, 11), 2);
-        assert_eq!(fitting(&[5, 5, 5], 0, 10), 1);
+        // 5 + 2 + 5 + 2 + 5 = 19 for three, 12 for two.
+        assert_eq!(fitting(&[5, 5, 5], 0, 19), 3);
+        assert_eq!(fitting(&[5, 5, 5], 0, 18), 2);
+        assert_eq!(fitting(&[5, 5, 5], 0, 12), 2);
+        assert_eq!(fitting(&[5, 5, 5], 0, 11), 1);
     }
 
     #[test]
     fn fitting_counts_from_the_offset() {
         assert_eq!(
-            fitting(&[20, 5, 5], 1, 11),
+            fitting(&[20, 5, 5], 1, 12),
             2,
             "the wide first column is not drawn"
         );
@@ -279,21 +282,21 @@ mod tests {
     fn the_viewport_moves_the_shortest_distance_that_shows_a_column_to_the_right() {
         let mut scroll = ColumnScroll::default();
 
-        scroll.follow(2, &[5, 5, 5], 11);
+        scroll.follow(2, &[5, 5, 5], 12);
 
         assert_eq!(
             scroll.first(),
             1,
-            "columns 1 and 2 fit in 11; the offset must not overshoot to 2"
+            "columns 1 and 2 fit in 12; the offset must not overshoot to 2"
         );
     }
 
     #[test]
     fn the_viewport_follows_a_column_to_the_left() {
         let mut scroll = ColumnScroll::default();
-        scroll.follow(2, &[5, 5, 5], 11);
+        scroll.follow(2, &[5, 5, 5], 12);
 
-        scroll.follow(0, &[5, 5, 5], 11);
+        scroll.follow(0, &[5, 5, 5], 12);
 
         assert_eq!(scroll.first(), 0);
     }
@@ -307,7 +310,7 @@ mod tests {
         assert_eq!(scroll.first(), 1);
     }
 
-    /// Twelve columns of five: three fit in 17, one in 5, eleven in 65.
+    /// Twelve columns of five: three fit in 19, one in 5, eleven in 75.
     const TWELVE: [u16; 12] = [5; 12];
 
     #[test]
@@ -316,12 +319,12 @@ mod tests {
         scroll.follow(11, &TWELVE, 5);
         assert_eq!(scroll.first(), 11, "only the last column fits in 5");
 
-        scroll.clamp_to(&TWELVE, 65);
+        scroll.clamp_to(&TWELVE, 75);
 
         assert_eq!(
             scroll.first(),
             1,
-            "eleven columns fit in 65, so the window ends on the last one \
+            "eleven columns fit in 75, so the window ends on the last one \
              rather than beside a screen of dead space"
         );
     }
@@ -329,10 +332,10 @@ mod tests {
     #[test]
     fn a_viewport_already_filling_the_panel_is_left_where_it_is() {
         let mut scroll = ColumnScroll::default();
-        scroll.follow(11, &TWELVE, 17);
+        scroll.follow(11, &TWELVE, 19);
         assert_eq!(scroll.first(), 9);
 
-        scroll.clamp_to(&TWELVE, 17);
+        scroll.clamp_to(&TWELVE, 19);
 
         assert_eq!(scroll.first(), 9, "there is no dead space to reclaim");
     }

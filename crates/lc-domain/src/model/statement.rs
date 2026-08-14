@@ -58,6 +58,17 @@ impl Statement {
         }
     }
 
+    /// Every column of one table, unbounded. The export's whole-table scope
+    /// (export design §3); [`Statement::select_all`] is the panel's bounded
+    /// read.
+    #[must_use]
+    pub fn select_everything(keyspace: &str, table: &str) -> Self {
+        Self {
+            cql: format!("SELECT * FROM {}.{}", quoted(keyspace), quoted(table)),
+            kind: StatementKind::Read,
+        }
+    }
+
     /// A statement typed by hand, classified by its first keyword.
     ///
     /// A sniffer rather than a parser: a statement opening with a comment
@@ -179,5 +190,13 @@ mod tests {
     fn the_cql_is_kept_verbatim() {
         let cql = "SELECT *\nFROM shop.orders";
         assert_eq!(Statement::typed(cql).cql, cql);
+    }
+
+    #[test]
+    fn selecting_everything_quotes_both_halves_and_bounds_nothing() {
+        assert_eq!(
+            Statement::select_everything("shop", "orders").cql,
+            "SELECT * FROM \"shop\".\"orders\""
+        );
     }
 }

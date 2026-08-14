@@ -18,7 +18,7 @@
 
 use lc_domain::contents::SelectionMode;
 use lc_domain::grid::{BAR, COLUMN_SPACING, available, fitting};
-use lc_domain::state::{Range, Span};
+use lc_domain::state::{Ranges, Span};
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow};
 use ratatui::Frame;
@@ -127,7 +127,7 @@ pub(crate) fn render(
             rows,
             selected,
             offset,
-            range,
+            ranges,
             flash,
         } => Some(Body {
             extent: tree(
@@ -136,7 +136,7 @@ pub(crate) fn render(
                 rows,
                 *selected,
                 *offset,
-                Marked::new(*range, *flash),
+                &Marked::new(ranges.clone(), *flash),
                 theme,
             ),
             columns: None,
@@ -148,7 +148,7 @@ pub(crate) fn render(
             details,
             selected,
             offset,
-            range,
+            ranges,
             flash,
         } => {
             let (extent, selection, rows) = crate::details::render(
@@ -157,7 +157,7 @@ pub(crate) fn render(
                 details,
                 *selected,
                 *offset,
-                Marked::new(*range, *flash),
+                &Marked::new(ranges.clone(), *flash),
                 theme,
             );
             Some(Body {
@@ -220,7 +220,7 @@ fn tree(
     rows: &[TreeRow],
     selected: usize,
     offset: usize,
-    marked: Marked,
+    marked: &Marked,
     theme: Theme,
 ) -> Extent {
     let items: Vec<ListItem> = rows
@@ -270,12 +270,12 @@ struct GridView<'a> {
     mode: SelectionMode,
     gutter: u16,
     /// The rows `v` has selected while extending the row axis, as
-    /// [`PanelBody::Grid::rows_range`].
-    rows_range: Option<Range>,
-    /// [`GridView::rows_range`]'s counterpart for the column axis.
-    columns_range: Option<Range>,
+    /// [`PanelBody::Grid::rows_ranges`].
+    rows_ranges: &'a Ranges,
+    /// [`GridView::rows_ranges`]'s counterpart for the column axis.
+    columns_ranges: &'a Ranges,
     /// What the two ranges are painted with — [`Token::Ranged`] for a live
-    /// selection, the louder [`Token::Selected`] for a yank's afterglow.
+    /// selection, the louder [`Token::Flash`] for a yank's afterglow.
     band: Token,
 }
 
@@ -294,8 +294,8 @@ fn grid(
         column,
         mode,
         gutter,
-        rows_range,
-        columns_range,
+        rows_ranges,
+        columns_ranges,
         band,
     } = *view;
 
@@ -350,8 +350,8 @@ fn grid(
         first_column,
         selected,
         gutter,
-        rows_range,
-        columns_range,
+        rows_ranges,
+        columns_ranges,
         band,
     };
     let body = rows
@@ -468,22 +468,17 @@ fn crosshair(
 }
 
 /// Whether the cell at `row, column` — both counted in the page's own
-/// indices, never the drawn window's — falls inside the rectangle
-/// `rows_range` and `columns_range` describe.
+/// indices, never the drawn window's — falls inside the rectangle the row
+/// groups and the column groups cross.
 ///
-/// `None` on an axis means that axis was never extended, so it constrains
-/// nothing: a row range with no column range is the whole row, and a column
-/// range with no row range is the whole column. The two together are painted
-/// only when at least one of them is `Some` (design §6).
-fn ranged(
-    row: usize,
-    column: usize,
-    rows_range: Option<Range>,
-    columns_range: Option<Range>,
-) -> bool {
-    (rows_range.is_some() || columns_range.is_some())
-        && rows_range.is_none_or(|range| range.contains(row))
-        && columns_range.is_none_or(|range| range.contains(column))
+/// An *empty* axis was never extended, so it constrains nothing: row groups
+/// with no column groups are whole rows, and column groups with no row groups
+/// are whole columns. The two together are painted only when at least one
+/// holds something (multi-group selection design §5, §6).
+fn ranged(row: usize, column: usize, rows: &Ranges, columns: &Ranges) -> bool {
+    (!rows.is_empty() || !columns.is_empty())
+        && (rows.is_empty() || rows.contains(row))
+        && (columns.is_empty() || columns.contains(column))
 }
 
 /// The grid's fields, read off the body that carries them. `None` for every
@@ -498,8 +493,8 @@ fn grid_view(body: &PanelBody) -> Option<GridView<'_>> {
         column,
         mode,
         gutter,
-        rows_range,
-        columns_range,
+        rows_ranges,
+        columns_ranges,
         flash,
     } = body
     else {
@@ -515,8 +510,8 @@ fn grid_view(body: &PanelBody) -> Option<GridView<'_>> {
         column: *column,
         mode: *mode,
         gutter: *gutter,
-        rows_range: *rows_range,
-        columns_range: *columns_range,
+        rows_ranges,
+        columns_ranges,
         band: Marked::band(*flash),
     })
 }
@@ -530,8 +525,8 @@ struct GridRow<'a> {
     first_column: usize,
     selected: usize,
     gutter: u16,
-    rows_range: Option<Range>,
-    columns_range: Option<Range>,
+    rows_ranges: &'a Ranges,
+    columns_ranges: &'a Ranges,
     band: Token,
 }
 
@@ -540,44 +535,38 @@ struct GridRow<'a> {
 /// The two travel together because a range that lost its band would be drawn
 /// as an ordinary selection — which is exactly what a yank's afterglow must
 /// not look like.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Marked {
-    pub(crate) range: Option<Range>,
+    pub(crate) ranges: Ranges,
     pub(crate) band: Token,
 }
 
 impl Marked {
-    /// A yank's afterglow takes the loudest of the three bands, so a copy
-    /// reads as a flash against the range that was standing there a frame ago.
-    /// Which token that is holds in every palette rather than by choice of
-    /// colour:
-    /// `the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row`
-    /// pins `Selected` above `Ranged` in each of them, dark and light
-    /// (visual mode design §6.1).
+    /// A yank's afterglow inverts what it took rather than taking a fourth
+    /// colour. The three bands are one ramp apart, so the loudest of them —
+    /// `Selected` — read as barely a change against the `Ranged` band standing
+    /// there a frame earlier; swapping ground for text cannot be mistaken for
+    /// any of the three, in any palette (visual mode design §6.1).
     const fn band(flash: bool) -> Token {
-        if flash {
-            Token::Selected
-        } else {
-            Token::Ranged
-        }
+        if flash { Token::Flash } else { Token::Ranged }
     }
 
-    const fn new(range: Option<Range>, flash: bool) -> Self {
+    fn new(ranges: Ranges, flash: bool) -> Self {
         Self {
-            range,
+            ranges,
             band: Self::band(flash),
         }
     }
 
     /// Nothing marked out. The band is the one an ordinary selection takes,
-    /// which nothing paints while `range` is `None`.
+    /// which nothing paints while `ranges` is empty.
     #[cfg(test)]
-    pub(crate) const fn none() -> Self {
-        Self::new(None, false)
+    pub(crate) fn none() -> Self {
+        Self::new(Ranges::default(), false)
     }
 
-    pub(crate) fn holds(self, index: usize) -> bool {
-        self.range.is_some_and(|range| range.contains(index))
+    pub(crate) fn holds(&self, index: usize) -> bool {
+        self.ranges.contains(index)
     }
 }
 
@@ -585,10 +574,15 @@ impl Marked {
 /// `layout.drawn` names, each patched with `Token::Ranged` where [`ranged`]
 /// says its page column falls inside the block.
 fn grid_row(index: usize, cells: &[GridCell], layout: &GridRow, theme: Theme) -> Row<'static> {
-    let marked = index == layout.selected
-        || layout
-            .rows_range
-            .is_some_and(|rows_range| rows_range.contains(index));
+    let held = layout.rows_ranges.contains(index);
+    let marked = index == layout.selected || held;
+
+    // A row range unconstrained on the column axis holds the whole row, and
+    // the row's own style is the only thing ratatui paints under the column
+    // spacing. Left to the cells, the band would break at every gap and read
+    // as one stripe per column rather than one selection — the same continuity
+    // `row_highlight_style` gives the cursor row.
+    let whole_row = held && layout.columns_ranges.is_empty();
 
     Row::new(
         std::iter::once(Cell::from(Line::from(vec![
@@ -610,8 +604,8 @@ fn grid_row(index: usize, cells: &[GridCell], layout: &GridRow, theme: Theme) ->
                     let style = if ranged(
                         index,
                         layout.first_column + offset,
-                        layout.rows_range,
-                        layout.columns_range,
+                        layout.rows_ranges,
+                        layout.columns_ranges,
                     ) {
                         Some(
                             cell_style(cell, theme)
@@ -626,6 +620,11 @@ fn grid_row(index: usize, cells: &[GridCell], layout: &GridRow, theme: Theme) ->
                 }),
         ),
     )
+    .style(if whole_row {
+        theme.style(layout.band)
+    } else {
+        Style::default()
+    })
 }
 
 /// Where each drawn column of the grid landed, in absolute frame columns.

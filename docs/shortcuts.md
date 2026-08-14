@@ -28,7 +28,7 @@ panel that takes text (§2).
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
-| `v`¹ | Start or freeze a selection of whole rows in the focused list panel. |
+| `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
 | `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
 | `Tab` | Focus the next panel — Tables, Table contents, DDL, Queries — wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
@@ -54,7 +54,7 @@ on the mode rather than fixed to the panel:
 | DDL, DDL tab | The row's fields for its kind, as one CSV line |
 | DDL, Columns tab | `name,type,kind`, as one CSV line |
 | Tables | The node's bare name — `shop`, `shop.orders` — not a CSV line |
-| Any panel, a range selected | Every row in the range — every column in column mode, every row of the rectangle in cell mode — as one line each, joined with `\n`, no trailing newline. A single cell in cell mode still yanks bare. |
+| Any panel, a selection held | Every selected row, in the order the rows are drawn — every column in column mode, every row of the rectangle in cell mode — one line each, joined with `\n`, no trailing newline and nothing between the groups. A single cell in cell mode still yanks bare. |
 
 See [yank design](specs/2026-08-13-yank-design.md) §2 and
 [yank selection modes](specs/2026-08-13-yank-selection-modes-design.md) §1.
@@ -64,6 +64,12 @@ title, so the binding is learned by looking at the panel rather than by reading
 this file (vision.md §4, principle 1). Two of them are not leading letters: the panel names are fixed by
 `docs/ui-draft.png`, and no title is renamed to make a key convenient.
 See [panel focus shortcuts design](specs/2026-08-09-panel-focus-shortcuts-design.md).
+
+Moving focus — by `Tab`, `Shift-Tab`, a focus letter, `Enter` on a table or a
+click — drops the selection of the panel being left, so only the focused panel
+ever holds one: a selection says what the next command acts on, and the next
+command acts on what has focus
+([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §4).
 
 `a` `b` `c` `d` are four adjacent letters for the four places a reader moves
 between while browsing a schema — the tree, the rows, the DDL and the column
@@ -191,6 +197,45 @@ rather than quitting: a diagnostics list is read once and dismissed, and the
 one key a user reaches for on a screen full of text they did not ask to read
 is `Esc`, not `q` — see [design](specs/2026-08-14-configuration-design.md) §9.
 
+### The export form
+
+`ctrl-e` opens `Overlay::Export` when Table contents is focused on a loaded
+page with at least one row, no export is already running, and the frame is
+big enough to draw the form — a form nothing draws would claim every key
+with nothing on screen saying so, which is the rule `?` already follows for
+the palette. A frame that shrinks past it closes it, for the same reason.
+It is the
+Contents half of a chord that means something else in Queries; see that
+subsection below and §2's ctrl paragraph for the other half. Like the
+picker and the palette it outranks focus and claims every key before the
+panel underneath sees one, `q` included, which quits everywhere else and
+does nothing here.
+
+| Key | Effect |
+|---|---|
+| `Tab` / `Shift-Tab` | Move to the next / previous of the form's four stops, wrapping. |
+| `Space` | Activates the focused stop: on a radio group, advances to the next enabled option, wrapping; on the Export stop, runs the export. |
+| `Enter` | Runs the export, and only from the Export stop. On the Scope or Format radio it does nothing — a radio group is not a button, and a keystroke landing there must not write a file. |
+| `j` / `k`, `Down` / `Up` | Move within a radio group — the second way to reach what `Space` also reaches there. |
+| any printable key, `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Text, and only on the path stop — the panel-that-takes-text rule, applied inside an overlay (§2). `Space` types a space there rather than activating anything, and `Enter` does nothing there either. |
+| `Esc` | Closes the form and writes nothing. |
+
+`ctrl-d`/`ctrl-u` are the only ctrl chords answered while the form is up —
+dispatched above the overlay guard the way they are everywhere (§1's motion
+table) — and they page nothing here: the form has no list long enough to
+page. Every other ctrl chord is refused while the form is up, the same
+refusal the palette and the picker already get.
+
+Failing to open the destination with `ExportError::Exists` raises a
+confirmation over the form rather than a sixth overlay variant:
+
+| Key | Effect |
+|---|---|
+| `Space` / `Enter` | Confirms, and re-emits the export with `overwrite: true`. |
+| `Esc` | Returns to the form, every field exactly as it was. |
+
+See [export design](specs/2026-08-14-export-design.md) §2, §7.
+
 ### Motion
 
 Applies to the focused panel and nothing else. What moves depends on the panel:
@@ -244,42 +289,54 @@ freezes what is extending — the range stops following the cursor, which is
 then free to walk off it without losing what was marked
 ([visual mode design](specs/2026-08-14-visual-mode-design.md) §2).
 
+`v` reads as one verb with three arms, decided by where the cursor is when it
+is pressed: extending a group freezes it, as above; a row no group holds opens
+a new group there and starts extending it, beside whatever is already frozen;
+a row a group already holds drops that group. There is no way to restart a
+selection from scratch with `v` alone — `Esc` first is the route, since it is
+already the key that means *drop what is held*
+([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §1).
+
 `Esc` is a chain of five rungs now rather than three, first hit wins: an
 overlay dismisses; failing that, an extending range freezes exactly the way
 a second `v` would, so a reflex `esc` never discards a range still growing;
-failing that, a frozen range clears; failing that, the focused panel's
-filter clears; failing that, Queries hands focus back to Tables. §2 restates
-this as the rule it now is.
+failing that, the selection clears — every group at once, however many there
+are, rather than one at a time; failing that, the focused panel's filter
+clears; failing that, Queries hands focus back to Tables. §2 restates this as
+the rule it now is.
 
 In Table contents, which axis `v` extends is `m`'s to say: cell mode grows
 a rectangle on both cursors at once, row mode a run of rows, column mode a
 run of columns — the same three shapes the panel already draws
 ([selection modes design](specs/2026-08-13-selection-modes-design.md) §2).
-Pressing `m` while a range stands clears it rather than reinterpreting it on
-the mode's new axis: a rectangle read as a column range would name cells
-nobody selected, and a key that quietly repaints what is marked is worse
-than one that asks you to mark it again.
+Pressing `m` while a selection stands clears it, groups and all, rather than
+reinterpreting it on the mode's new axis: a rectangle read as a column range
+would name cells nobody selected, and a key that quietly repaints what is
+marked is worse than one that asks you to mark it again.
 
-A Tables range of more than one row makes `Enter` inert and leaves the DDL
-panel describing nothing — reading a table needs one table, and a range of
-several says which rows are of interest, not which one to open. A range of
-exactly one row is Tables as it always was: `Enter` still reads it.
+A Tables selection of more than one row — one range of several, or several
+groups of one — makes `Enter` inert and leaves the DDL panel describing
+nothing: reading a table needs one table, and a selection of several rows says
+which rows are of interest, not which one to open. A selection of exactly one
+row is Tables as it always was: `Enter` still reads it.
 
-A range does not outlive what it was drawn against. The DDL range clears
-when the panel's subject or its tab changes, since a range describes rows on
-a tab about a table and neither survives a change to either. Tables' and
-DDL's ranges also clear when their filter changes, for the same reason a
-cursor already does: a range is a set of positions in a list, and a filter
-that renumbers rows changes what a position addresses. Table contents is the
-exception — its filter only flags matching cells and never renumbers a row,
-so a range there survives its filter changing. A click clears the range in
-whichever panel it lands in, alongside everything else a click already
-resets.
+A selection does not outlive what it was drawn against, groups and all. The
+DDL selection clears when the panel's subject or its tab changes, since a
+group describes rows on a tab about a table and neither survives a change to
+either. Tables' and DDL's selections also clear when their filter changes,
+for the same reason a cursor already does: a group is a set of positions in a
+list, and a filter that renumbers rows changes what a position addresses.
+Table contents is the exception — its filter only flags matching cells and
+never renumbers a row, so a selection there survives its filter changing. A
+click clears the whole selection in whichever panel it lands in, alongside
+everything else a click already resets.
 
-`y` over a range yanks every row it holds — every column, in column mode —
-as one line each, joined with `\n` and no trailing newline; a single cell in
-cell mode still yanks bare, unescaped, exactly as it always did. §1's `y`
-footnote table carries the row-by-row shape.
+`y` over a selection yanks every row it holds, across every group — every
+column, in column mode — as one line each, in the order the rows are drawn,
+joined with `\n` and no trailing newline, with nothing between the groups; a
+single cell in cell mode still yanks bare, unescaped, exactly as it always
+did. §1's `y` footnote table carries the row-by-row shape
+([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §5).
 
 ### Tables panel
 
@@ -331,10 +388,13 @@ cursor. `ctrl-e`/`ctrl-y` went because a viewport the cursor keeps yanking back
 is not a way to read a panel from its heading down; what replaces them is a
 slice of its own (§4).
 
-`ctrl-e` now means one thing rather than two: it opens the external editor
-from Queries and is inert everywhere else (§1's Queries subsection). Losing
-the DDL half is what "one key, one action" costs and buys here — a chord
-whose meaning depended on focus was the last of its kind (§2).
+`ctrl-e` lost this meaning, and did not gain a single one in its place: it
+opens the external editor from Queries and the export form from Table
+contents (§1's export-form subsection), each gated on its own panel exactly
+as `ctrl-r`'s one meaning already is (§2). Losing the DDL half is what "one
+key, one action" costs and buys here — a chord that moved the viewport
+without the cursor was the last of its kind, not a chord whose meaning
+depends on focus; that shape survives elsewhere in the layer.
 
 ### Table contents panel
 
@@ -345,6 +405,7 @@ below.
 | Key | Action |
 |---|---|
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
+| `ctrl-e` | Open the export form. Inert on an empty grid, while an export is running, and on a frame with no room to draw the form. |
 
 The panel opens in row mode, which lights the whole row: reading a table is
 reading rows. Cell mode draws the selected cell over a faint wash across its
@@ -443,17 +504,21 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has five members. `ctrl-r` runs the Queries
+for whatever is focused. The layer has six members now. `ctrl-r` runs the Queries
 buffer, and `ctrl-e` opens that buffer in an external editor: the panel takes
 text, so every printable key there is a character and neither action has an
 unmodified key available
 ([query execution design](specs/2026-08-10-query-execution-design.md) §1,
 [external editor design](specs/2026-08-12-external-editor-design.md) §1).
-`ctrl-t` opens the theme picker, for the reason §1's picker subsection gives.
+`ctrl-e` carries a second meaning too, over Table contents: it opens the
+export form, gated on focus exactly as `ctrl-r`'s one meaning already is —
+a chord is never a synonym for the plain key, and nothing in the rule says
+it may carry only one meaning of its own (export design §1). `ctrl-t` opens
+the theme picker, for the reason §1's picker subsection gives.
 `ctrl-d` and `ctrl-u` are the exception the rule can afford, and are described
 under §1's motion table: they delegate to the paging arm rather than carry a
 meaning of their own, so the layer still holds nothing that shadows a plain
-key. The first three gate on their own panel and their own overlay;
+key. The first four gate on their own panel and their own overlay;
 `ctrl-d`/`ctrl-u` are dispatched above the guard `ctrl_key` applies to the
 others, since an overlay pages exactly as it does under `PageDown`.
 
@@ -598,9 +663,10 @@ four where `q` does not quit: see its own subsection above.
 first — a search prompt cancels, restoring the filter it found applied; the
 palette just closes. Failing that, an extending range in the focused panel
 freezes, the way a second `v` would, so `Esc` never discards a range that is
-still growing. Failing that, a frozen range clears. Failing that, the focused
-panel's filter, if it has one, clears. Failing that, Queries hands focus back
-to Tables. Failing all five, `Esc` does nothing. The first rung preserves
+still growing. Failing that, the selection clears — every group at once,
+however many are held. Failing that, the focused panel's filter, if it has
+one, clears. Failing that, Queries hands focus back to Tables. Failing all
+five, `Esc` does nothing. The first rung preserves
 `escape_dismisses_the_overlay_before_it_leaves_the_editor`; extending it down
 the chain is what "the thing most recently put on screen comes off first"
 means once a panel can carry state of its own (panel search design §6, visual
@@ -616,13 +682,19 @@ Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `m` `q` `u` `v` `y`, plus `?` 
 Taken, uppercase: none — no shifted letter is bound (§2).
 
 Free, lowercase: `e` `f` `g` `i` `n` `o` `p` `r` `s` `t` `w` `x`
-`z`, every digit, every uppercase letter, and `Space`.
+`z`, every digit, and every uppercase letter.
+
+`Space` is claimed for the first time, inside the export form only: it
+activates the focused stop there (§1's export-form subsection) and is free
+everywhere else, unlike a plain letter — a panel's own claim on a letter
+stops at that panel's border, and so does the form's.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
-editor binds, inside Queries.
+editor and the export form's path stop bind.
 
-Ctrl taken: `ctrl-r` and `ctrl-e` in Queries, `ctrl-t` everywhere, and
+Ctrl taken: `ctrl-r` in Queries, `ctrl-e` in two panels — Queries and Table
+contents (§1's export-form subsection) — `ctrl-t` everywhere, and
 `ctrl-d`/`ctrl-u` everywhere `PageDown`/`PageUp` do anything. The rest of
 the layer is free — including `r`, `e` and `t` as plain keys, which nothing
 binds, and `d` and `u`, which mean what §1 says. Alt is not a layer and nothing may claim
@@ -650,7 +722,7 @@ which is a spec-level change.
 | `1`–`4` focus | Superseded by `a`/`b`/`c`/`d`/`u`, which the panel can show in its own title; a digit cannot. |
 | `A` `B` `C` `D` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. `T` opened the theme picker until the picker moved to `ctrl-t`, and is free again. |
 | `t` focus | Was Tables until the focus letters moved to four adjacent keys (§1). Free, and deliberately left so for a while — a finger that learnt it should find nothing rather than something else. |
-| `Space` | Was `Enter`'s synonym on a tree row. One key, one action (§2). |
+| `Space` on a tree row | Was `Enter`'s synonym there. One key, one action (§2) — true still, even though `Space` is no longer unbound everywhere: it activates a stop inside the export form (§1), and a tree row is not one. |
 | `ctrl-e` / `ctrl-y` | Moved the DDL viewport a line without its cursor. Reading a panel from its heading down needs a design, not two chords. The yank slice did not claim `ctrl-y`: `y` was free as a plain key, and a yank in Queries needs a selection first (yank design §1). |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
@@ -849,6 +921,21 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The palette lists it | `the_catalogue_lists_the_external_editor` (`commands.rs`) |
 | The bar names it after `ctrl-r run` | `the_queries_bar_names_the_editor_binding_after_run` (`view/hints.rs`) |
 | No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
+| `ctrl-e` opens the export form over a loaded grid, and does nothing over an empty one | `ctrl_e_over_a_loaded_contents_panel_opens_the_export_form`, `ctrl_e_does_nothing_over_an_empty_contents_panel` |
+| `ctrl-e` keeps its Queries meaning; the two are gated on focus | `ctrl_e_in_queries_still_opens_the_external_editor` |
+| `ctrl-e` is inert while an export is already running | `ctrl_e_is_inert_while_an_export_is_already_running` |
+| `ctrl-e` is inert where the frame cannot draw the form, and a frame that shrinks past it closes it | `ctrl_e_is_inert_where_the_frame_cannot_draw_the_form`, `a_frame_that_shrank_past_the_form_closes_it`, `fits_agrees_with_what_the_form_actually_draws` |
+| A second `ctrl-e`, and the picker's own opener, leave an open form alone | `a_second_ctrl_e_leaves_the_open_form_as_it_was`, `the_theme_picker_cannot_replace_an_open_export_form` |
+| `Tab`/`Shift-Tab` walk the form's own stops, not the panels | `tab_moves_between_the_forms_stops_rather_than_between_panels` |
+| `Space` toggles the focused radio, and types a space only on the path stop | `space_toggles_the_focused_radio`, `space_on_the_path_stop_types_a_space` |
+| `Enter` runs the export only from the Export stop, and is inert on a radio group | `enter_on_the_export_stop_runs_it`, `enter_on_a_radio_group_does_not_run_the_export` |
+| A printable key is text only on the path stop | `a_printable_key_types_itself_only_on_the_path_stop` |
+| A path too long for the field is drawn around its cursor | `a_path_too_long_for_the_field_is_drawn_around_its_cursor`, `a_window_holds_the_end_of_a_line_the_cursor_is_at_the_end_of`, `a_window_follows_the_cursor_back_into_the_middle_of_a_line` |
+| `q` does not quit while the form is up | `q_does_not_quit_while_the_form_is_up` |
+| `Esc` closes the form and writes nothing | `esc_closes_the_form_and_writes_nothing` |
+| An existing destination reopens the form asking to overwrite, putting back whatever it replaces | `an_existing_file_reopens_the_form_asking_to_overwrite`, `an_existing_file_landing_on_an_open_picker_puts_the_theme_back` |
+| Confirming re-emits the export with `overwrite: true`, and re-emits what was attempted rather than what the panel now holds | `confirming_re_emits_the_export_with_overwrite_set`, `confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds`, `confirming_still_exports_when_the_panel_has_moved_on_entirely` |
+| `Esc` from the confirmation goes back to the form intact | `esc_from_the_confirmation_goes_back_to_the_form_intact` |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
 | `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
 | A cell yanks its value, unescaped and untruncated | `a_cell_yanks_without_quoting`, `a_cell_yank_is_not_ellipsised` (`yank.rs`) |
@@ -878,12 +965,17 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `y` on a single cell still yanks it bare | `y_on_a_single_cell_still_yanks_it_bare` |
 | Every row of a range is banded, and the cursor row reads apart from them | `every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them` (`inbound/render.rs`) |
 | `y` drops the range and sends each cursor back to its anchor | `y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor`, `a_selection_grown_upwards_sends_the_cursor_back_down`, `a_frozen_range_still_knows_where_to_send_the_cursor`, `cell_mode_sends_both_cursors_home`, `the_tree_collapses_its_selection_on_y_too` |
-| A frozen range keeps the end it grew from | `a_selection_remembers_which_end_it_grew_from`, `a_truncated_range_pulls_its_anchor_back_too` (`state.rs`) |
+| A frozen group keeps the end it grew from, pulled back the same way on a clamp | `clamping_pulls_an_extending_anchor_back_into_the_list`, `clamping_a_frozen_group_pulls_its_surviving_anchor_back_too` (`state.rs`) |
 | A `y` that yanks nothing resets nothing and lights nothing | `a_y_that_yanks_nothing_leaves_the_selection_alone`, `a_y_that_yanks_nothing_lights_nothing` |
 | `y` lights what it took, on the axes its mode bounds | `y_lights_up_what_it_yanked`, `row_mode_lights_the_whole_row_and_column_mode_the_whole_column`, `a_bare_y_lights_the_row_it_took` |
 | The flash fades, costs one repaint doing it, and the next key ends it | `the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint`, `the_next_key_ends_the_flash` |
-| The flash is louder than the range it replaces, and reaches one panel | `a_yanks_afterglow_is_louder_than_the_range_it_replaces`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render.rs`) |
+| The flash inverts the rows it took, and reaches one panel | `a_yanks_afterglow_inverts_the_rows_it_took`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render.rs`) |
 | The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a filter | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter` (`view/hints.rs`) |
+| `v` on an unheld row opens a second group beside what is frozen, and `Esc` takes both at once | `v_builds_two_groups_and_esc_takes_both` |
+| `v` on a held row drops that group and no other | `v_on_a_selected_row_drops_that_group_only`, `v_freezes_then_opens_a_second_group_then_drops_one` (`state.rs`) |
+| Dropping a group takes the anchor with it only when the anchor was inside it | `dropping_the_group_holding_the_anchor_takes_the_anchor`, `dropping_another_group_keeps_the_anchor`, `clamping_away_the_group_holding_the_anchor_takes_the_anchor` (`state.rs`) |
+| `y` over several groups yanks their rows in the order they are drawn, with nothing between the groups, and sends the cursor home to the last `v` | `y_over_two_groups_yanks_their_rows_in_drawn_order`, `y_sends_the_cursor_home_to_the_last_v_and_spends_every_group`, `a_single_cell_in_one_group_each_way_still_yanks_bare` |
+| Switching panels clears the selection of the panel left behind, by every route, and re-focusing the same panel does not | `switching_panels_clears_the_selection_of_the_panel_left_behind`, `re_focusing_the_focused_panel_keeps_its_selection`, `leaving_contents_clears_both_of_its_axes`, `a_click_clears_the_selection_of_the_panel_it_leaves`, `enter_on_a_table_leaves_no_selection_behind_in_tables`, `esc_out_of_queries_clears_what_queries_left_behind` |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an

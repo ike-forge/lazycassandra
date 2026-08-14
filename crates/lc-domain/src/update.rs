@@ -8,18 +8,21 @@ use crate::commands::CommandsPanel;
 use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
+use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
-use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
+use crate::ports::ExportError;
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, DiagnosticsPanel, Flash, Geometry, Message, Overlay, Panel, Range,
-    SchemaState, Scroll, Selection, State,
+    ConnectionState, Cursor, DiagnosticsPanel, ExportJob, Flash, Geometry, Message, Overlay, Panel,
+    Range, Ranges, SchemaState, Scroll, Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
 use crate::tree::Node;
+use std::path::PathBuf;
 
 /// How many rows one look at a table brings back.
 ///
@@ -75,6 +78,15 @@ pub enum Msg {
     EditorFailed {
         reason: String,
     },
+    /// Rows written so far by `job`, a running total.
+    ExportProgress {
+        job: JobId,
+        rows: usize,
+    },
+    ExportFinished {
+        job: JobId,
+        result: Result<usize, ExportError>,
+    },
     Quit,
 }
 
@@ -89,11 +101,6 @@ pub enum Effect {
         query: QueryId,
         stmt: Box<Statement>,
     },
-    FetchNextPage {
-        conn: ConnId,
-        query: QueryId,
-        cursor: PagingState,
-    },
     Cancel(QueryId),
     RecordHistory(Box<Statement>),
     /// Hand `buffer` to the user's editor and report what comes back. The one
@@ -107,7 +114,32 @@ pub enum Effect {
     /// no answer, so there is no `Msg` back and nothing to report
     /// (docs/superpowers/specs/2026-08-13-yank-design.md §3, §4).
     Yank(String),
+    /// Write a result set to a file. The paging loop, if there is one, runs in
+    /// `lc-app` (export design §5).
+    Export {
+        conn: ConnId,
+        job: JobId,
+        source: Source,
+        destination: PathBuf,
+        format: Format,
+        overwrite: bool,
+    },
     Quit,
+}
+
+/// Where an export's rows come from.
+///
+/// An enum and not a struct with two optional fields: a statement and a row
+/// list at once, or neither, are both nonsense and neither can be written
+/// down (design §5).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Source {
+    /// Run this and page to the end. The columns arrive with the first page.
+    Whole(Box<Statement>),
+    Fetched {
+        columns: Vec<String>,
+        rows: Vec<Row>,
+    },
 }
 
 /// The state the application starts in, and what it must do first.
@@ -117,17 +149,13 @@ pub enum Effect {
 /// "Connecting…" (architecture.md §3).
 #[must_use]
 pub fn init(conn: ConnId, config: Config, diagnostics: Vec<Diagnostic>) -> (State, Vec<Effect>) {
-    let theme = config.theme.clone();
-    let overlay =
+    let mut state = State::default();
+    state.theme = config.theme.clone();
+    state.overlay =
         (!diagnostics.is_empty()).then(|| Overlay::Diagnostics(DiagnosticsPanel::new(diagnostics)));
-    let state = State {
-        connection: ConnectionState::Connecting(conn),
-        dirty: true,
-        theme,
-        config,
-        overlay,
-        ..State::default()
-    };
+    state.config = config;
+    state.connection = ConnectionState::Connecting(conn);
+    state.dirty = true;
 
     (state, vec![Effect::Connect(conn)])
 }
@@ -312,6 +340,10 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::EditorFailed { reason } => editor_failed(state, reason),
 
+        Msg::ExportProgress { job, rows } => export_progress(state, job, rows),
+
+        Msg::ExportFinished { job, result } => finish_export(state, job, result),
+
         Msg::Quit => quit(state),
     }
 }
@@ -374,7 +406,7 @@ fn quit(state: &mut State) -> Vec<Effect> {
 /// copied (selection-modes design §4). Every projection converges here, so no
 /// shape can reach the clipboard empty.
 fn yank(state: &mut State) -> Vec<Effect> {
-    let line = match state.focus {
+    let line = match state.focus() {
         Panel::Contents => contents(state),
         Panel::Tables => tree_nodes(state),
         Panel::Ddl => detail_rows(state),
@@ -400,45 +432,50 @@ fn yank(state: &mut State) -> Vec<Effect> {
 /// What `y` just took, ready to be lit once the selection that named it is
 /// gone (visual mode design §6.1).
 fn lit(state: &State) -> Flash {
-    let (rows, columns) = match state.focus {
+    let (rows, columns) = match state.focus() {
         Panel::Contents => grid_extent(state),
         Panel::Tables => (
-            Some(spanned(state.tables.selection, state.tables.cursor.index())),
-            None,
+            spanned(&state.tables.selection, state.tables.cursor.index()),
+            Ranges::default(),
         ),
         Panel::Ddl => (
-            Some(spanned(state.ddl.selection, state.ddl.cursor.index())),
-            None,
+            spanned(&state.ddl.selection, state.ddl.cursor.index()),
+            Ranges::default(),
         ),
         // Unreachable: the editor yanks nothing, so `yank` has already
         // returned by the time this is asked.
-        Panel::Queries => (None, None),
+        Panel::Queries => (Ranges::default(), Ranges::default()),
     };
 
-    Flash::lit(state.focus, rows, columns)
+    Flash::lit(state.focus(), rows, columns)
 }
 
-/// The range, or the one row the cursor is on when nothing is selected.
-fn spanned(selection: Selection, cursor: usize) -> Range {
-    selection
-        .range(cursor)
-        .unwrap_or_else(|| Range::new(cursor, cursor))
+/// The groups, or the one row the cursor is on when nothing is selected.
+fn spanned(selection: &Selection, cursor: usize) -> Ranges {
+    let ranges = selection.ranges(cursor);
+
+    if ranges.is_empty() {
+        Ranges::of(Range::new(cursor, cursor))
+    } else {
+        ranges
+    }
 }
 
 /// The rectangle `y` reads out of the grid, on each of its two axes.
 ///
-/// `None` on an axis is the whole of it — the convention the view model's
-/// `rows_range` and `columns_range` already carry, and what row mode and
-/// column mode take. The one place the mode decides which axes it bounds, so
-/// what is copied and what is lit afterwards cannot answer differently.
-fn grid_extent(state: &State) -> (Option<Range>, Option<Range>) {
-    let rows = spanned(state.contents.rows, state.contents.cursor.index());
-    let columns = spanned(state.contents.columns, state.contents.column.index());
+/// Empty on an axis is the whole of it — the convention the view model's
+/// `rows_ranges` and `columns_ranges` already carry, empty for `None`, and
+/// what row mode and column mode take. The one place the mode decides which
+/// axes it bounds, so what is copied and what is lit afterwards cannot answer
+/// differently.
+fn grid_extent(state: &State) -> (Ranges, Ranges) {
+    let rows = spanned(&state.contents.rows, state.contents.cursor.index());
+    let columns = spanned(&state.contents.columns, state.contents.column.index());
 
     match state.contents.mode {
-        SelectionMode::Row => (Some(rows), None),
-        SelectionMode::Column => (None, Some(columns)),
-        SelectionMode::Cell => (Some(rows), Some(columns)),
+        SelectionMode::Row => (rows, Ranges::default()),
+        SelectionMode::Column => (Ranges::default(), columns),
+        SelectionMode::Cell => (rows, columns),
     }
 }
 
@@ -450,47 +487,55 @@ fn contents(state: &State) -> Option<String> {
     };
     let page = page.page();
     let (rows, columns) = grid_extent(state);
-    let whole = |len: usize| Range::new(0, len.saturating_sub(1));
-    let rows = rows.unwrap_or_else(|| whole(page.rows.len()));
-    let columns = columns.unwrap_or_else(|| whole(page.columns.len()));
+    let whole = |len: usize| Ranges::of(Range::new(0, len.saturating_sub(1)));
+    let rows = if rows.is_empty() {
+        whole(page.rows.len())
+    } else {
+        rows
+    };
+    let columns = if columns.is_empty() {
+        whole(page.columns.len())
+    } else {
+        columns
+    };
 
     match state.contents.mode {
         SelectionMode::Cell if rows.rows() == 1 && columns.rows() == 1 => {
-            let row = page.rows.get(rows.first())?;
-            let value = row.values.get(columns.first())?;
+            let row = page.rows.get(rows.first()?.first())?;
+            let value = row.values.get(columns.first()?.first())?;
 
             crate::yank::grid_cell(value)
         }
         SelectionMode::Row | SelectionMode::Cell => {
-            Some(crate::yank::grid_block(&page.rows, rows, columns))
+            Some(crate::yank::grid_block(&page.rows, &rows, &columns))
         }
-        SelectionMode::Column => Some(crate::yank::grid_columns(&page.rows, columns)),
+        SelectionMode::Column => Some(crate::yank::grid_columns(&page.rows, &columns)),
     }
 }
 
 fn tree_nodes(state: &State) -> Option<String> {
     let schema = state.schema()?;
     let rows = state.tables.rows(schema);
-    let range = spanned(state.tables.selection, state.tables.cursor.index());
+    let selected = spanned(&state.tables.selection, state.tables.cursor.index());
 
     Some(crate::yank::lines(
-        rows.iter()
-            .enumerate()
-            .filter(|(index, _)| range.contains(*index))
-            .map(|(_, node)| crate::yank::node(node)),
+        selected
+            .indices()
+            .filter_map(|index| rows.get(index))
+            .map(crate::yank::node),
     ))
 }
 
 fn detail_rows(state: &State) -> Option<String> {
     let details = crate::view::details_of(state)?;
-    let range = spanned(state.ddl.selection, state.ddl.cursor.index());
+    let selected = spanned(&state.ddl.selection, state.ddl.cursor.index());
+    let rows: Vec<_> = details.rows().collect();
 
     Some(crate::yank::lines(
-        details
-            .rows()
-            .enumerate()
-            .filter(|(index, _)| range.contains(*index))
-            .map(|(_, row)| crate::yank::detail_row(row)),
+        selected
+            .indices()
+            .filter_map(|index| rows.get(index))
+            .map(|row| crate::yank::detail_row(row)),
     ))
 }
 
@@ -546,11 +591,18 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return search_key(state, press.key);
     }
 
+    // The form takes text on one of its four stops, so it claims every
+    // printable key the way a prompt does — and hands most of them nowhere on
+    // the other three (export design §2).
+    if matches!(state.overlay, Some(Overlay::Export(_))) {
+        return export_key(state, press.key);
+    }
+
     // Focus is the mode. A panel that takes text claims every printable key
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
     // said the CQL editor would have to break.
-    if state.focus.takes_text() && edit(state, press.key) {
+    if state.focus().takes_text() && edit(state, press.key) {
         return Vec::new();
     }
 
@@ -558,8 +610,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('q') => return quit(state),
         Key::Char('?') => open_palette(state),
         Key::Escape => escape(state),
-        Key::Tab => state.focus = state.focus.next(),
-        Key::BackTab => state.focus = state.focus.previous(),
+        Key::Tab => state.focus_on(state.focus().next()),
+        Key::BackTab => state.focus_on(state.focus().previous()),
         Key::Char('j') | Key::Down => scroll(state, Motion::Down),
         Key::Char('k') | Key::Up => scroll(state, Motion::Up),
         Key::PageDown => scroll(state, Motion::PageDown),
@@ -572,7 +624,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('/') => open_prompt(state),
         Key::Char('y') => return yank(state),
         Key::Char('m') => {
-            if state.focus == Panel::Contents {
+            if state.focus() == Panel::Contents {
                 // A range's axis is the mode's axis, so carrying one across
                 // would address rows or columns the user never chose — the
                 // argument `DdlPanel::show` already makes for the cursor
@@ -650,7 +702,7 @@ fn wheel(state: &mut State, panel: Panel, direction: Wheel) {
 }
 
 fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
-    state.focus = click.panel();
+    state.focus_on(click.panel());
 
     // A press names one row, so it spends the range rather than standing
     // beside it and making the next `y` lie (design §4).
@@ -720,14 +772,14 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
 /// one reached by key cannot diverge.
 fn show_tab(state: &mut State, shortcut: char) {
     if let Some(tab) = DdlTab::from_shortcut(shortcut) {
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         // A tab the strip does not draw is not a place to arrive at: `c` on a
         // keyspace focuses the panel and no more.
         if crate::view::ddl_tabs(state).contains(&tab) {
             state.ddl.show(tab);
         }
     } else if let Some(panel) = Panel::from_shortcut(shortcut) {
-        state.focus = panel;
+        state.focus_on(panel);
     }
 }
 
@@ -780,18 +832,31 @@ fn edit(state: &mut State, key: Key) -> bool {
 /// what puts it back, and — unlike the prompt above — a message *can* arrive
 /// over an open picker today, since the picker outlives no focus condition.
 fn raise(state: &mut State, message: Message) {
+    unwind_overlay(state);
+    state.overlay = Some(Overlay::Message(message));
+}
+
+/// Puts back whatever the overlay on screen was previewing, so a replacement
+/// can be installed over it without stranding the frame in it.
+///
+/// Every message-driven overlay replacement goes through here: [`raise`], and
+/// the `Exists` arm of [`finish_export`], which puts the export form back over
+/// whatever the user opened while the export was in flight — a picker among
+/// them, since the overlay is `None` for the whole of a running export and
+/// `ctrl-t` is not refused (final review I2).
+fn unwind_overlay(state: &mut State) {
     if let Some(Overlay::Search(prompt)) = &state.overlay {
         state.apply_filter(prompt.target(), prompt.previous().cloned());
     }
     restore_theme(state);
-    state.overlay = Some(Overlay::Message(message));
 }
 
 /// Puts back the theme a live picker opened on, if the overlay is that
 /// picker. Otherwise a no-op. Three sites unwind a preview: [`escape`], which
-/// does it while taking the overlay apart, and [`raise`] and the
-/// resize-shrink close in [`measured`], which share this one — so the second
-/// of those two cannot copy the check and diverge from the first.
+/// does it while taking the overlay apart, the resize-shrink close in
+/// [`measured`], and [`unwind_overlay`] — which every replacement from a
+/// message shares, so no such site can copy the check and diverge from the
+/// rest.
 fn restore_theme(state: &mut State) {
     if let Some(Overlay::Themes { restored, .. }) = &state.overlay {
         state.theme = restored.clone();
@@ -807,7 +872,7 @@ fn restore_theme(state: &mut State) {
 /// filtering (design §3.3) means the panel underneath is the preview of
 /// whatever the buffer holds, from the first frame the prompt is up.
 fn open_prompt(state: &mut State) {
-    let Some(target) = Filtered::of(state.focus) else {
+    let Some(target) = Filtered::of(state.focus()) else {
         return;
     };
 
@@ -867,7 +932,12 @@ fn escape(state: &mut State) {
             state.theme = restored;
             return;
         }
-        Some(Overlay::Message(_) | Overlay::Commands(_) | Overlay::Diagnostics(_)) => return,
+        Some(
+            Overlay::Message(_)
+            | Overlay::Commands(_)
+            | Overlay::Diagnostics(_)
+            | Overlay::Export(_),
+        ) => return,
         None => {}
     }
 
@@ -877,15 +947,15 @@ fn escape(state: &mut State) {
         return;
     }
 
-    if let Some(target) = Filtered::of(state.focus)
+    if let Some(target) = Filtered::of(state.focus())
         && state.filter(target).is_some()
     {
         state.apply_filter(target, None);
         return;
     }
 
-    if state.focus.takes_text() {
-        state.focus = Panel::default();
+    if state.focus().takes_text() {
+        state.focus_on(Panel::default());
     }
 }
 
@@ -1093,7 +1163,7 @@ enum Transition {
 /// the fix needs a line-to-row map from the renderer, and `home`/`end` are
 /// exact regardless (design §4).
 fn scroll(state: &mut State, motion: Motion) {
-    let panel = state.focus;
+    let panel = state.focus();
     let height = state.geometry.height(panel);
     let len = row_count(state, panel);
 
@@ -1129,7 +1199,12 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     if matches!(
         state.overlay,
-        Some(Overlay::Commands(_) | Overlay::Themes { .. } | Overlay::Diagnostics(_))
+        Some(
+            Overlay::Commands(_)
+                | Overlay::Themes { .. }
+                | Overlay::Diagnostics(_)
+                | Overlay::Export(_)
+        )
     ) {
         return Vec::new();
     }
@@ -1140,8 +1215,22 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
             open_themes(state);
             Vec::new()
         }
-        Key::Char('e') => open_editor(state),
+        Key::Char('e') => ctrl_e(state),
         _ => Vec::new(),
+    }
+}
+
+/// `ctrl-e` opens the user's editor on the Queries buffer and the export form
+/// over the Contents grid. Two meanings, each gated on its own panel — the
+/// shape `ctrl-r` already has (export design §1).
+fn ctrl_e(state: &mut State) -> Vec<Effect> {
+    match state.focus() {
+        Panel::Queries => open_editor(state),
+        Panel::Contents => {
+            open_export(state);
+            Vec::new()
+        }
+        Panel::Tables | Panel::Ddl => Vec::new(),
     }
 }
 
@@ -1149,13 +1238,263 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
 /// anywhere else: the panel takes text, so the action has no unmodified key
 /// available (external editor design §1).
 fn open_editor(state: &State) -> Vec<Effect> {
-    if state.focus != Panel::Queries {
+    if state.focus() != Panel::Queries {
         return Vec::new();
     }
 
     vec![Effect::OpenEditor {
         buffer: state.queries.text(),
     }]
+}
+
+/// Refused over a grid with no rows, and while an export is already running:
+/// one at a time (design §5).
+///
+/// Refused too where the frame cannot draw the form, for the reason
+/// [`open_palette`] gives: the form claims every key while it is open, so one
+/// nothing draws is a mode with nothing on screen saying so and only `Esc` out
+/// of it. Gated on the form's own measurement rather than on the palette's,
+/// which is the weaker condition — a frame that draws the palette need not
+/// draw a 56×11 block.
+fn open_export(state: &mut State) {
+    if state.export.is_some() || !state.geometry.export_fits() {
+        return;
+    }
+
+    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+        return;
+    };
+
+    let rows = page.page().rows.len();
+    if rows == 0 {
+        return;
+    }
+
+    let form = ExportForm::opened(subject.clone(), Fetched::of(rows), &state.cwd);
+    state.overlay = Some(Overlay::Export(form));
+    state.dirty = true;
+}
+
+/// What [`export_key`]'s form-only match decided.
+enum Outcome {
+    Nothing,
+    Close,
+    Run,
+}
+
+/// Every key the export form claims.
+///
+/// A confirmation in front of the form is resolved first, through
+/// [`confirm_key`].
+fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
+    let confirming =
+        matches!(&state.overlay, Some(Overlay::Export(form)) if form.confirm().is_some());
+    if confirming {
+        return confirm_key(state, key);
+    }
+
+    let outcome = {
+        let Some(Overlay::Export(form)) = &mut state.overlay else {
+            return Vec::new();
+        };
+
+        match key {
+            Key::Escape => Outcome::Close,
+            Key::Tab => {
+                form.tab();
+                Outcome::Nothing
+            }
+            Key::BackTab => {
+                form.back_tab();
+                Outcome::Nothing
+            }
+            Key::Char(' ') if !form.stop().takes_text() => {
+                if form.activate() {
+                    Outcome::Run
+                } else {
+                    Outcome::Nothing
+                }
+            }
+            Key::Enter if form.stop() == Stop::Export => Outcome::Run,
+            Key::Char('j') | Key::Down if !form.stop().takes_text() => {
+                form.down();
+                Outcome::Nothing
+            }
+            Key::Char('k') | Key::Up if !form.stop().takes_text() => {
+                form.up();
+                Outcome::Nothing
+            }
+            _ if form.stop().takes_text() => {
+                edit_path(form, key);
+                Outcome::Nothing
+            }
+            _ => Outcome::Nothing,
+        }
+    };
+
+    state.dirty = true;
+
+    match outcome {
+        Outcome::Nothing => Vec::new(),
+        Outcome::Close => {
+            state.overlay = None;
+            Vec::new()
+        }
+        Outcome::Run => start_export(state),
+    }
+}
+
+/// The path stop's keys. Every printable key is a character there and the
+/// editing keys move within the line (design §2).
+fn edit_path(form: &mut ExportForm, key: Key) {
+    let line = form.path_mut();
+
+    match key {
+        Key::Char(character) => line.insert(character),
+        Key::Backspace => line.delete_back(),
+        Key::Delete => line.delete_forward(),
+        Key::Left => line.left(),
+        Key::Right => line.right(),
+        Key::Home => line.home(),
+        Key::End => line.end(),
+        _ => {}
+    }
+}
+
+/// Turns the form into the one effect that does the work.
+///
+/// A confirmation re-emits the source it is holding rather than reading the
+/// panel again: the panel is live for the whole of an export, and by the time
+/// `Exists` comes back the user may be standing on another table (final review
+/// I3).
+fn start_export(state: &mut State) -> Vec<Effect> {
+    let Some(Overlay::Export(form)) = state.overlay.take() else {
+        return Vec::new();
+    };
+    let ConnectionState::Connected(connection) = &state.connection else {
+        state.overlay = Some(Overlay::Export(form));
+        return Vec::new();
+    };
+
+    let overwrite = form.confirm() == Some(Confirm::Overwrite);
+    let attempt = match form.pending() {
+        Some(pending) => Some(pending.source().clone()),
+        None => source(state, &form),
+    };
+    let Some(source) = attempt else {
+        state.overlay = Some(Overlay::Export(form));
+        return Vec::new();
+    };
+    let destination = PathBuf::from(form.path().text());
+    let (conn, job, format) = (connection.id, JobId::next(), form.format());
+
+    // Cloned rather than borrowed: the effect carries it out of the domain and
+    // the job holds it against an `Exists` that has not come back yet.
+    state.export = Some(ExportJob::started(
+        job,
+        destination.clone(),
+        form,
+        source.clone(),
+    ));
+    state.dirty = true;
+
+    vec![Effect::Export {
+        conn,
+        job,
+        source,
+        destination,
+        format,
+        overwrite,
+    }]
+}
+
+/// What the chosen scope reads.
+///
+/// `None` when the panel is no longer showing a page — which the form's own
+/// key claim makes impossible today, and which must not become a panic if it
+/// ever stops being.
+fn source(state: &State, form: &ExportForm) -> Option<Source> {
+    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+        return None;
+    };
+
+    match form.scope() {
+        // Ours is the limit that is dropped; a typed statement's own is the
+        // user's and is honoured verbatim (design §3).
+        Scope::Whole => Some(Source::Whole(Box::new(match subject {
+            Subject::Table(table) => Statement::select_everything(&table.keyspace, &table.table),
+            Subject::Typed(cql) => Statement::typed(cql),
+        }))),
+        Scope::Fetched => Some(Source::Fetched {
+            columns: page.page().columns.clone(),
+            rows: page.page().rows.clone(),
+        }),
+    }
+}
+
+/// The overwrite confirmation's keys: `Space` or `Enter` confirms, `Esc` goes
+/// back to the form (design §7).
+fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
+    match key {
+        Key::Char(' ') | Key::Enter => start_export(state),
+        Key::Escape => {
+            if let Some(Overlay::Export(form)) = &mut state.overlay {
+                form.dismiss();
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// A running total for `job`, dropped if it belongs to a job no longer
+/// tracked — cancelled, or already finished.
+fn export_progress(state: &mut State, job: JobId, rows: usize) -> Vec<Effect> {
+    if let Some(running) = &mut state.export {
+        running.progressed(job, rows);
+        state.mark_dirty();
+    }
+    Vec::new()
+}
+
+/// An export ended. `Exists` is the one outcome that is a question rather than
+/// a result: it reopens the form with its confirmation up (design §7).
+fn finish_export(state: &mut State, job: JobId, result: Result<usize, ExportError>) -> Vec<Effect> {
+    if state.export.as_ref().map(ExportJob::id) != Some(job) {
+        return Vec::new();
+    }
+
+    let Some(finished) = state.export.take() else {
+        return Vec::new();
+    };
+    state.dirty = true;
+
+    match result {
+        Ok(rows) => raise(
+            state,
+            Message {
+                title: "Exported".to_owned(),
+                message: format!("wrote {rows} rows to {}", finished.destination().display()),
+                severity: Severity::Info,
+            },
+        ),
+        Err(ExportError::Exists) => {
+            let (mut form, source) = finished.into_parts();
+            form.ask(Pending::Overwrite(Box::new(source)));
+            unwind_overlay(state);
+            state.overlay = Some(Overlay::Export(form));
+        }
+        Err(error) => raise(
+            state,
+            Message {
+                title: "Export failed".to_owned(),
+                message: error.to_string(),
+                severity: Severity::Danger,
+            },
+        ),
+    }
+
+    Vec::new()
 }
 
 /// `ctrl-d`/`ctrl-u`, dispatched to whatever `key` would reach unmodified.
@@ -1167,10 +1506,11 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         Some(Overlay::Commands(_)) => palette_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
-        // The prompt takes text and pages nothing, so neither spelling does.
-        Some(Overlay::Search(_)) => Vec::new(),
+        // The prompt takes text and pages nothing, so neither spelling does;
+        // the form has nothing paged either, whichever stop it is on.
+        Some(Overlay::Search(_) | Overlay::Export(_)) => Vec::new(),
         Some(Overlay::Message(_)) | None => {
-            if state.focus.takes_text() {
+            if state.focus().takes_text() {
                 edit(state, key);
             } else if matches!(key, Key::PageDown) {
                 scroll(state, Motion::PageDown);
@@ -1283,14 +1623,11 @@ fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
     }
 }
 
-/// `v`: start extending from the cursor, or freeze what is being extended.
+/// `v`: freeze, drop or open a group at the cursor (multi-group selection
+/// design §1).
 fn toggle_visual(state: &mut State) {
-    for axis in axes(state, state.focus).into_iter().flatten() {
-        if axis.selection.is_extending() {
-            axis.selection.stop(axis.cursor.index());
-        } else {
-            axis.selection.start(axis.cursor.index());
-        }
+    for axis in axes(state, state.focus()).into_iter().flatten() {
+        axis.selection.toggle(axis.cursor.index());
     }
 }
 
@@ -1299,7 +1636,7 @@ fn toggle_visual(state: &mut State) {
 fn stop_extending(state: &mut State) -> bool {
     let mut stopped = false;
 
-    for axis in axes(state, state.focus).into_iter().flatten() {
+    for axis in axes(state, state.focus()).into_iter().flatten() {
         if axis.selection.is_extending() {
             axis.selection.stop(axis.cursor.index());
             stopped = true;
@@ -1313,8 +1650,8 @@ fn stop_extending(state: &mut State) -> bool {
 fn clear_selection(state: &mut State) -> bool {
     let mut cleared = false;
 
-    for axis in axes(state, state.focus).into_iter().flatten() {
-        if axis.selection.range(0).is_some() {
+    for axis in axes(state, state.focus()).into_iter().flatten() {
+        if axis.selection.is_active() {
             axis.selection.clear();
             cleared = true;
         }
@@ -1332,11 +1669,14 @@ fn clear_selection(state: &mut State) -> bool {
 /// end. The anchor and not the range's first row: a selection grown upwards
 /// started at its last one.
 fn collapse_selection(state: &mut State) {
-    for axis in axes(state, state.focus).into_iter().flatten() {
+    for axis in axes(state, state.focus()).into_iter().flatten() {
+        // The selection is spent unconditionally (visual-mode design §5.1);
+        // only the cursor's move home is conditional on an anchor surviving
+        // (multi-group design §3).
         if let Some(anchor) = axis.selection.anchor() {
             axis.cursor.go_to(anchor, axis.len);
-            axis.selection.clear();
         }
+        axis.selection.clear();
     }
 }
 
@@ -1418,6 +1758,14 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     // stranding the preview.
     if geometry.theme_rows() == 0 && matches!(state.overlay, Some(Overlay::Themes { .. })) {
         restore_theme(state);
+        state.overlay = None;
+        state.mark_dirty();
+    }
+
+    // The form is a larger block than the palette, so it has a shrink of its
+    // own to answer for — between the two thresholds the panels draw, the form
+    // does not, and it would still be capturing every key.
+    if !geometry.export_fits() && matches!(state.overlay, Some(Overlay::Export(_))) {
         state.overlay = None;
         state.mark_dirty();
     }
@@ -1533,7 +1881,7 @@ fn activate(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     }
 
-    if state.focus != Panel::Tables {
+    if state.focus() != Panel::Tables {
         return Vec::new();
     }
 
@@ -1563,7 +1911,7 @@ fn activate(state: &mut State) -> Vec<Effect> {
 /// the user cannot predict
 /// (docs/superpowers/specs/2026-08-10-table-display-design.md §1).
 fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
-    state.focus = Panel::Contents;
+    state.focus_on(Panel::Contents);
 
     let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
     submit_into_contents(state, Subject::Table(table), stmt)
@@ -1571,7 +1919,7 @@ fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
 
 /// `ctrl-r`: the Queries buffer, whole, as one statement (design §3).
 fn run(state: &mut State) -> Vec<Effect> {
-    if state.focus != Panel::Queries {
+    if state.focus() != Panel::Queries {
         return Vec::new();
     }
 
@@ -1637,7 +1985,7 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
 /// resolves that in its own vocabulary — the shape `j`/`k` already have
 /// (docs/shortcuts.md §2, docs/superpowers/specs/2026-08-10-table-display-design.md §2).
 fn go_right(state: &mut State) {
-    match state.focus {
+    match state.focus() {
         Panel::Tables => transition(state, Transition::Open),
         Panel::Contents => {
             let len = state.contents.column_count();
@@ -1648,7 +1996,7 @@ fn go_right(state: &mut State) {
 }
 
 fn go_left(state: &mut State) {
-    match state.focus {
+    match state.focus() {
         Panel::Tables => transition(state, Transition::Close),
         Panel::Contents => state.contents.column.up(),
         Panel::Ddl | Panel::Queries => {}
@@ -1697,7 +2045,7 @@ fn follow_grid_columns(state: &mut State) {
 }
 
 fn transition(state: &mut State, transition: Transition) {
-    if state.focus != Panel::Tables {
+    if state.focus() != Panel::Tables {
         return;
     }
 
@@ -1779,22 +2127,19 @@ mod tests {
     }
 
     fn connected(posture: Posture) -> State {
-        State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture,
-                schema: SchemaState::Loading,
-            }),
-            ..State::default()
-        }
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture,
+            schema: SchemaState::Loading,
+        });
+        state
     }
 
     #[test]
     fn a_tick_costs_a_repaint_only_while_something_is_outstanding() {
-        let mut idle = State {
-            dirty: false,
-            ..State::default()
-        };
+        let mut idle = State::default();
+        idle.dirty = false;
 
         assert!(!idle.is_working());
         update(&mut idle, Msg::Tick);
@@ -2318,7 +2663,8 @@ mod tests {
             Overlay::Message(_)
             | Overlay::Search(_)
             | Overlay::Themes { .. }
-            | Overlay::Diagnostics(_) => None,
+            | Overlay::Diagnostics(_)
+            | Overlay::Export(_) => None,
         }
     }
 
@@ -2445,7 +2791,7 @@ mod tests {
         for (key, focus) in cases {
             let mut state = browsing_tables(&[("a", &["t1"])]);
             state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
-            state.focus = focus;
+            state.focus_on(focus);
             press(&mut state, Key::Char('?'));
             let before = crate::view::view_model(&state);
 
@@ -2905,7 +3251,7 @@ mod tests {
     #[test]
     fn motion_belongs_to_the_focused_panel_only() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         press(&mut state, Key::Char('j'));
 
@@ -3001,10 +3347,8 @@ mod tests {
 
     #[test]
     fn ctrl_e_hands_the_queries_buffer_to_an_editor() {
-        let mut state = State {
-            focus: Panel::Queries,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
         state.queries.replace("SELECT * FROM t");
 
         let effects = ctrl(&mut state, Key::Char('e'));
@@ -3022,10 +3366,8 @@ mod tests {
     #[test]
     fn ctrl_e_is_inert_outside_queries() {
         for focus in [Panel::Tables, Panel::Ddl, Panel::Contents] {
-            let mut state = State {
-                focus,
-                ..State::default()
-            };
+            let mut state = State::default();
+            state.focus_on(focus);
             let before = crate::view::view_model(&state);
 
             assert!(
@@ -3051,11 +3393,9 @@ mod tests {
         ];
 
         for overlay in overlays {
-            let mut state = State {
-                focus: Panel::Queries,
-                overlay: Some(overlay),
-                ..State::default()
-            };
+            let mut state = State::default();
+            state.focus_on(Panel::Queries);
+            state.overlay = Some(overlay);
 
             assert!(ctrl(&mut state, Key::Char('e')).is_empty());
         }
@@ -3105,7 +3445,7 @@ mod tests {
     /// Enter — the same convention `editor.rs`'s own helper uses.
     fn editing(text: &str) -> State {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         type_into(&mut state, text);
         state
     }
@@ -3128,7 +3468,7 @@ mod tests {
         // move, q quits. In the editor they are all just text.
         let state = editing("tacujkhlq");
 
-        assert_eq!(state.focus, Panel::Queries, "no letter moved focus");
+        assert_eq!(state.focus(), Panel::Queries, "no letter moved focus");
         assert_eq!(state.queries.text(), "tacujkhlq");
     }
 
@@ -3148,7 +3488,7 @@ mod tests {
     #[test]
     fn a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette() {
         let mut state = measured(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('?'));
 
@@ -3166,7 +3506,7 @@ mod tests {
     fn an_open_palette_outranks_a_panel_that_takes_text() {
         let mut state = measured(&["a", "b", "c"]);
         press(&mut state, Key::Char('?'));
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('j'));
 
@@ -3181,7 +3521,7 @@ mod tests {
     #[test]
     fn q_does_not_quit_while_the_editor_has_focus() {
         let mut state = browsing(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         let effects = press(&mut state, Key::Char('q'));
 
@@ -3196,7 +3536,7 @@ mod tests {
 
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
         assert_eq!(state.queries.text(), "SELECT", "leaving keeps the buffer");
     }
 
@@ -3212,7 +3552,7 @@ mod tests {
         press(&mut state, Key::Escape);
 
         assert!(state.overlay.is_none());
-        assert_eq!(state.focus, Panel::Queries, "one esc does one thing");
+        assert_eq!(state.focus(), Panel::Queries, "one esc does one thing");
     }
 
     #[test]
@@ -3221,14 +3561,14 @@ mod tests {
 
         press(&mut state, Key::Tab);
 
-        assert_eq!(state.focus, Panel::Tables, "Queries wraps to Tables");
+        assert_eq!(state.focus(), Panel::Tables, "Queries wraps to Tables");
         assert_eq!(state.queries.text(), "SELECT");
     }
 
     #[test]
     fn a_modified_key_is_still_not_text() {
         let mut state = browsing(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         update(
             &mut state,
@@ -3254,7 +3594,7 @@ mod tests {
 
         press(&mut state, Key::Char('b'));
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
         assert_eq!(state.queries.text(), "", "nothing leaked into the buffer");
     }
 
@@ -3375,7 +3715,7 @@ mod tests {
             effects.is_empty(),
             "a range names more than one thing to open"
         );
-        assert_eq!(state.focus, Panel::Tables, "and focus stays put");
+        assert_eq!(state.focus(), Panel::Tables, "and focus stays put");
     }
 
     #[test]
@@ -3412,9 +3752,8 @@ mod tests {
             })),
         );
 
-        assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            None,
+        assert!(
+            !state.tables.selection.is_active(),
             "pointing at one row is saying: this one"
         );
         assert_eq!(state.tables.cursor.index(), 2);
@@ -3500,7 +3839,7 @@ mod tests {
                 next: None,
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         update(
             &mut state,
             Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(width)),
@@ -3548,10 +3887,8 @@ mod tests {
 
     #[test]
     fn a_grid_with_no_page_swallows_horizontal_motion() {
-        let mut state = State {
-            focus: Panel::Contents,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Contents);
 
         press(&mut state, Key::Char('l'));
 
@@ -3562,7 +3899,7 @@ mod tests {
     #[test]
     fn horizontal_motion_belongs_to_the_focused_panel_only() {
         let mut state = grid_of(4, 80);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         press(&mut state, Key::Char('l'));
 
@@ -3571,11 +3908,11 @@ mod tests {
 
     #[test]
     fn the_column_viewport_follows_the_cell_cursor() {
-        // Four columns of width 2 ("c0" and a one-digit value) with one space
-        // between: 2+1+2 = 5 fits two columns in a grid 8 wide once the
-        // merged bar+gutter block (bar plus a one-digit gutter) and the one
-        // spacing column ahead of the values are taken off.
-        let mut state = grid_of(4, 8);
+        // Four columns of width 2 ("c0" and a one-digit value) with two spaces
+        // between: 2+2+2 = 6 fits two columns in a grid 10 wide once the
+        // merged bar+gutter block (bar plus a one-digit gutter) and the
+        // spacing ahead of the values are taken off.
+        let mut state = grid_of(4, 10);
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
@@ -3606,7 +3943,7 @@ mod tests {
 
         update(
             &mut state,
-            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(8)),
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(10)),
         );
 
         assert_eq!(
@@ -3618,14 +3955,14 @@ mod tests {
 
     #[test]
     fn a_panel_that_grew_pulls_the_column_viewport_back() {
-        let mut state = grid_of(4, 8);
+        let mut state = grid_of(4, 10);
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
         assert_eq!(
             state.contents.column_scroll.first(),
             2,
-            "two of four fit at 8"
+            "two of four fit at 10"
         );
 
         update(
@@ -3730,7 +4067,7 @@ mod tests {
     #[test]
     fn a_tree_transition_belongs_to_the_focused_panel_only() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         press(&mut state, Key::Char('l'));
 
@@ -3867,7 +4204,7 @@ mod tests {
 
         for expected in Panel::CYCLE.into_iter().skip(1).chain([Panel::CYCLE[0]]) {
             press(&mut state, Key::Tab);
-            assert_eq!(state.focus, expected);
+            assert_eq!(state.focus(), expected);
         }
     }
 
@@ -3878,29 +4215,27 @@ mod tests {
         press(&mut state, Key::BackTab);
 
         assert_eq!(
-            state.focus,
+            state.focus(),
             Panel::Queries,
             "stepping back from the first wraps"
         );
 
         press(&mut state, Key::BackTab);
 
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
     }
 
     #[test]
     fn a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text() {
         for from in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
             for to in Panel::ALL {
-                let mut state = State {
-                    focus: from,
-                    ..State::default()
-                };
+                let mut state = State::default();
+                state.focus_on(from);
 
                 press(&mut state, Key::Char(to.shortcut()));
 
                 assert_eq!(
-                    state.focus,
+                    state.focus(),
                     to,
                     "'{}' should reach {to:?} from {from:?}",
                     to.shortcut()
@@ -3917,7 +4252,7 @@ mod tests {
             press(&mut state, Key::Char(panel.shortcut()));
             press(&mut state, Key::Char(panel.shortcut()));
 
-            assert_eq!(state.focus, panel);
+            assert_eq!(state.focus(), panel);
             assert_eq!(
                 state.ddl.tab(),
                 DdlTab::Ddl,
@@ -3932,11 +4267,11 @@ mod tests {
             // A table has to be selected, or the strip draws no Columns tab
             // for the key to arrive at.
             let mut state = browsing_a_table();
-            state.focus = from;
+            state.focus_on(from);
 
             press(&mut state, Key::Char('c'));
 
-            assert_eq!(state.focus, Panel::Ddl, "from {from:?}");
+            assert_eq!(state.focus(), Panel::Ddl, "from {from:?}");
             assert_eq!(state.ddl.tab(), DdlTab::Columns, "from {from:?}");
         }
     }
@@ -3948,7 +4283,7 @@ mod tests {
 
         press(&mut state, Key::Char('c'));
 
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(
             state.ddl.tab(),
             DdlTab::Ddl,
@@ -3963,20 +4298,18 @@ mod tests {
         press(&mut state, Key::Char('c'));
         press(&mut state, Key::Char('d'));
 
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.tab(), DdlTab::Ddl);
     }
 
     #[test]
     fn c_is_text_in_a_panel_that_takes_text() {
-        let mut state = State {
-            focus: Panel::Queries,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('b'));
 
-        assert_eq!(state.focus, Panel::Queries, "focus is the mode");
+        assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
         assert_eq!(state.queries.text(), "b");
         assert_eq!(state.ddl.tab(), DdlTab::Ddl, "and no tab changed under it");
     }
@@ -3984,14 +4317,12 @@ mod tests {
     #[test]
     fn a_shortcut_is_text_in_a_panel_that_takes_text() {
         for to in Panel::ALL {
-            let mut state = State {
-                focus: Panel::Queries,
-                ..State::default()
-            };
+            let mut state = State::default();
+            state.focus_on(Panel::Queries);
 
             press(&mut state, Key::Char(to.shortcut()));
 
-            assert_eq!(state.focus, Panel::Queries, "focus is the mode");
+            assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
             assert_eq!(state.queries.text(), to.shortcut().to_string());
         }
     }
@@ -4007,7 +4338,7 @@ mod tests {
 
             let effects = press(&mut state, Key::Char(panel.shortcut()));
 
-            assert_eq!(state.focus, panel);
+            assert_eq!(state.focus(), panel);
             assert!(
                 effects.is_empty(),
                 "'{}' issued {effects:?}",
@@ -4029,19 +4360,165 @@ mod tests {
             // Focus starts elsewhere, so an unmoved focus is evidence rather
             // than the state it began in.
             let elsewhere = panel.next();
-            let mut state = State {
-                focus: elsewhere,
-                ..State::default()
-            };
+            let mut state = State::default();
+            state.focus_on(elsewhere);
             let shifted = panel.shortcut().to_ascii_uppercase();
 
             press(&mut state, Key::Char(shifted));
 
             assert_eq!(
-                state.focus, elsewhere,
+                state.focus(),
+                elsewhere,
                 "'{shifted}' must stay free for a binding of its own"
             );
         }
+    }
+
+    /// `shop` unfolded, with `orders` at row 1 — a table, not a keyspace.
+    fn tables_state() -> State {
+        let mut state = browsing_tables(&[("shop", &["orders", "users", "products"])]);
+        press(&mut state, Key::Char('l'));
+        state
+    }
+
+    /// Contents focused and showing a loaded page.
+    fn contents_state() -> State {
+        grid_of_rows(2, 3, 80)
+    }
+
+    type Route = (&'static str, Box<dyn Fn(&mut State)>);
+
+    #[test]
+    fn switching_panels_clears_the_selection_of_the_panel_left_behind() {
+        // Every route focus can change by. A selection outliving one of them
+        // would let `y` act on a panel the user is no longer looking at
+        // (multi-group selection design §4).
+        let routes: Vec<Route> = vec![
+            (
+                "tab",
+                Box::new(|state: &mut State| drop(press(state, Key::Tab))),
+            ),
+            (
+                "shift-tab",
+                Box::new(|state: &mut State| drop(press(state, Key::BackTab))),
+            ),
+            (
+                "a",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('a')))),
+            ),
+            (
+                "b",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('b')))),
+            ),
+            (
+                "c",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('c')))),
+            ),
+            (
+                "d",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('d')))),
+            ),
+            (
+                "u",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('u')))),
+            ),
+        ];
+
+        for (name, route) in routes {
+            let mut state = tables_state();
+            state.focus_on(Panel::Tables);
+            state.tables.selection.start(0);
+            state.tables.selection.stop(1);
+
+            route(&mut state);
+
+            if state.focus() == Panel::Tables {
+                continue;
+            }
+
+            assert!(
+                !state.tables.selection.is_active(),
+                "{name} left Tables holding a selection"
+            );
+        }
+    }
+
+    #[test]
+    fn re_focusing_the_focused_panel_keeps_its_selection() {
+        // Arriving where you already are is not navigation and must not cost
+        // you what you were reading (design §4).
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(1);
+
+        let _ = press(&mut state, Key::Char('a'));
+
+        assert_eq!(
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 1)),
+            "`a` on Tables is not a panel switch"
+        );
+    }
+
+    #[test]
+    fn leaving_contents_clears_both_of_its_axes() {
+        let mut state = contents_state();
+        state.focus_on(Panel::Contents);
+        state.contents.rows.start(0);
+        state.contents.rows.stop(1);
+        state.contents.columns.start(0);
+        state.contents.columns.stop(1);
+
+        state.focus_on(Panel::Tables);
+
+        assert!(!state.contents.rows.is_active(), "the row axis survived");
+        assert!(
+            !state.contents.columns.is_active(),
+            "the column axis survived"
+        );
+    }
+
+    #[test]
+    fn a_click_clears_the_selection_of_the_panel_it_leaves() {
+        let mut state = contents_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(1);
+
+        click_row(&mut state, Panel::Contents, 0);
+
+        assert!(!state.tables.selection.is_active());
+    }
+
+    #[test]
+    fn enter_on_a_table_leaves_no_selection_behind_in_tables() {
+        // `enter` focuses Contents on the table under the cursor; the tree it
+        // leaves must not stay lit behind it.
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.cursor.go_to(1, 4);
+        state.tables.selection.start(1);
+        state.tables.selection.stop(1);
+
+        // Row 1 is `orders`, a table: `enter` on a keyspace opens it and
+        // moves no focus.
+        let _ = press(&mut state, Key::Enter);
+
+        assert_eq!(state.focus(), Panel::Contents);
+        assert!(!state.tables.selection.is_active());
+    }
+
+    #[test]
+    fn esc_out_of_queries_clears_what_queries_left_behind() {
+        // Queries holds no selection of its own; the panel it hands focus to
+        // must not inherit one either.
+        let mut state = tables_state();
+        state.focus_on(Panel::Queries);
+
+        let _ = press(&mut state, Key::Escape);
+
+        assert_eq!(state.focus(), Panel::Tables);
     }
 
     fn read_shop_orders() -> State {
@@ -4103,7 +4580,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let first = state.contents.outstanding().expect("the panel is waiting");
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
 
         let effects = press(&mut state, Key::Enter);
@@ -4124,30 +4601,30 @@ mod tests {
     #[test]
     fn reading_a_table_lands_focus_in_contents() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('j'));
 
         press(&mut state, Key::Enter);
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
     fn a_click_on_a_table_lands_focus_in_contents_too() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('l'));
 
         click_row(&mut state, Panel::Tables, 1);
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
     fn focus_moves_before_the_page_arrives() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('j'));
 
@@ -4157,7 +4634,7 @@ mod tests {
             matches!(state.contents.state(), ContentsState::Loading { .. }),
             "focus is a consequence of the keypress, not of the network"
         );
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
@@ -4168,22 +4645,22 @@ mod tests {
         // cannot be pulled apart through key presses.
         let mut state = tabled(&[("shop", &["orders"])]);
         state.connection = ConnectionState::Disconnected;
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         read(&mut state, TableRef::new("shop", "orders"));
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
     fn unfolding_a_keyspace_leaves_focus_in_tables() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         press(&mut state, Key::Enter);
 
         assert_eq!(
-            state.focus,
+            state.focus(),
             Panel::Tables,
             "a fold is not a read and moves nothing"
         );
@@ -4192,7 +4669,7 @@ mod tests {
     #[test]
     fn reading_a_table_leaves_the_tree_selection_where_it_was() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('j'));
         let selected = state.tables.cursor.index();
@@ -4271,7 +4748,7 @@ mod tests {
                 next: None,
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         update(
             &mut state,
             Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(7)),
@@ -4313,7 +4790,7 @@ mod tests {
                 next: None,
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         update(
             &mut state,
             Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
@@ -4382,7 +4859,7 @@ mod tests {
 
         press(&mut state, Key::Char('y'));
 
-        assert_eq!(state.contents.rows, Selection::None);
+        assert_eq!(state.contents.rows, Selection::default());
         assert_eq!(
             state.contents.cursor.index(),
             1,
@@ -4405,8 +4882,8 @@ mod tests {
         assert_eq!(state.contents.cursor.index(), 3);
     }
 
-    /// Frozen by a second `v`, so the range is `Held` and the cursor has
-    /// already left the anchor by the time `y` asks for it.
+    /// Frozen by a second `v`, so the group is no longer extending and the
+    /// cursor has already left the anchor by the time `y` asks for it.
     #[test]
     fn a_frozen_range_still_knows_where_to_send_the_cursor() {
         let mut state = grid_of_named_cells(3, 4);
@@ -4418,7 +4895,7 @@ mod tests {
 
         press(&mut state, Key::Char('y'));
 
-        assert_eq!(state.contents.rows, Selection::None);
+        assert_eq!(state.contents.rows, Selection::default());
         assert_eq!(state.contents.cursor.index(), 1);
     }
 
@@ -4434,8 +4911,8 @@ mod tests {
 
         press(&mut state, Key::Char('y'));
 
-        assert_eq!(state.contents.rows, Selection::None);
-        assert_eq!(state.contents.columns, Selection::None);
+        assert_eq!(state.contents.rows, Selection::default());
+        assert_eq!(state.contents.columns, Selection::default());
         assert_eq!(
             (state.contents.cursor.index(), state.contents.column.index()),
             (1, 1),
@@ -4451,7 +4928,7 @@ mod tests {
 
         press(&mut state, Key::Char('y'));
 
-        assert_eq!(state.tables.selection, Selection::None);
+        assert_eq!(state.tables.selection, Selection::default());
         assert_eq!(state.tables.cursor.index(), 0);
     }
 
@@ -4460,16 +4937,17 @@ mod tests {
     #[test]
     fn a_y_that_yanks_nothing_leaves_the_selection_alone() {
         let mut state = measured(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         state.contents.cursor.go_to(0, 1);
         state.tables.selection.start(0);
 
         let effects = press(&mut state, Key::Char('y'));
 
         assert!(effects.is_empty());
+        let mut extending_from_zero = Selection::default();
+        extending_from_zero.start(0);
         assert_eq!(
-            state.tables.selection,
-            Selection::Extending { anchor: 0 },
+            state.tables.selection, extending_from_zero,
             "a panel that yanks nothing has nothing to reset"
         );
     }
@@ -4491,11 +4969,11 @@ mod tests {
 
         let flash = state.flash.expect("the yank lit what it copied");
         assert_eq!(flash.panel(), Panel::Contents);
-        assert_eq!(flash.rows(), Some(Range::new(1, 2)));
-        assert_eq!(flash.columns(), Some(Range::new(0, 1)));
+        assert_eq!(flash.rows(), &Ranges::of(Range::new(1, 2)));
+        assert_eq!(flash.columns(), &Ranges::of(Range::new(0, 1)));
     }
 
-    /// `None` on an axis is every row or every column of it — the convention
+    /// Empty on an axis is every row or every column of it — the convention
     /// the view model's ranges already carry, and what row mode yanks.
     #[test]
     fn row_mode_lights_the_whole_row_and_column_mode_the_whole_column() {
@@ -4503,16 +4981,24 @@ mod tests {
         press(&mut rows, Key::Char('y'));
 
         let flash = rows.flash.expect("lit");
-        assert_eq!(flash.rows(), Some(Range::new(0, 0)));
-        assert_eq!(flash.columns(), None, "row mode yanks every column");
+        assert_eq!(flash.rows(), &Ranges::of(Range::new(0, 0)));
+        assert_eq!(
+            flash.columns(),
+            &Ranges::default(),
+            "row mode yanks every column"
+        );
 
         let mut columns = grid_of_named_cells(3, 4);
         columns.contents.mode = SelectionMode::Column;
         press(&mut columns, Key::Char('y'));
 
         let flash = columns.flash.expect("lit");
-        assert_eq!(flash.rows(), None, "column mode yanks every row");
-        assert_eq!(flash.columns(), Some(Range::new(0, 0)));
+        assert_eq!(
+            flash.rows(),
+            &Ranges::default(),
+            "column mode yanks every row"
+        );
+        assert_eq!(flash.columns(), &Ranges::of(Range::new(0, 0)));
     }
 
     /// Nothing was selected, so what the flash marks is the one row `y` took —
@@ -4525,13 +5011,13 @@ mod tests {
 
         let flash = state.flash.expect("lit");
         assert_eq!(flash.panel(), Panel::Tables);
-        assert_eq!(flash.rows(), Some(Range::new(0, 0)));
+        assert_eq!(flash.rows(), &Ranges::of(Range::new(0, 0)));
     }
 
     #[test]
     fn a_y_that_yanks_nothing_lights_nothing() {
         let mut state = measured(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('y'));
 
@@ -4709,7 +5195,7 @@ mod tests {
     #[test]
     fn y_on_an_empty_panel_yanks_nothing() {
         let mut state = browsing_a_table();
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
     }
@@ -4725,7 +5211,7 @@ mod tests {
     #[test]
     fn y_yanks_a_ddl_row() {
         let mut state = browsing_a_table();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         assert_eq!(
             press(&mut state, Key::Char('y')),
@@ -4844,6 +5330,94 @@ mod tests {
     }
 
     #[test]
+    fn y_over_two_groups_yanks_their_rows_in_drawn_order() {
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(2);
+        state.tables.selection.stop(2);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(0);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(payload)) = effects.into_iter().next() else {
+            panic!("y raised no yank");
+        };
+
+        assert_eq!(
+            payload, "shop\nshop.products",
+            "row order, not insertion order (design §5)"
+        );
+    }
+
+    #[test]
+    fn y_sends_the_cursor_home_to_the_last_v_and_spends_every_group() {
+        // The last press is where the user last was, and it is the only one of the
+        // three candidate rows still true after a group has been dropped from the
+        // middle (design §3).
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(1);
+        state.tables.selection.start(3);
+        state.tables.selection.stop(3);
+        state.tables.cursor.go_to(3, 4);
+
+        let _ = press(&mut state, Key::Char('y'));
+
+        assert_eq!(state.tables.cursor.index(), 3, "home is the last v");
+        assert!(
+            !state.tables.selection.is_active(),
+            "a yank spends every group, not just the last"
+        );
+    }
+
+    #[test]
+    fn y_over_a_selection_whose_anchor_was_dropped_moves_no_cursor() {
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        // Two groups; the second one's row is where `v` was last pressed, and
+        // dropping it takes the anchor with it. The first group still stands.
+        state.tables.selection.toggle(0);
+        state.tables.selection.toggle(1);
+        state.tables.selection.toggle(3);
+        state.tables.selection.toggle(3);
+        state.tables.selection.toggle(3);
+        state.tables.cursor.go_to(1, 4);
+
+        assert_eq!(state.tables.selection.anchor(), None);
+
+        let _ = press(&mut state, Key::Char('y'));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "there is no row the anchor could send it to that the user chose"
+        );
+        assert!(
+            !state.tables.selection.is_active(),
+            "a yank spends the selection even when it has no anchor"
+        );
+    }
+
+    #[test]
+    fn a_single_cell_in_one_group_each_way_still_yanks_bare() {
+        // "One" is now "one row and one column in one group each"; the bare,
+        // unescaped value must survive that rewording (design §5).
+        let mut state = contents_state();
+        state.focus_on(Panel::Contents);
+        state.contents.mode = SelectionMode::Cell;
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(payload)) = effects.into_iter().next() else {
+            panic!("y raised no yank");
+        };
+
+        assert!(!payload.contains(','), "a bare cell takes no delimiter");
+    }
+
+    #[test]
     fn a_payload_of_nothing_but_delimiters_reaches_no_clipboard() {
         // `grid_of_rows` fills its cells with `Int(1)`; this needs nulls, so
         // the page is built here rather than borrowed from it.
@@ -4865,7 +5439,7 @@ mod tests {
                 next: None,
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         state.contents.mode = SelectionMode::Row;
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
@@ -4883,7 +5457,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let first = state.contents.outstanding().expect("the panel is waiting");
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Enter);
 
@@ -4940,7 +5514,7 @@ mod tests {
         );
         let tree_row = state.tables.cursor.index();
 
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('j'));
 
@@ -4965,7 +5539,7 @@ mod tests {
             },
         );
 
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         for _ in 0..5 {
             press(&mut state, Key::Char('j'));
         }
@@ -4978,7 +5552,7 @@ mod tests {
         let mut state = read_shop_orders();
         let tree_row = state.tables.cursor.index();
 
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::Char('j'));
 
         assert_eq!(state.tables.cursor.index(), tree_row);
@@ -4988,7 +5562,7 @@ mod tests {
     #[test]
     fn motion_in_the_ddl_panel_walks_the_rows_it_describes() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         let rows = crate::view::ddl_rows(&state);
         assert!(rows > 2, "the fixture describes a key and some options");
 
@@ -5011,11 +5585,11 @@ mod tests {
     #[test]
     fn describing_another_node_opens_the_ddl_panel_at_its_first_row() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::End);
         assert!(state.ddl.cursor.index() > 0);
 
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('k'));
 
         assert_eq!(state.ddl.cursor.index(), 0);
@@ -5025,7 +5599,7 @@ mod tests {
     #[test]
     fn a_measurement_pulls_the_viewport_onto_the_selected_row() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         update(
             &mut state,
@@ -5045,7 +5619,7 @@ mod tests {
     #[test]
     fn enter_outside_the_tree_reads_nothing() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
 
         let effects = press(&mut state, Key::Enter);
 
@@ -5122,7 +5696,7 @@ mod tests {
                 page: Box::new(page_of(30)),
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         sized(&mut state, [0, 0, 8, 0], 0);
 
         press(&mut state, Key::PageDown);
@@ -5133,7 +5707,7 @@ mod tests {
     #[test]
     fn motion_in_the_ddl_panel_moves_its_cursor_not_its_focus() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [0, 6, 0, 0], 20);
         let tree_row = state.tables.cursor.index();
         let rows = crate::view::ddl_rows(&state);
@@ -5156,7 +5730,7 @@ mod tests {
     #[test]
     fn ddl_motion_still_moves_the_cursor_before_the_first_measurement() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         let rows = crate::view::ddl_rows(&state);
         assert!(
             rows > 1,
@@ -5213,11 +5787,11 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::End);
         assert!(state.ddl.cursor.index() > 0);
 
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
 
         assert_eq!(
@@ -5231,18 +5805,17 @@ mod tests {
     fn a_new_subject_clears_the_ddl_range() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('l'));
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('v'));
-        assert!(state.ddl.selection.range(0).is_some());
+        assert!(state.ddl.selection.is_active());
 
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
 
-        assert_eq!(
-            state.ddl.selection.range(state.ddl.cursor.index()),
-            None,
+        assert!(
+            !state.ddl.selection.is_active(),
             "the rows the range addressed belong to the node that was on screen"
         );
     }
@@ -5250,11 +5823,11 @@ mod tests {
     #[test]
     fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::End);
         let end = state.ddl.cursor.index();
         assert!(end > 0);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         press(&mut state, Key::Char('l'));
 
@@ -5271,29 +5844,27 @@ mod tests {
     }
 
     #[test]
-    fn unfolding_a_keyspace_leaves_the_ddl_range_alone() {
+    fn leaving_ddl_for_tables_clears_its_range_before_unfolding_ever_runs() {
+        // Once superseded by `switching_panels_clears_the_selection_of_the_panel_left_behind`:
+        // the range used to survive the focus change itself and die only on
+        // whatever motion followed. Now `focus_on` is what clears it, so the
+        // motion after has nothing left to disturb (design §4).
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('v'));
-        let range = state.ddl.selection.range(state.ddl.cursor.index());
-        assert!(range.is_some());
-        state.focus = Panel::Tables;
+        assert!(state.ddl.selection.is_active());
 
-        press(&mut state, Key::Char('l'));
+        state.focus_on(Panel::Tables);
 
-        assert_eq!(
-            state.ddl.selection.range(state.ddl.cursor.index()),
-            range,
-            "unfolding leaves the panel on the same subject, so it is not a change the range should die on"
-        );
+        assert!(!state.ddl.selection.is_active());
     }
 
     #[test]
     fn a_measurement_pulls_a_stale_scroll_offset_back_inside_the_panel() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [0, 6, 0, 0], 40);
         state.ddl.scroll.to_end(40, 6);
         assert_eq!(state.ddl.scroll.offset(), 34);
@@ -5317,7 +5888,7 @@ mod tests {
         let conn = current_conn(&state);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::End);
         assert!(
             state.ddl.cursor.index() > 0,
@@ -5418,10 +5989,13 @@ mod tests {
         }
 
         sized(&mut state, [3, 3, 3, 3], 40);
+        // Room for the export form, or Contents' `ctrl-e export` hint is drawn
+        // inert and promises nothing to test.
+        state.geometry = state.geometry.with_export_fits(true);
         let ddl_len = crate::view::ddl_rows(&state);
         state.ddl.cursor.page_down(ddl_len, 3);
         state.ddl.scroll.down(40, 3);
-        state.focus = focus;
+        state.focus_on(focus);
 
         state
     }
@@ -5686,7 +6260,7 @@ mod tests {
         );
 
         assert!(effects.is_empty());
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
         assert_eq!(state.contents.column.index(), 3);
         assert_eq!(state.contents.cursor.index(), 0, "a heading names no row");
     }
@@ -5722,7 +6296,7 @@ mod tests {
         let effects = click_row(&mut state, Panel::Ddl, 2);
 
         assert!(effects.is_empty(), "a selection runs no query");
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.cursor.index(), 2);
     }
 
@@ -5743,7 +6317,7 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         click_row(&mut state, Panel::Tables, 0);
         click_row(&mut state, Panel::Tables, 1);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         let effects = point(
             &mut state,
@@ -5754,7 +6328,7 @@ mod tests {
         );
 
         assert!(effects.is_empty());
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.tab(), DdlTab::Columns);
     }
 
@@ -5764,7 +6338,7 @@ mod tests {
     #[test]
     fn a_click_on_a_tab_the_strip_no_longer_draws_only_focuses() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         point(
             &mut state,
@@ -5774,14 +6348,14 @@ mod tests {
             }),
         );
 
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.tab(), DdlTab::Ddl);
     }
 
     #[test]
     fn a_click_on_a_single_tab_panels_title_focuses_it() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         point(
             &mut state,
@@ -5791,17 +6365,17 @@ mod tests {
             }),
         );
 
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
     }
 
     #[test]
     fn a_click_focuses_the_panel_it_landed_in() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         click_row(&mut state, Panel::Tables, 0);
 
-        assert_eq!(state.focus, Panel::Tables, "one click focuses and acts");
+        assert_eq!(state.focus(), Panel::Tables, "one click focuses and acts");
         assert_eq!(row_count(&state), 2, "the keyspace unfolded on that click");
     }
 
@@ -5852,7 +6426,7 @@ mod tests {
     fn a_wheel_scrolls_the_panel_under_it_without_focusing_it() {
         let mut state = showing_rows(20);
         state.geometry = Geometry::new([8, 8, 8, 1], 0, 0);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         point(
             &mut state,
@@ -5868,7 +6442,7 @@ mod tests {
             0,
             "the wheel does not move the selection"
         );
-        assert_eq!(state.focus, Panel::Tables, "focus stays where it was");
+        assert_eq!(state.focus(), Panel::Tables, "focus stays where it was");
     }
 
     #[test]
@@ -5912,7 +6486,7 @@ mod tests {
     #[test]
     fn a_wheel_over_a_panel_with_nothing_to_scroll_is_inert() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         for character in "one\ntwo\nthree\nfour\nfive\n".chars() {
             press(
                 &mut state,
@@ -5923,7 +6497,7 @@ mod tests {
                 },
             );
         }
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         let cursor_before = state.queries.cursor();
         let text_before = state.queries.text();
 
@@ -5937,7 +6511,7 @@ mod tests {
 
         assert!(effects.is_empty());
         assert_eq!(state.tables.cursor.index(), 0, "no other panel moved");
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
         assert_eq!(
             state.queries.cursor(),
             cursor_before,
@@ -5958,7 +6532,7 @@ mod tests {
         // and `state.ddl.scroll` is left alone (design §7).
         let mut state = browsing(&["a", "b", "c", "d"]);
         state.geometry = Geometry::new([3, 3, 3, 1], 0, 0);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         state.ddl.scroll.down(100, 2);
         let ddl_before = state.ddl.scroll;
         assert_ne!(ddl_before.offset(), 0, "the fixture must start scrolled");
@@ -5974,7 +6548,11 @@ mod tests {
         assert!(effects.is_empty(), "a scroll alone asks for nothing");
         assert_eq!(state.tables.scroll.offset(), 1, "four rows, three visible");
         assert_eq!(state.tables.cursor.index(), 0, "the selection did not move");
-        assert_eq!(state.focus, Panel::Queries, "the wheel does not move focus");
+        assert_eq!(
+            state.focus(),
+            Panel::Queries,
+            "the wheel does not move focus"
+        );
         assert_eq!(
             state.ddl.scroll, ddl_before,
             "no selection changed, so nothing new is described"
@@ -6059,7 +6637,7 @@ mod tests {
     #[test]
     fn a_motion_after_a_wheel_brings_the_selection_back_into_view() {
         let mut state = scrolling_rows(40);
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         for _ in 0..5 {
             roll(&mut state, Panel::Contents, Wheel::Down);
         }
@@ -6078,7 +6656,7 @@ mod tests {
     #[test]
     fn walking_off_the_bottom_still_drags_the_view_with_it() {
         let mut state = scrolling_rows(40);
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
 
         for _ in 0..6 {
             press(&mut state, Key::Char('j'));
@@ -6147,7 +6725,7 @@ mod tests {
     #[test]
     fn a_resize_brings_the_selection_back_into_view() {
         let mut state = scrolling_rows(40);
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         for _ in 0..6 {
             press(&mut state, Key::Char('j'));
         }
@@ -6308,7 +6886,7 @@ mod tests {
 
         let mut elsewhere = browsing_tables(&[("shop", &["orders"])]);
         elsewhere.geometry = geometry;
-        elsewhere.focus = Panel::Ddl;
+        elsewhere.focus_on(Panel::Ddl);
         // Off zero, or `ctrl-y` would find nothing to scroll up over here.
         elsewhere
             .ddl
@@ -6341,9 +6919,22 @@ mod tests {
                 page: Box::new(page_of(3)),
             },
         );
+        // The one fixture `ctrl-e` opens the form from: a loaded grid on a
+        // frame with room for it.
+        yankable.geometry = yankable.geometry.with_export_fits(true);
 
         // Measured, so the columns `m` cycles the highlight over are drawn.
         let grid = grid_of_rows(4, 5, 80);
+
+        // The export form, open on its first stop. Every key `export_key`
+        // claims there — `esc`, `tab`/`backtab`, `j`/`k`/`↓`/`↑`, `⏎` — is
+        // already catalogued elsewhere (`Global`, `Motion`, `Tables`), so
+        // this adds no key the negative sweep has to worry about; only
+        // `Export`'s own `space` needs a state where it does something, and
+        // this is that state (`toggle_scope` only fires with a scope to
+        // toggle to, hence `ROW_LIMIT` rather than a smaller page).
+        let mut export_open = contents_showing(ROW_LIMIT);
+        ctrl(&mut export_open, Key::Char('e'));
 
         vec![
             covered,
@@ -6353,6 +6944,7 @@ mod tests {
             picker_open,
             yankable,
             grid,
+            export_open,
         ]
     }
 
@@ -6450,7 +7042,7 @@ mod tests {
     fn slash_opens_the_prompt_in_every_panel_that_can_hold_a_filter() {
         for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
             let mut state = browsing_tables(&[("shop", &["orders"])]);
-            state.focus = panel;
+            state.focus_on(panel);
 
             press(&mut state, Key::Char('/'));
 
@@ -6464,10 +7056,8 @@ mod tests {
 
     #[test]
     fn slash_is_text_in_queries_and_opens_nothing() {
-        let mut state = State {
-            focus: Panel::Queries,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('/'));
 
@@ -6600,7 +7190,7 @@ mod tests {
     #[test]
     fn escape_clears_the_focused_panels_filter_when_no_overlay_is_up() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         state.apply_filter(Filtered::Contents, Filter::new("o"));
 
         press(&mut state, Key::Escape);
@@ -6638,8 +7228,8 @@ mod tests {
         press(&mut state, Key::Char('j'));
 
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(1, 3))
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(1, 3))
         );
     }
 
@@ -6654,8 +7244,8 @@ mod tests {
 
         assert_eq!(state.tables.cursor.index(), 2);
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 1)),
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 1)),
             "a frozen range does not follow the cursor"
         );
     }
@@ -6668,17 +7258,13 @@ mod tests {
 
         press(&mut state, Key::Escape);
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 1)),
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 1)),
             "the first press leaves visual mode and keeps the range"
         );
 
         press(&mut state, Key::Escape);
-        assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            None,
-            "the second clears it"
-        );
+        assert!(!state.tables.selection.is_active(), "the second clears it");
     }
 
     #[test]
@@ -6690,7 +7276,7 @@ mod tests {
 
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.tables.selection.range(0), None);
+        assert!(!state.tables.selection.is_active());
         assert!(
             state.filter(Filtered::Tables).is_some(),
             "the range came off first; the filter is still applied"
@@ -6700,22 +7286,71 @@ mod tests {
     #[test]
     fn v_selects_in_the_focused_panel_only() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         press(&mut state, Key::Char('v'));
 
-        assert_eq!(state.tables.selection.range(0), None);
+        assert!(!state.tables.selection.is_active());
         assert!(state.ddl.selection.is_extending());
     }
 
     #[test]
     fn v_types_a_v_in_queries() {
         let mut state = browsing(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('v'));
 
         assert_eq!(state.queries.text(), "v");
+    }
+
+    #[test]
+    fn v_builds_two_groups_and_esc_takes_both() {
+        // v j v, walk away, v — the gesture the design opens with (§1).
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+
+        let _ = press(&mut state, Key::Char('v'));
+        let _ = press(&mut state, Key::Char('j'));
+        let _ = press(&mut state, Key::Char('v'));
+        let _ = press(&mut state, Key::Char('j'));
+        let _ = press(&mut state, Key::Char('j'));
+        let _ = press(&mut state, Key::Char('v'));
+        let _ = press(&mut state, Key::Char('v'));
+
+        let selected = state.tables.selection.ranges(state.tables.cursor.index());
+        assert_eq!(selected.groups().count(), 2, "the gap kept them apart");
+        assert_eq!(selected.indices().collect::<Vec<_>>(), vec![0, 1, 3]);
+
+        let _ = press(&mut state, Key::Escape);
+
+        assert!(
+            !state.tables.selection.is_active(),
+            "one esc takes every group"
+        );
+    }
+
+    #[test]
+    fn v_on_a_selected_row_drops_that_group_only() {
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(1);
+        state.tables.selection.start(3);
+        state.tables.selection.stop(3);
+        state.tables.cursor.go_to(0, 4);
+
+        let _ = press(&mut state, Key::Char('v'));
+
+        assert_eq!(
+            state
+                .tables
+                .selection
+                .ranges(state.tables.cursor.index())
+                .indices()
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
     }
 
     #[test]
@@ -6727,7 +7362,7 @@ mod tests {
 
         state.apply_filter(Filtered::Tables, Filter::new("a"));
 
-        assert_eq!(state.tables.selection.range(0), None);
+        assert!(!state.tables.selection.is_active());
     }
 
     #[test]
@@ -6738,16 +7373,16 @@ mod tests {
         press(&mut state, Key::End);
         press(&mut state, Key::Char('v'));
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 2))
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 2))
         );
 
         press(&mut state, Key::Home);
         press(&mut state, Key::Char('h'));
 
         assert_eq!(
-            state.tables.selection.range(state.tables.cursor.index()),
-            Some(Range::new(0, 0)),
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(0, 0)),
             "folding the keyspace took the two table rows with it"
         );
     }
@@ -6760,11 +7395,11 @@ mod tests {
         // unreachable, and stays so, until the vim slice gives Queries a
         // filter to prefer.
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
     }
 
     #[test]
@@ -6775,7 +7410,7 @@ mod tests {
         press(&mut state, Key::Tab);
         press(&mut state, Key::BackTab);
 
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
         assert!(searching(&state).is_some(), "and the prompt survives");
     }
 
@@ -6844,7 +7479,7 @@ mod tests {
     #[test]
     fn a_ddl_filter_that_shrinks_the_panel_pulls_its_cursor_back() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
         press(&mut state, Key::End);
         let unfiltered = crate::view::ddl_rows(&state);
@@ -6875,7 +7510,7 @@ mod tests {
     #[test]
     fn a_filter_that_empties_table_ddl_leaves_its_cursor_at_rest() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
         press(&mut state, Key::End);
 
@@ -6897,7 +7532,7 @@ mod tests {
     #[test]
     fn clearing_a_ddl_filter_leaves_the_cursor_on_the_index_it_held() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
 
         press(&mut state, Key::Char('/'));
@@ -6927,7 +7562,7 @@ mod tests {
     #[test]
     fn the_measurement_after_a_filter_pulls_a_stale_ddl_offset_back_inside() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
 
         for _ in 0..20 {
@@ -6962,7 +7597,7 @@ mod tests {
     #[test]
     fn escape_clearing_a_ddl_filter_re_follows_the_selection() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('a'));
@@ -7061,7 +7696,7 @@ mod tests {
     fn ctrl_r_outside_queries_runs_nothing() {
         for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
             let mut state = editing("SELECT * FROM shop.orders");
-            state.focus = panel;
+            state.focus_on(panel);
 
             assert!(
                 run_query(&mut state).is_empty(),
@@ -7091,7 +7726,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let read = state.contents.outstanding().expect("the read is in flight");
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         type_into(&mut state, "SELECT * FROM shop.users");
 
         let effects = run_query(&mut state);
@@ -7106,14 +7741,14 @@ mod tests {
     #[test]
     fn reading_a_table_cancels_a_pending_query() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         type_into(&mut state, "SELECT * FROM shop.users");
         run_query(&mut state);
         let query = state
             .contents
             .outstanding()
             .expect("the query is in flight");
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         let effects = press(&mut state, Key::Enter);
 
@@ -7291,10 +7926,10 @@ mod tests {
         press(&mut state, Key::Char('j'));
 
         assert_eq!(
-            state.contents.rows.range(state.contents.cursor.index()),
-            Some(Range::new(0, 1))
+            state.contents.rows.ranges(state.contents.cursor.index()),
+            Ranges::of(Range::new(0, 1))
         );
-        assert_eq!(state.contents.columns.range(0), None);
+        assert!(!state.contents.columns.is_active());
     }
 
     #[test]
@@ -7306,10 +7941,10 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(
-            state.contents.columns.range(state.contents.column.index()),
-            Some(Range::new(0, 1))
+            state.contents.columns.ranges(state.contents.column.index()),
+            Ranges::of(Range::new(0, 1))
         );
-        assert_eq!(state.contents.rows.range(0), None);
+        assert!(!state.contents.rows.is_active());
     }
 
     #[test]
@@ -7323,13 +7958,13 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(
-            state.contents.rows.range(state.contents.cursor.index()),
-            Some(Range::new(0, 1)),
+            state.contents.rows.ranges(state.contents.cursor.index()),
+            Ranges::of(Range::new(0, 1)),
             "the row anchor was set before the column moved off zero"
         );
         assert_eq!(
-            state.contents.columns.range(state.contents.column.index()),
-            Some(Range::new(1, 2)),
+            state.contents.columns.ranges(state.contents.column.index()),
+            Ranges::of(Range::new(1, 2)),
             "the column anchor was set after `l`, not swapped with the row's"
         );
     }
@@ -7344,8 +7979,8 @@ mod tests {
 
         press(&mut state, Key::Char('m'));
 
-        assert_eq!(state.contents.rows.range(0), None);
-        assert_eq!(state.contents.columns.range(0), None);
+        assert!(!state.contents.rows.is_active());
+        assert!(!state.contents.columns.is_active());
         assert_eq!(
             state.contents.mode,
             SelectionMode::Row,
@@ -7361,10 +7996,633 @@ mod tests {
 
         press(&mut state, Key::Escape);
         assert!(!state.contents.rows.is_extending());
-        assert!(state.contents.rows.range(0).is_some());
+        assert!(state.contents.rows.is_active());
 
         press(&mut state, Key::Escape);
-        assert_eq!(state.contents.rows.range(0), None);
-        assert_eq!(state.contents.columns.range(0), None);
+        assert!(!state.contents.rows.is_active());
+        assert!(!state.contents.columns.is_active());
+    }
+
+    fn contents_showing(rows: usize) -> State {
+        let mut state = connected(Posture::ReadOnly);
+        state.geometry = Geometry::default().with_export_fits(true);
+        state.focus_on(Panel::Contents);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(query, page_of(rows));
+        state
+    }
+
+    fn contents_showing_typed(cql: &str) -> State {
+        let mut state = connected(Posture::ReadOnly);
+        state.geometry = Geometry::default().with_export_fits(true);
+        state.focus_on(Panel::Contents);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Typed(cql.to_owned()));
+        state.contents.page_ready(query, page_of(ROW_LIMIT));
+        state
+    }
+
+    fn open_form(state: &mut State) {
+        handle_key(state, KeyPress::ctrl(Key::Char('e')));
+    }
+
+    fn form_of(state: &State) -> &crate::export::ExportForm {
+        match state.overlay.as_ref() {
+            Some(Overlay::Export(form)) => form,
+            _ => panic!("the export form is up"),
+        }
+    }
+
+    #[test]
+    fn ctrl_e_over_a_loaded_contents_panel_opens_the_export_form() {
+        let mut state = contents_showing(5);
+
+        open_form(&mut state);
+
+        assert_eq!(form_of(&state).title(), "Export table shop.orders");
+    }
+
+    #[test]
+    fn ctrl_e_does_nothing_over_an_empty_contents_panel() {
+        let mut state = contents_showing(0);
+
+        open_form(&mut state);
+
+        assert!(state.overlay.is_none());
+    }
+
+    /// A form nothing draws would still claim every key: `q` would not quit,
+    /// `Tab` would not switch panel, and the path stop would swallow letters
+    /// into an invisible field.
+    #[test]
+    fn ctrl_e_is_inert_where_the_frame_cannot_draw_the_form() {
+        let mut state = contents_showing(5);
+        state.geometry = Geometry::default().with_export_fits(false);
+
+        open_form(&mut state);
+
+        assert!(state.overlay.is_none());
+    }
+
+    /// The band between the program's too-small threshold and the form's own
+    /// size is where the panels draw and the form does not — a palette-sized
+    /// gate would leave it open there, so the form is measured on its own.
+    #[test]
+    fn a_frame_that_shrank_past_the_form_closes_it() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+        assert!(matches!(state.overlay, Some(Overlay::Export(_))));
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 14).with_export_fits(false)),
+        );
+
+        assert!(
+            state.overlay.is_none(),
+            "the palette still fits, and the form does not"
+        );
+    }
+
+    /// The chord keeps its Queries meaning; the two are gated on focus, the
+    /// way ctrl-r already is (design §1).
+    #[test]
+    fn ctrl_e_in_queries_still_opens_the_external_editor() {
+        let mut state = connected(Posture::ReadOnly);
+        state.focus_on(Panel::Queries);
+
+        let effects = handle_key(&mut state, KeyPress::ctrl(Key::Char('e')));
+
+        assert!(matches!(effects.as_slice(), [Effect::OpenEditor { .. }]));
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn the_form_records_how_much_of_the_result_is_in_memory() {
+        let mut complete = contents_showing(7);
+        open_form(&mut complete);
+        assert_eq!(
+            form_of(&complete).fetched(),
+            crate::export::Fetched::Everything(7)
+        );
+
+        let mut capped = contents_showing(ROW_LIMIT);
+        open_form(&mut capped);
+        assert_eq!(
+            form_of(&capped).fetched(),
+            crate::export::Fetched::Some(ROW_LIMIT)
+        );
+    }
+
+    #[test]
+    fn tab_moves_between_the_forms_stops_rather_than_between_panels() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+
+        assert_eq!(form_of(&state).stop(), crate::export::Stop::Format);
+        assert_eq!(state.focus(), Panel::Contents, "focus did not move");
+    }
+
+    #[test]
+    fn space_toggles_the_focused_radio() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        assert_eq!(form_of(&state).scope(), crate::export::Scope::Fetched);
+    }
+
+    #[test]
+    fn a_printable_key_types_itself_only_on_the_path_stop() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Char('x')));
+        assert_eq!(
+            form_of(&state).scope(),
+            crate::export::Scope::Whole,
+            "an unclaimed key on a radio does nothing"
+        );
+
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Char('x')));
+
+        assert!(form_of(&state).path().text().ends_with('x'));
+    }
+
+    #[test]
+    fn space_on_the_path_stop_types_a_space() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        assert!(form_of(&state).path().text().ends_with(' '));
+    }
+
+    /// `Space` is the form's activation key (design §2). `Enter` reaches the
+    /// Export button because a focused button is what it means everywhere
+    /// else — but a radio group is not a button, and a keystroke there must
+    /// not write a file.
+    #[test]
+    fn enter_on_a_radio_group_does_not_run_the_export() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Enter));
+
+        assert!(effects.is_empty());
+        assert!(
+            matches!(state.overlay, Some(Overlay::Export(_))),
+            "the form is still up"
+        );
+    }
+
+    #[test]
+    fn enter_on_the_export_stop_runs_it() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Enter));
+
+        assert!(matches!(effects.as_slice(), [Effect::Export { .. }]));
+    }
+
+    #[test]
+    fn q_does_not_quit_while_the_form_is_up() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+
+        handle_key(&mut state, KeyPress::new(Key::Char('q')));
+
+        assert!(
+            !state.should_quit,
+            "the overlay claims every unmodified key"
+        );
+    }
+
+    #[test]
+    fn esc_closes_the_form_and_writes_nothing() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Escape));
+
+        assert!(state.overlay.is_none());
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn the_theme_picker_cannot_replace_an_open_export_form() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+
+        handle_key(&mut state, KeyPress::ctrl(Key::Char('t')));
+
+        assert!(
+            matches!(state.overlay, Some(Overlay::Export(_))),
+            "a chord must not discard the form and the path typed into it"
+        );
+    }
+
+    #[test]
+    fn a_second_ctrl_e_leaves_the_open_form_as_it_was() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Char('x')));
+        let typed = form_of(&state).path().text().to_owned();
+
+        handle_key(&mut state, KeyPress::ctrl(Key::Char('e')));
+
+        assert_eq!(form_of(&state).path().text(), typed);
+        assert_eq!(form_of(&state).stop(), crate::export::Stop::Path);
+    }
+
+    fn started(state: &mut State) -> Vec<Effect> {
+        open_form(state);
+        // Scope, Format, Path, Export.
+        for _ in 0..3 {
+            handle_key(state, KeyPress::new(Key::Tab));
+        }
+        handle_key(state, KeyPress::new(Key::Char(' ')))
+    }
+
+    #[test]
+    fn exporting_the_whole_table_asks_for_it_without_a_limit() {
+        let mut state = contents_showing(ROW_LIMIT);
+
+        let effects = started(&mut state);
+
+        let [
+            Effect::Export {
+                source,
+                format,
+                destination,
+                overwrite,
+                ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("one export effect");
+        };
+        assert_eq!(
+            *source,
+            Source::Whole(Box::new(Statement::typed(
+                "SELECT * FROM \"shop\".\"orders\""
+            )))
+        );
+        assert_eq!(*format, crate::export::Format::Csv);
+        assert!(destination.ends_with("shop.orders.csv"));
+        assert!(!overwrite, "the first attempt never clobbers");
+    }
+
+    /// The user's own LIMIT is theirs; only ours is dropped (design §3).
+    #[test]
+    fn exporting_a_typed_query_re_runs_it_verbatim() {
+        let mut state = contents_showing_typed("SELECT * FROM shop.orders LIMIT 10");
+
+        let effects = started(&mut state);
+
+        let [Effect::Export { source, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        assert_eq!(
+            *source,
+            Source::Whole(Box::new(Statement::typed(
+                "SELECT * FROM shop.orders LIMIT 10"
+            )))
+        );
+    }
+
+    #[test]
+    fn exporting_the_fetched_rows_asks_the_cluster_nothing() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        let [
+            Effect::Export {
+                source: Source::Fetched { columns, rows },
+                ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("one export effect carrying the rows");
+        };
+        assert_eq!(rows.len(), ROW_LIMIT);
+        assert_eq!(columns, &["id".to_owned()]);
+    }
+
+    #[test]
+    fn starting_an_export_closes_the_form_and_records_the_job() {
+        let mut state = contents_showing(ROW_LIMIT);
+
+        let effects = started(&mut state);
+
+        assert!(state.overlay.is_none(), "the form is done with");
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        assert_eq!(state.export.as_ref().map(ExportJob::id), Some(*job));
+        assert_eq!(state.export.as_ref().map(ExportJob::rows), Some(0));
+    }
+
+    #[test]
+    fn progress_is_the_running_total() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+
+        update(
+            &mut state,
+            Msg::ExportProgress {
+                job: *job,
+                rows: 5_000,
+            },
+        );
+
+        assert_eq!(state.export.as_ref().map(ExportJob::rows), Some(5_000));
+    }
+
+    #[test]
+    fn progress_for_a_job_that_is_not_running_is_dropped() {
+        let mut state = contents_showing(ROW_LIMIT);
+        started(&mut state);
+
+        update(
+            &mut state,
+            Msg::ExportProgress {
+                job: JobId::next(),
+                rows: 9,
+            },
+        );
+
+        assert_eq!(state.export.as_ref().map(ExportJob::rows), Some(0));
+    }
+
+    #[test]
+    fn finishing_clears_the_job_and_says_what_was_written() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Ok(41_203),
+            },
+        );
+
+        assert!(state.export.is_none());
+        let Some(Overlay::Message(message)) = &state.overlay else {
+            panic!("the result is on screen");
+        };
+        assert_eq!(message.severity, Severity::Info);
+        assert!(message.message.contains("41203"));
+        assert!(message.message.contains("shop.orders.csv"));
+    }
+
+    #[test]
+    fn a_failure_is_reported_as_a_danger() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Err(ExportError::Io("disk full".to_owned())),
+            },
+        );
+
+        assert!(state.export.is_none());
+        let Some(Overlay::Message(message)) = &state.overlay else {
+            panic!("the failure is on screen");
+        };
+        assert_eq!(message.severity, Severity::Danger);
+    }
+
+    /// Not a message: the user is meant to answer it, and the form has to be
+    /// there to go back to (design §7).
+    #[test]
+    fn an_existing_file_reopens_the_form_asking_to_overwrite() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Err(ExportError::Exists),
+            },
+        );
+
+        assert!(state.export.is_none(), "nothing is running");
+        assert_eq!(form_of(&state).confirm(), Some(Confirm::Overwrite));
+    }
+
+    /// The overlay is `None` for the whole of a running export, so `ctrl-t` is
+    /// not refused and the picker can be up and previewing when the answer
+    /// lands. Replacing it outright would leave the previewed theme in force
+    /// with `restored` — the only copy of the user's own — dropped with the
+    /// picker (final review I2).
+    #[test]
+    fn an_existing_file_landing_on_an_open_picker_puts_the_theme_back() {
+        let mut state = contents_showing(ROW_LIMIT);
+        // Room for the picker as well as the form.
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14)
+            .with_export_fits(true)
+            .with_theme_rows(20);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        let job = *job;
+        let chosen = state.theme.clone();
+
+        handle_key(&mut state, KeyPress::ctrl(Key::Char('t')));
+        handle_key(&mut state, KeyPress::new(Key::Char('j')));
+        assert_ne!(state.theme, chosen, "the picker is previewing another");
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+            },
+        );
+
+        assert_eq!(state.theme, chosen);
+        assert_eq!(form_of(&state).confirm(), Some(Confirm::Overwrite));
+    }
+
+    #[test]
+    fn confirming_re_emits_the_export_with_overwrite_set() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Err(ExportError::Exists),
+            },
+        );
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        let [Effect::Export { overwrite, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        assert!(overwrite);
+        assert!(state.overlay.is_none());
+    }
+
+    /// The overlay is `None` and the panel is live for the whole of an export,
+    /// so the user can step to another table and read it before `Exists` comes
+    /// back. What the confirmation re-emits is the export that was attempted,
+    /// not whatever the panel holds by then (final review I3).
+    #[test]
+    fn confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+        // Scope: Whole -> Fetched, so the rows themselves ride on the effect.
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        let [Effect::Export { job, source, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        let (job, attempted) = (*job, source.clone());
+
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "audit_log")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["action".to_owned()],
+                ..page_of(3)
+            },
+        );
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+            },
+        );
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        let [
+            Effect::Export {
+                source, overwrite, ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("one export effect");
+        };
+        assert!(overwrite);
+        assert_eq!(*source, attempted, "shop.orders' rows, not audit_log's");
+    }
+
+    /// The panel need not be showing a page at all by then — `source` would
+    /// hand back `None` and `Space` would be a silent no-op.
+    #[test]
+    fn confirming_still_exports_when_the_panel_has_moved_on_entirely() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        let job = *job;
+
+        state
+            .contents
+            .requested(QueryId::next(), Subject::Typed("SELECT 1".to_owned()));
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+            },
+        );
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        assert!(matches!(effects.as_slice(), [Effect::Export { .. }]));
+    }
+
+    #[test]
+    fn esc_from_the_confirmation_goes_back_to_the_form_intact() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Err(ExportError::Exists),
+            },
+        );
+
+        handle_key(&mut state, KeyPress::new(Key::Escape));
+
+        assert_eq!(form_of(&state).confirm(), None, "back to the form");
+        assert_eq!(
+            form_of(&state).stop(),
+            crate::export::Stop::Export,
+            "with every field as it was"
+        );
+    }
+
+    #[test]
+    fn ctrl_e_is_inert_while_an_export_is_already_running() {
+        let mut state = contents_showing(5);
+        started(&mut state);
+        state.overlay = None;
+
+        open_form(&mut state);
+
+        assert!(state.overlay.is_none());
     }
 }
