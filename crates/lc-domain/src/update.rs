@@ -3300,11 +3300,11 @@ mod tests {
 
     #[test]
     fn the_column_viewport_follows_the_cell_cursor() {
-        // Four columns of width 2 ("c0" and a one-digit value) with one space
-        // between: 2+1+2 = 5 fits two columns in a grid 8 wide once the
-        // merged bar+gutter block (bar plus a one-digit gutter) and the one
-        // spacing column ahead of the values are taken off.
-        let mut state = grid_of(4, 8);
+        // Four columns of width 2 ("c0" and a one-digit value) with two spaces
+        // between: 2+2+2 = 6 fits two columns in a grid 10 wide once the
+        // merged bar+gutter block (bar plus a one-digit gutter) and the
+        // spacing ahead of the values are taken off.
+        let mut state = grid_of(4, 10);
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
@@ -3335,7 +3335,7 @@ mod tests {
 
         update(
             &mut state,
-            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(8)),
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(10)),
         );
 
         assert_eq!(
@@ -3347,14 +3347,14 @@ mod tests {
 
     #[test]
     fn a_panel_that_grew_pulls_the_column_viewport_back() {
-        let mut state = grid_of(4, 8);
+        let mut state = grid_of(4, 10);
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
         assert_eq!(
             state.contents.column_scroll.first(),
             2,
-            "two of four fit at 8"
+            "two of four fit at 10"
         );
 
         update(

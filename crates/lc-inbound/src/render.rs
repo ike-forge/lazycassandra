@@ -567,6 +567,7 @@ mod tests {
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{SelectionMode, Subject, TableRef};
     use lc_domain::ddl::DdlTab;
+    use lc_domain::grid::{BAR, COLUMN_SPACING};
     use lc_domain::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
@@ -1486,16 +1487,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop       ││   id email                               │",
+            "│▌\u{f084} shop       ││    id  email                             │",
             "the header leaves the bar+gutter block blank"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││▌1 1  ada@example.com                     │"
+            "│              ││▌1  1   ada@example.com                   │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││ 2 2  bob@example.com                     │"
+            "│              ││ 2  2   bob@example.com                   │"
         );
     }
 
@@ -1511,7 +1512,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 2),
-            "│              ││▌1 8f14e45f-ceea-467a-9c2b…               │",
+            "│              ││▌1  8f14e45f-ceea-467a-9c2b…              │",
             "a silently clipped value looks like a shorter value"
         );
     }
@@ -1532,12 +1533,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop             ││   a                        b                                     │",
+            "│▌\u{f084} shop             ││    a                         b                                   │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│                    ││▌1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…              │",
+            "│                    ││▌1  8f14e45f-ceea-467a-9c2b…  8f14e45f-ceea-467a-9c2b…            │",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -1555,19 +1556,18 @@ mod tests {
         state.contents.column.go_to(2, 3);
 
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let header = |x: u16| buffer.cell((x, 1)).expect("inside the panel");
         let partition = Theme::default()
             .style(Token::PartitionKey)
             .fg
             .expect("the partition key spends a colour");
 
-        // Column 16 is the Contents panel's left border. The bar and the
-        // gutter share one two-wide block (17-18), then one spacing column
-        // (19), so the first heading starts at 20.
-        assert_eq!(header(20).fg, partition, "id is the partition key");
-        assert!(header(20).modifier.contains(Modifier::BOLD));
+        let id = drawn_column(area, 0);
+        assert_eq!(header(id).fg, partition, "id is the partition key");
+        assert!(header(id).modifier.contains(Modifier::BOLD));
         assert_eq!(
-            header(23).fg,
+            header(drawn_column(area, 1)).fg,
             Theme::default()
                 .style(Token::RegularColumn)
                 .fg
@@ -1595,15 +1595,15 @@ mod tests {
         state.apply_filter(Filtered::Contents, Filter::new("ali"));
 
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let style = |x: u16, y: u16| {
             let cell = buffer.cell((x, y)).expect("inside the panel");
             (cell.fg, cell.bg, cell.modifier)
         };
-        // Bar, then gutter, then `id` (one digit, the cursor's cell at column
-        // 0), then `email` (matched): 21 lands on the digit, 24 on `email`'s
-        // first character.
-        let unmatched_id = 21;
-        let matched_email = 24;
+        // `id` is two wide and holds the cursor's cell; `email`, the matched
+        // one, is the column after it.
+        let unmatched_id = drawn_column(area, 0);
+        let matched_email = drawn_column(area, 1);
 
         assert_ne!(
             style(matched_email, 2),
@@ -1642,6 +1642,7 @@ mod tests {
         state.contents.cursor.go_to(0, 2);
 
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
         let faint = Theme::default()
             .style(Token::Faint)
@@ -1652,17 +1653,17 @@ mod tests {
             .fg
             .expect("muted spends a colour");
 
-        assert_eq!(cell(24).fg, faint, "the null is faint");
+        assert_eq!(cell(drawn_column(area, 1)).fg, faint, "the null is faint");
         assert_eq!(
-            cell(18).fg,
+            cell(area.x + 1 + BAR).fg,
             muted,
             "the gutter digit shares the bar+gutter block's column and is muted, not faint"
         );
         assert_ne!(
-            cell(21).fg,
+            cell(drawn_column(area, 0)).fg,
             faint,
-            "the value beside it is not — column 21 is inside the id value's own \
-             column, not the gutter, and is not what this is about"
+            "the value beside it is not — that column is the id value's own, \
+             not the gutter, and is not what this is about"
         );
     }
 
@@ -1784,11 +1785,7 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
-        // The bar and the gutter share one widget column, two wide for a
-        // two-row page, then one column of spacing, then `id` (two wide), then
-        // one more spacing column: the second column's first cell is six in
-        // from the panel's inner edge.
-        let name = area.x + 1 + 6;
+        let name = drawn_column(area, 1);
 
         assert_eq!(bg(name, 2), selected, "every row of the column is lit");
         assert_eq!(bg(name, 3), selected, "including the last one");
@@ -1798,7 +1795,7 @@ mod tests {
             "and its heading, which ratatui leaves to us (design §4)"
         );
         assert_ne!(
-            bg(area.x + 1 + 3, 2),
+            bg(drawn_column(area, 0), 2),
             selected,
             "the row the cursor is on is not — column mode lights one column"
         );
@@ -1888,12 +1885,9 @@ mod tests {
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        // The bar+gutter block for a 4-row page is two columns wide, then one
-        // of spacing: the first data column starts four in from the inner
-        // edge, and each further column is three cells wide.
         let bg = |row: u16, column: u16| {
             buffer
-                .cell((area.x + 4 + column * 3, area.y + 2 + row))
+                .cell((drawn_column(area, column), area.y + 2 + row))
                 .expect("inside the panel")
                 .bg
         };
@@ -1927,18 +1921,17 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, x: u16| {
             buffer
-                .cell((area.x + x, area.y + 2 + row))
+                .cell((x, area.y + 2 + row))
                 .expect("inside the panel")
                 .bg
         };
 
-        // A two-wide value column starts four in from the inner edge, so the
-        // spacing before the second column is the sixth cell; the gutter's row
-        // number is the second.
-        for x in [2, 6] {
+        // The row number in the gutter and the blank ahead of the second
+        // column: neither is a cell of the row, and both are inside it.
+        for x in [area.x + 1 + BAR, drawn_column(area, 1) - 1] {
             assert_eq!(
                 bg(0, x),
-                bg(0, 4),
+                bg(0, drawn_column(area, 0)),
                 "the band runs the width of the row, gutter and spacing included"
             );
             assert_ne!(bg(3, x), bg(0, x), "and stops at the range's last row");
@@ -1958,7 +1951,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, column: u16| {
             buffer
-                .cell((area.x + 4 + column * 3, area.y + 2 + row))
+                .cell((drawn_column(area, column), area.y + 2 + row))
                 .expect("inside the panel")
                 .bg
         };
@@ -2000,7 +1993,7 @@ mod tests {
         // column 2 is not.
         let bg = |column: u16| {
             buffer
-                .cell((area.x + 4 + column * 3, area.y + 3))
+                .cell((drawn_column(area, column), area.y + 3))
                 .expect("inside the panel")
                 .bg
         };
@@ -2060,13 +2053,10 @@ mod tests {
             .style(Token::Crosshair)
             .bg
             .expect("the cell mode's crosshair spends a background");
-        // The bar and the gutter share one widget column, three wide for a
-        // twenty-row page, then a column of spacing: the only heading starts
-        // four in from the panel's inner edge.
         let heading = |buffer: &Buffer| {
             let area = block_area(buffer, "Table contents");
             buffer
-                .cell((area.x + 1 + 4, 1))
+                .cell((first_cell(area, 2), 1))
                 .expect("inside the panel")
                 .bg
         };
@@ -2099,7 +2089,9 @@ mod tests {
 
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
-        let heading = buffer.cell((area.x + 1 + 3, 1)).expect("inside the panel");
+        let heading = buffer
+            .cell((first_cell(area, 1), 1))
+            .expect("inside the panel");
 
         assert_eq!(
             heading.bg,
@@ -2137,7 +2129,9 @@ mod tests {
 
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
-        let null = buffer.cell((area.x + 1 + 6, 3)).expect("inside the panel");
+        let null = buffer
+            .cell((drawn_column(area, 1), 3))
+            .expect("inside the panel");
 
         assert_ne!(
             buffer.cell((area.x + 1, 3)).expect("inside the panel").bg,
@@ -2250,16 +2244,14 @@ mod tests {
                 .contains(Modifier::UNDERLINED)
         };
         // The top border, then the grid's header row, then the first row —
-        // the one the cursor is on, at its first column. That column is two
-        // wide and sits past the merged bar+gutter block (bar plus a
-        // one-digit gutter) and the one spacing column beside it.
-        let first = area.x + 4;
+        // the one the cursor is on, at its first column.
+        let first = drawn_column(area, 0);
         let selected = area.y + 2;
 
         assert!(underlined(first, selected), "the cell the cursor is on");
         assert!(underlined(first + 1, selected), "for its whole width");
         assert!(
-            !underlined(first + 3, selected),
+            !underlined(drawn_column(area, 1), selected),
             "the next column of the same row is not what a command would act on"
         );
         assert!(
@@ -2318,7 +2310,7 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
-        let first = area.x + 4;
+        let first = drawn_column(area, 0);
         let highlight = Theme::default()
             .style(Token::Crosshair)
             .bg
@@ -2329,8 +2321,10 @@ mod tests {
             "the selected cell keeps its highlight without focus"
         );
         assert!(
-            cell(first + 3).bg == highlight
-                && !cell(first + 3).modifier.contains(Modifier::UNDERLINED),
+            cell(drawn_column(area, 1)).bg == highlight
+                && !cell(drawn_column(area, 1))
+                    .modifier
+                    .contains(Modifier::UNDERLINED),
             "and the rest of its row keeps the row tint alone"
         );
     }
@@ -2382,11 +2376,24 @@ mod tests {
         state
     }
 
-    /// The x of the `index`th drawn column's first cell: the merged
-    /// bar+gutter block and its one spacing column, then two-wide columns
-    /// each followed by a spacing one.
+    /// The x of the first drawn column's first cell: the panel's own border,
+    /// the merged bar+gutter block, and the spacing that follows it.
+    /// `gutter` is what `lc_domain::grid::gutter` gives the page — the digits
+    /// of its last row number.
+    const fn first_cell(area: Rect, gutter: u16) -> u16 {
+        area.x + 1 + BAR + gutter + COLUMN_SPACING
+    }
+
+    /// The same for the `index`th drawn column, where every column before it
+    /// is `width` wide.
+    const fn nth_cell(area: Rect, gutter: u16, width: u16, index: u16) -> u16 {
+        first_cell(area, gutter) + index * (width + COLUMN_SPACING)
+    }
+
+    /// [`nth_cell`] for the fixtures `sized_page` builds: two-wide columns
+    /// over a page of fewer than ten rows.
     const fn drawn_column(area: Rect, index: u16) -> u16 {
-        area.x + 4 + index * 3
+        nth_cell(area, 1, 2, index)
     }
 
     #[test]
@@ -2415,25 +2422,25 @@ mod tests {
         };
 
         assert!(
-            heading.trim_start().starts_with("c3"),
+            heading.trim_start().starts_with("c4"),
             "the drawn window starts at the offset, got {heading:?}"
         );
         assert!(
             first.starts_with('▌'),
             "the bar is pinned and never scrolls off, got {first:?}"
         );
-        // c3 is drawn first, so the cursor's c5 is the third column drawn.
+        // c4 is drawn first, so the cursor's c5 is the second column drawn.
         assert!(
-            underlined(drawn_column(area, 2)) && underlined(drawn_column(area, 2) + 1),
+            underlined(drawn_column(area, 1)) && underlined(drawn_column(area, 1) + 1),
             "the cell cursor is on c5, counted from the drawn window rather \
              than from the page: {heading:?}"
         );
         assert!(
-            !underlined(drawn_column(area, 3)),
+            !underlined(drawn_column(area, 2)),
             "and not on the column beside it"
         );
         assert!(
-            !underlined(drawn_column(area, 5)),
+            !underlined(drawn_column(area, 4)),
             "nor on the last column drawn, where an index blind to the offset \
              would land"
         );
@@ -2447,14 +2454,14 @@ mod tests {
         let mut state = showing_column_path(&[8, 5]);
         assert_eq!(
             state.contents.column_scroll.first(),
-            3,
-            "the fixture must scroll to c3 or this test proves nothing about \
+            4,
+            "the fixture must scroll to c4 or this test proves nothing about \
              page indices"
         );
-        // Page column 6 — drawn third in this window (c3, c4, c5, c6, …). A
-        // check keyed on the drawn position rather than the page column would
-        // either band the wrong cell or, since no drawn position is 6, band
-        // nothing at all in a window this size.
+        // Page column 6 — drawn third in this window (c4, c5, c6, …). A check
+        // keyed on the drawn position rather than the page column would either
+        // band the wrong cell or, since no drawn position is 6, band nothing
+        // at all in a window this size.
         state.contents.columns = Selection::held(6, 6);
 
         let buffer = draw_state(40, 12, &state);
@@ -2470,7 +2477,7 @@ mod tests {
         };
 
         assert_ne!(
-            bg(3),
+            bg(2),
             bg(0),
             "page column 6 draws third in this scrolled window and must be \
              banded there, keyed on its page index rather than its position"
