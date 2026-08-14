@@ -7,7 +7,7 @@
 use crate::commands::CommandsPanel;
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
-use crate::export::{Confirm, ExportForm, Fetched, Format, Scope, Stop};
+use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
@@ -1200,6 +1200,11 @@ fn edit_path(form: &mut ExportForm, key: Key) {
 }
 
 /// Turns the form into the one effect that does the work.
+///
+/// A confirmation re-emits the source it is holding rather than reading the
+/// panel again: the panel is live for the whole of an export, and by the time
+/// `Exists` comes back the user may be standing on another table (final review
+/// I3).
 fn start_export(state: &mut State) -> Vec<Effect> {
     let Some(Overlay::Export(form)) = state.overlay.take() else {
         return Vec::new();
@@ -1210,14 +1215,25 @@ fn start_export(state: &mut State) -> Vec<Effect> {
     };
 
     let overwrite = form.confirm() == Some(Confirm::Overwrite);
-    let Some(source) = source(state, &form) else {
+    let attempt = match form.pending() {
+        Some(pending) => Some(pending.source().clone()),
+        None => source(state, &form),
+    };
+    let Some(source) = attempt else {
         state.overlay = Some(Overlay::Export(form));
         return Vec::new();
     };
     let destination = PathBuf::from(form.path().text());
     let (conn, job, format) = (connection.id, JobId::next(), form.format());
 
-    state.export = Some(ExportJob::started(job, destination.clone(), form));
+    // Cloned rather than borrowed: the effect carries it out of the domain and
+    // the job holds it against an `Exists` that has not come back yet.
+    state.export = Some(ExportJob::started(
+        job,
+        destination.clone(),
+        form,
+        source.clone(),
+    ));
     state.dirty = true;
 
     vec![Effect::Export {
@@ -1261,7 +1277,7 @@ fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::Char(' ') | Key::Enter => start_export(state),
         Key::Escape => {
             if let Some(Overlay::Export(form)) = &mut state.overlay {
-                form.set_confirm(None);
+                form.dismiss();
             }
             Vec::new()
         }
@@ -1301,8 +1317,8 @@ fn finish_export(state: &mut State, job: JobId, result: Result<usize, ExportErro
             },
         ),
         Err(ExportError::Exists) => {
-            let mut form = finished.form();
-            form.set_confirm(Some(Confirm::Overwrite));
+            let (mut form, source) = finished.into_parts();
+            form.ask(Pending::Overwrite(Box::new(source)));
             unwind_overlay(state);
             state.overlay = Some(Overlay::Export(form));
         }
@@ -7607,6 +7623,85 @@ mod tests {
         };
         assert!(overwrite);
         assert!(state.overlay.is_none());
+    }
+
+    /// The overlay is `None` and the panel is live for the whole of an export,
+    /// so the user can step to another table and read it before `Exists` comes
+    /// back. What the confirmation re-emits is the export that was attempted,
+    /// not whatever the panel holds by then (final review I3).
+    #[test]
+    fn confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+        // Scope: Whole -> Fetched, so the rows themselves ride on the effect.
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        let [Effect::Export { job, source, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        let (job, attempted) = (*job, source.clone());
+
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "audit_log")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["action".to_owned()],
+                ..page_of(3)
+            },
+        );
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+            },
+        );
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        let [
+            Effect::Export {
+                source, overwrite, ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("one export effect");
+        };
+        assert!(overwrite);
+        assert_eq!(*source, attempted, "shop.orders' rows, not audit_log's");
+    }
+
+    /// The panel need not be showing a page at all by then — `source` would
+    /// hand back `None` and `Space` would be a silent no-op.
+    #[test]
+    fn confirming_still_exports_when_the_panel_has_moved_on_entirely() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        let job = *job;
+
+        state
+            .contents
+            .requested(QueryId::next(), Subject::Typed("SELECT 1".to_owned()));
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+            },
+        );
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        assert!(matches!(effects.as_slice(), [Effect::Export { .. }]));
     }
 
     #[test]

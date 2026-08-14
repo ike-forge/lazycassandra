@@ -881,8 +881,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A printable key is text only on the path stop | `a_printable_key_types_itself_only_on_the_path_stop` |
 | `q` does not quit while the form is up | `q_does_not_quit_while_the_form_is_up` |
 | `Esc` closes the form and writes nothing | `esc_closes_the_form_and_writes_nothing` |
-| An existing destination reopens the form asking to overwrite | `an_existing_file_reopens_the_form_asking_to_overwrite` |
-| Confirming re-emits the export with `overwrite: true` | `confirming_re_emits_the_export_with_overwrite_set` |
+| An existing destination reopens the form asking to overwrite, putting back whatever it replaces | `an_existing_file_reopens_the_form_asking_to_overwrite`, `an_existing_file_landing_on_an_open_picker_puts_the_theme_back` |
+| Confirming re-emits the export with `overwrite: true`, and re-emits what was attempted rather than what the panel now holds | `confirming_re_emits_the_export_with_overwrite_set`, `confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds`, `confirming_still_exports_when_the_panel_has_moved_on_entirely` |
 | `Esc` from the confirmation goes back to the form intact | `esc_from_the_confirmation_goes_back_to_the_form_intact` |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
 | `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |

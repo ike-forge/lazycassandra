@@ -281,7 +281,12 @@ mod tests {
     #[test]
     fn the_confirmation_replaces_the_form() {
         let mut form = form(Fetched::Some(200));
-        form.set_confirm(Some(lc_domain::export::Confirm::Overwrite));
+        form.ask(lc_domain::export::Pending::Overwrite(Box::new(
+            lc_domain::Source::Fetched {
+                columns: Vec::new(),
+                rows: Vec::new(),
+            },
+        )));
 
         let drawn = text(&drawn(80, 24, form));
 

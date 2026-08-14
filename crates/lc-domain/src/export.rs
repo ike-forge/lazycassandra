@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::cell;
 use crate::contents::Subject;
 use crate::model::{CqlValue, Row};
-use crate::update::ROW_LIMIT;
+use crate::update::{ROW_LIMIT, Source};
 use crate::yank;
 
 /// What an export is written as.
@@ -371,18 +371,48 @@ impl Stop {
     }
 }
 
-/// What the form is asking before it will act.
+/// What the form is asking before it will act, as the form draws it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Confirm {
     /// The destination exists. `Esc` goes back to the form (design §7).
     Overwrite,
 }
 
+/// A question the form is asking, and the export answering it runs.
+///
+/// [`Confirm`] is this without its payload — what a renderer needs and all it
+/// needs. The payload is the point: the panel underneath is live for the whole
+/// of an export, so the rows and the statement the refused attempt was made
+/// with are carried here rather than read again from a Contents panel the user
+/// is free to move meanwhile (final review I3).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pending {
+    Overwrite(Box<Source>),
+}
+
+impl Pending {
+    /// The question, without what answering it would write.
+    #[must_use]
+    pub const fn confirm(&self) -> Confirm {
+        match self {
+            Self::Overwrite(_) => Confirm::Overwrite,
+        }
+    }
+
+    /// What answering it writes.
+    #[must_use]
+    pub fn source(&self) -> &Source {
+        match self {
+            Self::Overwrite(source) => source,
+        }
+    }
+}
+
 /// How many characters of a typed statement the title shows.
 const TITLE_LIMIT: usize = 100;
 
 /// The open export form.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExportForm {
     subject: Subject,
     fetched: Fetched,
@@ -390,7 +420,7 @@ pub struct ExportForm {
     scope: Scope,
     format: Format,
     path: Line,
-    confirm: Option<Confirm>,
+    pending: Option<Pending>,
 }
 
 impl ExportForm {
@@ -411,7 +441,7 @@ impl ExportForm {
             scope: Scope::default(),
             format,
             path: Line::new(path),
-            confirm: None,
+            pending: None,
         }
     }
 
@@ -449,13 +479,28 @@ impl ExportForm {
         self.fetched
     }
 
+    /// The question up in front of the form, if there is one.
     #[must_use]
-    pub const fn confirm(&self) -> Option<Confirm> {
-        self.confirm
+    pub fn confirm(&self) -> Option<Confirm> {
+        self.pending.as_ref().map(Pending::confirm)
     }
 
-    pub const fn set_confirm(&mut self, confirm: Option<Confirm>) {
-        self.confirm = confirm;
+    /// What answering that question would export.
+    #[must_use]
+    pub const fn pending(&self) -> Option<&Pending> {
+        self.pending.as_ref()
+    }
+
+    /// Puts a question in front of the form, holding what answering it runs.
+    pub fn ask(&mut self, pending: Pending) {
+        self.pending = Some(pending);
+    }
+
+    /// `Esc` from the confirmation: the question goes, and the export it was
+    /// holding goes with it — a source with nothing asking about it is what
+    /// this type exists to prevent (design §7).
+    pub fn dismiss(&mut self) {
+        self.pending = None;
     }
 
     /// Whether the fetched-rows scope can be chosen at all (design §3).

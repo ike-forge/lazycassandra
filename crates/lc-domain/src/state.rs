@@ -18,6 +18,7 @@ use crate::search::{Filter, Filtered, Prompt};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
 use crate::tree::TablesPanel;
+use crate::update::Source;
 use crate::view::hints::Binding;
 
 #[derive(Debug, Clone, Default)]
@@ -58,7 +59,7 @@ pub struct State {
 }
 
 /// A running export.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExportJob {
     id: JobId,
     rows: usize,
@@ -66,16 +67,27 @@ pub struct ExportJob {
     /// Kept so `ExportError::Exists` can put the form back exactly as it was
     /// (export design §7). Dropped on any other outcome.
     form: ExportForm,
+    /// Kept for the same round trip, and for the same reason the form is: what
+    /// the confirmation re-emits has to be what was attempted, not what the
+    /// panel happens to hold by the time the answer arrives — the panel stays
+    /// live for the whole of an export (final review I3).
+    source: Source,
 }
 
 impl ExportJob {
     #[must_use]
-    pub const fn started(id: JobId, destination: PathBuf, form: ExportForm) -> Self {
+    pub const fn started(
+        id: JobId,
+        destination: PathBuf,
+        form: ExportForm,
+        source: Source,
+    ) -> Self {
         Self {
             id,
             rows: 0,
             destination,
             form,
+            source,
         }
     }
 
@@ -102,11 +114,11 @@ impl ExportJob {
         }
     }
 
-    /// The form the job was started from, consumed so a caller cannot hold
-    /// both the job and the form it came from at once.
+    /// The form the job was started from and the source it was started with,
+    /// consumed so a caller cannot hold both the job and its parts at once.
     #[must_use]
-    pub fn form(self) -> ExportForm {
-        self.form
+    pub fn into_parts(self) -> (ExportForm, Source) {
+        (self.form, self.source)
     }
 }
 
@@ -195,7 +207,10 @@ pub struct Message {
 /// the hint bar row instead — but every other consequence of being an overlay
 /// still holds: it claims keys before focus is consulted, `esc` dismisses it,
 /// and a click spends itself on it rather than on whatever is underneath.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `PartialEq` and not `Eq`: the export form holds the rows a confirmation
+/// would write, and a `CqlValue` can be a float.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
     Message(Message),
     Commands(CommandsPanel),

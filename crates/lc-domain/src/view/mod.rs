@@ -591,6 +591,10 @@ mod tests {
                     Fetched::Some(200),
                     Path::new(""),
                 ),
+                crate::Source::Fetched {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                },
             )),
             ..State::default()
         };
