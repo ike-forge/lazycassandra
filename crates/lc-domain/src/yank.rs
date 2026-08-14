@@ -82,6 +82,9 @@ pub fn detail_row(row: &DetailRow) -> String {
             kind,
         } => vec![name.clone(), cql_type.clone(), part(*kind).to_owned()],
         DetailRow::Property { name, value } => vec![name.clone(), value.clone()],
+        // The map as the cluster reported it, not the summary drawn over it:
+        // what a yank is for is pasting back into CQL.
+        DetailRow::ClassProperty { name, raw, .. } => vec![name.clone(), raw.clone()],
     };
 
     line(&fields)
@@ -176,7 +179,7 @@ const fn part(kind: ColumnKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::model::{
-        ClusteringOrder, CqlValue, Keyspace, Page, PrimaryKey, Replication, Row, Table,
+        ClusteringOrder, CqlValue, Keyspace, Page, PrimaryKey, Replication, Row, Setting, Table,
         TableOptions,
     };
     use crate::tree::Node;
@@ -302,6 +305,26 @@ mod tests {
             "compaction,SizeTieredCompactionStrategy"
         );
         assert_eq!(detail_row(&identity), "Table,users");
+    }
+
+    #[test]
+    fn a_class_property_yanks_the_map_rather_than_the_summary_drawn_over_it() {
+        let row = DetailRow::ClassProperty {
+            name: "compression".to_owned(),
+            class: "LZ4Compressor".to_owned(),
+            settings: vec![Setting {
+                label: "chunk",
+                value: "16kb".to_owned(),
+            }],
+            raw: "{chunk_length_in_kb: 16, class: org.apache.cassandra.io.compress.LZ4Compressor}"
+                .to_owned(),
+        };
+
+        assert_eq!(
+            detail_row(&row),
+            "compression,\"{chunk_length_in_kb: 16, class: org.apache.cassandra.io.compress.LZ4Compressor}\"",
+            "a paste back into CQL needs the map, not the abbreviation"
+        );
     }
 
     #[test]

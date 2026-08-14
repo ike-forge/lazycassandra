@@ -7,7 +7,9 @@
 //! (docs/superpowers/specs/2026-08-09-table-metadata-design.md §1).
 
 use crate::ddl::DdlTab;
-use crate::model::{ClusteringOrder, Column, Keyspace, Replication, Table};
+use crate::model::{
+    ClassKind, ClassOption, ClusteringOrder, Column, Keyspace, Replication, Setting, Table,
+};
 use crate::search::Filter;
 use crate::state::State;
 use crate::style::Token;
@@ -118,6 +120,19 @@ pub enum DetailRow {
     },
     /// A property: name on its own line, value indented beneath it.
     Property { name: String, value: String },
+    /// A property whose value named a class this build knows in full, drawn as
+    /// that class and the settings it carried rather than as the flattened map
+    /// the cluster reported.
+    ///
+    /// The map is kept alongside as `raw`: it is what a yank owes the
+    /// clipboard and what a filter has to match, neither of which may be
+    /// narrowed to the abbreviation the panel happens to draw.
+    ClassProperty {
+        name: String,
+        class: String,
+        settings: Vec<Setting>,
+        raw: String,
+    },
     /// What the panel is describing: a fixed label and the name it carries,
     /// drawn in the colour and behind the icon that name wears in the Tables
     /// tree (docs/superpowers/specs/2026-08-12-ddl-identity-rows-design.md §2).
@@ -296,12 +311,35 @@ impl DetailRow {
                 filter.matches(name) || filter.matches(cql_type)
             }
             Self::Property { name, value } => filter.matches(name) || filter.matches(value),
+            // Against the map as reported, not against the abbreviation: a
+            // term the panel no longer draws is still a term the option holds.
+            Self::ClassProperty { name, raw, .. } => filter.matches(name) || filter.matches(raw),
             // The label is not matched, for the reason a section heading is
             // not: `Keyspace` and `Table` are the same two words on every
             // table, so a filter over them narrows nothing.
             Self::Identity { name, .. } => filter.matches(name),
         }
     }
+}
+
+/// One table option, read as a class where its name says it carries one and
+/// this build recognises the value in full, and left as the reported text
+/// everywhere else.
+fn option_row((name, value): (&str, &str)) -> DetailRow {
+    let parsed = ClassKind::of(name).and_then(|kind| ClassOption::parse(kind, value));
+
+    parsed.map_or_else(
+        || DetailRow::Property {
+            name: name.to_owned(),
+            value: value.to_owned(),
+        },
+        |option| DetailRow::ClassProperty {
+            name: name.to_owned(),
+            class: option.class,
+            settings: option.settings,
+            raw: value.to_owned(),
+        },
+    )
 }
 
 /// The keyspace a panel is about, and the table when one is selected.
@@ -358,14 +396,7 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
         heading: Some(Heading::new("Options", Token::Section)),
         group: Group::Settings,
         token: None,
-        rows: table
-            .options
-            .in_display_order()
-            .map(|(name, value)| DetailRow::Property {
-                name: name.to_owned(),
-                value: value.to_owned(),
-            })
-            .collect(),
+        rows: table.options.in_display_order().map(option_row).collect(),
     };
 
     Details {
@@ -661,7 +692,9 @@ mod tests {
                     DetailRow::KeyColumn { name, .. } | DetailRow::Column { name, .. } => {
                         Some(name.clone())
                     }
-                    DetailRow::Property { .. } | DetailRow::Identity { .. } => None,
+                    DetailRow::Property { .. }
+                    | DetailRow::ClassProperty { .. }
+                    | DetailRow::Identity { .. } => None,
                 })
                 .collect()
         };
@@ -874,6 +907,87 @@ mod tests {
                 "{heading} keeps the colour of the key it names"
             );
         }
+    }
+
+    /// The fixture table carrying `options` instead of its own.
+    fn configured(pairs: &[(&str, &str)]) -> Table {
+        Table {
+            options: options(pairs),
+            ..orders()
+        }
+    }
+
+    #[test]
+    fn a_class_valued_option_is_projected_as_its_class_and_settings() {
+        let raw = "{class: org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy, \
+                   max_threshold: 32, min_threshold: 4}";
+        let details = details(&browsing(configured(&[("compaction", raw)])));
+
+        assert_eq!(
+            section(&details, "Options").rows,
+            [DetailRow::ClassProperty {
+                name: "compaction".to_owned(),
+                class: "SizeTieredCompactionStrategy".to_owned(),
+                settings: vec![
+                    Setting {
+                        label: "max",
+                        value: "32".to_owned(),
+                    },
+                    Setting {
+                        label: "min",
+                        value: "4".to_owned(),
+                    },
+                ],
+                raw: raw.to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_class_valued_option_this_build_cannot_read_stays_the_map_it_arrived_as() {
+        let raw = "{class: com.example.Whatever, knobs: 11}";
+        let details = details(&browsing(configured(&[("compaction", raw)])));
+
+        assert_eq!(
+            section(&details, "Options").rows,
+            [DetailRow::Property {
+                name: "compaction".to_owned(),
+                value: raw.to_owned(),
+            }],
+            "an unreadable value is shown whole rather than half-read"
+        );
+    }
+
+    #[test]
+    fn an_option_that_carries_no_class_is_never_read_as_one() {
+        let details = details(&browsing(configured(&[(
+            "comment",
+            "{class: SnappyCompressor}",
+        )])));
+
+        assert_eq!(
+            section(&details, "Options").rows,
+            [DetailRow::Property {
+                name: "comment".to_owned(),
+                value: "{class: SnappyCompressor}".to_owned(),
+            }],
+            "only compaction and compression name a class"
+        );
+    }
+
+    #[test]
+    fn a_class_row_matches_a_term_the_summary_no_longer_draws() {
+        let mut state = browsing(configured(&[(
+            "compression",
+            "{chunk_length_in_kb: 16, class: org.apache.cassandra.io.compress.LZ4Compressor}",
+        )]));
+        state.apply_filter(Filtered::Ddl, Filter::new("io.compress"));
+
+        assert_eq!(
+            section(&details(&state), "Options").rows.len(),
+            1,
+            "the package is gone from the panel but not from the option"
+        );
     }
 
     #[test]

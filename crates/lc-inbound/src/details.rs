@@ -22,7 +22,7 @@
 //! never drawn, and there is nothing here to guard.
 
 use lc_domain::grid::BAR;
-use lc_domain::model::ClusteringOrder;
+use lc_domain::model::{ClusteringOrder, Setting};
 use lc_domain::state::{Range, Span};
 use lc_domain::style::Token;
 use lc_domain::view::{ColumnKind, DetailRow, Details, Group, IdentityKind};
@@ -41,6 +41,8 @@ const INDENT: usize = 2;
 /// than a property's value so the two shapes stay distinguishable.
 const TYPE_INDENT: usize = 4;
 const ELLIPSIS: char = '…';
+/// What separates one setting of a class-valued property from the next.
+const BULLET: &str = "· ";
 
 /// A body's lines, and where the selected row landed among them.
 pub(crate) struct Laid {
@@ -239,6 +241,12 @@ fn row_lines(row: &DetailRow, width: usize, style: Style, theme: Theme) -> Vec<L
             kind,
         } => column_lines(name, cql_type, *kind, width, theme),
         DetailRow::Property { name, value } => property_lines(name, value, width, style, theme),
+        DetailRow::ClassProperty {
+            name,
+            class,
+            settings,
+            ..
+        } => class_property_lines(name, class, settings, width, style, theme),
         DetailRow::Identity { kind, name } => identity_lines(*kind, name, width, theme),
     }
 }
@@ -379,6 +387,59 @@ fn property_lines(
         .collect()
 }
 
+/// A class-valued property: the class where a plain property puts its value,
+/// and the settings behind it in the colour that keeps the class the thing the
+/// eye lands on.
+fn class_property_lines(
+    name: &str,
+    class: &str,
+    settings: &[Setting],
+    width: usize,
+    style: Style,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let label = theme.style(Token::PropertyName);
+    let faint = theme.style(Token::Faint);
+    let tail = settings
+        .iter()
+        .map(|setting| format!("{BULLET}{} {}", setting.label, setting.value))
+        .collect::<Vec<String>>()
+        .join(" ");
+
+    let value = format!("{class}{}", tail_at(&tail));
+
+    if let Some(gap) = gap(name, &value, width) {
+        return vec![Line::from(vec![
+            TextSpan::styled(name.to_owned(), label),
+            TextSpan::styled(format!("{}{class}", " ".repeat(gap)), style),
+            TextSpan::styled(tail_at(&tail), faint),
+        ])];
+    }
+
+    // The class and the settings wrap as two blocks rather than as one run of
+    // text: a wrapped line carries one style, and splitting the class across
+    // lines is already the worst this panel does to a name it promises not to
+    // abbreviate — colouring half of it faint on top of that would be worse.
+    std::iter::once(Line::from(TextSpan::styled(truncate(name, width), label)))
+        .chain(styled(wrap(class, width, INDENT), style))
+        .chain(styled(wrap(&tail, width, INDENT), faint))
+        .collect()
+}
+
+fn styled(texts: Vec<String>, style: Style) -> impl Iterator<Item = Line<'static>> {
+    texts.into_iter().map(move |text| Line::styled(text, style))
+}
+
+/// The settings run as it follows the class on a shared line: with the space
+/// the class does not carry itself, and empty where there are no settings.
+fn tail_at(tail: &str) -> String {
+    if tail.is_empty() {
+        String::new()
+    } else {
+        format!(" {tail}")
+    }
+}
+
 /// The spaces that put `right` at the margin of a `width`-column line already
 /// holding `left`, or `None` when the two cannot share a line with a gap
 /// between them.
@@ -465,6 +526,65 @@ mod tests {
             Style::new(),
             Theme::default(),
         ))
+    }
+
+    fn class_property(
+        name: &str,
+        class: &str,
+        settings: &[(&'static str, &str)],
+        width: usize,
+    ) -> Vec<String> {
+        let settings: Vec<Setting> = settings
+            .iter()
+            .map(|(label, value)| Setting {
+                label,
+                value: (*value).to_owned(),
+            })
+            .collect();
+
+        texts(&class_property_lines(
+            name,
+            class,
+            &settings,
+            width,
+            Style::new(),
+            Theme::default(),
+        ))
+    }
+
+    #[test]
+    fn a_class_property_puts_its_class_and_settings_at_the_right_margin() {
+        assert_eq!(
+            class_property("compression", "LZ4Compressor", &[("chunk", "16kb")], 40),
+            ["compression   LZ4Compressor · chunk 16kb"],
+            "the whole value is pushed right, the way a plain property's is"
+        );
+    }
+
+    #[test]
+    fn a_class_property_too_wide_for_one_line_drops_its_settings_beneath_the_class() {
+        assert_eq!(
+            class_property(
+                "compaction",
+                "SizeTieredCompactionStrategy",
+                &[("max", "32"), ("min", "4")],
+                28,
+            ),
+            [
+                "compaction",
+                "  SizeTieredCompactionStrate",
+                "  gy",
+                "  · max 32 · min 4",
+            ],
+        );
+    }
+
+    #[test]
+    fn a_class_with_no_settings_draws_the_class_alone() {
+        assert_eq!(
+            class_property("compression", "SnappyCompressor", &[], 30),
+            ["compression   SnappyCompressor"],
+        );
     }
 
     #[test]
