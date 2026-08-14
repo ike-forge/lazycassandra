@@ -8,6 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use unicode_width::UnicodeWidthChar as _;
 
 use crate::theme::Theme;
 
@@ -156,18 +157,43 @@ fn path(visible: &str, focused: bool, theme: Theme) -> TextLine<'static> {
 /// filename, which on any real working directory is longer than the 54 columns
 /// inside the block, and the field used to draw the head of it with the caret
 /// pinned to the right edge and the filename off screen (final review I5).
+///
+/// `first` is a character index, as the cursor is, but it is chosen by
+/// accumulated display width rather than by subtracting a character count:
+/// counting characters made a 40-character CJK path an 80-column line, which
+/// `Paragraph` then cut at the field's 54 columns, putting the end of the path
+/// off screen and the caret back on the right edge — the very failure the
+/// window exists to prevent (re-review of final review I5).
 fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
     let width = width.max(1);
-    let len = path.chars().count();
-    // One past the last character is a caret position too, so the window that
-    // holds the end of a full line stops one character short of `width`.
-    let furthest = (len + 1).saturating_sub(width);
-    let first = cursor.saturating_sub(width - 1).min(furthest);
+    let characters: Vec<char> = path.chars().collect();
+    let cursor = cursor.min(characters.len());
 
-    (
-        path.chars().skip(first).take(width).collect(),
-        cursor - first,
-    )
+    // One past the last character is a caret position too, and costs the one
+    // column the caret is drawn in.
+    let mut used = characters.get(cursor).and_then(|c| c.width()).unwrap_or(1);
+    let mut first = cursor;
+    for (index, character) in characters[..cursor].iter().enumerate().rev() {
+        let next = used + character.width().unwrap_or(0);
+        if next > width {
+            break;
+        }
+        used = next;
+        first = index;
+    }
+
+    let mut visible = String::new();
+    let mut drawn = 0;
+    for character in &characters[first..] {
+        let next = drawn + character.width().unwrap_or(0);
+        if next > width {
+            break;
+        }
+        visible.push(*character);
+        drawn = next;
+    }
+
+    (visible, cursor - first)
 }
 
 fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'_> {
@@ -232,6 +258,10 @@ mod tests {
     use crate::theme::Theme;
 
     fn drawn(width: u16, height: u16, form: ExportForm) -> Buffer {
+        with_caret(width, height, form).0
+    }
+
+    fn with_caret(width: u16, height: u16, form: ExportForm) -> (Buffer, (u16, u16)) {
         let state = State {
             overlay: Some(Overlay::Export(form)),
             ..State::default()
@@ -244,7 +274,47 @@ mod tests {
             })
             .expect("TestBackend always draws");
 
-        terminal.backend().buffer().clone()
+        let backend = terminal.backend();
+        let position = backend.cursor_position();
+
+        (backend.buffer().clone(), (position.x, position.y))
+    }
+
+    /// The form with `path` typed into its path field, `left` characters back
+    /// from the end, and `Tab` on the field so the caret is drawn.
+    fn on_path(path: &str, left: usize) -> ExportForm {
+        let mut form = form(Fetched::Some(200));
+        form.tab();
+        form.tab();
+
+        let line = form.path_mut();
+        while line.cursor() > 0 {
+            line.delete_back();
+        }
+        for character in path.chars() {
+            line.insert(character);
+        }
+        for _ in 0..left {
+            line.left();
+        }
+
+        form
+    }
+
+    /// The row's text, without the blank cell ratatui parks behind every
+    /// double-width symbol.
+    fn row(buffer: &Buffer, y: u16) -> String {
+        let mut text = String::new();
+        let mut x = 0;
+
+        while let Some(cell) = buffer.cell((x, y)) {
+            let symbol = cell.symbol();
+            text.push_str(symbol);
+            x += u16::try_from(unicode_width::UnicodeWidthStr::width(symbol).max(1))
+                .unwrap_or(u16::MAX);
+        }
+
+        text
     }
 
     fn text(buffer: &Buffer) -> String {
@@ -345,6 +415,61 @@ mod tests {
             drawn.contains("shop.orders.csv"),
             "the cursor opens on the filename, so the filename is what shows"
         );
+    }
+
+    /// Counting characters made this path 80 columns of window for a 54-column
+    /// field: `Paragraph` cut it at 54, hiding the end of the path, and the
+    /// caret snapped to the right edge (re-review of final review I5).
+    #[test]
+    fn a_double_width_path_is_drawn_from_its_tail_with_the_caret_on_the_cursor() {
+        let path = format!("{}終", "東".repeat(39));
+        let (buffer, caret) = with_caret(80, 24, on_path(&path, 0));
+        let y = (0..buffer.area.height)
+            .find(|y| row(&buffer, *y).contains('終'))
+            .expect("the path field is drawn");
+        let field = row(&buffer, y);
+        let left = (0..buffer.area.width)
+            .find(|x| {
+                buffer
+                    .cell((*x, y))
+                    .is_some_and(|cell| cell.symbol() == "東")
+            })
+            .expect("the window is double-width text");
+
+        assert!(field.contains(&format!("{}終", "東".repeat(25))));
+        assert!(
+            !field.contains(&"東".repeat(26)),
+            "26 double-width characters is the most 54 columns hold"
+        );
+        assert_eq!(caret, (left + 52, y), "the true column, not the right edge");
+    }
+
+    #[test]
+    fn a_mixed_width_path_windows_by_column_around_a_cursor_in_the_middle() {
+        let path = format!("/home/ike/{}東京/report.csv", "deep/".repeat(10));
+        let (buffer, caret) = with_caret(80, 24, on_path(&path, 12));
+        let y = (0..buffer.area.height)
+            .find(|y| row(&buffer, *y).contains("東京"))
+            .expect("the path field is drawn");
+        let field = row(&buffer, y);
+        let left = (0..buffer.area.width)
+            .find(|x| {
+                buffer
+                    .cell((*x, y))
+                    .is_some_and(|cell| cell.symbol() == "d")
+            })
+            .expect("the window opens on the repeated segment");
+
+        assert!(field.contains(&format!("{}東京", "deep/".repeat(10))));
+        assert!(!field.contains("/home/ike/"), "the head is scrolled off");
+        assert!(!field.contains("report.csv"), "so is the tail");
+        assert_eq!(caret, (left + 52, y));
+    }
+
+    #[test]
+    fn a_character_wider_than_the_whole_field_still_leaves_the_window() {
+        assert_eq!(super::window("東", 1, 1), (String::new(), 0));
+        assert_eq!(super::window("東b", 0, 1), (String::new(), 0));
     }
 
     #[test]
