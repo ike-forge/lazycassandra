@@ -14,17 +14,20 @@ const SEPARATOR: &str = " | ";
 
 /// The bar as it fits in `width`.
 ///
-/// Hints are dropped whole rather than clipped, lowest value first: panel
-/// hints right to left, then `tab panel`, then the first panel hint with the
-/// separator. `q quit` goes last, because a user who can read one hint needs
-/// the way out (design §6) — except in Queries, whose global tail has no
-/// `q quit` to keep, `q` being text there rather than a binding.
+/// A running export's count is the first thing given up, dropped whole
+/// before any hint is: it says what is already happening, not what a key
+/// would do, and a bar with no room to spare is not the place to say it.
+/// Once it is gone the rest keeps its own order — panel hints right to left,
+/// then `tab panel`, then the first panel hint with the separator. `q quit`
+/// goes last, because a user who can read one hint needs the way out
+/// (design §6) — except in Queries, whose global tail has no `q quit` to
+/// keep, `q` being text there rather than a binding.
 pub(crate) fn line(bar: &HintBar, width: u16, theme: Theme) -> Line<'static> {
     let panel: Vec<Segment> = bar.panel.iter().map(Segment::new).collect();
     let global: Vec<Segment> = bar.global.iter().map(Segment::new).collect();
-    let (kept, from) = fit(&panel, &global, usize::from(width));
+    let (kept, from, export) = fit(&panel, &global, bar.export.as_deref(), usize::from(width));
 
-    Line::from(spans(&panel[..kept], &global[from..], theme))
+    Line::from(spans(&panel[..kept], &global[from..], export, theme))
 }
 
 struct Segment {
@@ -66,28 +69,45 @@ impl Segment {
     }
 }
 
-fn fit(panel: &[Segment], global: &[Segment], width: usize) -> (usize, usize) {
+fn fit<'a>(
+    panel: &[Segment],
+    global: &[Segment],
+    export: Option<&'a str>,
+    width: usize,
+) -> (usize, usize, Option<&'a str>) {
     let mut kept = panel.len();
     let mut from = 0;
+    let export = if export.is_some() && composed(panel, kept, global, from, export) > width {
+        None
+    } else {
+        export
+    };
 
-    while kept > 1 && composed(panel, kept, global, from) > width {
+    while kept > 1 && composed(panel, kept, global, from, export) > width {
         kept -= 1;
     }
-    while composed(panel, kept, global, from) > width && from + 1 < global.len() {
+    while composed(panel, kept, global, from, export) > width && from + 1 < global.len() {
         from += 1;
     }
-    if composed(panel, kept, global, from) > width {
+    if composed(panel, kept, global, from, export) > width {
         kept = 0;
     }
-    if composed(panel, kept, global, from) > width {
+    if composed(panel, kept, global, from, export) > width {
         from = global.len();
     }
 
-    (kept, from)
+    (kept, from, export)
 }
 
-fn composed(panel: &[Segment], kept: usize, global: &[Segment], from: usize) -> usize {
-    if kept == 0 && from >= global.len() {
+fn composed(
+    panel: &[Segment],
+    kept: usize,
+    global: &[Segment],
+    from: usize,
+    export: Option<&str>,
+) -> usize {
+    let has_hints = kept > 0 || from < global.len();
+    if !has_hints && export.is_none() {
         return 0;
     }
 
@@ -96,8 +116,17 @@ fn composed(panel: &[Segment], kept: usize, global: &[Segment], from: usize) -> 
     } else {
         0
     };
+    let mut total =
+        INDENT.chars().count() + joined(&panel[..kept]) + separator + joined(&global[from..]);
 
-    INDENT.chars().count() + joined(&panel[..kept]) + separator + joined(&global[from..])
+    if let Some(text) = export {
+        if has_hints {
+            total += SEPARATOR.chars().count();
+        }
+        total += text.chars().count();
+    }
+
+    total
 }
 
 fn joined(segments: &[Segment]) -> usize {
@@ -105,8 +134,13 @@ fn joined(segments: &[Segment]) -> usize {
         + SEPARATOR.chars().count() * segments.len().saturating_sub(1)
 }
 
-fn spans(panel: &[Segment], global: &[Segment], theme: Theme) -> Vec<Span<'static>> {
-    if panel.is_empty() && global.is_empty() {
+fn spans(
+    panel: &[Segment],
+    global: &[Segment],
+    export: Option<&str>,
+    theme: Theme,
+) -> Vec<Span<'static>> {
+    if panel.is_empty() && global.is_empty() && export.is_none() {
         return Vec::new();
     }
 
@@ -116,6 +150,12 @@ fn spans(panel: &[Segment], global: &[Segment], theme: Theme) -> Vec<Span<'stati
         spans.push(Span::styled(SEPARATOR, theme.style(Token::Faint)));
     }
     push_joined(&mut spans, global, theme);
+    if let Some(text) = export {
+        if !panel.is_empty() || !global.is_empty() {
+            spans.push(Span::styled(SEPARATOR, theme.style(Token::Faint)));
+        }
+        spans.push(Span::styled(text.to_owned(), theme.style(Token::Muted)));
+    }
     spans
 }
 
