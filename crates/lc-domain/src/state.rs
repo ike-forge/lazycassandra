@@ -652,10 +652,14 @@ impl Selection {
 
         self.anchor = match self.anchor {
             Some(anchor) if self.extending => Some(anchor.min(last)),
-            // Frozen, the anchor lives inside a group; when the group holding
-            // it goes, so does it (design §3).
-            Some(anchor) if self.groups.contains(anchor) => Some(anchor),
-            _ => None,
+            // Frozen, the anchor is pulled back the same way the group is;
+            // only a group dropped outright takes its anchor with it
+            // (design §2).
+            Some(anchor) => {
+                let anchor = anchor.min(last);
+                self.groups.contains(anchor).then_some(anchor)
+            }
+            None => None,
         };
     }
 }
@@ -1709,6 +1713,21 @@ mod tests {
 
         assert!(selection.ranges(0).is_empty());
         assert_eq!(selection.anchor(), None);
+    }
+
+    #[test]
+    fn clamping_a_frozen_group_pulls_its_surviving_anchor_back_too() {
+        // The group and the anchor are pulled back the same way; only a
+        // group that is dropped outright takes its anchor with it
+        // (multi-group selection design §2).
+        let mut selection = Selection::default();
+        selection.start(9);
+        selection.stop(2);
+
+        selection.clamp_to(5);
+
+        assert_eq!(selection.ranges(0), Ranges::of(Range::new(2, 4)));
+        assert_eq!(selection.anchor(), Some(4));
     }
 
     #[test]
