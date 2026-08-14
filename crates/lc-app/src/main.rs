@@ -14,11 +14,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use input::Incoming;
 use lc_domain::model::ConnId;
-use lc_domain::ports::Cluster;
+use lc_domain::ports::{Cluster, ConfigSource};
 use lc_domain::posture::Posture;
 use lc_domain::state::Geometry;
 use lc_domain::{Effect, Msg, State, update, view_model};
-use lc_inbound::{FrameMap, Rendered, Theme};
+use lc_inbound::{FrameMap, Rendered, Themes};
 use lc_outbound::cassandra::CassandraCluster;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
@@ -84,11 +84,12 @@ fn contact_point() -> String {
 }
 
 /// Draws a frame and reports what it turned out to be.
-fn draw(terminal: &mut DefaultTerminal, state: &State) -> Result<Rendered> {
+fn draw(terminal: &mut DefaultTerminal, state: &State, themes: &Themes) -> Result<Rendered> {
     let mut rendered = Rendered::default();
     let view = view_model(state);
+    let theme = themes.get(&view.theme);
 
-    terminal.draw(|frame| rendered = lc_inbound::render(frame, &view, Theme::of(&view.theme)))?;
+    terminal.draw(|frame| rendered = lc_inbound::render(frame, &view, theme))?;
 
     Ok(rendered)
 }
@@ -133,14 +134,18 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
         Posture::ReadOnly,
     ));
 
-    let (mut state, startup) = lc_domain::init(conn);
+    let source = lc_outbound::config::FileConfigSource::from_env();
+    let (config, diagnostics) = source.load().await;
+    let themes = Themes::new(&config.themes, config.background);
+
+    let (mut state, startup) = lc_domain::init(conn, config, diagnostics);
     let mut measured: Option<Geometry> = None;
 
     for effect in &startup {
         effects::run(&tx, &cluster, effect);
     }
 
-    let rendered = draw(&mut terminal, &state)?;
+    let rendered = draw(&mut terminal, &state, &themes)?;
     let mut map = rendered.map;
     report(&tx, &mut measured, rendered.geometry);
     state.dirty = false;
@@ -169,7 +174,7 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
         }
 
         if state.dirty {
-            let rendered = draw(&mut terminal, &state)?;
+            let rendered = draw(&mut terminal, &state, &themes)?;
             map = rendered.map;
             report(&tx, &mut measured, rendered.geometry);
             state.dirty = false;
