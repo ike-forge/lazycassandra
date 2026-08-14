@@ -196,6 +196,10 @@ impl Theme {
             Token::SelectedCell => Style::new()
                 .add_modifier(Modifier::REVERSED)
                 .add_modifier(Modifier::UNDERLINED),
+            // No underline beside the reverse: the cursor cell spends that one
+            // to read apart from the row it sits on, and a flash covering
+            // whole rows would leave it nothing to spend.
+            Token::Flash => Style::new().add_modifier(Modifier::REVERSED),
             Token::Keyword => fg(palette.keyword),
             Token::Reference => fg(palette.reference),
             Token::Literal => fg(palette.literal),
@@ -556,7 +560,7 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 30] = [
+    pub(super) const EVERY_TOKEN: [Token; 31] = [
         Token::PartitionKey,
         Token::ClusteringKey,
         Token::StaticColumn,
@@ -579,6 +583,7 @@ pub(crate) mod tests {
         Token::SelectedCell,
         Token::Crosshair,
         Token::Ranged,
+        Token::Flash,
         Token::Shortcut,
         Token::HintKey,
         Token::HintAction,

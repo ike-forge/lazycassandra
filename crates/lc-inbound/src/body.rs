@@ -547,19 +547,13 @@ pub(crate) struct Marked {
 }
 
 impl Marked {
-    /// A yank's afterglow takes the loudest of the three bands, so a copy
-    /// reads as a flash against the range that was standing there a frame ago.
-    /// Which token that is holds in every palette rather than by choice of
-    /// colour:
-    /// `the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row`
-    /// pins `Selected` above `Ranged` in each of them, dark and light
-    /// (visual mode design §6.1).
+    /// A yank's afterglow inverts what it took rather than taking a fourth
+    /// colour. The three bands are one ramp apart, so the loudest of them —
+    /// `Selected` — read as barely a change against the `Ranged` band standing
+    /// there a frame earlier; swapping ground for text cannot be mistaken for
+    /// any of the three, in any palette (visual mode design §6.1).
     const fn band(flash: bool) -> Token {
-        if flash {
-            Token::Selected
-        } else {
-            Token::Ranged
-        }
+        if flash { Token::Flash } else { Token::Ranged }
     }
 
     const fn new(range: Option<Range>, flash: bool) -> Self {

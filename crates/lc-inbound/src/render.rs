@@ -1805,11 +1805,12 @@ mod tests {
     }
 
     /// A yank spends the selection that named the rows, so the flash is the
-    /// only thing left saying what was copied — and it has to be louder than
-    /// the band that was standing there a frame ago, or the copy reads as the
-    /// selection simply vanishing (visual mode design §6.1).
+    /// only thing left saying what was copied — and the three bands are one
+    /// ramp apart, so no colour among them reads as a change against the band
+    /// standing there a frame ago. The afterglow inverts instead (visual mode
+    /// design §6.1).
     #[test]
-    fn a_yanks_afterglow_is_louder_than_the_range_it_replaces() {
+    fn a_yanks_afterglow_inverts_the_rows_it_took() {
         let mut ranged = showing(sized_page(2, 4));
         ranged.contents.mode = SelectionMode::Row;
         ranged.contents.cursor.go_to(3, 4);
@@ -1820,26 +1821,34 @@ mod tests {
         flashed.contents.cursor.go_to(3, 4);
         flashed.flash = Some(Flash::lit(Panel::Contents, Some(Range::new(0, 1)), None));
 
-        let bg = |state: &State, row: u16| {
+        let cell = |state: &State, row: u16| {
             let buffer = draw_state(60, 12, state);
             let area = block_area(&buffer, "Table contents");
             buffer
                 .cell((area.x + 4, area.y + 2 + row))
                 .expect("inside the panel")
-                .bg
+                .clone()
         };
-        let palette = Theme::default().palette();
+        let reversed =
+            |state: &State, row: u16| cell(state, row).modifier.contains(Modifier::REVERSED);
 
-        assert_eq!(bg(&ranged, 0), palette.ranged);
-        assert_eq!(
-            bg(&flashed, 0),
-            palette.selection_bg,
-            "the afterglow takes the loudest band, which is the cursor row's"
+        assert_eq!(cell(&ranged, 0).bg, Theme::default().palette().ranged);
+        assert!(
+            !reversed(&ranged, 0),
+            "a held range is banded, not inverted"
+        );
+        assert!(
+            reversed(&flashed, 0),
+            "and the afterglow inverts what it took"
+        );
+        assert!(
+            !reversed(&flashed, 2),
+            "leaving the rows the yank did not take alone"
         );
         assert_eq!(
-            bg(&flashed, 2),
-            bg(&ranged, 2),
-            "and it lights only the rows the yank took"
+            cell(&flashed, 2).bg,
+            cell(&ranged, 2).bg,
+            "in colour as well as in modifier"
         );
     }
 
@@ -1850,26 +1859,22 @@ mod tests {
         state.flash = Some(Flash::lit(Panel::Tables, Some(Range::new(0, 0)), None));
 
         let buffer = draw_state(60, 12, &state);
-        let palette = Theme::default().palette();
         let tree = block_area(&buffer, "Tables");
         let grid = block_area(&buffer, "Table contents");
+        let inverted = |x: u16, y: u16| {
+            buffer
+                .cell((x, y))
+                .expect("inside the panel")
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
 
-        assert_eq!(
-            buffer
-                .cell((tree.x + 2, tree.y + 1))
-                .expect("inside the panel")
-                .bg,
-            palette.selection_bg
-        );
-        // Row 2, not the grid's own row 0: that one carries the cursor band in
-        // this palette's loudest colour whether or not anything flashed, and
-        // would pass this assertion for the wrong reason.
-        assert_ne!(
-            buffer
-                .cell((grid.x + 4, grid.y + 4))
-                .expect("inside the panel")
-                .bg,
-            palette.selection_bg,
+        assert!(inverted(tree.x + 2, tree.y + 1));
+        // Row 2, not the grid's own row 0: cell mode inverts the cursor's own
+        // cell whether or not anything flashed, and row 0 would pass this
+        // assertion for the wrong reason.
+        assert!(
+            !inverted(grid.x + 4, grid.y + 4),
             "a flash lit over the tree reaches no other panel"
         );
     }

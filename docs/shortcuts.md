@@ -850,7 +850,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A `y` that yanks nothing resets nothing and lights nothing | `a_y_that_yanks_nothing_leaves_the_selection_alone`, `a_y_that_yanks_nothing_lights_nothing` |
 | `y` lights what it took, on the axes its mode bounds | `y_lights_up_what_it_yanked`, `row_mode_lights_the_whole_row_and_column_mode_the_whole_column`, `a_bare_y_lights_the_row_it_took` |
 | The flash fades, costs one repaint doing it, and the next key ends it | `the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint`, `the_next_key_ends_the_flash` |
-| The flash is louder than the range it replaces, and reaches one panel | `a_yanks_afterglow_is_louder_than_the_range_it_replaces`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render.rs`) |
+| The flash inverts the rows it took, and reaches one panel | `a_yanks_afterglow_inverts_the_rows_it_took`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render.rs`) |
 | The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a filter | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter` (`view/hints.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
