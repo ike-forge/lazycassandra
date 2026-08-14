@@ -8228,6 +8228,9 @@ mod tests {
     #[test]
     fn the_theme_picker_cannot_replace_an_open_export_form() {
         let mut state = contents_showing(5);
+        // Room for the picker, so what refuses the chord is the open form and
+        // not the picker's own size gate.
+        state.geometry = state.geometry.with_theme_rows(20);
         open_form(&mut state);
 
         handle_key(&mut state, KeyPress::ctrl(Key::Char('t')));
