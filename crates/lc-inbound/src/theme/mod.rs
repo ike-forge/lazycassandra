@@ -784,6 +784,50 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_explicit_background_overrides_a_custom_themes_own_stated_base() {
+        let stated_danger = Rgb {
+            red: 0xaa,
+            green: 0x11,
+            blue: 0x22,
+        };
+        let custom = CustomTheme {
+            name: ThemeName::try_new("midnight").expect("valid"),
+            extends: BuiltIn::Ours(Ours::AshDark),
+            colors: BTreeMap::from([
+                (
+                    Role::Base,
+                    Rgb {
+                        red: 0x0b,
+                        green: 0x0d,
+                        blue: 0x12,
+                    },
+                ),
+                (Role::Danger, stated_danger),
+            ]),
+        };
+        let background = Rgb {
+            red: 0x22,
+            green: 0x33,
+            blue: 0x44,
+        };
+        let themes = Themes::new(std::slice::from_ref(&custom), Background::Fixed(background));
+        let resolved = themes
+            .get(&ThemeChoice::Custom(custom.name.clone()))
+            .palette();
+
+        assert_eq!(
+            resolved.base,
+            Color::Rgb(background.red, background.green, background.blue),
+            "`background` is the narrower instruction and wins over the theme's own `base`"
+        );
+        assert_eq!(
+            resolved.danger,
+            Color::Rgb(stated_danger.red, stated_danger.green, stated_danger.blue),
+            "the override is narrow: a role the theme itself stated is untouched"
+        );
+    }
+
+    #[test]
     fn a_built_in_resolves_the_same_through_the_table_as_it_does_directly() {
         let themes = Themes::new(&[], Background::Theme);
 
@@ -826,17 +870,6 @@ pub(crate) mod tests {
             Color::Reset,
             "a colour would paint over exactly what this option exists to reveal"
         );
-    }
-
-    #[test]
-    fn the_default_background_leaves_every_palette_as_its_author_wrote_it() {
-        let themes = Themes::new(&[], Background::Theme);
-
-        for built_in in BuiltIn::ALL {
-            let choice = ThemeChoice::from(built_in);
-
-            assert_eq!(themes.get(&choice).palette(), Theme::of(&choice).palette());
-        }
     }
 
     #[test]
