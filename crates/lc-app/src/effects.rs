@@ -89,7 +89,13 @@ pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, ef
             crate::clipboard::hand_off(line);
         }
 
-        Effect::Cancel(_) | Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {
-        }
+        // `Export` is not wired to a port yet — the paging loop that drives
+        // `Writer`/`Sink` and reports `Msg::ExportProgress`/`ExportFinished`
+        // is a later task's.
+        Effect::Cancel(_)
+        | Effect::RecordHistory(_)
+        | Effect::OpenEditor { .. }
+        | Effect::Export { .. }
+        | Effect::Quit => {}
     }
 }

@@ -7,19 +7,21 @@
 use crate::commands::CommandsPanel;
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
-use crate::export::{ExportForm, Fetched};
+use crate::export::{Confirm, ExportForm, Fetched, Format, Scope};
 use crate::grid::{self, ColumnScroll};
-use crate::model::{ConnId, DbError, Key, KeyPress, Page, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
+use crate::ports::ExportError;
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, Range, SchemaState, Scroll,
-    Selection, State,
+    ConnectionState, Cursor, ExportJob, Geometry, Message, Overlay, Panel, Range, SchemaState,
+    Scroll, Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
 use crate::tree::Node;
+use std::path::PathBuf;
 
 /// How many rows one look at a table brings back.
 ///
@@ -75,6 +77,15 @@ pub enum Msg {
     EditorFailed {
         reason: String,
     },
+    /// Rows written so far by `job`, a running total.
+    ExportProgress {
+        job: JobId,
+        rows: usize,
+    },
+    ExportFinished {
+        job: JobId,
+        result: Result<usize, ExportError>,
+    },
     Quit,
 }
 
@@ -102,7 +113,32 @@ pub enum Effect {
     /// no answer, so there is no `Msg` back and nothing to report
     /// (docs/superpowers/specs/2026-08-13-yank-design.md §3, §4).
     Yank(String),
+    /// Write a result set to a file. The paging loop, if there is one, runs in
+    /// `lc-app` (export design §5).
+    Export {
+        conn: ConnId,
+        job: JobId,
+        source: Source,
+        destination: PathBuf,
+        format: Format,
+        overwrite: bool,
+    },
     Quit,
+}
+
+/// Where an export's rows come from.
+///
+/// An enum and not a struct with two optional fields: a statement and a row
+/// list at once, or neither, are both nonsense and neither can be written
+/// down (design §5).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Source {
+    /// Run this and page to the end. The columns arrive with the first page.
+    Whole(Box<Statement>),
+    Fetched {
+        columns: Vec<String>,
+        rows: Vec<Row>,
+    },
 }
 
 /// The state the application starts in, and what it must do first.
@@ -297,6 +333,10 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         Msg::EditorClosed { buffer } => editor_closed(state, &buffer),
 
         Msg::EditorFailed { reason } => editor_failed(state, reason),
+
+        Msg::ExportProgress { job, rows } => export_progress(state, job, rows),
+
+        Msg::ExportFinished { job, result } => finish_export(state, job, result),
 
         Msg::Quit => quit(state),
     }
@@ -1032,8 +1072,13 @@ fn open_editor(state: &State) -> Vec<Effect> {
     }]
 }
 
-/// Refused over a grid with no rows.
+/// Refused over a grid with no rows, and while an export is already running:
+/// one at a time (design §5).
 fn open_export(state: &mut State) {
+    if state.export.is_some() {
+        return;
+    }
+
     let ContentsState::Loaded { subject, page } = state.contents.state() else {
         return;
     };
@@ -1134,12 +1179,122 @@ fn edit_path(form: &mut ExportForm, key: Key) {
     }
 }
 
-/// Filled in when `Effect::Export` exists (Task 7).
-fn start_export(_state: &mut State) -> Vec<Effect> {
+/// Turns the form into the one effect that does the work.
+fn start_export(state: &mut State) -> Vec<Effect> {
+    let Some(Overlay::Export(form)) = state.overlay.take() else {
+        return Vec::new();
+    };
+    let ConnectionState::Connected(connection) = &state.connection else {
+        state.overlay = Some(Overlay::Export(form));
+        return Vec::new();
+    };
+
+    let overwrite = form.confirm() == Some(Confirm::Overwrite);
+    let Some(source) = source(state, &form) else {
+        state.overlay = Some(Overlay::Export(form));
+        return Vec::new();
+    };
+    let destination = PathBuf::from(form.path().text());
+    let (conn, job, format) = (connection.id, JobId::next(), form.format());
+
+    state.export = Some(ExportJob::started(job, destination.clone(), form));
+    state.dirty = true;
+
+    vec![Effect::Export {
+        conn,
+        job,
+        source,
+        destination,
+        format,
+        overwrite,
+    }]
+}
+
+/// What the chosen scope reads.
+///
+/// `None` when the panel is no longer showing a page — which the form's own
+/// key claim makes impossible today, and which must not become a panic if it
+/// ever stops being.
+fn source(state: &State, form: &ExportForm) -> Option<Source> {
+    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+        return None;
+    };
+
+    match form.scope() {
+        // Ours is the limit that is dropped; a typed statement's own is the
+        // user's and is honoured verbatim (design §3).
+        Scope::Whole => Some(Source::Whole(Box::new(match subject {
+            Subject::Table(table) => Statement::select_everything(&table.keyspace, &table.table),
+            Subject::Typed(cql) => Statement::typed(cql),
+        }))),
+        Scope::Fetched => Some(Source::Fetched {
+            columns: page.page().columns.clone(),
+            rows: page.page().rows.clone(),
+        }),
+    }
+}
+
+/// The overwrite confirmation's keys: `Space` or `Enter` confirms, `Esc` goes
+/// back to the form (design §7).
+fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
+    match key {
+        Key::Char(' ') | Key::Enter => start_export(state),
+        Key::Escape => {
+            if let Some(Overlay::Export(form)) = &mut state.overlay {
+                form.set_confirm(None);
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// A running total for `job`, dropped if it belongs to a job no longer
+/// tracked — cancelled, or already finished.
+fn export_progress(state: &mut State, job: JobId, rows: usize) -> Vec<Effect> {
+    if let Some(running) = &mut state.export {
+        running.progressed(job, rows);
+        state.mark_dirty();
+    }
     Vec::new()
 }
 
-fn confirm_key(_state: &mut State, _key: Key) -> Vec<Effect> {
+/// An export ended. `Exists` is the one outcome that is a question rather than
+/// a result: it reopens the form with its confirmation up (design §7).
+fn finish_export(state: &mut State, job: JobId, result: Result<usize, ExportError>) -> Vec<Effect> {
+    if state.export.as_ref().map(ExportJob::id) != Some(job) {
+        return Vec::new();
+    }
+
+    let Some(finished) = state.export.take() else {
+        return Vec::new();
+    };
+    state.dirty = true;
+
+    match result {
+        Ok(rows) => raise(
+            state,
+            Message {
+                title: "Exported".to_owned(),
+                message: format!("wrote {rows} rows to {}", finished.destination().display()),
+                severity: Severity::Info,
+            },
+        ),
+        Err(ExportError::Exists) => {
+            let mut form = finished.form();
+            form.set_confirm(Some(Confirm::Overwrite));
+            state.overlay = Some(Overlay::Export(form));
+        }
+        Err(error) => raise(
+            state,
+            Message {
+                title: "Export failed".to_owned(),
+                message: error.to_string(),
+                severity: Severity::Danger,
+            },
+        ),
+    }
+
     Vec::new()
 }
 
@@ -6909,6 +7064,19 @@ mod tests {
         state
     }
 
+    fn contents_showing_typed(cql: &str) -> State {
+        let mut state = State {
+            focus: Panel::Contents,
+            ..connected(Posture::ReadOnly)
+        };
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Typed(cql.to_owned()));
+        state.contents.page_ready(query, page_of(ROW_LIMIT));
+        state
+    }
+
     fn open_form(state: &mut State) {
         handle_key(state, KeyPress::ctrl(Key::Char('e')));
     }
@@ -7071,5 +7239,264 @@ mod tests {
 
         assert_eq!(form_of(&state).path().text(), typed);
         assert_eq!(form_of(&state).stop(), crate::export::Stop::Path);
+    }
+
+    fn started(state: &mut State) -> Vec<Effect> {
+        open_form(state);
+        // Scope, Format, Path, Export.
+        for _ in 0..3 {
+            handle_key(state, KeyPress::new(Key::Tab));
+        }
+        handle_key(state, KeyPress::new(Key::Char(' ')))
+    }
+
+    #[test]
+    fn exporting_the_whole_table_asks_for_it_without_a_limit() {
+        let mut state = contents_showing(ROW_LIMIT);
+
+        let effects = started(&mut state);
+
+        let [
+            Effect::Export {
+                source,
+                format,
+                destination,
+                overwrite,
+                ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("one export effect");
+        };
+        assert_eq!(
+            *source,
+            Source::Whole(Box::new(Statement::typed(
+                "SELECT * FROM \"shop\".\"orders\""
+            )))
+        );
+        assert_eq!(*format, crate::export::Format::Csv);
+        assert!(destination.ends_with("shop.orders.csv"));
+        assert!(!overwrite, "the first attempt never clobbers");
+    }
+
+    /// The user's own LIMIT is theirs; only ours is dropped (design §3).
+    #[test]
+    fn exporting_a_typed_query_re_runs_it_verbatim() {
+        let mut state = contents_showing_typed("SELECT * FROM shop.orders LIMIT 10");
+
+        let effects = started(&mut state);
+
+        let [Effect::Export { source, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        assert_eq!(
+            *source,
+            Source::Whole(Box::new(Statement::typed(
+                "SELECT * FROM shop.orders LIMIT 10"
+            )))
+        );
+    }
+
+    #[test]
+    fn exporting_the_fetched_rows_asks_the_cluster_nothing() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        let [
+            Effect::Export {
+                source: Source::Fetched { columns, rows },
+                ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("one export effect carrying the rows");
+        };
+        assert_eq!(rows.len(), ROW_LIMIT);
+        assert_eq!(columns, &["id".to_owned()]);
+    }
+
+    #[test]
+    fn starting_an_export_closes_the_form_and_records_the_job() {
+        let mut state = contents_showing(ROW_LIMIT);
+
+        let effects = started(&mut state);
+
+        assert!(state.overlay.is_none(), "the form is done with");
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        assert_eq!(state.export.as_ref().map(ExportJob::id), Some(*job));
+        assert_eq!(state.export.as_ref().map(ExportJob::rows), Some(0));
+    }
+
+    #[test]
+    fn progress_is_the_running_total() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+
+        update(
+            &mut state,
+            Msg::ExportProgress {
+                job: *job,
+                rows: 5_000,
+            },
+        );
+
+        assert_eq!(state.export.as_ref().map(ExportJob::rows), Some(5_000));
+    }
+
+    #[test]
+    fn progress_for_a_job_that_is_not_running_is_dropped() {
+        let mut state = contents_showing(ROW_LIMIT);
+        started(&mut state);
+
+        update(
+            &mut state,
+            Msg::ExportProgress {
+                job: JobId::next(),
+                rows: 9,
+            },
+        );
+
+        assert_eq!(state.export.as_ref().map(ExportJob::rows), Some(0));
+    }
+
+    #[test]
+    fn finishing_clears_the_job_and_says_what_was_written() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Ok(41_203),
+            },
+        );
+
+        assert!(state.export.is_none());
+        let Some(Overlay::Message(message)) = &state.overlay else {
+            panic!("the result is on screen");
+        };
+        assert_eq!(message.severity, Severity::Info);
+        assert!(message.message.contains("41203"));
+        assert!(message.message.contains("shop.orders.csv"));
+    }
+
+    #[test]
+    fn a_failure_is_reported_as_a_danger() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Err(ExportError::Io("disk full".to_owned())),
+            },
+        );
+
+        assert!(state.export.is_none());
+        let Some(Overlay::Message(message)) = &state.overlay else {
+            panic!("the failure is on screen");
+        };
+        assert_eq!(message.severity, Severity::Danger);
+    }
+
+    /// Not a message: the user is meant to answer it, and the form has to be
+    /// there to go back to (design §7).
+    #[test]
+    fn an_existing_file_reopens_the_form_asking_to_overwrite() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Err(ExportError::Exists),
+            },
+        );
+
+        assert!(state.export.is_none(), "nothing is running");
+        assert_eq!(form_of(&state).confirm(), Some(Confirm::Overwrite));
+    }
+
+    #[test]
+    fn confirming_re_emits_the_export_with_overwrite_set() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Err(ExportError::Exists),
+            },
+        );
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        let [Effect::Export { overwrite, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        assert!(overwrite);
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn esc_from_the_confirmation_goes_back_to_the_form_intact() {
+        let mut state = contents_showing(ROW_LIMIT);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job: *job,
+                result: Err(ExportError::Exists),
+            },
+        );
+
+        handle_key(&mut state, KeyPress::new(Key::Escape));
+
+        assert_eq!(form_of(&state).confirm(), None, "back to the form");
+        assert_eq!(
+            form_of(&state).stop(),
+            crate::export::Stop::Export,
+            "with every field as it was"
+        );
+    }
+
+    #[test]
+    fn ctrl_e_is_inert_while_an_export_is_already_running() {
+        let mut state = contents_showing(5);
+        started(&mut state);
+        state.overlay = None;
+
+        open_form(&mut state);
+
+        assert!(state.overlay.is_none());
     }
 }

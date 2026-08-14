@@ -5,14 +5,14 @@
 //! panels; deferring until that shape is known rather than guessing at it.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::commands::CommandsPanel;
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::editor::Editor;
 use crate::export::ExportForm;
-use crate::model::{ConnId, DbError, Key, KeyPress, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, JobId, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::search::{Filter, Filtered, Prompt};
 use crate::style::Severity;
@@ -53,6 +53,61 @@ pub struct State {
     /// Passed in by `lc-app` at startup: the domain cannot read it and must
     /// not learn how (export design §2.1).
     pub cwd: PathBuf,
+    /// The one export in flight, if any. One at a time (export design §5).
+    pub export: Option<ExportJob>,
+}
+
+/// A running export.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportJob {
+    id: JobId,
+    rows: usize,
+    destination: PathBuf,
+    /// Kept so `ExportError::Exists` can put the form back exactly as it was
+    /// (export design §7). Dropped on any other outcome.
+    form: ExportForm,
+}
+
+impl ExportJob {
+    #[must_use]
+    pub const fn started(id: JobId, destination: PathBuf, form: ExportForm) -> Self {
+        Self {
+            id,
+            rows: 0,
+            destination,
+            form,
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> JobId {
+        self.id
+    }
+
+    /// Rows written so far, as the hint bar reports it.
+    #[must_use]
+    pub const fn rows(&self) -> usize {
+        self.rows
+    }
+
+    #[must_use]
+    pub fn destination(&self) -> &Path {
+        &self.destination
+    }
+
+    /// Applies a progress report, if it belongs to this job.
+    pub fn progressed(&mut self, job: JobId, rows: usize) {
+        if self.id == job {
+            self.rows = rows;
+        }
+    }
+
+    /// The form the job was started from, consumed so a caller cannot hold
+    /// both the job and the form it came from at once.
+    #[must_use]
+    pub fn form(self) -> ExportForm {
+        self.form
+    }
 }
 
 /// The loader's phase.
