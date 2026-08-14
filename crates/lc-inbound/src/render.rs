@@ -1041,7 +1041,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{e0b6}▌\u{f084} shop     \u{e0b4}││Press Enter on a table│"
+            capped("│[▌\u{f084} shop     ]││Press Enter on a table│")
         );
         assert_eq!(
             row(&buffer, 2),
@@ -1145,7 +1145,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{e0b6}▌\u{f084} shop     \u{e0b4}││Press Enter on a table│"
+            capped("│[▌\u{f084} shop     ]││Press Enter on a table│")
         );
         assert_eq!(
             row(&buffer, 2),
@@ -1503,12 +1503,12 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│\u{e0b6}▌\u{f084} shop     \u{e0b4}││    id email                              │",
+            capped("│[▌\u{f084} shop     ]││    id email                              │"),
             "the header leaves the bar+gutter block blank"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││\u{e0b6}▌1 1  ada@example.com                   \u{e0b4}│"
+            capped("│              ││[▌1 1  ada@example.com                   ]│")
         );
         assert_eq!(
             row(&buffer, 3),
@@ -1528,7 +1528,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 2),
-            "│              ││\u{e0b6}▌1 8f14e45f-ceea-467a-9c2b…             \u{e0b4}│",
+            capped("│              ││[▌1 8f14e45f-ceea-467a-9c2b…             ]│"),
             "a silently clipped value looks like a shorter value"
         );
     }
@@ -1549,12 +1549,16 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{e0b6}▌\u{f084} shop           \u{e0b4}││    a                        b                                    │",
+            capped(
+                "│[▌\u{f084} shop           ]││    a                        b                                    │"
+            ),
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│                    ││\u{e0b6}▌1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…            \u{e0b4}│",
+            capped(
+                "│                    ││[▌1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…            ]│"
+            ),
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -2001,7 +2005,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{e0b6}▌\u{f084} shop     \u{e0b4}││No rows                                   │"
+            capped("│[▌\u{f084} shop     ]││No rows                                   │")
         );
     }
 
@@ -2352,6 +2356,14 @@ mod tests {
         state.tables.open(&schema);
         state.tables.open(&schema);
         state
+    }
+
+    /// `text` with the cursor row's caps written as `[` and `]`, so a row this
+    /// panel drew can be spelt out without pinning the glyph they are drawn
+    /// with.
+    fn capped(text: &str) -> String {
+        text.replace('[', &crate::icons::CAP_LEFT.to_string())
+            .replace(']', &crate::icons::CAP_RIGHT.to_string())
     }
 
     /// The Ddl panel's text at 100x41, inside both its border and the two
@@ -2990,7 +3002,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{e0b6}▌\u{f084} ks00     \u{e0b4}▐│Press Enter on a table│",
+            capped("│[▌\u{f084} ks00     ]▐│Press Enter on a table│"),
             "the row is as wide as it is without a scrollbar; the scrollbar replaced the border"
         );
     }

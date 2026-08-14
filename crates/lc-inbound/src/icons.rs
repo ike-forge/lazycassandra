@@ -30,15 +30,18 @@ pub(crate) const KEY: &str = "\u{f030b} ";
 /// filling it at one cell leaves a blob.
 pub(crate) const SETTINGS: &str = "\u{f013} ";
 
-/// `nf-ple-left_half_circle_thick` and `nf-ple-right_half_circle_thick`, at
-/// either end of the cursor row's band.
+/// `nf-ple-trapezoid_top_bottom` and its mirror, at either end of the cursor
+/// row's band.
 ///
 /// Drawn in the band's own background colour against the panel's ground, which
-/// is the only way a cell grid rounds a corner: the glyph is the band's end,
-/// not a border around it. The thick cut rather than the thin, because the
-/// thin one leaves a seam between the semicircle and the band it closes.
-pub(crate) const CAP_LEFT: char = '\u{e0b6}';
-pub(crate) const CAP_RIGHT: char = '\u{e0b4}';
+/// is the only way a cell grid softens a corner: the glyph is the band's end,
+/// not a border around it. A chamfer rather than
+/// `nf-ple-left_half_circle_thick`'s semicircle, because a glyph fills its
+/// cell — the semicircle's radius is half a cell and there is no smaller one
+/// to ask for, so the only way down from a pill is to cut the corners
+/// straight instead of curving them.
+pub(crate) const CAP_LEFT: char = '\u{e0d2}';
+pub(crate) const CAP_RIGHT: char = '\u{e0d4}';
 
 pub(crate) const fn tree_row(kind: RowKind) -> &'static str {
     match kind {
