@@ -503,7 +503,10 @@ impl ExportForm {
     #[must_use]
     pub fn scope_labels(&self) -> [String; 2] {
         let whole = match (self.subject.table(), self.fetched) {
-            (None, _) => "Export the whole query result".to_owned(),
+            (None, Fetched::Everything(rows)) => {
+                format!("Export the whole query result ({rows})")
+            }
+            (None, Fetched::Some(_)) => "Export the whole query result".to_owned(),
             (Some(_), Fetched::Everything(rows)) => format!("Export the whole table ({rows})"),
             (Some(_), Fetched::Some(_)) => "Export the whole table".to_owned(),
         };
@@ -992,6 +995,25 @@ mod tests {
         );
 
         assert_eq!(form.scope_labels()[0], "Export the whole query result");
+    }
+
+    /// The count belongs on whichever label survives, and a typed subject's
+    /// label survives the same way a table's does (design §3).
+    #[test]
+    fn a_complete_typed_result_carries_its_count_too() {
+        let form = ExportForm::opened(
+            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+            Fetched::Everything(137),
+            Path::new(""),
+        );
+
+        assert_eq!(
+            form.scope_labels(),
+            [
+                "Export the whole query result (137)".to_owned(),
+                "Export the 137 fetched rows".to_owned()
+            ]
+        );
     }
 
     #[test]
