@@ -5,6 +5,7 @@
 
 pub mod cell;
 pub mod commands;
+pub mod config;
 pub mod contents;
 pub mod ddl;
 pub mod editor;
@@ -22,8 +23,9 @@ pub mod update;
 pub mod view;
 pub mod yank;
 
+pub use config::Config;
 pub use posture::Posture;
 pub use state::State;
-pub use theme::{Ours, Ported, ThemeChoice};
+pub use theme::{BuiltIn, Ours, Ported, ThemeChoice};
 pub use update::{Effect, Msg, init, update};
 pub use view::{OverlayView, PanelView, ViewModel, view_model};

@@ -9,6 +9,7 @@
 
 use async_trait::async_trait;
 
+use crate::config::{Config, Credential, Diagnostic};
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
 
@@ -24,19 +25,18 @@ pub trait Cluster: Send + Sync {
     async fn fetch_page(&self, conn: ConnId, cursor: &PagingState) -> Result<Page, DbError>;
 }
 
-/// Locates and layers configuration files (architecture.md §7).
+/// Locates and layers configuration files (design §7).
 #[async_trait]
 pub trait ConfigSource: Send + Sync {
-    async fn load(&self) -> Result<Config, ConfigError>;
+    /// Never fails: a file that cannot be read or parsed produces
+    /// diagnostics and contributes nothing (design §6).
+    async fn load(&self) -> (Config, Vec<Diagnostic>);
 }
 
-/// Resolves a credential *reference* to a value at connect time.
-///
-/// Resolved secrets are never written back to disk or into the history store
-/// (architecture.md §7).
+/// Resolves a credential to a value at connect time.
 #[async_trait]
 pub trait SecretResolver: Send + Sync {
-    async fn resolve(&self, reference: &CredentialRef) -> Result<String, ConfigError>;
+    async fn resolve(&self, credential: &Credential) -> Result<String, ConfigError>;
 }
 
 /// Query history and saved queries.
@@ -44,33 +44,6 @@ pub trait SecretResolver: Send + Sync {
 pub trait Store: Send + Sync {
     async fn record(&self, stmt: &Statement) -> Result<(), StoreError>;
     async fn history(&self, limit: usize) -> Result<Vec<Statement>, StoreError>;
-}
-
-/// Where a credential comes from.
-///
-/// There is deliberately no `Password(String)` variant: the project config is
-/// meant to be committed, so a literal secret in it is a parse error rather
-/// than a leak (vision.md §6).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CredentialRef {
-    Env(String),
-    File(std::path::PathBuf),
-    Command(Vec<String>),
-}
-
-/// The merged, validated result of layering every config source.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Config {
-    pub connections: Vec<ConnectionConfig>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectionConfig {
-    pub name: String,
-    pub hosts: Vec<String>,
-    pub posture: Posture,
-    pub username: Option<String>,
-    pub password: Option<CredentialRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
