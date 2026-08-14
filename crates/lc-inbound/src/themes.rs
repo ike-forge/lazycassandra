@@ -65,9 +65,9 @@ pub(crate) fn render(frame: &mut Frame, labels: &[&str], selected: usize, theme:
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::ThemeChoice;
     use lc_domain::state::{Cursor, Overlay, State};
     use lc_domain::view::view_model;
+    use lc_domain::{Ported, ThemeChoice};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Cell;
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn the_cursor_row_is_a_bar_of_the_flavours_own_surface() {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
-        let choice = ThemeChoice::CatppuccinMocha;
+        let choice = ThemeChoice::Ported(Ported::CatppuccinMocha);
         let mut state = State::default();
         let mut cursor = Cursor::default();
         cursor.go_to(choice.index(), ThemeChoice::ALL.len());
@@ -142,14 +142,14 @@ mod tests {
             })
             .expect("a frame");
 
-        let highlight = Theme::of(choice).palette().highlight;
+        let selection_bg = Theme::of(choice).palette().selection_bg;
         assert!(
             terminal
                 .backend()
                 .buffer()
                 .content()
                 .iter()
-                .any(|cell| cell.bg == highlight),
+                .any(|cell| cell.bg == selection_bg),
             "the picker's own cursor row is where a theme shows what it does"
         );
     }

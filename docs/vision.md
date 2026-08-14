@@ -131,29 +131,37 @@ persistent named panels in fixed positions, navigated with predictable motions.
 You build muscle memory for *where things are*, not just what keys do. Layout
 does not rearrange itself under you.
 
-**5. Wear the terminal's clothes.**
-The background is yours and LazyCassandra never paints over it; body text
-keeps your terminal's own foreground. What is drawn *on top* is ours,
-truecolor included, chosen to read on a light and a dark terminal alike.
+**5. Colour is a relationship, not a property.**
+No colour is readable on its own — only against a specific background. A
+palette that inherits the terminal's background cannot know what its own
+colours will do there, and the claim "this is legible" becomes untestable:
+the hex that reads at 5.1:1 on white reads at 2.4:1 on a dark grey. So
+LazyCassandra declares its own ground. A theme of ours names `base`,
+`surface` and `selection_bg`, and every colour it spends on text is held to
+4.5:1 against all three by a test that fails the build.
 
-The tool no longer reserves meaning for the sixteen ANSI colours. That rule
-bought resilience against a terminal palette that is close to extinct, at the
-cost of every distinction that makes a dense grid readable at a glance — the
-actual daily problem. A theme is a `Palette` of named roles now, and key
-structure, write posture and severity are drawn in whichever colour the
-active theme gives that role, not in a fixed ANSI slot. A poor-palette
-fallback, if one is ever wanted, ships as a theme of its own rather than as a
-constraint on every other theme.
+This replaces the earlier rule that the background was the user's. That rule
+cost us every distinction it was meant to protect: hedging across unknown
+grounds forces mid-lightness colours, which are too dark on a dark terminal
+and too light on a light one — broken everywhere rather than mediocre
+everywhere. A full-screen TUI takes the alternate screen buffer and paints
+every cell, so inheriting the background blended us into nothing anyway.
 
-The default theme is still the least disruptive one: it leaves the frame's
-background, an overlay's background, body text and panel borders unset, so it
-paints no panel field and inherits whatever the terminal already has. What it
-does draw — key structure, severity, write posture, and the rest — must stay
-legible on light and dark backgrounds alike, because it cannot know which it
-is on. `the_default_palette_reads_on_black_and_on_white` holds that.
-LazyCassandra also ships four Catppuccin flavours that repaint everything,
-and a runtime picker (`T`) to move between all five with a live preview —
-see architecture.md §6 and specs/2026-08-10-themes-design.md.
+The tool reserves no meaning for the sixteen ANSI colours. A theme is a
+`Palette` of named roles, and key structure, write posture and severity are
+drawn in whichever colour the active theme gives that role.
+
+Themes come in two kinds. Ours — Default, Ash, Beacon and Quill, each light
+and dark — are held to the contrast rules above. Ported palettes, Catppuccin
+today, are their authors' work: we take them as given and impose nothing on
+them beyond deciding whether to ship them, which is stated in the type system
+rather than in a comment. `T` moves between all twelve with a live preview.
+
+Users who run a translucent, blurred or image background have a real
+preference that a declared ground cannot serve. That lands as an explicit
+`background = "terminal"` opt-in with the config file (§6), documented as
+unsupported for contrast and never the default — see architecture.md §6 and
+specs/2026-08-13-colour-palettes-design.md.
 
 **6. Destructive things are obvious, reversible, or confirmed — pick two.**
 Read-only is the default posture on any connection not explicitly marked
@@ -261,9 +269,9 @@ Write-posture enforcement and confirmation flows.
 **Phase 4 — Operate.** Node and ring view, compaction and repair state, metrics.
 The k9s-adjacent surface.
 
-**Phase 5 — Extend.** User-supplied themes (the terminal-inheriting default
-lands in Phase 0), user-defined keybindings, saved queries, plugin
-or scripting surface. Possibly ScyllaDB support, if the driver story is clean.
+**Phase 5 — Extend.** User-supplied themes and the `background = "terminal"`
+opt-in, user-defined keybindings, saved queries, plugin or scripting surface.
+Possibly ScyllaDB support, if the driver story is clean.
 
 ## 8. Open research questions
 

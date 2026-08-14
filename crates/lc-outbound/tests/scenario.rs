@@ -311,7 +311,7 @@ async fn pressing_enter_on_a_table_fills_the_contents_panel() {
             .collect::<Vec<_>>(),
         [["8f14e45f", "ada@example.com"], ["c9f0f895", "null"]]
     );
-    assert_eq!(rows[1][1].token, Some(Token::Muted), "the null is muted");
+    assert_eq!(rows[1][1].token, Some(Token::Faint), "the null is faint");
     assert_eq!(*selected, 0);
 }
 
@@ -425,7 +425,12 @@ fn headings(details: &Details) -> Vec<&str> {
     details
         .sections
         .iter()
-        .filter_map(|section| section.heading.as_deref())
+        .filter_map(|section| {
+            section
+                .heading
+                .as_ref()
+                .map(|heading| heading.text.as_str())
+        })
         .collect()
 }
 
@@ -433,7 +438,12 @@ fn section<'a>(details: &'a Details, heading: &str) -> &'a Section {
     details
         .sections
         .iter()
-        .find(|section| section.heading.as_deref() == Some(heading))
+        .find(|section| {
+            section
+                .heading
+                .as_ref()
+                .is_some_and(|own| own.text == heading)
+        })
         .unwrap_or_else(|| panic!("{heading} is missing"))
 }
 

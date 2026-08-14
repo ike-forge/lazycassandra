@@ -17,7 +17,7 @@
 //! measure (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4).
 
 use lc_domain::contents::SelectionMode;
-use lc_domain::grid::{COLUMN_SPACING, available, fitting};
+use lc_domain::grid::{BAR, COLUMN_SPACING, available, fitting};
 use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow};
@@ -39,6 +39,22 @@ const ELLIPSIS: char = '…';
 
 /// Rows of a grid spent on its header rather than on a row.
 const HEADER_ROWS: u16 = 1;
+
+/// The mark in the cursor row's gutter.
+///
+/// A left half-block rather than an arrow: it reads as a bar running down the
+/// edge of the row, and it is one column wide in every font we can assume.
+const SELECTION_BAR: char = '▌';
+
+/// The cursor row's mark, reserved as a column of its own on every row so
+/// unselected rows never shift sideways as the cursor moves (design §4.2).
+fn selection_bar(is_selected: bool, theme: Theme) -> TextSpan<'static> {
+    if is_selected {
+        TextSpan::styled(SELECTION_BAR.to_string(), theme.style(Token::SelectionBar))
+    } else {
+        TextSpan::raw(" ")
+    }
+}
 
 /// What a scrollbar needs, in whatever unit the panel scrolls in.
 pub(crate) struct Extent {
@@ -198,7 +214,11 @@ fn tree(
     offset: usize,
     theme: Theme,
 ) -> Extent {
-    let items: Vec<ListItem> = rows.iter().map(|row| item(row, theme)).collect();
+    let items: Vec<ListItem> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| item(row, index == selected, theme))
+        .collect();
     let height = usize::from(area.height);
 
     let list = List::new(items).highlight_style(theme.style(Token::Selected));
@@ -276,7 +296,7 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         .map(|width| (*width).min(available))
         .collect();
 
-    let constraints = std::iter::once(Constraint::Length(gutter))
+    let constraints = std::iter::once(Constraint::Length(BAR + gutter))
         .chain(drawn_widths.iter().copied().map(Constraint::Length));
 
     let row = visible(selected, offset, height);
@@ -285,40 +305,26 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     // painting neither band, so a heading lit on its own would be the only mark
     // on an unlit grid (design §4). A column selection does not depend on where
     // the row viewport sits.
-    let heading = match mode {
+    let wash = match mode {
         SelectionMode::Cell => row.is_some().then(|| theme.style(Token::Crosshair)),
         SelectionMode::Column => Some(theme.style(Token::Selected)),
         SelectionMode::Row => None,
     };
-    let header = Row::new(
-        std::iter::once(Cell::from(Text::raw(" ".repeat(usize::from(gutter))))).chain(
-            columns[drawn.clone()]
-                .iter()
-                .zip(&drawn_widths)
-                .enumerate()
-                .map(|(index, (heading_column, width))| {
-                    // A projection's columns carry no token at all, and
-                    // claiming one for them under the wash would be a
-                    // decoration the schema does not support
-                    // (`view::contents`): the wash composes onto whatever the
-                    // heading already draws, which for those is nothing.
-                    let base = heading_column
-                        .token
-                        .map_or_else(Style::new, |token| theme.style(token));
-
-                    let style = match heading.filter(|_| first_column + index == column) {
-                        Some(wash) => base.patch(wash),
-                        None => base,
-                    };
-
-                    styled_cell(&heading_column.name, Some(style), *width)
-                }),
-        ),
+    let header = heading(
+        &columns[drawn.clone()],
+        &drawn_widths,
+        wash.zip(column.checked_sub(first_column)),
+        gutter,
+        theme,
     );
 
     let body = rows.iter().enumerate().map(|(index, cells)| {
         Row::new(
-            std::iter::once(number(index, gutter, theme)).chain(
+            std::iter::once(Cell::from(Line::from(vec![
+                selection_bar(index == selected, theme),
+                number(index, gutter, theme),
+            ])))
+            .chain(
                 cells
                     .get(drawn.clone())
                     .unwrap_or_default()
@@ -333,8 +339,9 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
         .header(header)
         .column_spacing(COLUMN_SPACING);
 
-    // The gutter is a column of the widget but not of the page, so the
-    // selected column is one further right than the domain's index.
+    // The bar and the row number share one widget column that is not a column
+    // of the page, so the selected column is one further right than the
+    // domain's index.
     let drawn_column = column.saturating_sub(first_column) + 1;
     // `None` where the cursor is off the right of what fits: ratatui clamps
     // `selected_column` to the last column it drew, so column mode would lay a
@@ -385,19 +392,58 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
     )
 }
 
+/// The grid's heading row: a blank cell over the bar and the gutter, then the
+/// drawn columns. `washed` names which of them the cursor is in — an index into
+/// what is drawn, not into the page — and the style to wash it with; `None`
+/// where the mode paints no band, or where the cursor's column is not one of
+/// these.
+fn heading(
+    columns: &[GridColumn],
+    widths: &[u16],
+    washed: Option<(Style, usize)>,
+    gutter: u16,
+    theme: Theme,
+) -> Row<'static> {
+    Row::new(
+        std::iter::once(Cell::from(Text::raw(" ".repeat(usize::from(BAR + gutter))))).chain(
+            columns
+                .iter()
+                .zip(widths)
+                .enumerate()
+                .map(|(index, (column, width))| {
+                    // A projection's columns carry no token at all, and claiming
+                    // one for them under the wash would be a decoration the
+                    // schema does not support (`view::contents`): the wash
+                    // composes onto whatever the heading already draws, which
+                    // for those is nothing.
+                    let base = column
+                        .token
+                        .map_or_else(Style::new, |token| theme.style(token));
+
+                    let style = match washed.filter(|(_, washed)| *washed == index) {
+                        Some((wash, _)) => base.patch(wash),
+                        None => base,
+                    };
+
+                    styled_cell(&column.name, Some(style), *width)
+                }),
+        ),
+    )
+}
+
 /// A row's number, right-aligned in the gutter.
-fn number(index: usize, gutter: u16, theme: Theme) -> Cell<'static> {
+fn number(index: usize, gutter: u16, theme: Theme) -> TextSpan<'static> {
     let text = format!("{:>width$}", index + 1, width = usize::from(gutter));
 
-    Cell::from(Text::raw(text)).style(theme.style(Token::Muted))
+    TextSpan::styled(text, theme.style(Token::Muted))
 }
 
 /// A matched cell composes `Token::Match` onto whatever `token` already
-/// draws, rather than replacing it: `token` is what keeps a null apart from a
-/// text cell holding the word `"null"` (design §4.3), and overwriting it
-/// would lose that distinction for exactly the cells the user just went
-/// looking for. `Style::patch` is the same composition idiom the selected
-/// row already relies on, via `row_highlight_style`.
+/// draws, rather than replacing it, the same composition idiom the selected
+/// row already relies on via `row_highlight_style`. `Token::Match` overwrites
+/// `fg`, so a matched null and a matched cell holding the literal word
+/// `"null"` draw alike; the tokens carry no modifier to tell them apart by
+/// (design §4.1).
 fn cell_style(cell: &GridCell, theme: Theme) -> Option<Style> {
     let base = cell.token.map(|token| theme.style(token));
 
@@ -441,7 +487,7 @@ fn truncated(text: &str, width: u16) -> String {
     out
 }
 
-fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
+fn item(row: &TreeRow, is_selected: bool, theme: Theme) -> ListItem<'static> {
     // A keyspace opens at the margin and its tables hang off it, so the shape
     // of the tree is the indentation and no separate fold marker is spent on
     // saying what the drawn rows already say
@@ -458,9 +504,9 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
     // shape rather than as text
     // (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §7).
     // The icon takes the colour of what it names rather than the row's, so a
-    // system keyspace's glyph keeps its colour while its name stays muted:
-    // the mute says "this is not yours to browse", which is a claim about the
-    // name, not about what kind of thing the row is (design §8).
+    // system keyspace's glyph keeps its colour while its name stays faint: the
+    // de-emphasis says "this is not yours to browse", which is a claim about
+    // the name, not about what kind of thing the row is (design §8).
     let icon = TextSpan::styled(
         crate::icons::tree_row(row.kind),
         theme
@@ -469,6 +515,7 @@ fn item(row: &TreeRow, theme: Theme) -> ListItem<'static> {
     );
 
     ListItem::new(Line::from(vec![
+        selection_bar(is_selected, theme),
         TextSpan::raw(limb),
         icon,
         TextSpan::raw(row.label.clone()),
@@ -578,4 +625,25 @@ fn shifted(line: &str, columns: usize) -> String {
 /// fallback is unreachable rather than a silent clamp.
 fn narrowed(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reserved rather than inserted: an unselected row pays the same column, or
+    /// every row would shift sideways as the cursor moved (design §4.2).
+    #[test]
+    fn the_gutter_is_one_column_on_every_row_and_marked_on_one() {
+        let selected = selection_bar(true, Theme::default());
+        let unselected = selection_bar(false, Theme::default());
+
+        assert_eq!(selected.content.chars().count(), 1);
+        assert_eq!(unselected.content.chars().count(), 1);
+        assert_ne!(selected.content, unselected.content);
+        assert_eq!(
+            selected.style.fg,
+            Some(Theme::default().palette().selection_bar)
+        );
+    }
 }

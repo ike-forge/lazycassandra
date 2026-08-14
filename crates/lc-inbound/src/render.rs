@@ -280,9 +280,12 @@ fn inset(columns: usize, border: Style) -> Span<'static> {
 }
 
 /// The shortcut span keeps its own `Token::Shortcut` style regardless of
-/// focus; the plain text around it takes `Token::Focused`'s colour when its
-/// panel is focused, matching the border. An inactive tab is muted whether or
-/// not its panel has focus: it names something the panel is not showing.
+/// focus. The active tab takes `Token::Focused`'s colour when its panel is
+/// focused, matching the border, and drops one tier to `Token::Muted` when it
+/// is not — an unfocused panel's active tab still names what it is showing,
+/// but not as loudly as body text. An inactive tab sits a further tier down
+/// at `Token::Faint`, whether or not its panel has focus: it names something
+/// the panel is not showing.
 fn panel_title<'a>(
     tabs: &[&'a Tab],
     form: Strip,
@@ -292,11 +295,12 @@ fn panel_title<'a>(
     lead: usize,
 ) -> Line<'a> {
     let shortcut = theme.style(Token::Shortcut);
-    let separator = theme.style(Token::Muted);
+    let separator = theme.style(Token::Faint);
+    let inactive = theme.style(Token::Faint);
     let active = if is_focused_panel {
         theme.style(Token::Focused)
     } else {
-        Style::new()
+        theme.style(Token::Muted)
     };
 
     let mut spans = vec![inset(lead, border), Span::raw(TITLE_PAD)];
@@ -306,7 +310,7 @@ fn panel_title<'a>(
             spans.push(Span::styled(lc_domain::view::TAB_SEPARATOR, separator));
         }
 
-        let style = if tab.active { active } else { separator };
+        let style = if tab.active { active } else { inactive };
         let (before, mark, after) = match form {
             Strip::Short => tab.split_short(),
             Strip::Full | Strip::Active => tab.split(),
@@ -315,7 +319,7 @@ fn panel_title<'a>(
         spans.push(Span::styled(before, style));
         // The active tab's mark spends no colour of its own, so it inherits
         // whatever the border or the focus style put under it; an inactive
-        // tab's is muted with the rest of that tab, or the strip would mark a
+        // tab's is faint with the rest of that tab, or the strip would mark a
         // tab the panel is not showing more strongly than the one it is.
         spans.push(Span::styled(mark, style.patch(shortcut)));
         spans.push(Span::styled(after, style));
@@ -401,7 +405,8 @@ fn render_prompt(frame: &mut Frame, hint_bar: Rect, query: &str, view: &ViewMode
 /// Over the block's right border, so it spends no content width — and only
 /// when something is hidden, so its absence says nothing is.
 ///
-/// The track is the border glyph, muted, so it reads as part of the border
+/// The track is the border glyph at `Token::Faint`, so it reads as part of the
+/// border
 /// rather than a second bar beside it; the thumb takes the border's own
 /// (possibly focus-patched) style, so the scroll position — not the
 /// unscrolled rest of the column — carries the stronger colour
@@ -496,7 +501,7 @@ fn bar(
             .begin_symbol(None)
             .end_symbol(None)
             .track_symbol(Some(track))
-            .track_style(theme.style(Token::Muted))
+            .track_style(theme.style(Token::Faint))
             .thumb_symbol(thumb)
             .thumb_style(border),
         area.inner(margin),
@@ -506,7 +511,6 @@ fn bar(
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::ThemeChoice;
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{SelectionMode, Subject, TableRef};
     use lc_domain::ddl::DdlTab;
@@ -522,6 +526,7 @@ mod tests {
     };
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
+    use lc_domain::{Ported, ThemeChoice};
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -570,7 +575,7 @@ mod tests {
                 render(
                     frame,
                     &view_model(&state),
-                    Theme::of(ThemeChoice::CatppuccinMocha),
+                    Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha)),
                 );
             })
             .expect("TestBackend always draws");
@@ -587,7 +592,7 @@ mod tests {
 
     #[test]
     fn focus_wins_over_a_flavours_own_panel_border() {
-        let theme = Theme::of(ThemeChoice::CatppuccinMocha);
+        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut terminal =
             Terminal::new(TestBackend::new(40, 12)).expect("TestBackend always initialises");
         let state = State {
@@ -627,7 +632,7 @@ mod tests {
                 render(
                     frame,
                     &view_model(&state),
-                    Theme::of(ThemeChoice::CatppuccinMocha),
+                    Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha)),
                 );
             })
             .expect("TestBackend always draws");
@@ -641,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_theme_leaves_the_field_alone() {
+    fn the_default_theme_paints_the_field_too() {
         let mut terminal =
             Terminal::new(TestBackend::new(80, 24)).expect("TestBackend always initialises");
         let state = State::default();
@@ -658,8 +663,9 @@ mod tests {
                 .buffer()
                 .content()
                 .iter()
-                .all(|cell| cell.bg == Color::Reset),
-            "the background is the user's (vision.md §4, principle 5)"
+                .all(|cell| cell.bg != Color::Reset),
+            "the default theme declares its own base, corners included \
+             (docs/superpowers/specs/2026-08-13-colour-palettes-design.md §1)"
         );
     }
 
@@ -685,7 +691,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open  / search │ tab panel  q quit",
+            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open | / search | tab panel | q quit",
             "the loader takes the leading cells and the hints follow it"
         );
         assert!(
@@ -725,7 +731,7 @@ mod tests {
         let drawn = row(&buffer, 23);
         let hints: String = drawn.chars().skip(taken).collect();
 
-        assert_eq!(hints.trim_end(), " ?/esc close  q quit");
+        assert_eq!(hints.trim_end(), " ?/esc close | q quit");
     }
 
     #[test]
@@ -755,7 +761,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 11).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open │ tab panel  q quit",
+            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open | tab panel | q quit",
             "the cells the loader took come out of the hints, lowest value first"
         );
     }
@@ -846,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_but_the_shortcut_wears_the_shortcut_colour() {
+    fn nothing_but_the_shortcut_wears_the_shortcut_colour_in_a_title() {
         let buffer = draw(40, 12);
         let marked = |x, y| {
             buffer.cell((x, y)).expect("cell is in bounds").fg
@@ -1035,15 +1041,15 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││Press Enter on a table│"
+            "│▌\u{f084} shop       ││Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│\u{f084} typezoo     ││                      │"
+            "│ \u{f084} typezoo    ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│\u{f084} system      ││                      │"
+            "│ \u{f084} system     ││                      │"
         );
     }
 
@@ -1136,19 +1142,19 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││Press Enter on a table│"
+            "│▌\u{f084} shop       ││Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│├─ \u{f0ce} orders   ││                      │"
+            "│ ├─ \u{f0ce} orders  ││                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│└─ \u{f0ce} users    ││                      │"
+            "│ └─ \u{f0ce} users   ││                      │"
         );
         assert_eq!(
             row(&buffer, 4),
-            "│\u{f084} typezoo     ││                      │",
+            "│ \u{f084} typezoo    ││                      │",
             "a keyspace with no tables draws no marker"
         );
     }
@@ -1156,26 +1162,27 @@ mod tests {
     #[test]
     fn the_clusters_own_keyspaces_are_dimmed() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-        // Column 3: the name, past the border and the icon it opens with. The
-        // icon carries its own colour (design §8), which is not what this is
-        // about.
-        let fg = |y: u16| buffer.cell((3, y)).expect("inside the panel").fg;
-        let muted = Theme::default()
-            .style(Token::Muted)
+        // Column 4: the name, past the border, the gutter bar and the icon it
+        // opens with. The icon carries its own colour (design §8), which is
+        // not what this is about.
+        let fg = |y: u16| buffer.cell((4, y)).expect("inside the panel").fg;
+        let faint = Theme::default()
+            .style(Token::Faint)
             .fg
-            .expect("muted spends a colour");
+            .expect("faint spends a colour");
 
-        assert_ne!(fg(1), muted, "shop is the user's");
-        assert_eq!(fg(2), muted, "system is the cluster's");
+        assert_ne!(fg(1), faint, "shop is the user's");
+        assert_eq!(fg(2), faint, "system is the cluster's");
     }
 
     #[test]
     fn a_dimmed_rows_icon_keeps_the_colour_of_what_it_names() {
         let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-        // Column 1: a keyspace opens at the margin, right after the border.
-        let icon = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
+        // Column 2: a keyspace opens right after the border and the gutter
+        // bar.
+        let icon = |y: u16| buffer.cell((2, y)).expect("inside the panel").fg;
         let theme = Theme::default();
-        let muted = theme.style(Token::Muted).fg.expect("muted spends a colour");
+        let faint = theme.style(Token::Faint).fg.expect("faint spends a colour");
         let keyspace = theme
             .style(Token::Keyspace)
             .fg
@@ -1183,8 +1190,8 @@ mod tests {
 
         assert_eq!(icon(2), keyspace, "the icon says what the row is");
         assert_eq!(
-            buffer.cell((3, 2)).expect("inside the panel").fg,
-            muted,
+            buffer.cell((4, 2)).expect("inside the panel").fg,
+            faint,
             "the name it precedes stays the cluster's"
         );
     }
@@ -1397,16 +1404,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││  id email                                │",
-            "the header leaves the gutter blank"
+            "│▌\u{f084} shop       ││   id email                               │",
+            "the header leaves the bar+gutter block blank"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││1 1  ada@example.com                      │"
+            "│              ││▌1 1  ada@example.com                     │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││2 2  bob@example.com                      │"
+            "│              ││ 2 2  bob@example.com                     │"
         );
     }
 
@@ -1422,7 +1429,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 2),
-            "│              ││1 8f14e45f-ceea-467a-9c2b…                │",
+            "│              ││▌1 8f14e45f-ceea-467a-9c2b…               │",
             "a silently clipped value looks like a shorter value"
         );
     }
@@ -1443,12 +1450,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop              ││  a                        b                                      │",
+            "│▌\u{f084} shop             ││   a                        b                                     │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│                    ││1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…               │",
+            "│                    ││▌1 8f14e45f-ceea-467a-9c2b… 8f14e45f-ceea-467a-9c2b…              │",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -1472,13 +1479,18 @@ mod tests {
             .fg
             .expect("the partition key spends a colour");
 
-        // Column 17 is the gutter, so the first heading starts two along.
-        assert_eq!(header(19).fg, partition, "id is the partition key");
-        assert!(header(19).modifier.contains(Modifier::BOLD));
+        // Column 16 is the Contents panel's left border. The bar and the
+        // gutter share one two-wide block (17-18), then one spacing column
+        // (19), so the first heading starts at 20.
+        assert_eq!(header(20).fg, partition, "id is the partition key");
+        assert!(header(20).modifier.contains(Modifier::BOLD));
         assert_eq!(
-            header(22).fg,
-            Color::Reset,
-            "a regular column spends no colour — it is the baseline"
+            header(23).fg,
+            Theme::default()
+                .style(Token::RegularColumn)
+                .fg
+                .expect("a regular column reads as body text"),
+            "a regular column reads as body text rather than as a key"
         );
     }
 
@@ -1505,11 +1517,11 @@ mod tests {
             let cell = buffer.cell((x, y)).expect("inside the panel");
             (cell.fg, cell.bg, cell.modifier)
         };
-        // Gutter, then `id` (one digit, the cursor's cell at column 0), then
-        // `email` (matched): 19 lands on the digit, 22 on `email`'s first
-        // character.
-        let unmatched_id = 19;
-        let matched_email = 22;
+        // Bar, then gutter, then `id` (one digit, the cursor's cell at column
+        // 0), then `email` (matched): 21 lands on the digit, 24 on `email`'s
+        // first character.
+        let unmatched_id = 21;
+        let matched_email = 24;
 
         assert_ne!(
             style(matched_email, 2),
@@ -1535,7 +1547,7 @@ mod tests {
     }
 
     #[test]
-    fn a_null_is_dimmed_so_it_reads_apart_from_the_word() {
+    fn a_null_is_faint_so_it_reads_apart_from_the_word() {
         // Row 1 (not the cursor's row) so the row's own colours are not
         // flattened under `Token::Selected`'s highlight text.
         let mut state = showing(page_of(
@@ -1549,25 +1561,38 @@ mod tests {
 
         let buffer = draw_state(60, 12, &state);
         let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
+        let faint = Theme::default()
+            .style(Token::Faint)
+            .fg
+            .expect("faint spends a colour");
         let muted = Theme::default()
             .style(Token::Muted)
             .fg
             .expect("muted spends a colour");
 
-        assert_eq!(cell(22).fg, muted, "the null is muted");
-        assert_ne!(
-            cell(19).fg,
+        assert_eq!(cell(24).fg, faint, "the null is faint");
+        assert_eq!(
+            cell(18).fg,
             muted,
-            "the value beside it is not — the gutter at 17 is, and is not what this is about"
+            "the gutter digit shares the bar+gutter block's column and is muted, not faint"
+        );
+        assert_ne!(
+            cell(21).fg,
+            faint,
+            "the value beside it is not — column 21 is inside the id value's own \
+             column, not the gutter, and is not what this is about"
         );
     }
 
     #[test]
-    fn a_matched_null_composes_match_with_muted_rather_than_losing_either() {
-        // Design §4.3 (amended): `Token::Muted` spends `DIM` alongside its
-        // colour precisely so `Style::patch` keeps it under `Token::Match`'s
-        // own colour, and a matched null stays tellable apart from a matched
-        // cell whose text is literally the word "null".
+    fn a_matched_null_still_carries_the_match_colour() {
+        // The ramp carries the tier now, not a modifier (design §4.1), so a
+        // null's own token (`Token::Faint`) has no modifier for
+        // `Style::patch` to carry through `Token::Match` overwriting `fg`. A
+        // matched null and a matched word both end up drawn as a plain
+        // match, indistinguishable from each other; telling a matched null
+        // apart from a matched word again is future work, not this token's
+        // job.
         let mut state = showing(page_of(
             &["id", "value", "note"],
             &[&[CqlValue::Int(1), CqlValue::Null, text("null")]],
@@ -1575,28 +1600,21 @@ mod tests {
         state.apply_filter(Filtered::Contents, Filter::new("null"));
 
         let buffer = draw_state(70, 12, &state);
-        // Shifted right by the row-number gutter and its spacing: one digit
-        // for a one-row page, plus one column (table display design §4).
+        // Shifted right by the bar, the row-number gutter and their spacing:
+        // one digit for a one-row page, plus one column each (table display
+        // design §4, design §4.2).
         let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
-        let null_cell = cell(23);
-        let word_cell = cell(29);
+        let null_cell = cell(25);
+        let word_cell = cell(31);
 
-        assert!(
-            null_cell.modifier.contains(Modifier::DIM),
-            "the matched null must still read as a null"
-        );
         assert_eq!(
             null_cell.fg, word_cell.fg,
             "both are matches, so they carry the same match colour"
         );
         assert!(
-            !word_cell.modifier.contains(Modifier::DIM),
-            "the matched word is not a null and must not be dimmed"
-        );
-        assert_ne!(
-            (null_cell.fg, null_cell.modifier),
-            (word_cell.fg, word_cell.modifier),
-            "a matched null must still draw differently from a matched non-null cell"
+            !null_cell.modifier.contains(Modifier::DIM)
+                && !word_cell.modifier.contains(Modifier::DIM),
+            "no token recedes with a modifier now that the ramp carries the tier"
         );
     }
 
@@ -1643,7 +1661,7 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
-        let name = area.x + 1 + 5;
+        let name = area.x + 1 + 6;
 
         assert_eq!(bg(17, 3), selected, "the row the cursor is on is lit");
         assert_ne!(
@@ -1683,10 +1701,11 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
-        // The gutter is one digit wide for a two-row page, then one column of
-        // spacing, then `id` (two wide), then one more spacing column: the
-        // second column's first cell is five in from the panel's inner edge.
-        let name = area.x + 1 + 5;
+        // The bar and the gutter share one widget column, two wide for a
+        // two-row page, then one column of spacing, then `id` (two wide), then
+        // one more spacing column: the second column's first cell is six in
+        // from the panel's inner edge.
+        let name = area.x + 1 + 6;
 
         assert_eq!(bg(name, 2), selected, "every row of the column is lit");
         assert_eq!(bg(name, 3), selected, "including the last one");
@@ -1696,7 +1715,7 @@ mod tests {
             "and its heading, which ratatui leaves to us (design §4)"
         );
         assert_ne!(
-            bg(area.x + 1 + 2, 2),
+            bg(area.x + 1 + 3, 2),
             selected,
             "the row the cursor is on is not — column mode lights one column"
         );
@@ -1750,12 +1769,13 @@ mod tests {
             .style(Token::Crosshair)
             .bg
             .expect("the cell mode's crosshair spends a background");
-        // The gutter is two digits wide for a twenty-row page, then a column of
-        // spacing: the only heading starts three in from the panel's inner edge.
+        // The bar and the gutter share one widget column, three wide for a
+        // twenty-row page, then a column of spacing: the only heading starts
+        // four in from the panel's inner edge.
         let heading = |buffer: &Buffer| {
             let area = block_area(buffer, "Table contents");
             buffer
-                .cell((area.x + 1 + 3, 1))
+                .cell((area.x + 1 + 4, 1))
                 .expect("inside the panel")
                 .bg
         };
@@ -1782,12 +1802,12 @@ mod tests {
     /// wherever the theme keeps its colours (design §4).
     #[test]
     fn a_key_columns_heading_keeps_its_colour_under_the_wash() {
-        let theme = Theme::of(ThemeChoice::CatppuccinMocha);
+        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
         let state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
 
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
-        let heading = buffer.cell((area.x + 1 + 2, 1)).expect("inside the panel");
+        let heading = buffer.cell((area.x + 1 + 3, 1)).expect("inside the panel");
 
         assert_eq!(
             heading.bg,
@@ -1812,7 +1832,7 @@ mod tests {
     /// entirely would go unnoticed.
     #[test]
     fn the_crosshair_leaves_a_flavours_column_colours_alone() {
-        let theme = Theme::of(ThemeChoice::CatppuccinMocha);
+        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut state = showing(page_of(
             &["id", "value"],
             &[
@@ -1824,7 +1844,7 @@ mod tests {
 
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
-        let null = buffer.cell((area.x + 1 + 5, 3)).expect("inside the panel");
+        let null = buffer.cell((area.x + 1 + 6, 3)).expect("inside the panel");
 
         assert_ne!(
             buffer.cell((area.x + 1, 3)).expect("inside the panel").bg,
@@ -1838,7 +1858,7 @@ mod tests {
         );
         assert_eq!(
             null.fg,
-            theme.style(Token::Muted).fg.expect("a null is muted"),
+            theme.style(Token::Faint).fg.expect("a null is faint"),
             "and the null under it keeps its own colour"
         );
     }
@@ -1874,7 +1894,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} shop        ││No rows                                   │"
+            "│▌\u{f084} shop       ││No rows                                   │"
         );
     }
 
@@ -1936,8 +1956,9 @@ mod tests {
         };
         // The top border, then the grid's header row, then the first row —
         // the one the cursor is on, at its first column. That column is two
-        // wide and sits past the one-digit gutter and its spacing.
-        let first = area.x + 3;
+        // wide and sits past the merged bar+gutter block (bar plus a
+        // one-digit gutter) and the one spacing column beside it.
+        let first = area.x + 4;
         let selected = area.y + 2;
 
         assert!(underlined(first, selected), "the cell the cursor is on");
@@ -1965,7 +1986,7 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
-        let first = area.x + 3;
+        let first = area.x + 4;
         let highlight = Theme::default()
             .style(Token::Crosshair)
             .bg
@@ -1993,12 +2014,12 @@ mod tests {
             .expect("muted spends a colour");
 
         assert_eq!(
-            fg(area.x + 1),
+            fg(area.x + 2),
             muted,
             "the row number is chrome, not a value"
         );
         assert_ne!(
-            fg(area.x + 3),
+            fg(area.x + 4),
             muted,
             "and the value beside it reads at full weight"
         );
@@ -2008,8 +2029,9 @@ mod tests {
     /// the horizontal viewport following it the way `update` does.
     ///
     /// Twelve two-wide columns in the 22-column body a 40x12 frame gives the
-    /// Contents panel, less the one-digit gutter and its spacing: seven fit, so
-    /// anything past the seventh has to be reached by scrolling.
+    /// Contents panel, less the merged bar+gutter block and its one spacing
+    /// column: six fit, so anything past the sixth has to be reached by
+    /// scrolling.
     fn showing_column_path(path: &[usize]) -> State {
         let page = sized_page(12, 3);
         let widths = lc_domain::grid::widths(&page);
@@ -2024,10 +2046,11 @@ mod tests {
         state
     }
 
-    /// The x of the `index`th drawn column's first cell: the one-digit gutter,
-    /// a spacing column, then two-wide columns each followed by a spacing one.
+    /// The x of the `index`th drawn column's first cell: the merged
+    /// bar+gutter block and its one spacing column, then two-wide columns
+    /// each followed by a spacing one.
     const fn drawn_column(area: Rect, index: u16) -> u16 {
-        area.x + 3 + index * 3
+        area.x + 4 + index * 3
     }
 
     #[test]
@@ -2056,25 +2079,25 @@ mod tests {
         };
 
         assert!(
-            heading.trim_start().starts_with("c2"),
+            heading.trim_start().starts_with("c3"),
             "the drawn window starts at the offset, got {heading:?}"
         );
         assert!(
-            first.starts_with('1'),
-            "the gutter is pinned and never scrolls off, got {first:?}"
+            first.starts_with('▌'),
+            "the bar is pinned and never scrolls off, got {first:?}"
         );
-        // c2 is drawn first, so the cursor's c5 is the fourth column drawn.
+        // c3 is drawn first, so the cursor's c5 is the third column drawn.
         assert!(
-            underlined(drawn_column(area, 3)) && underlined(drawn_column(area, 3) + 1),
+            underlined(drawn_column(area, 2)) && underlined(drawn_column(area, 2) + 1),
             "the cell cursor is on c5, counted from the drawn window rather \
              than from the page: {heading:?}"
         );
         assert!(
-            !underlined(drawn_column(area, 4)),
+            !underlined(drawn_column(area, 3)),
             "and not on the column beside it"
         );
         assert!(
-            !underlined(drawn_column(area, 6)),
+            !underlined(drawn_column(area, 5)),
             "nor on the last column drawn, where an index blind to the offset \
              would land"
         );
@@ -2116,7 +2139,10 @@ mod tests {
         let buffer = frame_showing_grid(2, 200, 20);
         let text = block_row(&buffer, "Table contents", 1);
 
-        assert!(text.trim_start().starts_with('1'), "got {text:?}");
+        assert!(
+            text.trim_start_matches(['▌', ' ']).starts_with('1'),
+            "got {text:?}"
+        );
     }
 
     #[test]
@@ -2134,10 +2160,11 @@ mod tests {
     #[test]
     fn a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed() {
         // `lc_domain::grid::widths` caps a column at 24 and not at the panel,
-        // which leaves the renderer a length the area cannot satisfy: 22
-        // columns of body, less the one-wide gutter and its spacing, is 20.
-        // Handed one it cannot honour, ratatui shrinks every column — the
-        // gutter among them — and truncates with no ellipsis to say so.
+        // so the natural width outruns the 19 columns of body left once the
+        // merged bar+gutter block and its spacing column are taken. `drawn_widths`
+        // caps each width against what is left, so ratatui is never
+        // overcommitted and the bar keeps its own cells; the value is cut by
+        // `styled_cell`, which is where the ellipsis below comes from.
         let state = showing(page_of(
             &["id"],
             &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
@@ -2147,8 +2174,8 @@ mod tests {
         let drawn = block_row(&buffer, "Table contents", 1);
 
         assert!(
-            drawn.starts_with("1 "),
-            "the gutter keeps its own width: {drawn:?}"
+            drawn.starts_with("▌1 "),
+            "the bar and the gutter keep their own width: {drawn:?}"
         );
         assert!(
             drawn.trim_end().ends_with('…'),
@@ -2292,7 +2319,7 @@ mod tests {
     }
 
     #[test]
-    fn a_border_wide_enough_names_both_tabs_and_mutes_the_one_not_drawn() {
+    fn a_border_wide_enough_names_both_tabs_and_fades_the_one_not_drawn() {
         // 120 columns puts the sidebar at 30, which holds the whole strip.
         let buffer = draw_state(120, 41, &describing(orders()));
         let border = row(&buffer, top_border(&buffer, "DDL").1);
@@ -2302,13 +2329,10 @@ mod tests {
         // Past its 'C', which wears the shortcut colour whether or not its tab
         // is the one drawn.
         let (fg, _, modifier) = style_of_first(&buffer, "olumns");
-        let muted = Theme::default().style(Token::Muted);
+        let faint = Theme::default().style(Token::Faint);
 
-        assert_eq!(fg, muted.fg.expect("muted spends a colour"));
-        assert!(
-            modifier.contains(Modifier::DIM),
-            "the tab is not the one drawn"
-        );
+        assert_eq!(fg, faint.fg.expect("faint spends a colour"));
+        assert_eq!(modifier, faint.add_modifier, "the tab is not the one drawn");
     }
 
     #[test]
@@ -2595,16 +2619,19 @@ mod tests {
         // 34 is the blank row the settings group opens with.
         assert_eq!(
             colour(35),
-            Color::Reset,
-            "an option is not part of the key structure and must not read as one"
+            theme
+                .style(Token::Section)
+                .fg
+                .expect("a section heading spends a colour"),
+            "Options names a group rather than a schema concept"
         );
         assert_eq!(
             colour(36),
-            Theme::default()
+            theme
                 .style(Token::PropertyName)
                 .fg
                 .expect("a property name is highlighted"),
-            "the property name carries the accent its heading does not"
+            "and its rows keep their own colours rather than the heading's"
         );
     }
 
@@ -2834,8 +2861,8 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│\u{f084} ks00        ▐│Press Enter on a table│",
-            "the row is as wide as it is without a bar; the bar replaced the border"
+            "│▌\u{f084} ks00       ▐│Press Enter on a table│",
+            "the row is as wide as it is without a scrollbar; the scrollbar replaced the border"
         );
     }
 
@@ -3297,23 +3324,16 @@ mod tests {
         state.apply_filter(Filtered::Ddl, Filter::new("ord"));
 
         let buffer = draw_state(80, 24, &state);
-        let (fg, bg, modifier) = style_of_first(&buffer, "/ord");
+        let (fg, _bg, modifier) = style_of_first(&buffer, "/ord");
         let expected = Theme::default().style(Token::Muted);
 
         assert_eq!(
             fg,
-            expected.fg.unwrap_or(Color::Reset),
+            expected.fg.expect("muted spends a colour"),
             "no colour override"
         );
-        assert_eq!(
-            bg,
-            expected.bg.unwrap_or(Color::Reset),
-            "no colour override"
-        );
-        assert_eq!(
-            modifier, expected.add_modifier,
-            "the dim modifier, and only that"
-        );
+        assert_eq!(expected.bg, None, "muted paints no background of its own");
+        assert_eq!(modifier, expected.add_modifier, "no modifier override");
     }
 
     #[test]

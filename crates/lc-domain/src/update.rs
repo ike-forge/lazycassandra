@@ -1385,6 +1385,7 @@ mod tests {
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::search::{Filter, Filtered, Prompt};
     use crate::state::{Connection, Span};
+    use crate::theme::Ported;
     use crate::tree::tests_support::schema_of as tabled_schema;
     use crate::view::tests_support::tabled;
 
@@ -1992,13 +1993,13 @@ mod tests {
     #[test]
     fn the_picker_opens_on_the_theme_in_force() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinFrappe;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinFrappe);
 
         ctrl(&mut state, Key::Char('t'));
 
         assert_eq!(
             theme_picker(&state),
-            Some(ThemeChoice::CatppuccinFrappe.index())
+            Some(ThemeChoice::Ported(Ported::CatppuccinFrappe).index())
         );
     }
 
@@ -2031,13 +2032,13 @@ mod tests {
     #[test]
     fn escape_restores_the_theme_the_picker_opened_on() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinMocha;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
 
         ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.theme, ThemeChoice::CatppuccinMocha);
+        assert_eq!(state.theme, ThemeChoice::Ported(Ported::CatppuccinMocha));
         assert!(state.overlay.is_none());
     }
 
@@ -2205,13 +2206,13 @@ mod tests {
     #[test]
     fn a_frame_that_shrinks_below_the_picker_closes_it_and_restores_the_theme() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinMocha;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
 
         ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
         assert_ne!(
             state.theme,
-            ThemeChoice::CatppuccinMocha,
+            ThemeChoice::Ported(Ported::CatppuccinMocha),
             "previewing a different theme before the frame shrinks"
         );
 
@@ -2226,7 +2227,7 @@ mod tests {
         );
         assert_eq!(
             state.theme,
-            ThemeChoice::CatppuccinMocha,
+            ThemeChoice::Ported(Ported::CatppuccinMocha),
             "the preview must not strand itself when its own room disappears"
         );
     }
@@ -2234,11 +2235,11 @@ mod tests {
     #[test]
     fn a_message_arriving_over_an_open_picker_restores_the_theme() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinMocha;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
 
         ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
-        assert_ne!(state.theme, ThemeChoice::CatppuccinMocha);
+        assert_ne!(state.theme, ThemeChoice::Ported(Ported::CatppuccinMocha));
 
         raise(
             &mut state,
@@ -2251,7 +2252,7 @@ mod tests {
 
         assert_eq!(
             state.theme,
-            ThemeChoice::CatppuccinMocha,
+            ThemeChoice::Ported(Ported::CatppuccinMocha),
             "the half-previewed theme must not strand itself under the failure"
         );
         assert!(matches!(state.overlay, Some(Overlay::Message(_))));
@@ -2260,16 +2261,16 @@ mod tests {
     #[test]
     fn a_click_dismisses_the_picker_and_restores_the_theme() {
         let mut state = measured(&["a"]);
-        state.theme = ThemeChoice::CatppuccinMocha;
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
 
         ctrl(&mut state, Key::Char('t'));
         press(&mut state, Key::Char('k'));
-        assert_ne!(state.theme, ThemeChoice::CatppuccinMocha);
+        assert_ne!(state.theme, ThemeChoice::Ported(Ported::CatppuccinMocha));
 
         point(&mut state, Pointer::Click(Click::Panel(Panel::Tables)));
 
         assert!(state.overlay.is_none());
-        assert_eq!(state.theme, ThemeChoice::CatppuccinMocha);
+        assert_eq!(state.theme, ThemeChoice::Ported(Ported::CatppuccinMocha));
     }
 
     #[test]
@@ -2944,9 +2945,10 @@ mod tests {
     #[test]
     fn the_column_viewport_follows_the_cell_cursor() {
         // Four columns of width 2 ("c0" and a one-digit value) with one space
-        // between: 2+1+2 = 5 fits two columns in a grid 7 wide once the
-        // one-digit gutter and its spacing are taken off.
-        let mut state = grid_of(4, 7);
+        // between: 2+1+2 = 5 fits two columns in a grid 8 wide once the
+        // merged bar+gutter block (bar plus a one-digit gutter) and the one
+        // spacing column ahead of the values are taken off.
+        let mut state = grid_of(4, 8);
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
@@ -2973,7 +2975,7 @@ mod tests {
 
         update(
             &mut state,
-            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(7)),
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(8)),
         );
 
         assert_eq!(
@@ -2985,11 +2987,11 @@ mod tests {
 
     #[test]
     fn a_panel_that_grew_pulls_the_column_viewport_back() {
-        let mut state = grid_of(4, 7);
+        let mut state = grid_of(4, 8);
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
-        assert_eq!(state.contents.columns.first(), 2, "two of four fit at 7");
+        assert_eq!(state.contents.columns.first(), 2, "two of four fit at 8");
 
         update(
             &mut state,

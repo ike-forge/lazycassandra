@@ -55,9 +55,9 @@ pub(crate) fn identity(token: Token) -> &'static str {
 /// The icon for a section heading, which only the two key sections get: the
 /// Options heading names a list of settings, and the Columns tab wears the
 /// glyph on its rows rather than over them (design §3).
-pub(crate) fn section(token: Option<Token>) -> &'static str {
+pub(crate) fn section(token: Token) -> &'static str {
     match token {
-        Some(Token::PartitionKey | Token::ClusteringKey) => KEY,
+        Token::PartitionKey | Token::ClusteringKey => KEY,
         _ => "",
     }
 }

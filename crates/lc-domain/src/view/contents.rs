@@ -33,7 +33,7 @@ pub struct GridColumn {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridCell {
     pub text: String,
-    /// `Some(Token::Muted)` for a null, which is what keeps it apart from a
+    /// `Some(Token::Faint)` for a null, which is what keeps it apart from a
     /// text column whose value is the word "null".
     pub token: Option<Token>,
     /// Whether the applied filter matched `text`.
@@ -124,7 +124,7 @@ fn grid_cell(value: &CqlValue, filter: Option<&Filter>) -> GridCell {
     GridCell {
         matched: filter.is_some_and(|filter| filter.matches(&text)),
         token: match value {
-            CqlValue::Null => Some(Token::Muted),
+            CqlValue::Null => Some(Token::Faint),
             _ => None,
         },
         text,
@@ -297,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn a_null_is_muted_so_it_cannot_be_read_as_the_word() {
+    fn a_null_is_faint_so_it_cannot_be_read_as_the_word() {
         let state = showing(page_of(
             &["id", "email"],
             &[&[CqlValue::Int(1), CqlValue::Null]],
@@ -307,7 +307,7 @@ mod tests {
             panic!("a loaded page draws a grid");
         };
         assert_eq!(rows[0][0].token, None);
-        assert_eq!(rows[0][1].token, Some(Token::Muted));
+        assert_eq!(rows[0][1].token, Some(Token::Faint));
     }
 
     #[test]
@@ -449,7 +449,7 @@ mod tests {
         let null = rows
             .iter()
             .flatten()
-            .find(|cell| cell.token == Some(Token::Muted))
+            .find(|cell| cell.token == Some(Token::Faint))
             .expect("the fixture has a null");
 
         assert!(
@@ -458,7 +458,7 @@ mod tests {
         );
         assert_eq!(
             null.token,
-            Some(Token::Muted),
+            Some(Token::Faint),
             "and must stay distinguishable from a text column holding \"null\""
         );
     }

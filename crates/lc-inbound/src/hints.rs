@@ -7,8 +7,10 @@ use ratatui::text::{Line, Span};
 use crate::theme::Theme;
 
 const INDENT: &str = " ";
-const GAP: &str = "  ";
-const SEPARATOR: &str = " │ ";
+/// Every join in the bar, panel-to-panel and panel-to-global alike. Narrow
+/// margins on purpose: the bar is the densest row on screen and a wide gutter
+/// around a separator costs a hint.
+const SEPARATOR: &str = " | ";
 
 /// The bar as it fits in `width`.
 ///
@@ -49,12 +51,12 @@ impl Segment {
 
     /// An inert hint keeps its width — `fit` drops hints whole and must not
     /// see a different bar — and gives up the bold that says the key is live:
-    /// both halves go to `Muted`, so the whole segment recedes together
+    /// both halves go to `Faint`, so the whole segment recedes together
     /// whatever `HintAction` is later drawn as.
     fn spans(&self, theme: Theme) -> Vec<Span<'static>> {
         let (keys, action) = match self.liveness {
             Liveness::Live => (Token::HintKey, Token::HintAction),
-            Liveness::Inert => (Token::Muted, Token::Muted),
+            Liveness::Inert => (Token::Faint, Token::Faint),
         };
 
         vec![
@@ -100,7 +102,7 @@ fn composed(panel: &[Segment], kept: usize, global: &[Segment], from: usize) -> 
 
 fn joined(segments: &[Segment]) -> usize {
     segments.iter().map(Segment::width).sum::<usize>()
-        + GAP.chars().count() * segments.len().saturating_sub(1)
+        + SEPARATOR.chars().count() * segments.len().saturating_sub(1)
 }
 
 fn spans(panel: &[Segment], global: &[Segment], theme: Theme) -> Vec<Span<'static>> {
@@ -111,7 +113,7 @@ fn spans(panel: &[Segment], global: &[Segment], theme: Theme) -> Vec<Span<'stati
     let mut spans = vec![Span::raw(INDENT)];
     push_joined(&mut spans, panel, theme);
     if !panel.is_empty() && !global.is_empty() {
-        spans.push(Span::styled(SEPARATOR, theme.style(Token::HintAction)));
+        spans.push(Span::styled(SEPARATOR, theme.style(Token::Faint)));
     }
     push_joined(&mut spans, global, theme);
     spans
@@ -120,7 +122,7 @@ fn spans(panel: &[Segment], global: &[Segment], theme: Theme) -> Vec<Span<'stati
 fn push_joined(spans: &mut Vec<Span<'static>>, segments: &[Segment], theme: Theme) {
     for (index, segment) in segments.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::raw(GAP));
+            spans.push(Span::styled(SEPARATOR, theme.style(Token::Faint)));
         }
         spans.extend(segment.spans(theme));
     }
@@ -155,7 +157,7 @@ mod tests {
     fn a_wide_frame_shows_every_hint() {
         assert_eq!(
             drawn(Panel::Tables, 80),
-            " ⏎ open  / search │ tab panel  q quit"
+            " ⏎ open | / search | tab panel | q quit"
         );
     }
 
@@ -165,8 +167,8 @@ mod tests {
         // fitting (design §6). `?` never joins this fixture's bar — these
         // states never carry a geometry a palette would fit (design §5.1) —
         // so the thresholds are exactly what they were before `?` existed.
-        assert_eq!(drawn(Panel::Tables, 36), " ⏎ open │ tab panel  q quit");
-        assert_eq!(drawn(Panel::Tables, 25), " ⏎ open │ q quit");
+        assert_eq!(drawn(Panel::Tables, 36), " ⏎ open | tab panel | q quit");
+        assert_eq!(drawn(Panel::Tables, 25), " ⏎ open | q quit");
         assert_eq!(drawn(Panel::Tables, 15), " q quit");
         assert_eq!(drawn(Panel::Tables, 6), "");
     }
@@ -208,21 +210,21 @@ mod tests {
 
         assert_eq!(
             drawn(80),
-            " ⏎ open  / search │ tab panel  ? commands  q quit"
+            " ⏎ open | / search | tab panel | ? commands | q quit"
         );
         assert_eq!(
             drawn(46),
-            " ⏎ open │ tab panel  ? commands  q quit",
+            " ⏎ open | tab panel | ? commands | q quit",
             "tab panel is still here alongside ? commands"
         );
         assert_eq!(
             drawn(37),
-            " ⏎ open │ ? commands  q quit",
+            " ⏎ open | ? commands | q quit",
             "tab panel goes first as the frame narrows"
         );
         assert_eq!(
             drawn(26),
-            " ⏎ open │ q quit",
+            " ⏎ open | q quit",
             "? commands goes next; q quit is still the last one out"
         );
     }
@@ -233,7 +235,7 @@ mod tests {
         // global tail a 40-column frame carries (`?` needs a taller one).
         assert_eq!(
             drawn(Panel::Tables, 40),
-            " ⏎ open  / search │ tab panel  q quit"
+            " ⏎ open | / search | tab panel | q quit"
         );
     }
 
@@ -241,7 +243,7 @@ mod tests {
     fn the_editor_names_its_own_keys_and_drops_the_quit_it_no_longer_has() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " ctrl-r run  ctrl-e edit  ⏎ newline  esc leave │ tab panel"
+            " ctrl-r run | ctrl-e edit | ⏎ newline | esc leave | tab panel"
         );
     }
 
@@ -311,7 +313,30 @@ mod tests {
             live.spans[1].style, inert.spans[1].style,
             "an inert key must not read as pressable"
         );
-        assert_eq!(inert.spans[1].style, Theme::default().style(Token::Muted));
+        assert_eq!(inert.spans[1].style, Theme::default().style(Token::Faint));
+    }
+
+    /// One join for every pair of hints. The panel/global boundary is no longer
+    /// drawn differently from any other gap (design §4.2).
+    #[test]
+    fn every_pair_of_hints_is_joined_the_same_way() {
+        let bar = bar_of(Panel::Tables);
+        let line = line(&bar, 200, Theme::default());
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert!(
+            !text.contains('│'),
+            "the old boundary glyph survives: {text}"
+        );
+        assert!(text.contains(" | "), "{text}");
+        assert!(
+            !text.contains("  "),
+            "a double space survives a join: {text}"
+        );
     }
 
     #[test]

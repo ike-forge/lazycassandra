@@ -24,6 +24,6 @@ pub mod yank;
 
 pub use posture::Posture;
 pub use state::State;
-pub use theme::ThemeChoice;
+pub use theme::{Ours, Ported, ThemeChoice};
 pub use update::{Effect, Msg, init, update};
 pub use view::{OverlayView, PanelView, ViewModel, view_model};

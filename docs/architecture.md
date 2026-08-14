@@ -233,36 +233,49 @@ Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
 
 ## 6. Theme plumbing
 
-VISION principle 5 says the background is the terminal's own and everything
-drawn on top is ours. That falls out of the architecture rather than being
-bolted on.
+VISION principle 5 says colour is a relationship, not a property: a theme
+declares its own ground and is held to contrast against it. That falls out
+of the architecture rather than being bolted on.
 
 The domain never names a colour. It emits **semantic style tokens**:
 
 ```rust
 enum Token {
     PartitionKey, ClusteringKey, RegularColumn, Posture(Posture),
-    Severity(Severity), Muted, Keyspace, Table, Keyword, Reference, Literal,
-    /* … */
+    Severity(Severity), Muted, Faint, Keyspace, Table, Keyword, Reference,
+    Literal, /* … */
 }
 ```
 
-A theme is a `Palette` — a struct of named colour roles — plus one
-`Token -> ratatui::Style` function shared by every theme, both in
-`lc-inbound`. `ThemeChoice` lives in `lc-domain` instead, because a theme
-*name* is not a colour: `State.theme` holds one, and `Theme::of` in
-`lc-inbound` is the single place a name becomes a `Palette`. Four roles —
-`base`, `surface`, `text`, `border` — are `Option<Color>`; the default theme
-leaves all four `None`, so it paints no panel field and inherits whatever
-background and body foreground the user's terminal already has, on light or
-dark alike. `the_default_theme_paints_no_panel_field` is the mechanical
-statement of that. A theme that does own its palette — the four Catppuccin
-flavours — sets every role and repaints everything.
+A theme is a `Palette` — a struct of 28 plain `Color` fields, no
+`Option<Color>` — plus one `Token -> ratatui::Style` function shared by every
+theme, both in `lc-inbound`. `ThemeChoice` lives in `lc-domain` instead,
+because a theme *name* is not a colour: `State.theme` holds one, and
+`Theme::of` in `lc-inbound` is the single place a name becomes a `Palette`.
+
+`ThemeChoice` splits into two variants, `Ours(Ours)` and `Ported(Ported)`.
+`Ours` holds the eight palettes we author — Default, Ash, Beacon and Quill,
+each light and dark — and `Ported` holds the four Catppuccin flavours we take
+as given. The split is structural rather than a naming convention because the
+contrast sweep — in `theme::tests`, over the ratios `contrast.rs` computes —
+is written against `Ours::ALL`: it takes an `Ours` and cannot name a `Ported`
+theme by type, so "we impose no contrast requirement on a ported palette" is a
+fact the compiler enforces, not a policy someone could forget to apply. Adding
+a ported theme is one enum variant and one `const`, with no test to appease.
+
+Adding one of ours is not enforced by the type system, because `Ours::ALL` is
+a hand-written array and the compiler cannot check that it lists every
+variant. What catches an omission is `Ours::next`, an exhaustive match each
+variant of which names the one declared after it: a ninth variant fails to
+compile until `next` is extended, and `walking_from_the_first_theme_of_ours_reaches_every_one`
+then fails until `ALL` lists it too. Two steps, both of which have to be taken
+before the build is green again — but a deliberate edit to both could still
+leave a palette unswept.
 
 Practical consequence: nothing in the domain has to change to add a theme,
 and no theme can invent a meaning the domain didn't define. See
-specs/2026-08-10-themes-design.md for the roles, the five themes, and the
-runtime picker (`T`).
+specs/2026-08-13-colour-palettes-design.md for the roles, all twelve themes,
+and the runtime picker (`T`).
 
 ## 7. Configuration
 

@@ -606,14 +606,14 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A fresh panel opens in cell mode, cycling wraps, and a new request keeps the mode | `a_fresh_panel_selects_a_cell`, `the_mode_cycles_cell_row_column_and_wraps`, `a_new_request_keeps_the_mode_and_clears_the_cursors` (`contents.rs`) |
 | Row mode lights the row and column mode lights the column and its heading | `row_mode_lights_the_whole_row_and_no_column`, `column_mode_lights_the_column_and_its_heading`, `a_heading_is_unwashed_once_the_crosshair_scrolls_out_of_view`, `column_mode_lights_nothing_when_its_cursor_is_off_the_columns_drawn` (`inbound/render.rs`) |
 | The wash leaves a flavour's column colours, and a key column's heading colour, alone | `the_crosshair_leaves_a_flavours_column_colours_alone`, `a_key_columns_heading_keeps_its_colour_under_the_wash` (`inbound/render.rs`) |
-| The crosshair is fainter than the cursor row and flattens no colour the row keeps | `the_crosshair_is_fainter_than_the_cursor_row`, `the_crosshair_flattens_no_colour_the_cursor_row_keeps` (`inbound/theme/mod.rs`) |
+| The crosshair is fainter than the cursor row and flattens no colour the row keeps | `the_crosshair_is_fainter_than_the_cursor_row`, `the_two_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
 | The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render.rs`) |
 | A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
 | The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something`, `the_catalogue_lists_the_selection_mode_key`, `the_catalogue_lists_every_key_a_panel_hints_at` (`commands.rs`) |
 | A repeated focus letter does nothing further | `a_repeated_shortcut_leaves_a_panel_alone` |
 | A tab change resets the cursor and viewport and keeps the filter | `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `a_tab_change_leaves_the_filter_where_it_was` (`ddl.rs`) |
 | The columns tab lists every column with its kind | `the_columns_tab_lists_every_column_with_the_part_it_plays`, `the_columns_tab_shows_the_columns_the_ddl_tab_leaves_out` (`view/details.rs`), `the_columns_tab_draws_every_column_with_its_kind_and_type` (`inbound/render.rs`) |
-| A strip too narrow keeps the drawn tab whole | `a_border_wide_enough_names_both_tabs_and_mutes_the_one_not_drawn`, `a_border_too_narrow_for_the_strip_keeps_the_tab_it_is_drawing_whole` (`inbound/render.rs`) |
+| A strip too narrow keeps the drawn tab whole | `a_border_wide_enough_names_both_tabs_and_fades_the_one_not_drawn`, `a_border_too_narrow_for_either_strip_keeps_the_tab_it_is_drawing_whole` (`inbound/render.rs`) |
 | `q` quits and cancels | `q_quits`, `quitting_cancels_everything_still_in_flight` |
 | `Esc` clears the overlay | `escape_dismisses_the_overlay` |
 | `Tab`/`Shift-Tab` cycle and wrap | `tab_walks_the_panels_in_reading_order_and_wraps`, `shift_tab_walks_them_the_other_way` |
@@ -637,10 +637,10 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A click dismisses the picker and restores the theme | `a_click_dismisses_the_picker_and_restores_the_theme` |
 | The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
 | The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
-| The default theme paints no panel field, and only the cursor row and the crosshair paint a background | `the_default_theme_paints_no_panel_field`, `only_the_cursor_row_and_its_crosshair_paint_a_background` (`inbound/theme/mod.rs`) |
-| The default palette reads on black and on white | `the_default_palette_reads_on_black_and_on_white` (`inbound/theme/mod.rs`) |
-| Every flavour reads against its own base, and a highlight bar is distinct from its field | `every_flavour_reads_against_its_own_base`, `a_highlight_bar_is_distinct_from_its_field` (`inbound/theme/catppuccin.rs`) |
-| Every flavour sets every surface | `every_flavour_paints_every_surface` (`inbound/theme/catppuccin.rs`) |
+| The cursor row and its crosshair are the only tokens that paint a background, and neither spends a foreground | `the_two_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
+| Every palette of ours reads on every ground it declares, the crosshair included | `every_palette_of_ours_reads_on_every_ground_it_declares`, `the_neutral_ramp_of_ours_is_a_staircase`, `every_border_of_ours_is_perceptible` (`inbound/theme/mod.rs`) |
+| Every flavour reads against its own base, and a highlight bar is distinct from its field | `every_flavour_reads_against_its_own_base`, `a_highlight_bar_is_distinct_from_its_field` (`inbound/theme/ported/catppuccin.rs`) |
+| Every palette sets every surface | `Palette` holds plain `Color`s and no `Option<Color>`, so nothing can decline one and there is nothing left to test (`inbound/theme/mod.rs`) |
 | Focus letters are distinct and total | `every_panel_has_a_distinct_shortcut`, `a_shortcut_leads_back_to_the_panel_that_claims_it`, `the_shortcuts_are_the_ones_the_design_names` — all in `state.rs` |
 | No focus letter is shadowed by an earlier arm | `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` |
 | A focus letter is text in a panel that takes text | `a_shortcut_is_text_in_a_panel_that_takes_text` |
@@ -650,7 +650,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A keyspace is offered no Columns tab, and `c` stores none | `a_keyspace_is_offered_no_columns_tab_and_keeps_describing_itself` (`view/details.rs`), `c_on_a_keyspace_focuses_the_panel_and_draws_no_columns_tab` |
 | A tab change restarts the cursor; arriving at the tab drawn does not | `showing_a_tab_draws_it`, `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone`, `a_tab_change_leaves_the_filter_where_it_was` (`ddl.rs`) |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
-| The marked cell, and only it, wears the shortcut colour | `each_panel_colours_the_key_that_focuses_it`, `nothing_but_the_shortcut_wears_the_shortcut_colour` (`inbound/render.rs`), `a_shortcut_is_a_colour_of_its_own_on_a_focused_title` (`inbound/theme/mod.rs`) |
+| The marked cell, and only it, wears the shortcut colour in a title | `each_panel_colours_the_key_that_focuses_it`, `nothing_but_the_shortcut_wears_the_shortcut_colour_in_a_title` (`inbound/render.rs`), `a_hot_key_is_underlined_and_nothing_else_is` (`inbound/theme/mod.rs`) |
 | A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |
 | A click focuses what it lands in | `a_click_focuses_the_panel_it_landed_in`, `a_click_on_chrome_focuses_and_does_nothing_else` |
 | A stale row is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped` |
@@ -750,7 +750,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
 | `ctrl-e` hands the Queries buffer to an editor | `ctrl_e_hands_the_queries_buffer_to_an_editor` |
 | `ctrl-e` is inert outside Queries | `ctrl_e_is_inert_outside_queries` |
-| An open palette swallows it too | `ctrl_e_under_the_palette_does_nothing` |
+| An open palette swallows it too | `ctrl_e_under_an_overlay_does_nothing` |
 | A closed editor replaces the buffer and moves the cursor to its end | `a_closed_editor_replaces_the_buffer` |
 | A failed editor keeps the buffer and raises a message | `a_failed_editor_says_so_and_keeps_the_buffer` |
 | The palette lists it | `the_catalogue_lists_the_external_editor` (`commands.rs`) |

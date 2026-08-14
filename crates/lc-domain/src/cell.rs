@@ -17,7 +17,7 @@ const HEX: [char; 16] = [
 #[must_use]
 pub fn text(value: &CqlValue) -> String {
     match value {
-        // Distinguishable from a text column holding the word by the muted
+        // Distinguishable from a text column holding the word by the faint
         // token the projection puts on it, not by the text.
         CqlValue::Null => "null".to_owned(),
         CqlValue::Boolean(value) => value.to_string(),

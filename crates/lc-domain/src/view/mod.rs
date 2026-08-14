@@ -14,7 +14,7 @@ mod tables;
 mod title;
 
 pub use contents::{GridCell, GridColumn};
-pub use details::{ColumnKind, DetailRow, Details, Group, IdentityKind, Section};
+pub use details::{ColumnKind, DetailRow, Details, Group, Heading, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness};
 pub use tables::{RowKind, TreeRow};
 use title::TabSpec;
@@ -351,6 +351,7 @@ mod tests {
     use crate::contents::{Subject, TableRef};
     use crate::model::{DbError, Page, QueryId};
     use crate::state::{Message, Overlay};
+    use crate::theme::Ported;
 
     #[test]
     fn every_panel_is_projected_in_reading_order() {
@@ -470,7 +471,7 @@ mod tests {
 
     #[test]
     fn an_open_picker_is_projected_as_every_theme_and_the_cursors_position() {
-        let choice = ThemeChoice::CatppuccinMocha;
+        let choice = ThemeChoice::Ported(Ported::CatppuccinMocha);
         let mut cursor = crate::state::Cursor::default();
         cursor.go_to(choice.index(), ThemeChoice::ALL.len());
         let state = State {

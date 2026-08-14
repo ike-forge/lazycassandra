@@ -47,13 +47,38 @@ pub struct Section {
     /// `Partition Key`, `Clustering Key`, `Options`, `Replication`. `None` for
     /// the identity group, whose two rows name themselves — a heading over
     /// `Keyspace` and `Table` could only restate them.
-    pub heading: Option<String>,
+    pub heading: Option<Heading>,
     /// What the group is, which decides both the blank line above it and
     /// whether its rows read as key structure.
     pub group: Group,
-    /// Styles the heading and every row beneath it.
+    /// Styles the rows beneath the heading, and nothing else. `None` where the
+    /// group names no schema concept: an option is not key structure and must
+    /// not read as any.
     pub token: Option<Token>,
     pub rows: Vec<DetailRow>,
+}
+
+/// A group's label and the colour it is drawn in.
+///
+/// The token is separate from [`Section::token`] because a heading is coloured
+/// by what it names while its rows are coloured by what they are: `Partition
+/// Key` wears the key's own colour, and a heading naming no schema concept —
+/// `Options`, `Replication`, the column count — wears [`Token::Section`],
+/// which its rows must not inherit
+/// (docs/superpowers/specs/2026-08-13-colour-palettes-design.md §4.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Heading {
+    pub text: String,
+    pub token: Token,
+}
+
+impl Heading {
+    fn new(text: impl Into<String>, token: Token) -> Self {
+        Self {
+            text: text.into(),
+            token,
+        }
+    }
 }
 
 /// Which part of the panel a section belongs to.
@@ -290,7 +315,7 @@ fn identity(keyspace: &Keyspace, table: Option<&Table>) -> Section {
 
 fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     let partition = Section {
-        heading: Some("Partition Key".to_owned()),
+        heading: Some(Heading::new("Partition Key", Token::PartitionKey)),
         group: Group::Shape,
         token: Some(Token::PartitionKey),
         rows: table
@@ -306,7 +331,7 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     };
 
     let clustering = Section {
-        heading: Some("Clustering Key".to_owned()),
+        heading: Some(Heading::new("Clustering Key", Token::ClusteringKey)),
         group: Group::Shape,
         token: Some(Token::ClusteringKey),
         rows: table
@@ -322,7 +347,7 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     };
 
     let options = Section {
-        heading: Some("Options".to_owned()),
+        heading: Some(Heading::new("Options", Token::Section)),
         group: Group::Settings,
         token: None,
         rows: table
@@ -387,7 +412,10 @@ fn columns_of(keyspace: &Keyspace, table: &Table) -> Details {
         sections: populated([
             identity(keyspace, Some(table)),
             Section {
-                heading: Some(format!("{} columns", table.columns().count())),
+                heading: Some(Heading::new(
+                    format!("{} columns", table.columns().count()),
+                    Token::Section,
+                )),
                 group: Group::Shape,
                 token: None,
                 rows,
@@ -398,7 +426,7 @@ fn columns_of(keyspace: &Keyspace, table: &Table) -> Details {
 
 fn of_keyspace(keyspace: &Keyspace) -> Details {
     let replication = Section {
-        heading: Some("Replication".to_owned()),
+        heading: Some(Heading::new("Replication", Token::Section)),
         group: Group::Settings,
         token: None,
         rows: replication_rows(&keyspace.replication),
@@ -472,7 +500,12 @@ mod tests {
         details
             .sections
             .iter()
-            .filter_map(|section| section.heading.as_deref())
+            .filter_map(|section| {
+                section
+                    .heading
+                    .as_ref()
+                    .map(|heading| heading.text.as_str())
+            })
             .collect()
     }
 
@@ -491,7 +524,12 @@ mod tests {
         details
             .sections
             .iter()
-            .find(|section| section.heading.as_deref() == Some(heading))
+            .find(|section| {
+                section
+                    .heading
+                    .as_ref()
+                    .is_some_and(|own| own.text == heading)
+            })
             .unwrap_or_else(|| panic!("{heading} is missing"))
     }
 
@@ -797,6 +835,37 @@ mod tests {
             None,
             "an option is not part of the key structure and must not read as one"
         );
+    }
+
+    #[test]
+    fn a_heading_naming_no_schema_concept_is_a_section_heading() {
+        let keyspace = details(&tabled(&[("shop", &["orders"])]));
+        let table = details(&browsing(orders()));
+        let columns = details(&columns_tab(&browsing(every_kind())));
+        let token = |details: &Details, heading: &str| section(details, heading).heading.clone();
+
+        for (details, heading) in [
+            (&keyspace, "Replication"),
+            (&table, "Options"),
+            (&columns, "5 columns"),
+        ] {
+            assert_eq!(
+                token(details, heading).map(|heading| heading.token),
+                Some(Token::Section),
+                "{heading} names a group, not a schema concept"
+            );
+        }
+
+        for (heading, expected) in [
+            ("Partition Key", Token::PartitionKey),
+            ("Clustering Key", Token::ClusteringKey),
+        ] {
+            assert_eq!(
+                token(&table, heading).map(|heading| heading.token),
+                Some(expected),
+                "{heading} keeps the colour of the key it names"
+            );
+        }
     }
 
     #[test]
