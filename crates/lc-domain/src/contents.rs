@@ -42,10 +42,12 @@ pub struct ContentsPanel {
 /// (design §3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SelectionMode {
-    /// The cell, over a faint wash across its row and its column.
+    /// The whole row. The default: reading a table is reading rows, and a cell
+    /// cursor is what you cycle to once you have a cell in mind (design §2).
     #[default]
-    Cell,
     Row,
+    /// The cell, over a faint wash across its row and its column.
+    Cell,
     Column,
 }
 
@@ -584,20 +586,20 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_panel_selects_a_cell() {
-        assert_eq!(ContentsPanel::default().mode, SelectionMode::Cell);
+    fn a_fresh_panel_selects_a_row() {
+        assert_eq!(ContentsPanel::default().mode, SelectionMode::Row);
     }
 
     #[test]
-    fn the_mode_cycles_cell_row_column_and_wraps() {
-        let mut mode = SelectionMode::Cell;
+    fn the_mode_cycles_row_column_cell_and_wraps() {
+        let mut mode = SelectionMode::Row;
 
-        mode = mode.next();
-        assert_eq!(mode, SelectionMode::Row);
         mode = mode.next();
         assert_eq!(mode, SelectionMode::Column);
         mode = mode.next();
-        assert_eq!(mode, SelectionMode::Cell, "the third press comes home");
+        assert_eq!(mode, SelectionMode::Cell);
+        mode = mode.next();
+        assert_eq!(mode, SelectionMode::Row, "the third press comes home");
     }
 
     /// The mode is how the user reads a grid, not something about this page.

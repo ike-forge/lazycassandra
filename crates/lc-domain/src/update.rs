@@ -3717,11 +3717,10 @@ mod tests {
         state
     }
 
-    /// The panel opens in cell mode, so this is what `y` now does by default
-    /// (design §1).
     #[test]
     fn y_yanks_the_cell_in_cell_mode() {
         let mut state = grid_of_named_cells(3, 2);
+        state.contents.mode = SelectionMode::Cell;
         state.contents.cursor.go_to(1, 2);
         state.contents.column.go_to(2, 3);
 
@@ -3734,10 +3733,11 @@ mod tests {
         );
     }
 
+    /// The panel opens in row mode, so this is what `y` does by default
+    /// (design §1).
     #[test]
-    fn y_still_yanks_the_row_in_row_mode() {
+    fn y_yanks_the_row_in_row_mode() {
         let mut state = grid_of_named_cells(3, 2);
-        state.contents.mode = SelectionMode::Row;
         state.contents.cursor.go_to(1, 2);
         state.contents.column.go_to(2, 3);
 
@@ -6149,13 +6149,13 @@ mod tests {
         let mut state = populated(Panel::Contents);
 
         press(&mut state, Key::Char('m'));
-        assert_eq!(state.contents.mode, SelectionMode::Row);
-
-        press(&mut state, Key::Char('m'));
         assert_eq!(state.contents.mode, SelectionMode::Column);
 
         press(&mut state, Key::Char('m'));
         assert_eq!(state.contents.mode, SelectionMode::Cell);
+
+        press(&mut state, Key::Char('m'));
+        assert_eq!(state.contents.mode, SelectionMode::Row);
     }
 
     /// The grid is the only body with two cursors to choose between. `m` is
@@ -6173,7 +6173,7 @@ mod tests {
                 effects.is_empty() && crate::view::view_model(&state) == before,
                 "{panel:?} has no grid for a mode to apply to"
             );
-            assert_eq!(state.contents.mode, SelectionMode::Cell);
+            assert_eq!(state.contents.mode, SelectionMode::Row);
         }
     }
 
@@ -6185,6 +6185,6 @@ mod tests {
         press(&mut state, Key::Char('m'));
 
         assert_eq!(state.queries.text(), format!("{before}m"));
-        assert_eq!(state.contents.mode, SelectionMode::Cell);
+        assert_eq!(state.contents.mode, SelectionMode::Row);
     }
 }

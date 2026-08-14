@@ -270,11 +270,11 @@ below.
 
 | Key | Action |
 |---|---|
-| `m` | Cycle the selection mode: cell → row → column, wrapping. |
+| `m` | Cycle the selection mode: row → column → cell, wrapping. |
 
-The panel opens in cell mode, which draws the selected cell over a faint wash
-across its row and its column. Row mode lights the whole row instead, and
-column mode lights the column and its heading. Whichever mode is up, `j`/`k`
+The panel opens in row mode, which lights the whole row: reading a table is
+reading rows. Cell mode draws the selected cell over a faint wash across its
+row and its column, and column mode lights the column and its heading. Whichever mode is up, `j`/`k`
 still move the row cursor and `h`/`l` the column cursor exactly as the Motion
 table above says — the mode changes what is painted, not what a key does.
 
@@ -603,7 +603,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The cell is drawn over its row, and the gutter numbers the page | `the_selected_cell_is_marked_apart_from_the_rest_of_its_row`, `the_gutter_is_muted_and_the_values_beside_it_are_not`, `rows_are_numbered_from_one`, `the_row_number_is_the_pages_own_index_after_a_scroll` (`inbound/render.rs`) |
 | The cell highlight reads against the row's without a colour | `a_selected_cell_reads_against_the_selected_row_without_spending_a_colour` (`inbound/theme/mod.rs`) |
 | `m` cycles the selection mode, and does so only in Contents | `m_cycles_the_contents_selection_mode`, `m_does_nothing_outside_the_grid`, `m_types_an_m_in_queries` |
-| A fresh panel opens in cell mode, cycling wraps, and a new request keeps the mode | `a_fresh_panel_selects_a_cell`, `the_mode_cycles_cell_row_column_and_wraps`, `a_new_request_keeps_the_mode_and_clears_the_cursors` (`contents.rs`) |
+| A fresh panel opens in row mode, cycling wraps, and a new request keeps the mode | `a_fresh_panel_selects_a_row`, `the_mode_cycles_row_column_cell_and_wraps`, `a_new_request_keeps_the_mode_and_clears_the_cursors` (`contents.rs`) |
 | Row mode lights the row and column mode lights the column and its heading | `row_mode_lights_the_whole_row_and_no_column`, `column_mode_lights_the_column_and_its_heading`, `a_heading_is_unwashed_once_the_crosshair_scrolls_out_of_view`, `column_mode_lights_nothing_when_its_cursor_is_off_the_columns_drawn` (`inbound/render.rs`) |
 | The wash leaves a flavour's column colours, and a key column's heading colour, alone | `the_crosshair_leaves_a_flavours_column_colours_alone`, `a_key_columns_heading_keeps_its_colour_under_the_wash` (`inbound/render.rs`) |
 | The crosshair is fainter than the cursor row and flattens no colour the row keeps | `the_crosshair_is_fainter_than_the_cursor_row`, `the_two_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
@@ -762,7 +762,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The bar names it after `ctrl-r run` | `the_queries_bar_names_the_editor_binding_after_run` (`view/hints.rs`) |
 | No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
-| `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_still_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
+| `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
 | A cell yanks its value, unescaped and untruncated | `a_cell_yanks_without_quoting`, `a_cell_yank_is_not_ellipsised` (`yank.rs`) |
 | A null cell and an empty column yank nothing at all | `a_null_cell_yanks_nothing` (`yank.rs`), `y_on_a_null_cell_raises_no_effect`, `y_in_column_mode_on_a_page_with_no_rows_yanks_nothing` |
 | A column yank carries every row, in order, with no heading | `a_column_yanks_every_row_in_order_and_no_heading`, `a_null_in_a_column_yanks_as_an_empty_field`, `a_column_field_is_escaped_the_way_a_row_field_is`, `a_row_too_short_contributes_an_empty_field` (`yank.rs`), `a_column_yank_carries_rows_the_viewport_hides` |
