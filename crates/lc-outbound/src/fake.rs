@@ -191,6 +191,9 @@ pub struct FakeWriter {
     finished: Arc<AtomicBool>,
     /// Whether `open` refuses every path as already taken.
     exists: bool,
+    /// Whether `finish` fails — the disk-full-at-close case, where a partial
+    /// file is likeliest (design §4).
+    unflushable: bool,
 }
 
 impl FakeWriter {
@@ -208,6 +211,17 @@ impl FakeWriter {
     pub fn refusing_because_it_exists() -> Self {
         Self {
             exists: true,
+            ..Self::default()
+        }
+    }
+
+    /// A writer whose `finish` fails. `finish` is the real writer's flush, so
+    /// this is the last moment an export can fail and the one that leaves a
+    /// truncated file behind.
+    #[must_use]
+    pub fn failing_to_finish() -> Self {
+        Self {
+            unflushable: true,
             ..Self::default()
         }
     }
@@ -237,6 +251,7 @@ impl Writer for FakeWriter {
             written: Arc::clone(&self.written),
             aborted: Arc::clone(&self.aborted),
             finished: Arc::clone(&self.finished),
+            unflushable: self.unflushable,
         }))
     }
 }
@@ -247,6 +262,7 @@ struct FakeSink {
     written: Arc<Mutex<String>>,
     aborted: Arc<AtomicBool>,
     finished: Arc<AtomicBool>,
+    unflushable: bool,
 }
 
 #[async_trait]
@@ -261,6 +277,11 @@ impl Sink for FakeSink {
 
     async fn finish(&mut self) -> Result<(), ExportError> {
         self.finished.store(true, Ordering::Relaxed);
+
+        if self.unflushable {
+            return Err(ExportError::Io("no space left on device".to_owned()));
+        }
+
         Ok(())
     }
 

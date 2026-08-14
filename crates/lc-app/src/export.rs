@@ -54,18 +54,21 @@ async fn run(
     let mut sink = writer.open(&job.destination, job.overwrite).await?;
     let mut encoder = Encoder::new(job.format);
 
-    match write(tx, cluster, sink.as_mut(), &mut encoder, &job).await {
-        Ok(written) => {
-            sink.finish().await?;
-            Ok(written)
-        }
-        Err(error) => {
-            // A truncated array is not a document, and a partial file is not a
-            // result whatever the format (design §4).
-            sink.abort().await;
-            Err(error)
-        }
+    // A truncated array is not a document, and a partial file is not a result
+    // whatever the format (design §4). `finish` is the buffered writer's
+    // flush, so it is the failure most likely to leave one — returning on it
+    // left the user with `Export failed` and a half-written file on disk
+    // (final review I4).
+    let result = match write(tx, cluster, sink.as_mut(), &mut encoder, &job).await {
+        Ok(written) => sink.finish().await.map(|()| written),
+        Err(error) => Err(error),
+    };
+
+    if result.is_err() {
+        sink.abort().await;
     }
+
+    result
 }
 
 async fn write(

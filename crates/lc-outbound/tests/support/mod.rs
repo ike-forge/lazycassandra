@@ -176,16 +176,16 @@ async fn export(
     let mut sink = writer.open(&job.destination, job.overwrite).await?;
     let mut encoder = Encoder::new(job.format);
 
-    match write(cluster, sink.as_mut(), &mut encoder, job, messages).await {
-        Ok(written) => {
-            sink.finish().await?;
-            Ok(written)
-        }
-        Err(error) => {
-            sink.abort().await;
-            Err(error)
-        }
+    let result = match write(cluster, sink.as_mut(), &mut encoder, job, messages).await {
+        Ok(written) => sink.finish().await.map(|()| written),
+        Err(error) => Err(error),
+    };
+
+    if result.is_err() {
+        sink.abort().await;
     }
+
+    result
 }
 
 async fn write(

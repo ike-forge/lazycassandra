@@ -261,6 +261,33 @@ async fn an_existing_destination_asks_before_it_clobbers() {
     assert!(*overwrite);
 }
 
+/// The last thing an export does is flush, which is where a full disk shows
+/// up — and where the file on disk is likeliest to be a truncated one. The
+/// user got `Export failed` and kept the truncation (final review I4).
+#[tokio::test]
+async fn a_finish_that_fails_leaves_no_partial_file_either() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .returning(page(&[("seed", "seed@example.com")]))
+    .paging(three_pages());
+    let writer = FakeWriter::failing_to_finish();
+    let mut state = on_a_read_table(&cluster).await;
+
+    let effects = run_export_form(&mut state, Format::Json);
+    run_with_writer(&cluster, Some(&writer), &mut state, effects).await;
+
+    assert!(writer.aborted(), "the partial file goes with the failure");
+    assert_eq!(writer.written(), "", "abort took the truncated document");
+    let finished = expect_finished(&state);
+    assert_eq!(finished.severity, Severity::Danger);
+    assert!(
+        finished.message.contains("no space left on device"),
+        "the flush's own failure reaches the user: {finished:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_cluster_that_fails_mid_export_leaves_no_partial_file() {
     let cluster = FakeCluster::new(
