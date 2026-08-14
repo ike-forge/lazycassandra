@@ -1261,10 +1261,13 @@ fn clear_selection(state: &mut State) -> bool {
 /// started at its last one.
 fn collapse_selection(state: &mut State) {
     for axis in axes(state, state.focus()).into_iter().flatten() {
+        // The selection is spent unconditionally (visual-mode design §5.1);
+        // only the cursor's move home is conditional on an anchor surviving
+        // (multi-group design §3).
         if let Some(anchor) = axis.selection.anchor() {
             axis.cursor.go_to(anchor, axis.len);
-            axis.selection.clear();
         }
+        axis.selection.clear();
     }
 }
 
