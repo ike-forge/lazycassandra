@@ -14,6 +14,7 @@
 )]
 
 mod merge;
+mod validate;
 mod wire;
 
 use lc_domain::config::{Diagnostic, Origin, Span};
