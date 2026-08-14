@@ -463,6 +463,107 @@ impl Range {
     }
 }
 
+/// Inclusive runs of rows, sorted, disjoint and never adjacent.
+///
+/// Normalised on the way in and never afterwards: [`Ranges::insert`] absorbs
+/// every group the new one overlaps *or touches*, because two groups meeting
+/// at consecutive rows are one band on screen and a set that could hold both
+/// spellings would let a renderer draw a seam nothing explains. Sorted, so a
+/// yank reads rows in the order they are drawn without sorting them itself
+/// (docs/superpowers/specs/2026-08-14-multi-group-selection-design.md §2).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ranges(Vec<Range>);
+
+impl Ranges {
+    #[must_use]
+    pub fn of(range: Range) -> Self {
+        Self(vec![range])
+    }
+
+    pub fn insert(&mut self, range: Range) {
+        let mut first = range.first;
+        let mut last = range.last;
+        let mut kept: Vec<Range> = Vec::with_capacity(self.0.len() + 1);
+        let mut placed = false;
+
+        for held in self.0.drain(..) {
+            if held.first <= last.saturating_add(1) && first <= held.last.saturating_add(1) {
+                first = first.min(held.first);
+                last = last.max(held.last);
+            } else if held.last < first {
+                kept.push(held);
+            } else {
+                if !placed {
+                    kept.push(Range { first, last });
+                    placed = true;
+                }
+
+                kept.push(held);
+            }
+        }
+
+        if !placed {
+            kept.push(Range { first, last });
+        }
+
+        self.0 = kept;
+    }
+
+    /// Drops the group holding `index`, answering with it.
+    pub fn remove_holding(&mut self, index: usize) -> Option<Range> {
+        let position = self.0.iter().position(|group| group.contains(index))?;
+
+        Some(self.0.remove(position))
+    }
+
+    #[must_use]
+    pub fn contains(&self, index: usize) -> bool {
+        self.0.iter().any(|group| group.contains(index))
+    }
+
+    /// How many rows are selected across every group.
+    #[must_use]
+    pub fn rows(&self) -> usize {
+        self.0.iter().map(|group| group.rows()).sum()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn groups(&self) -> impl Iterator<Item = Range> + '_ {
+        self.0.iter().copied()
+    }
+
+    /// Every selected row, in the order the rows are drawn.
+    pub fn indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter().flat_map(|group| group.first..=group.last)
+    }
+
+    #[must_use]
+    pub fn first(&self) -> Option<Range> {
+        self.0.first().copied()
+    }
+
+    /// Pulls the groups back over a list that shrank, dropping the ones whose
+    /// first row has gone.
+    pub fn clamp_to(&mut self, len: usize) {
+        let Some(last) = len.checked_sub(1) else {
+            self.0.clear();
+            return;
+        };
+
+        self.0.retain(|group| group.first <= last);
+
+        for group in &mut self.0 {
+            if group.last > last {
+                group.last = last;
+            }
+        }
+    }
+}
+
 /// A run of rows a panel has selected, and whether the cursor is still one end
 /// of it (docs/superpowers/specs/2026-08-14-visual-mode-design.md §2).
 ///
@@ -1719,5 +1820,105 @@ mod tests {
             Span::default(),
             "a frame that drew no selection reports none"
         );
+    }
+
+    #[test]
+    fn groups_that_overlap_or_merely_touch_become_one() {
+        // Two groups meeting at consecutive rows are one band on screen, and a
+        // set holding both spellings would let a renderer draw a seam the user
+        // cannot explain (multi-group selection design §2).
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 2));
+        ranges.insert(Range::new(2, 4));
+
+        assert_eq!(ranges.groups().collect::<Vec<_>>(), vec![Range::new(0, 4)]);
+
+        let mut touching = Ranges::default();
+        touching.insert(Range::new(0, 2));
+        touching.insert(Range::new(3, 5));
+
+        assert_eq!(
+            touching.groups().collect::<Vec<_>>(),
+            vec![Range::new(0, 5)],
+            "3 follows 2, so the two are one band"
+        );
+    }
+
+    #[test]
+    fn a_gap_of_one_row_keeps_two_groups() {
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 1));
+        ranges.insert(Range::new(3, 4));
+
+        assert_eq!(
+            ranges.groups().collect::<Vec<_>>(),
+            vec![Range::new(0, 1), Range::new(3, 4)]
+        );
+        assert_eq!(ranges.rows(), 4);
+        assert!(!ranges.contains(2), "the gap is not selected");
+        assert!(ranges.contains(0) && ranges.contains(4));
+    }
+
+    #[test]
+    fn the_order_groups_arrived_in_does_not_show() {
+        let mut forwards = Ranges::default();
+        forwards.insert(Range::new(0, 1));
+        forwards.insert(Range::new(5, 6));
+        forwards.insert(Range::new(3, 3));
+
+        let mut backwards = Ranges::default();
+        backwards.insert(Range::new(3, 3));
+        backwards.insert(Range::new(5, 6));
+        backwards.insert(Range::new(0, 1));
+
+        assert_eq!(forwards, backwards);
+        assert_eq!(
+            forwards.indices().collect::<Vec<_>>(),
+            vec![0, 1, 3, 5, 6],
+            "indices come out in the order the rows are drawn"
+        );
+    }
+
+    #[test]
+    fn a_group_bridging_two_others_swallows_both() {
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 1));
+        ranges.insert(Range::new(5, 6));
+        ranges.insert(Range::new(1, 5));
+
+        assert_eq!(ranges.groups().collect::<Vec<_>>(), vec![Range::new(0, 6)]);
+    }
+
+    #[test]
+    fn removing_answers_with_the_group_that_held_the_row() {
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 1));
+        ranges.insert(Range::new(4, 6));
+
+        assert_eq!(ranges.remove_holding(5), Some(Range::new(4, 6)));
+        assert_eq!(ranges.groups().collect::<Vec<_>>(), vec![Range::new(0, 1)]);
+        assert_eq!(ranges.remove_holding(3), None, "no group holds row 3");
+    }
+
+    #[test]
+    fn clamping_drops_only_the_groups_whose_head_is_gone() {
+        // A group whose first row has gone no longer addresses anything the
+        // user pointed at; one whose tail was truncated still does (visual
+        // mode design §2, applied per group).
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 1));
+        ranges.insert(Range::new(4, 8));
+        ranges.insert(Range::new(10, 12));
+
+        ranges.clamp_to(6);
+
+        assert_eq!(
+            ranges.groups().collect::<Vec<_>>(),
+            vec![Range::new(0, 1), Range::new(4, 5)]
+        );
+
+        ranges.clamp_to(0);
+
+        assert!(ranges.is_empty(), "an empty list selects nothing");
     }
 }
