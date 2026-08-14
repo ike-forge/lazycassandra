@@ -88,17 +88,13 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
     let mut selection = Span::default();
     let mut row = 0;
     let mut previous: Option<Group> = None;
-    // Every line is drawn one column in, so the cursor row's left cap has a
-    // column of panel ground to be cut out of and the rows below it stay
-    // aligned with the row that carries one.
-    let width = width.saturating_sub(usize::from(crate::body::CAPS));
 
     for section in &details.sections {
         // The one row spent on separation, and only where it buys a split
         // between two of the panel's parts: what the rows are about, what the
         // table is, what it is configured to do.
         if previous.is_some_and(|group| group != section.group) {
-            lines.push(indented(Line::raw("")));
+            lines.push(Line::raw(""));
         }
         previous = Some(section.group);
 
@@ -108,10 +104,10 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
 
         if let Some(heading) = &section.heading {
             let icon = crate::icons::section(heading.token, section.group);
-            lines.push(indented(Line::styled(
+            lines.push(Line::styled(
                 truncate(&prefixed(icon, &heading.text, width), width),
                 theme.style(heading.token),
-            )));
+            ));
         }
 
         for detail in &section.rows {
@@ -121,14 +117,12 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
                 let highlight = theme.style(Token::Selected);
                 drawn = drawn
                     .into_iter()
-                    .map(|line| capped(patched(line, highlight), highlight, theme))
+                    .map(|line| patched(line, highlight))
                     .collect();
                 selection = Span {
                     first: lines.len(),
                     lines: drawn.len(),
                 };
-            } else {
-                drawn = drawn.into_iter().map(indented).collect();
             }
 
             lines.extend(drawn);
@@ -137,32 +131,6 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
     }
 
     Laid { lines, selection }
-}
-
-/// A line moved past the column the cursor row's left cap is drawn in.
-fn indented(mut line: Line<'static>) -> Line<'static> {
-    line.spans.insert(0, TextSpan::raw(" "));
-    line
-}
-
-/// The cursor row's line with its band closed off at both ends.
-///
-/// This body's band covers the row's text rather than the panel's width — a
-/// wrapped value leaves the rest of its line bare — so the caps go where the
-/// text ends rather than at the margin. Each carries the panel's ground
-/// explicitly: the band has already been patched onto the line, and a span
-/// that inherited it would draw the glyph in its own colour.
-fn capped(line: Line<'static>, band: Style, theme: Theme) -> Line<'static> {
-    let Some(colour) = band.bg else {
-        return indented(line);
-    };
-    let cap = Style::new().fg(colour).bg(theme.palette().base);
-
-    let mut spans = vec![TextSpan::styled(crate::icons::CAP_LEFT.to_string(), cap)];
-    spans.extend(line.spans);
-    spans.push(TextSpan::styled(crate::icons::CAP_RIGHT.to_string(), cap));
-
-    Line::from(spans).style(line.style)
 }
 
 /// `text` behind its icon, or bare where the two together would push the name
