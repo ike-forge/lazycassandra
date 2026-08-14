@@ -306,11 +306,6 @@ impl Themes {
             built_in => Theme::of(built_in),
         }
     }
-
-    /// The names the picker lists after the built-ins, in config order.
-    pub fn names(&self) -> impl Iterator<Item = &ThemeName> {
-        self.custom.keys()
-    }
 }
 
 /// The cursor row.
