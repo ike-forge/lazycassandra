@@ -2,9 +2,12 @@
 //! becomes (docs/superpowers/specs/2026-08-14-export-design.md).
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use crate::cell;
+use crate::contents::Subject;
 use crate::model::{CqlValue, Row};
+use crate::update::ROW_LIMIT;
 use crate::yank;
 
 /// What an export is written as.
@@ -283,6 +286,288 @@ impl Line {
     }
 }
 
+/// How much of the result an export covers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Scope {
+    /// Re-run the statement with no limit of ours and page to the end.
+    #[default]
+    Whole,
+    /// The rows the panel already holds.
+    Fetched,
+}
+
+/// The rows in memory, and whether the statement has more behind them.
+///
+/// An enum rather than a count and a flag: "everything, and there is more"
+/// cannot be written down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fetched {
+    /// Fewer than [`ROW_LIMIT`] came back, so our limit was not the binding
+    /// constraint and both scopes would write the same file.
+    Everything(usize),
+    Some(usize),
+}
+
+impl Fetched {
+    /// What the panel holds, whichever variant that is.
+    #[must_use]
+    pub const fn of(rows: usize) -> Self {
+        if rows < ROW_LIMIT {
+            Self::Everything(rows)
+        } else {
+            Self::Some(rows)
+        }
+    }
+
+    #[must_use]
+    pub const fn count(self) -> usize {
+        match self {
+            Self::Everything(rows) | Self::Some(rows) => rows,
+        }
+    }
+
+    #[must_use]
+    const fn complete(self) -> bool {
+        matches!(self, Self::Everything(_))
+    }
+}
+
+/// Where `Tab` is in the form.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Stop {
+    #[default]
+    Scope,
+    Format,
+    /// The one stop where a printable key is text (design §2).
+    Path,
+    Export,
+}
+
+impl Stop {
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Scope => Self::Format,
+            Self::Format => Self::Path,
+            Self::Path => Self::Export,
+            Self::Export => Self::Scope,
+        }
+    }
+
+    #[must_use]
+    pub const fn previous(self) -> Self {
+        match self {
+            Self::Scope => Self::Export,
+            Self::Format => Self::Scope,
+            Self::Path => Self::Format,
+            Self::Export => Self::Path,
+        }
+    }
+
+    /// Whether this stop claims printable keys as text.
+    #[must_use]
+    pub const fn takes_text(self) -> bool {
+        matches!(self, Self::Path)
+    }
+}
+
+/// What the form is asking before it will act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Confirm {
+    /// The destination exists. `Esc` goes back to the form (design §7).
+    Overwrite,
+}
+
+/// How many characters of a typed statement the title shows.
+const TITLE_LIMIT: usize = 100;
+
+/// The open export form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportForm {
+    subject: Subject,
+    fetched: Fetched,
+    stop: Stop,
+    scope: Scope,
+    format: Format,
+    path: Line,
+    confirm: Option<Confirm>,
+}
+
+impl ExportForm {
+    /// Opens over `subject`, prefilling the path from `cwd`.
+    ///
+    /// `cwd` is passed rather than read: the domain cannot reach the process's
+    /// working directory and must not learn how (design §2.1).
+    #[must_use]
+    pub fn opened(subject: Subject, fetched: Fetched, cwd: &Path) -> Self {
+        let format = Format::default();
+        let name = format!("{}.{}", stem(&subject), format.extension());
+        let path = cwd.join(&name).to_string_lossy().into_owned();
+
+        Self {
+            subject,
+            fetched,
+            stop: Stop::default(),
+            scope: Scope::default(),
+            format,
+            path: Line::new(path),
+            confirm: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn stop(&self) -> Stop {
+        self.stop
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> Scope {
+        self.scope
+    }
+
+    #[must_use]
+    pub const fn format(&self) -> Format {
+        self.format
+    }
+
+    #[must_use]
+    pub const fn path(&self) -> &Line {
+        &self.path
+    }
+
+    pub const fn path_mut(&mut self) -> &mut Line {
+        &mut self.path
+    }
+
+    #[must_use]
+    pub const fn subject(&self) -> &Subject {
+        &self.subject
+    }
+
+    #[must_use]
+    pub const fn fetched(&self) -> Fetched {
+        self.fetched
+    }
+
+    #[must_use]
+    pub const fn confirm(&self) -> Option<Confirm> {
+        self.confirm
+    }
+
+    pub const fn set_confirm(&mut self, confirm: Option<Confirm>) {
+        self.confirm = confirm;
+    }
+
+    /// Whether the fetched-rows scope can be chosen at all (design §3).
+    #[must_use]
+    pub const fn fetched_enabled(&self) -> bool {
+        !self.fetched.complete()
+    }
+
+    pub const fn tab(&mut self) {
+        self.stop = self.stop.next();
+    }
+
+    pub const fn back_tab(&mut self) {
+        self.stop = self.stop.previous();
+    }
+
+    /// `Space`. Reports whether the export should run — true only from
+    /// [`Stop::Export`].
+    pub fn activate(&mut self) -> bool {
+        match self.stop {
+            Stop::Scope => {
+                self.toggle_scope();
+                false
+            }
+            Stop::Format => {
+                self.toggle_format();
+                false
+            }
+            Stop::Path => false,
+            Stop::Export => true,
+        }
+    }
+
+    /// `j`/`↓` inside a radio group. The groups have two options each, so a
+    /// move in either direction reaches the same place a toggle does.
+    pub fn down(&mut self) {
+        self.move_within_group();
+    }
+
+    pub fn up(&mut self) {
+        self.move_within_group();
+    }
+
+    /// The two scope options, in order, as the form draws them.
+    #[must_use]
+    pub fn scope_labels(&self) -> [String; 2] {
+        let whole = match (self.subject.table(), self.fetched) {
+            (None, _) => "Export the whole query result".to_owned(),
+            (Some(_), Fetched::Everything(rows)) => format!("Export the whole table ({rows})"),
+            (Some(_), Fetched::Some(_)) => "Export the whole table".to_owned(),
+        };
+
+        [
+            whole,
+            format!("Export the {} fetched rows", self.fetched.count()),
+        ]
+    }
+
+    /// What the form's border says it is about (design §1).
+    #[must_use]
+    pub fn title(&self) -> String {
+        match &self.subject {
+            Subject::Table(table) => format!("Export table {}", table.qualified()),
+            Subject::Typed(_) => format!("Export query {}", cut(&self.subject.label())),
+        }
+    }
+
+    fn move_within_group(&mut self) {
+        match self.stop {
+            Stop::Scope => self.toggle_scope(),
+            Stop::Format => self.toggle_format(),
+            Stop::Path | Stop::Export => {}
+        }
+    }
+
+    fn toggle_scope(&mut self) {
+        if !self.fetched_enabled() {
+            return;
+        }
+
+        self.scope = match self.scope {
+            Scope::Whole => Scope::Fetched,
+            Scope::Fetched => Scope::Whole,
+        };
+    }
+
+    fn toggle_format(&mut self) {
+        self.format = self.format.next();
+        self.path.set_extension(self.format.extension());
+    }
+}
+
+/// The default filename, without an extension.
+fn stem(subject: &Subject) -> String {
+    match subject {
+        Subject::Table(table) => table.qualified(),
+        Subject::Typed(_) => "query".to_owned(),
+    }
+}
+
+/// `label` cut to [`TITLE_LIMIT`] characters, ellipsised. Cutting on a
+/// character boundary rather than a byte one: a CQL literal can hold anything.
+fn cut(label: &str) -> String {
+    if label.chars().count() <= TITLE_LIMIT {
+        return label.to_owned();
+    }
+
+    let head: String = label.chars().take(TITLE_LIMIT).collect();
+
+    format!("{head}…")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,5 +833,202 @@ mod tests {
         line.set_extension("json");
 
         assert_eq!(line.text(), "/home/ike/.config.json");
+    }
+
+    use crate::contents::{Subject, TableRef};
+    use std::path::Path;
+
+    fn form(fetched: Fetched) -> ExportForm {
+        ExportForm::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            fetched,
+            Path::new("/home/ike"),
+        )
+    }
+
+    #[test]
+    fn a_form_opens_on_the_whole_scope_as_csv_with_the_path_prefilled() {
+        let form = form(Fetched::Some(200));
+
+        assert_eq!(form.stop(), Stop::Scope);
+        assert_eq!(form.scope(), Scope::Whole);
+        assert_eq!(form.format(), Format::Csv);
+        assert_eq!(form.path().text(), "/home/ike/shop.orders.csv");
+    }
+
+    #[test]
+    fn a_typed_subject_is_prefilled_as_query() {
+        let form = ExportForm::opened(
+            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+            Fetched::Some(200),
+            Path::new("/home/ike"),
+        );
+
+        assert_eq!(form.path().text(), "/home/ike/query.csv");
+    }
+
+    #[test]
+    fn no_cwd_prefills_a_bare_relative_name() {
+        let form = ExportForm::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Fetched::Some(200),
+            Path::new(""),
+        );
+
+        assert_eq!(form.path().text(), "shop.orders.csv");
+    }
+
+    #[test]
+    fn tab_walks_the_four_stops_and_wraps() {
+        let mut form = form(Fetched::Some(200));
+
+        for expected in [Stop::Format, Stop::Path, Stop::Export, Stop::Scope] {
+            form.tab();
+            assert_eq!(form.stop(), expected);
+        }
+    }
+
+    #[test]
+    fn shift_tab_walks_them_backwards() {
+        let mut form = form(Fetched::Some(200));
+
+        for expected in [Stop::Export, Stop::Path, Stop::Format, Stop::Scope] {
+            form.back_tab();
+            assert_eq!(form.stop(), expected);
+        }
+    }
+
+    #[test]
+    fn space_on_the_scope_stop_moves_to_the_other_option_and_back() {
+        let mut form = form(Fetched::Some(200));
+
+        assert!(!form.activate(), "a radio does not run the export");
+        assert_eq!(form.scope(), Scope::Fetched);
+        form.activate();
+        assert_eq!(form.scope(), Scope::Whole);
+    }
+
+    #[test]
+    fn space_on_the_export_stop_reports_that_it_ran() {
+        let mut form = form(Fetched::Some(200));
+        form.tab();
+        form.tab();
+        form.tab();
+
+        assert_eq!(form.stop(), Stop::Export);
+        assert!(form.activate());
+    }
+
+    #[test]
+    fn space_on_the_format_stop_rewrites_the_paths_extension() {
+        let mut form = form(Fetched::Some(200));
+        form.tab();
+        form.activate();
+
+        assert_eq!(form.format(), Format::Json);
+        assert_eq!(form.path().text(), "/home/ike/shop.orders.json");
+    }
+
+    #[test]
+    fn j_and_k_move_within_a_radio_group_too() {
+        let mut form = form(Fetched::Some(200));
+        form.down();
+        assert_eq!(form.scope(), Scope::Fetched);
+        form.up();
+        assert_eq!(form.scope(), Scope::Whole);
+    }
+
+    /// Everything already fetched means the two scopes would write the same
+    /// file, and one of the two is the honest name for it (design §3).
+    #[test]
+    fn a_result_that_is_already_complete_disables_the_fetched_scope() {
+        let mut form = form(Fetched::Everything(137));
+
+        assert!(!form.fetched_enabled());
+        form.activate();
+        assert_eq!(
+            form.scope(),
+            Scope::Whole,
+            "the disabled option is unreachable"
+        );
+        form.down();
+        assert_eq!(form.scope(), Scope::Whole);
+    }
+
+    #[test]
+    fn a_disabled_fetched_scope_moves_its_count_onto_the_other_label() {
+        let form = form(Fetched::Everything(137));
+
+        assert_eq!(
+            form.scope_labels(),
+            [
+                "Export the whole table (137)".to_owned(),
+                "Export the 137 fetched rows".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn an_incomplete_result_names_both_scopes_plainly() {
+        let form = form(Fetched::Some(200));
+
+        assert_eq!(
+            form.scope_labels(),
+            [
+                "Export the whole table".to_owned(),
+                "Export the 200 fetched rows".to_owned()
+            ]
+        );
+    }
+
+    /// A typed statement may carry its own LIMIT, so "the whole table" would
+    /// be a claim about something that is not a table (design §3).
+    #[test]
+    fn a_typed_subject_names_its_whole_scope_a_query_result() {
+        let form = ExportForm::opened(
+            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+            Fetched::Some(200),
+            Path::new(""),
+        );
+
+        assert_eq!(form.scope_labels()[0], "Export the whole query result");
+    }
+
+    #[test]
+    fn a_table_form_is_titled_by_its_table() {
+        assert_eq!(form(Fetched::Some(200)).title(), "Export table shop.orders");
+    }
+
+    #[test]
+    fn a_long_query_title_is_cut_to_a_hundred_characters_with_an_ellipsis() {
+        let cql = format!(
+            "SELECT * FROM shop.orders WHERE note = '{}'",
+            "x".repeat(200)
+        );
+        let form = ExportForm::opened(Subject::Typed(cql), Fetched::Some(200), Path::new(""));
+        let title = form.title();
+
+        assert!(title.starts_with("Export query SELECT * FROM shop.orders"));
+        assert!(title.ends_with('…'));
+        assert_eq!(
+            title.trim_start_matches("Export query ").chars().count(),
+            101,
+            "a hundred characters and the ellipsis"
+        );
+    }
+
+    /// Cutting on a byte boundary would panic; cutting on a character one
+    /// cannot.
+    #[test]
+    fn a_query_title_cuts_on_a_character_boundary() {
+        let cql = format!("SELECT '{}'", "é".repeat(200));
+        let form = ExportForm::opened(Subject::Typed(cql), Fetched::Some(200), Path::new(""));
+
+        assert!(form.title().ends_with('…'));
+    }
+
+    #[test]
+    fn a_fresh_form_is_not_confirming_anything() {
+        assert_eq!(form(Fetched::Some(200)).confirm(), None);
     }
 }
