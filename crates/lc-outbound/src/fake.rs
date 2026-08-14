@@ -75,6 +75,12 @@ impl FakeCluster {
 
     /// Fails `execute_paged` when the cursor names `index` rather than
     /// handing back the scripted page there.
+    ///
+    /// Two things to know before reaching for this: it is consulted only
+    /// after `pages` is non-empty (an unscripted cluster returns its one
+    /// `execute` page before `index` is ever checked), and `execute_error`
+    /// from [`Self::refusing_to_execute`] is checked first and, if set,
+    /// fails every call regardless of `index`.
     #[must_use]
     pub fn failing_page(self, index: usize, error: DbError) -> Self {
         Self {

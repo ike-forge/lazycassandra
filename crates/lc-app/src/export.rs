@@ -2,6 +2,13 @@
 //!
 //! It lives here rather than behind a port because it needs two of them, and
 //! the composition root is the one place that holds both (export design §5).
+//!
+//! `crates/lc-outbound/tests/support/mod.rs` mirrors this file's sequencing
+//! by hand, because this crate is a binary — the scenario tier cannot depend
+//! on it and call in directly. A change here that reorders or adds a step
+//! (a page write, a progress report, the finish/abort split) must be carried
+//! over there too, or the scenario tests stop proving anything about this
+//! code.
 
 use std::path::PathBuf;
 use std::sync::Arc;
