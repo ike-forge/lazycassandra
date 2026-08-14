@@ -127,9 +127,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         Some(OverlayView::Themes { labels, selected }) => {
             crate::themes::render(frame, labels, *selected, theme);
         }
-        // Not drawn yet: a later task gives this its own renderer, the way
-        // `commands` and `themes` each got one.
-        Some(OverlayView::Diagnostics { .. }) | None => {}
+        Some(OverlayView::Diagnostics { rows, selected }) => {
+            crate::diagnostics::render(frame, rows, *selected, theme);
+        }
+        None => {}
     }
 
     Rendered {
