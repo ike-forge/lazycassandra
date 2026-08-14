@@ -23,6 +23,7 @@ pub use title::{PanelTitle, TAB_SEPARATOR, Tab};
 pub use crate::editor::Position;
 
 use crate::commands::{self, CommandRow};
+use crate::config::Diagnostic;
 use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
 use crate::model::DbError;
@@ -87,6 +88,40 @@ pub enum OverlayView {
         labels: Vec<String>,
         selected: usize,
     },
+    /// The config diagnostics' rows and where its cursor is.
+    Diagnostics {
+        rows: Vec<DiagnosticRow>,
+        selected: usize,
+    },
+}
+
+/// One diagnostic as a renderer needs it: the location already formatted, so
+/// the renderer never has to know how a span is spelled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticRow {
+    pub location: String,
+    pub severity: Severity,
+    pub message: String,
+}
+
+fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
+    let location = diagnostic.span.map_or_else(
+        || diagnostic.origin.as_str().to_owned(),
+        |span| {
+            format!(
+                "{}:{}:{}",
+                diagnostic.origin.as_str(),
+                span.line,
+                span.column
+            )
+        },
+    );
+
+    DiagnosticRow {
+        location,
+        severity: diagnostic.severity,
+        message: diagnostic.message.clone(),
+    }
 }
 
 fn overlay(state: &State) -> Option<OverlayView> {
@@ -94,6 +129,10 @@ fn overlay(state: &State) -> Option<OverlayView> {
         Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
         Overlay::Commands(panel) => Some(OverlayView::Commands {
             rows: commands::rows(),
+            selected: panel.selected(),
+        }),
+        Overlay::Diagnostics(panel) => Some(OverlayView::Diagnostics {
+            rows: panel.rows().iter().map(row).collect(),
             selected: panel.selected(),
         }),
         // `Some`, not drawn through the modal path the other two overlays

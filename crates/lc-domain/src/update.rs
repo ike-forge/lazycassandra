@@ -5,6 +5,7 @@
 //! open one with (architecture.md §3).
 
 use crate::commands::CommandsPanel;
+use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
 use crate::grid::{self, ColumnScroll};
@@ -13,8 +14,8 @@ use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, Flash, Geometry, Message, Overlay, Panel, Range, SchemaState, Scroll,
-    Selection, State,
+    ConnectionState, Cursor, DiagnosticsPanel, Flash, Geometry, Message, Overlay, Panel, Range,
+    SchemaState, Scroll, Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
@@ -115,10 +116,16 @@ pub enum Effect {
 /// performed behind the domain's back, so the first frame can already say
 /// "Connecting…" (architecture.md §3).
 #[must_use]
-pub fn init(conn: ConnId) -> (State, Vec<Effect>) {
+pub fn init(conn: ConnId, config: Config, diagnostics: Vec<Diagnostic>) -> (State, Vec<Effect>) {
+    let theme = config.theme.clone();
+    let overlay =
+        (!diagnostics.is_empty()).then(|| Overlay::Diagnostics(DiagnosticsPanel::new(diagnostics)));
     let state = State {
         connection: ConnectionState::Connecting(conn),
         dirty: true,
+        theme,
+        config,
+        overlay,
         ..State::default()
     };
 
@@ -521,6 +528,12 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return palette_key(state, press.key);
     }
 
+    // The diagnostics overlay takes motion, not text, the same as the palette
+    // (design §9).
+    if matches!(state.overlay, Some(Overlay::Diagnostics(_))) {
+        return diagnostics_key(state, press.key);
+    }
+
     // The theme picker takes motion, not text, the same as the palette
     // (design §6).
     if matches!(state.overlay, Some(Overlay::Themes { .. })) {
@@ -854,7 +867,7 @@ fn escape(state: &mut State) {
             state.theme = restored;
             return;
         }
-        Some(Overlay::Message(_) | Overlay::Commands(_)) => return,
+        Some(Overlay::Message(_) | Overlay::Commands(_) | Overlay::Diagnostics(_)) => return,
         None => {}
     }
 
@@ -918,6 +931,38 @@ fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::PageUp => panel.page_up(height),
         Key::Home => panel.to_start(),
         Key::End => panel.to_end(),
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+/// What an open diagnostics overlay responds to.
+///
+/// `Esc` dismisses it and motion moves the cursor, bounded by the row count —
+/// the same treatment [`palette_key`] gives `Overlay::Commands`, minus the
+/// paging arithmetic a palette needs to skip a heading, which this list has
+/// none of.
+fn diagnostics_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(key, Key::Escape) {
+        state.overlay = None;
+        return Vec::new();
+    }
+
+    let height = state.geometry.command_rows();
+    let Some(Overlay::Diagnostics(panel)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    let len = panel.rows().len();
+    let cursor = panel.cursor_mut();
+
+    match key {
+        Key::Char('j') | Key::Down => cursor.down(len),
+        Key::Char('k') | Key::Up => cursor.up(),
+        Key::PageDown => cursor.page_down(len, height),
+        Key::PageUp => cursor.page_up(height),
+        Key::Home => cursor.to_start(),
+        Key::End => cursor.to_end(len),
         _ => {}
     }
 
@@ -1091,6 +1136,7 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
     match &state.overlay {
         Some(Overlay::Commands(_)) => palette_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
+        Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does.
         Some(Overlay::Search(_)) => Vec::new(),
         Some(Overlay::Message(_)) | None => {
@@ -1680,13 +1726,14 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 mod tests {
     use super::*;
     use crate::commands::{CATALOGUE, CommandsPanel};
+    use crate::config::{Config, Diagnostic, Icons, Origin, Span as ConfigSpan};
     use crate::contents::{ContentsState, SelectionMode};
     use crate::ddl::DdlTab;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::search::{Filter, Filtered, Prompt};
     use crate::state::{Connection, FLASH_TICKS, Range, Span};
-    use crate::theme::Ported;
+    use crate::theme::{Ours, Ported};
     use crate::tree::tests_support::schema_of as tabled_schema;
     use crate::view::tests_support::tabled;
 
@@ -1934,7 +1981,7 @@ mod tests {
     fn the_application_starts_by_connecting() {
         let conn = ConnId::next();
 
-        let (state, effects) = init(conn);
+        let (state, effects) = init(conn, Config::default(), Vec::new());
 
         assert_eq!(effects, vec![Effect::Connect(conn)]);
         assert!(state.connection.is_current(conn));
@@ -1942,9 +1989,64 @@ mod tests {
     }
 
     #[test]
+    fn a_config_with_nothing_wrong_opens_no_overlay() {
+        let (state, _) = init(ConnId::next(), Config::default(), Vec::new());
+
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn diagnostics_open_over_the_panels_and_esc_dismisses_them() {
+        let diagnostic = Diagnostic {
+            origin: Origin::new("./.lazycassandra.toml"),
+            span: Some(ConfigSpan {
+                line: 14,
+                column: 11,
+            }),
+            severity: Severity::Danger,
+            message: "connection `dev`: `posture` unknown value \"read\"".to_owned(),
+        };
+        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic]);
+
+        assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
+
+        let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Escape)));
+
+        assert!(
+            state.overlay.is_none(),
+            "esc dismisses this overlay like every other"
+        );
+    }
+
+    #[test]
+    fn the_config_the_tool_started_on_is_kept_rather_than_consumed() {
+        let config = Config {
+            icons: Icons::Off,
+            ..Config::default()
+        };
+        let (state, _) = init(ConnId::next(), config.clone(), Vec::new());
+
+        assert_eq!(
+            state.config, config,
+            "the follow-ups in design §11 read this"
+        );
+    }
+
+    #[test]
+    fn the_theme_a_config_names_is_the_theme_the_tool_opens_on() {
+        let config = Config {
+            theme: ThemeChoice::Ours(Ours::QuillLight),
+            ..Config::default()
+        };
+        let (state, _) = init(ConnId::next(), config, Vec::new());
+
+        assert_eq!(state.theme, ThemeChoice::Ours(Ours::QuillLight));
+    }
+
+    #[test]
     fn connecting_successfully_asks_for_the_schema() {
         let conn = ConnId::next();
-        let (mut state, _) = init(conn);
+        let (mut state, _) = init(conn, Config::default(), Vec::new());
 
         let effects = update(
             &mut state,
@@ -1960,7 +2062,7 @@ mod tests {
 
     #[test]
     fn a_connected_message_for_a_stale_attempt_is_ignored() {
-        let (mut state, _) = init(ConnId::next());
+        let (mut state, _) = init(ConnId::next(), Config::default(), Vec::new());
 
         let effects = update(
             &mut state,
@@ -1980,7 +2082,7 @@ mod tests {
     #[test]
     fn a_failed_connection_is_recorded_and_raised() {
         let conn = ConnId::next();
-        let (mut state, _) = init(conn);
+        let (mut state, _) = init(conn, Config::default(), Vec::new());
 
         let effects = update(
             &mut state,
@@ -2001,7 +2103,7 @@ mod tests {
 
     #[test]
     fn a_failed_connection_for_a_stale_attempt_is_dropped() {
-        let (mut state, _) = init(ConnId::next());
+        let (mut state, _) = init(ConnId::next(), Config::default(), Vec::new());
 
         update(
             &mut state,
@@ -2131,7 +2233,10 @@ mod tests {
     fn palette(state: &State) -> Option<&CommandsPanel> {
         match state.overlay.as_ref()? {
             Overlay::Commands(panel) => Some(panel),
-            Overlay::Message(_) | Overlay::Search(_) | Overlay::Themes { .. } => None,
+            Overlay::Message(_)
+            | Overlay::Search(_)
+            | Overlay::Themes { .. }
+            | Overlay::Diagnostics(_) => None,
         }
     }
 

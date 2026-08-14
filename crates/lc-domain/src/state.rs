@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::commands::CommandsPanel;
+use crate::config::{Config, Diagnostic};
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::editor::Editor;
@@ -50,6 +51,10 @@ pub struct State {
     pub should_quit: bool,
     /// The theme in force. A name; `lc-inbound` owns what it looks like.
     pub theme: ThemeChoice,
+    /// The configuration the tool started on. Most of it has no consumer yet
+    /// (design §11); it is held rather than dropped so those follow-ups have
+    /// somewhere to read from.
+    pub config: Config,
 }
 
 /// The loader's phase.
@@ -152,6 +157,43 @@ pub enum Overlay {
         cursor: Cursor,
         restored: ThemeChoice,
     },
+    /// What the config files got wrong, drawn over the panels at startup.
+    Diagnostics(DiagnosticsPanel),
+}
+
+/// The config diagnostics, and where the cursor is among them.
+///
+/// A list rather than a [`Message`]: a config load yields many entries, and
+/// `overlay.rs`'s sizing under-counts an embedded newline by its own
+/// admission, so a multi-line message truncates (design §9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsPanel {
+    rows: Vec<Diagnostic>,
+    cursor: Cursor,
+}
+
+impl DiagnosticsPanel {
+    #[must_use]
+    pub fn new(rows: Vec<Diagnostic>) -> Self {
+        Self {
+            rows,
+            cursor: Cursor::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn rows(&self) -> &[Diagnostic] {
+        &self.rows
+    }
+
+    #[must_use]
+    pub const fn selected(&self) -> usize {
+        self.cursor.index()
+    }
+
+    pub fn cursor_mut(&mut self) -> &mut Cursor {
+        &mut self.cursor
+    }
 }
 
 impl ConnectionState {
