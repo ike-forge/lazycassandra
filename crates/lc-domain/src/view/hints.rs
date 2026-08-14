@@ -88,6 +88,15 @@ const PALETTE_GLOBAL: &[Binding] = &[
     },
 ];
 
+/// What the bar names while the diagnostics overlay is up. `esc` is the only
+/// way out — `diagnostics_key` claims every key motion does not, including
+/// `q`, so naming `quit` here would be the exact lie this bar exists to
+/// prevent (design §9).
+const DIAGNOSTICS_GLOBAL: &[Binding] = &[Binding {
+    keys: &[KeyPress::new(Key::Escape)],
+    action: "close",
+}];
+
 /// What the bar names in place of the focused panel's group while the picker
 /// is open. Moving is the whole panel group, and it is named "preview"
 /// because that is what the press does — the cursor writes `State.theme` on
@@ -156,6 +165,13 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: THEMES.iter().map(rendered).collect(),
             global: THEMES_GLOBAL.iter().map(rendered).collect(),
+        };
+    }
+
+    if matches!(state.overlay, Some(Overlay::Diagnostics(_))) {
+        return HintBar {
+            panel: Vec::new(),
+            global: DIAGNOSTICS_GLOBAL.iter().map(rendered).collect(),
         };
     }
 
@@ -466,6 +482,40 @@ mod tests {
                 .map(|hint| (hint.keys.as_str(), hint.action))
                 .collect::<Vec<_>>(),
             [("⏎", "keep"), ("esc", "cancel"), ("q", "quit")]
+        );
+    }
+
+    #[test]
+    fn the_bar_names_what_diagnostics_responds_to() {
+        use crate::config::Diagnostic;
+        use crate::state::DiagnosticsPanel;
+
+        let state = State {
+            overlay: Some(Overlay::Diagnostics(DiagnosticsPanel::new(vec![
+                Diagnostic {
+                    origin: crate::config::Origin::new("./.lazycassandra.toml"),
+                    span: None,
+                    severity: crate::style::Severity::Warning,
+                    message: "unknown key `k0` — ignored".to_owned(),
+                },
+            ]))),
+            ..State::default()
+        };
+
+        let bar = bar(&state);
+
+        assert!(
+            bar.panel.is_empty(),
+            "the overlay answers to nothing the focused panel does: {:?}",
+            bar.panel
+        );
+        assert_eq!(
+            bar.global
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .collect::<Vec<_>>(),
+            [("esc", "close")],
+            "esc is the only way out, and the one binding worth naming"
         );
     }
 

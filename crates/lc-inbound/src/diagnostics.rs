@@ -37,7 +37,7 @@ fn rect(area: Rect, rows: usize) -> Option<Rect> {
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,
         width,
-        height.min(area.height),
+        height,
     ))
 }
 
@@ -75,7 +75,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[DiagnosticRow], selected: usize,
     let extent = Extent {
         position: state.offset(),
         total: rows.len(),
-        visible: usize::from(inner.height),
+        visible: usize::from(inner.height) / 2,
     };
 
     if extent.overflows() {
@@ -168,6 +168,20 @@ mod tests {
         assert!(
             with_scrollbar.contains('▐'),
             "a config with more diagnostics than fit must not silently drop them: {with_scrollbar}"
+        );
+    }
+
+    #[test]
+    fn a_row_count_that_fits_by_lines_but_not_by_rows_still_gets_a_scrollbar() {
+        // Each row is two lines. A block whose inner height fits `rows.len()`
+        // *lines* still hides every row past `inner.height / 2` — the bug
+        // this test exists to catch counted lines where it should have
+        // counted rows.
+        let drawn = drawn(&rows(7), 80, 24);
+
+        assert!(
+            drawn.contains('▐'),
+            "seven two-line rows overflow a block that only fits six: {drawn}"
         );
     }
 

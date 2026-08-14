@@ -137,10 +137,11 @@ See [panel search design](specs/2026-08-10-panel-search-design.md) §3.
 
 `ctrl-t` opens `Overlay::Themes`, an `Overlay` of the same rank as the command
 palette (§2): it outranks focus and claims every key before the panel
-underneath ever sees one. It is refused on the same gate as the command
-palette — a frame too small to draw a list gets neither — and it is also
-refused over a live search prompt (see the prompt's subsection above). The
-palette carries a row for it.
+underneath ever sees one. It is refused on the picker's own gate — a frame too
+small to draw its list gets no picker — which is not the palette's gate: a
+config can define enough themes that the picker no longer fits where a
+palette would. It is also refused over a live search prompt (see the
+prompt's subsection above). The palette carries a row for it.
 
 The list is the twelve built-in themes, followed by whatever `[[themes]]`
 the config layers define — a config-defined theme is never listed before a

@@ -32,7 +32,14 @@ pub(crate) fn parse(source: &str, origin: &Origin) -> (Option<Layer>, Vec<Diagno
                     origin: origin.clone(),
                     span,
                     severity: Severity::Danger,
-                    message: format!("{} — file ignored", error.message()),
+                    // "file ignored" reads as one entry, not the whole file — a
+                    // wrong-typed scalar (`icons = "yes"`) takes this path too
+                    // (design §6), and per-key recovery from a type mismatch is
+                    // follow-up work (§11), so today the loss really is total.
+                    message: format!(
+                        "{} — every setting in this file was skipped",
+                        error.message()
+                    ),
                 }],
             );
         }
@@ -98,6 +105,19 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
     diagnostics
 }
 
+/// An environment variable, `None` if unset or empty.
+///
+/// The XDG spec treats an empty value as unset; without this, `XDG_CONFIG_HOME=""`
+/// or `HOME=""` would resolve `global_path` against the current directory
+/// instead.
+fn non_empty_env(name: &str) -> Option<PathBuf> {
+    non_empty(std::env::var_os(name))
+}
+
+fn non_empty(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value.filter(|value| !value.is_empty()).map(PathBuf::from)
+}
+
 /// The two files, layered (design §3).
 #[derive(Debug, Clone)]
 pub struct FileConfigSource {
@@ -117,8 +137,8 @@ impl FileConfigSource {
     #[must_use]
     pub fn from_env() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let xdg = non_empty_env("XDG_CONFIG_HOME");
+        let home = non_empty_env("HOME");
 
         Self::new(&cwd, xdg.as_deref(), home.as_deref())
     }
@@ -182,6 +202,14 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Danger);
         assert_eq!(diagnostics[0].span.map(|span| span.line), Some(1));
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("every setting in this file was skipped"),
+            "a wrong-typed scalar takes this same path (design §6), and the message must not \
+             read as though only one entry were dropped: {}",
+            diagnostics[0].message
+        );
     }
 
     #[test]
@@ -221,5 +249,19 @@ mod tests {
         assert_eq!(line_col("abc\ndef", 0), Span { line: 1, column: 1 });
         assert_eq!(line_col("abc\ndef", 4), Span { line: 2, column: 1 });
         assert_eq!(line_col("abc\ndef", 6), Span { line: 2, column: 3 });
+    }
+
+    #[test]
+    fn an_empty_environment_variable_is_treated_as_unset() {
+        assert_eq!(
+            non_empty(Some(std::ffi::OsString::new())),
+            None,
+            "the XDG spec treats an empty value as unset, not as the current directory"
+        );
+        assert_eq!(non_empty(None), None);
+        assert_eq!(
+            non_empty(Some(std::ffi::OsString::from("/x"))),
+            Some(PathBuf::from("/x"))
+        );
     }
 }

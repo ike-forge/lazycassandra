@@ -1,8 +1,9 @@
 //! The theme picker: every theme, drawn over the panels.
 //!
-//! Narrower and shorter than the command palette, and gated on the palette's
-//! own room rather than its own (`update::open_themes`) — a frame that holds
-//! the larger block holds this one.
+//! Narrower than the command palette but not necessarily shorter: the list is
+//! every built-in plus every theme a config defines, which config themes made
+//! unbounded. `update::open_themes` gates on [`visible_rows`], this block's
+//! own measurement, rather than the palette's.
 
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
@@ -20,7 +21,7 @@ const PAD: u16 = 1;
 fn rect(area: Rect, rows: usize) -> Option<Rect> {
     let height = u16::try_from(rows.saturating_add(2)).unwrap_or(u16::MAX);
 
-    if area.width < WIDTH || area.height < height {
+    if rows > visible_rows(area) {
         return None;
     }
 
@@ -30,6 +31,18 @@ fn rect(area: Rect, rows: usize) -> Option<Rect> {
         WIDTH,
         height,
     ))
+}
+
+/// Rows a picker would show in `area` before it stops fitting entirely — this
+/// block does not scroll, so a list longer than this is refused rather than
+/// opened dead. Zero means even an empty picker's borders do not fit, which is
+/// what gates `ctrl-t` in the domain.
+pub(crate) fn visible_rows(area: Rect) -> usize {
+    if area.width < WIDTH || area.height < 2 {
+        return 0;
+    }
+
+    usize::from(area.height - 2)
 }
 
 pub(crate) fn render(frame: &mut Frame, labels: &[String], selected: usize, theme: Theme) {

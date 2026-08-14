@@ -839,6 +839,10 @@ pub struct Geometry {
     /// function of the terminal size alone, which is what keeps §3's
     /// measurement loop open (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
     grid_width: usize,
+    /// Rows the theme picker's own block could show in this frame, measured
+    /// the same way `command_rows` measures the palette's — its own room,
+    /// not a borrowed one (configuration design §9).
+    theme_rows: usize,
 }
 
 impl Geometry {
@@ -853,6 +857,7 @@ impl Geometry {
             ddl_selection: Span { first: 0, lines: 0 },
             command_rows,
             grid_width: 0,
+            theme_rows: 0,
         }
     }
 
@@ -916,6 +921,23 @@ impl Geometry {
     #[must_use]
     pub const fn with_grid_width(self, grid_width: usize) -> Self {
         Self { grid_width, ..self }
+    }
+
+    /// Rows the theme picker's own block would show at this frame size,
+    /// whether or not one is open.
+    ///
+    /// Zero means it does not fit, which is what makes `ctrl-t` refuse to
+    /// open a picker nothing draws (design §9).
+    #[must_use]
+    pub const fn theme_rows(self) -> usize {
+        self.theme_rows
+    }
+
+    /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason: a
+    /// test that opens no picker has nothing to say here.
+    #[must_use]
+    pub const fn with_theme_rows(self, theme_rows: usize) -> Self {
+        Self { theme_rows, ..self }
     }
 
     /// Where the Ddl panel drew its selected row.

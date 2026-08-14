@@ -53,6 +53,16 @@ impl Report {
         });
     }
 
+    /// For the few diagnostics that name no located value.
+    fn error_unlocated(&mut self, message: String) {
+        self.diagnostics.push(Diagnostic {
+            origin: self.fallback.clone(),
+            span: None,
+            severity: Severity::Danger,
+            message,
+        });
+    }
+
     fn warn<V>(&mut self, located: &Located<V>, message: String) {
         let (origin, span) = self.at(located);
 
@@ -185,8 +195,18 @@ fn layout(layer: Option<LayoutLayer>, report: &mut Report) -> PanelRatios {
     .into_iter()
     .find_map(|(located, isolated)| located.zip(isolated.err()));
 
-    if let Some((located, error)) = failing {
-        report.error(located, format!("layout: {error}"));
+    match failing {
+        Some((located, error)) => report.error(located, format!("layout: {error}")),
+        // Unreachable while every share is checked only against the literal
+        // `5..=95` (design §7, §11.8): no combination fails jointly without
+        // one of the three failing in isolation first. The day joint
+        // validation lands, this is exactly the case a silent fallback would
+        // be worst in, so it is reported now rather than left to be found
+        // then.
+        None => report.error_unlocated(
+            "layout: shares are individually in range but not jointly valid — using default"
+                .to_owned(),
+        ),
     }
 
     PanelRatios::default()
@@ -290,7 +310,7 @@ fn background(layer: Option<Located<String>>, report: &mut Report) -> Background
         _ => match Rgb::parse(&located.value) {
             Ok(rgb) => Background::Fixed(rgb),
             Err(error) => {
-                report.error(&located, error.to_string());
+                report.error(&located, format!("background: {error}"));
                 Background::Theme
             }
         },
@@ -304,7 +324,7 @@ fn themes(layers: Vec<ThemeLayer>, report: &mut Report) -> Vec<CustomTheme> {
         let name = match ThemeName::try_new(&layer.name.value) {
             Ok(name) => name,
             Err(error) => {
-                report.error(&layer.name, error.to_string());
+                report.error(&layer.name, format!("theme.name: {error}"));
                 continue;
             }
         };
@@ -373,7 +393,7 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
         let name = match ConnectionName::try_new(&layer.name.value) {
             Ok(name) => name,
             Err(error) => {
-                report.error(&layer.name, error.to_string());
+                report.error(&layer.name, format!("connection.name: {error}"));
                 continue;
             }
         };
@@ -612,10 +632,76 @@ mod tests {
                 blue: 0x12
             })
         );
-        assert_eq!(
-            config_of(&["background = \"puce\"\n"]).0.background,
-            Background::Theme
+        let (config, diagnostics) = config_of(&["background = \"puce\"\n"]);
+        assert_eq!(config.background, Background::Theme);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.starts_with("background: ")),
+            "the diagnostic must name the key it is about, not only the value: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn every_accepted_consistency_string_round_trips() {
+        let table = [
+            ("any", Consistency::Any),
+            ("one", Consistency::One),
+            ("two", Consistency::Two),
+            ("three", Consistency::Three),
+            ("quorum", Consistency::Quorum),
+            ("all", Consistency::All),
+            ("local-quorum", Consistency::LocalQuorum),
+            ("each-quorum", Consistency::EachQuorum),
+            ("local-one", Consistency::LocalOne),
+        ];
+
+        for (word, expected) in table {
+            let (config, diagnostics) =
+                config_of(&[format!("[driver]\nconsistency = \"{word}\"\n").as_str()]);
+
+            assert_eq!(
+                config.driver.consistency, expected,
+                "`{word}` must parse to {expected:?}"
+            );
+            assert!(diagnostics.is_empty(), "{word}: {diagnostics:?}");
+        }
+    }
+
+    #[test]
+    fn every_accepted_compression_string_round_trips() {
+        let table = [
+            ("none", Compression::None),
+            ("lz4", Compression::Lz4),
+            ("snappy", Compression::Snappy),
+        ];
+
+        for (word, expected) in table {
+            let (config, diagnostics) =
+                config_of(&[format!("[driver]\ncompression = \"{word}\"\n").as_str()]);
+
+            assert_eq!(
+                config.driver.compression, expected,
+                "`{word}` must parse to {expected:?}"
+            );
+            assert!(diagnostics.is_empty(), "{word}: {diagnostics:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_consistency_word_falls_back_and_is_reported() {
+        let (config, diagnostics) = config_of(&["[driver]\nconsistency = \"stale\"\n"]);
+
+        assert_eq!(config.driver.consistency, Consistency::default());
+        assert!(diagnostics[0].message.contains("driver.consistency"));
+    }
+
+    #[test]
+    fn an_unknown_compression_word_falls_back_and_is_reported() {
+        let (config, diagnostics) = config_of(&["[driver]\ncompression = \"zstd\"\n"]);
+
+        assert_eq!(config.driver.compression, Compression::default());
+        assert!(diagnostics[0].message.contains("driver.compression"));
     }
 
     #[test]

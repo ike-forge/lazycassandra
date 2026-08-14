@@ -63,9 +63,13 @@ bounded!(Millis, u32, "milliseconds", 1, 600_000, 5_000);
 
 /// The three shares `lc-inbound`'s layout is built from.
 ///
-/// One type rather than three newtypes: the shares are only valid together,
-/// against the floors `layout.rs` declares, so validating them independently
-/// would accept a frame with no room for a panel.
+/// One type rather than three newtypes: a partial set of shares is
+/// meaningless — there is no useful value for a sidebar share alone with no
+/// `ddl` or `queries` to go with it — so the unit type makes a partial set
+/// unconstructable and the fallback atomic. Each share is still validated
+/// independently, against the literal `5..=95`, not against the floors
+/// `layout.rs` declares — that is follow-up work (design §7, §11.8); this
+/// type does not yet make the three shares jointly valid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanelRatios {
     sidebar: u16,
@@ -173,7 +177,7 @@ impl Rgb {
         };
         let digits = hex.strip_prefix('#').ok_or_else(out_of_range)?;
 
-        if digits.len() != 6 {
+        if digits.len() != 6 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(out_of_range());
         }
 
@@ -396,13 +400,44 @@ mod tests {
     }
 
     #[test]
-    fn panel_ratios_are_validated_together_rather_than_one_at_a_time() {
+    fn each_panel_ratio_is_validated_against_the_literal_bound_not_layout_floors() {
         assert!(PanelRatios::try_new(25, 60, 10).is_ok());
         assert!(
             PanelRatios::try_new(4, 60, 10).is_err(),
-            "a sidebar this narrow cannot clear the floor layout.rs declares"
+            "5..=95 is the literal bound this type checks, not the floor layout.rs declares"
         );
         assert!(PanelRatios::try_new(96, 60, 10).is_err());
+    }
+
+    #[test]
+    fn rgb_parses_a_valid_hex_triple() {
+        let rgb = Rgb::parse("#1a2b3c").expect("well-formed hex parses");
+
+        assert_eq!((rgb.red, rgb.green, rgb.blue), (0x1a, 0x2b, 0x3c));
+    }
+
+    #[test]
+    fn rgb_rejects_a_string_the_wrong_length() {
+        assert!(Rgb::parse("#1a2b3").is_err());
+        assert!(Rgb::parse("#1a2b3cd").is_err());
+    }
+
+    #[test]
+    fn rgb_rejects_a_string_missing_the_hash() {
+        assert!(Rgb::parse("1a2b3c").is_err());
+    }
+
+    #[test]
+    fn rgb_rejects_a_non_hex_digit() {
+        assert!(Rgb::parse("#1a2b3g").is_err());
+    }
+
+    #[test]
+    fn rgb_rejects_a_leading_plus_a_radix_parse_would_otherwise_accept() {
+        assert!(
+            Rgb::parse("#+1+2+3").is_err(),
+            "u8::from_str_radix accepts a leading '+', which is not a hex digit"
+        );
     }
 
     #[test]
