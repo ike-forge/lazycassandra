@@ -75,12 +75,11 @@ impl Report {
         match result {
             Ok(value) => Some(value),
             Err(error) => {
+                let (origin, span) = self.at(at);
+
                 self.diagnostics.push(Diagnostic {
-                    origin: at
-                        .origin()
-                        .cloned()
-                        .unwrap_or_else(|| self.fallback.clone()),
-                    span: at.span(),
+                    origin,
+                    span,
                     severity: Severity::Danger,
                     message: format!("{key}: {error}"),
                 });
@@ -141,8 +140,8 @@ fn grid(layer: Option<GridLayer>, report: &mut Report) -> GridConfig {
     }
 }
 
-/// The three shares are only valid together, against the floors
-/// `lc-inbound`'s layout declares — so a failure falls back to
+/// One [`PanelRatios`] rather than three independent shares: a partial set
+/// cannot be constructed, so a failure falls back to
 /// [`PanelRatios::default`] as a unit rather than share by share.
 fn layout(layer: Option<LayoutLayer>, report: &mut Report) -> PanelRatios {
     let Some(layer) = layer else {
@@ -161,18 +160,36 @@ fn layout(layer: Option<LayoutLayer>, report: &mut Report) -> PanelRatios {
         .queries
         .as_ref()
         .map_or(default.queries(), |located| located.value);
-    let result = PanelRatios::try_new(sidebar, ddl, queries);
 
-    let Some(located) = layer
-        .sidebar
-        .as_ref()
-        .or(layer.ddl.as_ref())
-        .or(layer.queries.as_ref())
-    else {
-        return result.unwrap_or_default();
-    };
+    if let Ok(ratios) = PanelRatios::try_new(sidebar, ddl, queries) {
+        return ratios;
+    }
 
-    report.keep(result, located, "layout").unwrap_or_default()
+    // Each share is re-checked in isolation, against the other two at their
+    // defaults, so the diagnostic blames the share that is actually out of
+    // range rather than merely the first one the layer stated.
+    let failing = [
+        (
+            layer.sidebar.as_ref(),
+            PanelRatios::try_new(sidebar, default.ddl(), default.queries()),
+        ),
+        (
+            layer.ddl.as_ref(),
+            PanelRatios::try_new(default.sidebar(), ddl, default.queries()),
+        ),
+        (
+            layer.queries.as_ref(),
+            PanelRatios::try_new(default.sidebar(), default.ddl(), queries),
+        ),
+    ]
+    .into_iter()
+    .find_map(|(located, isolated)| located.zip(isolated.err()));
+
+    if let Some((located, error)) = failing {
+        report.error(located, format!("layout: {error}"));
+    }
+
+    PanelRatios::default()
 }
 
 fn driver(layer: Option<DriverLayer>, report: &mut Report) -> DriverConfig {
@@ -513,6 +530,23 @@ mod tests {
     }
 
     #[test]
+    fn a_layout_failure_blames_the_share_that_is_out_of_range_not_the_first_one_stated() {
+        let (config, diagnostics) = config_of(&["[layout]\nsidebar = 50\nddl = 3\n"]);
+
+        assert_eq!(config.layout, PanelRatios::default());
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            diagnostics[0].message.contains("ddl"),
+            "must name the failing share, not sidebar: {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics[0].span.map(|span| span.line),
+            Some(3),
+            "must point at ddl's line, not sidebar's: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn a_theme_named_in_one_file_and_defined_in_the_other_resolves() {
         let (config, diagnostics) = config_of(&[
             "theme = \"midnight\"\n",
@@ -592,7 +626,38 @@ mod tests {
 
         assert_eq!(config.themes.len(), 1);
         assert_eq!(config.themes[0].colors.len(), 1);
-        assert!(diagnostics.iter().any(|d| d.message.contains("baes")));
+        let unknown_role = diagnostics
+            .iter()
+            .find(|d| d.message.contains("baes"))
+            .expect("the unknown role is reported");
+        assert_eq!(unknown_role.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn an_unknown_role_is_a_warning_but_a_malformed_hex_on_a_real_role_is_an_error_and_only_that_theme_survives_with_what_was_valid()
+     {
+        let (config, diagnostics) = config_of(&[
+            "[[themes]]\nname = \"midnight\"\n[themes.colors]\nbaes = \"#0b0d12\"\nfocus = \"not-a-colour\"\nbase = \"#7aa2f7\"\n",
+        ]);
+
+        assert_eq!(config.themes.len(), 1, "the theme survives both drops");
+        assert_eq!(
+            config.themes[0].colors.len(),
+            1,
+            "only the valid colour is kept"
+        );
+
+        let unknown_role = diagnostics
+            .iter()
+            .find(|d| d.message.contains("baes"))
+            .expect("the unknown role is reported");
+        assert_eq!(unknown_role.severity, Severity::Warning);
+
+        let malformed_hex = diagnostics
+            .iter()
+            .find(|d| d.message.contains("focus"))
+            .expect("the malformed hex is reported");
+        assert_eq!(malformed_hex.severity, Severity::Danger);
     }
 
     #[test]
