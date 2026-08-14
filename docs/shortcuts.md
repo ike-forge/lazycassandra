@@ -16,7 +16,7 @@ key does something, it does it there.
 
 Reachable from every panel that does not take text, in every connection
 state. `Esc`, `Tab` and `Shift-Tab` are the exceptions that really are
-unconditional; the seven marked rows are text instead, inside the one panel
+unconditional; the ten marked rows are text instead, inside the one panel
 that takes text — see the Queries subsection below. `ctrl-t` is unmarked
 because a chord is not text anywhere: the ctrl layer is dispatched above the
 panel that takes text (§2).
