@@ -1281,6 +1281,11 @@ mod tests {
             buffer.cell((1, 3)).expect("inside the panel").bg,
             "row 1 is inside the range and banded, row 2 is not"
         );
+        assert_ne!(
+            buffer.cell((1, 1)).expect("inside the panel").bg,
+            buffer.cell((1, 2)).expect("inside the panel").bg,
+            "row 0 is the cursor row, also inside the range, and reads apart from row 1"
+        );
     }
 
     #[test]
@@ -1796,7 +1801,7 @@ mod tests {
 
     #[test]
     fn every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them() {
-        let mut state = showing(sized_page(1, 4));
+        let mut state = showing(sized_page(2, 4));
         state.contents.mode = SelectionMode::Row;
         state.contents.cursor.down(4);
         state.contents.rows = Selection::Held(Range::new(0, 2));
@@ -1804,22 +1809,28 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         // The bar+gutter block for a 4-row page is two columns wide, then one
-        // of spacing: the one data column starts four in from the inner edge.
-        let bg = |row: u16| {
+        // of spacing: the first data column starts four in from the inner
+        // edge, and each further column is three cells wide.
+        let bg = |row: u16, column: u16| {
             buffer
-                .cell((area.x + 4, area.y + 2 + row))
+                .cell((area.x + 4 + column * 3, area.y + 2 + row))
                 .expect("inside the panel")
                 .bg
         };
 
-        let banded = bg(0);
-        let cursor = bg(1);
-        let plain = bg(3);
+        let banded = bg(0, 0);
+        let cursor = bg(1, 0);
+        let plain = bg(3, 0);
 
         assert_ne!(banded, plain, "a row in the range is banded");
         assert_ne!(
             banded, cursor,
             "and the cursor row still reads apart from it"
+        );
+        assert_ne!(
+            bg(0, 1),
+            bg(3, 1),
+            "a second column on the banded row is banded too, not just the first"
         );
     }
 
@@ -1855,7 +1866,7 @@ mod tests {
 
     #[test]
     fn a_column_range_bands_its_columns_and_lights_no_gutter_bar() {
-        let mut state = showing(sized_page(2, 3));
+        let mut state = showing(sized_page(3, 3));
         state.contents.mode = SelectionMode::Column;
         state.contents.columns = Selection::Held(Range::new(0, 1));
 
@@ -1869,6 +1880,20 @@ mod tests {
             bar.symbol(),
             " ",
             "the range is columns; a bar down every row would claim the rows were selected"
+        );
+
+        // Row 2 (index 1), off the cursor row: column 0 is inside the range,
+        // column 2 is not.
+        let bg = |column: u16| {
+            buffer
+                .cell((area.x + 4 + column * 3, area.y + 3))
+                .expect("inside the panel")
+                .bg
+        };
+        assert_ne!(
+            bg(0),
+            bg(2),
+            "a ranged column is banded and an unranged one is not, off the cursor row"
         );
     }
 
