@@ -28,6 +28,7 @@ use ratatui::text::{Line, Span as TextSpan, Text};
 use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
+use crate::hit::Band;
 use crate::theme::Theme;
 
 /// The limb a table hangs off its keyspace by, and the one that closes the
@@ -75,6 +76,9 @@ pub(crate) struct Body {
     /// The horizontal extent, for the bodies that scroll sideways. Only a
     /// grid does.
     pub(crate) columns: Option<Extent>,
+    /// Where each drawn column of a grid landed, naming its page index. Empty
+    /// for every body that is not a grid.
+    pub(crate) bands: Vec<Band<usize>>,
     pub(crate) unit: Unit,
     /// Where the body drew its selection, in the unit [`Extent`] counts in.
     ///
@@ -89,13 +93,15 @@ pub(crate) struct Body {
 /// An enum rather than a flag beside a header count, so "these are rows" and
 /// "this many are spent above the first" cannot be said apart
 /// (conventions.md §1).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum Unit {
     /// Rows a press can land on, `header` of which the panel spends on its own
     /// chrome above the first one drawn.
     Rows { header: u16 },
-    /// Lines: scrolled, but nothing a press can address.
-    Lines,
+    /// Lines, each naming the row it was wrapped from — the shape of the Ddl
+    /// body, whose rows stand one to several lines. Empty where the lines
+    /// belong to no rows at all, which is the Queries editor.
+    Lines { rows: Vec<Option<usize>> },
 }
 
 pub(crate) fn render(
@@ -122,6 +128,7 @@ pub(crate) fn render(
         } => Some(Body {
             extent: tree(frame, area, rows, *selected, *offset, theme),
             columns: None,
+            bands: Vec::new(),
             unit: Unit::Rows { header: 0 },
             selection: Span::default(),
         }),
@@ -130,19 +137,21 @@ pub(crate) fn render(
             selected,
             offset,
         } => {
-            let (extent, selection) =
+            let (extent, selection, rows) =
                 crate::details::render(frame, area, details, *selected, *offset, theme);
             Some(Body {
                 extent,
                 columns: None,
-                unit: Unit::Lines,
+                bands: Vec::new(),
+                unit: Unit::Lines { rows },
                 selection,
             })
         }
         PanelBody::Editor { lines, cursor } => Some(Body {
             extent: editor(frame, area, lines, *cursor, focused),
             columns: None,
-            unit: Unit::Lines,
+            bands: Vec::new(),
+            unit: Unit::Lines { rows: Vec::new() },
             selection: Span::default(),
         }),
         PanelBody::Grid {
@@ -155,7 +164,7 @@ pub(crate) fn render(
             mode,
             gutter,
         } => {
-            let (extent, horizontal) = grid(
+            let (extent, horizontal, bands) = grid(
                 frame,
                 area,
                 &GridView {
@@ -174,6 +183,7 @@ pub(crate) fn render(
             Some(Body {
                 extent,
                 columns: Some(horizontal),
+                bands,
                 unit: Unit::Rows {
                     header: HEADER_ROWS,
                 },
@@ -263,7 +273,12 @@ enum Selection {
     Column(Option<usize>),
 }
 
-fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent, Extent) {
+fn grid(
+    frame: &mut Frame,
+    area: Rect,
+    view: &GridView,
+    theme: Theme,
+) -> (Extent, Extent, Vec<Band<usize>>) {
     let GridView {
         columns,
         rows,
@@ -389,7 +404,41 @@ fn grid(frame: &mut Frame, area: Rect, view: &GridView, theme: Theme) -> (Extent
             total: columns.len(),
             visible: shown,
         },
+        bands(area, &drawn_widths, first_column, gutter),
     )
+}
+
+/// Where each drawn column of the grid landed, in absolute frame columns.
+///
+/// Laid out from the same constraints handed to the `Table`, in the same
+/// order: the bar and the gutter share one widget column, one spacing column
+/// follows it, and one follows every value column but the last. Each band
+/// claims the spacing that follows it, so a press on the blank between two
+/// cells names the one it sits behind rather than nothing at all; the blank
+/// past the last column belongs to no column, and is where the grid runs out.
+///
+/// `lc_domain::grid::fitting` is what keeps the sum inside `area`, so no band
+/// runs past the panel and `ratatui` never shrinks a column out from under one
+/// (design §6).
+fn bands(area: Rect, widths: &[u16], first_column: usize, gutter: u16) -> Vec<Band<usize>> {
+    let last = widths.len().saturating_sub(1);
+    let mut start = area.x + BAR + gutter + COLUMN_SPACING;
+
+    widths
+        .iter()
+        .enumerate()
+        .map(|(offset, width)| {
+            let spacing = if offset == last { 0 } else { COLUMN_SPACING };
+            let band = Band {
+                start,
+                end: start.saturating_add(*width).saturating_add(spacing),
+                names: first_column + offset,
+            };
+            start = band.end;
+
+            band
+        })
+        .collect()
 }
 
 /// The grid's heading row: a blank cell over the bar and the gutter, then the

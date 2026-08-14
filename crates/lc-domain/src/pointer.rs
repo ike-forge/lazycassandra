@@ -24,10 +24,27 @@ pub enum Pointer {
 /// Where a press landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Click {
-    /// A row of a panel that has rows.
-    Row { panel: Panel, row: usize },
-    /// Chrome: a border, a title, a grid's header, blank space past the last
-    /// row, or a body with no rows at all.
+    /// A row of a panel that has rows, and the column of it where the body has
+    /// columns — `None` over a grid's gutter, and for every body that is a
+    /// list rather than a grid.
+    Row {
+        panel: Panel,
+        row: usize,
+        column: Option<usize>,
+    },
+    /// A grid's heading cell: the column it names, and no row.
+    Column { panel: Panel, column: usize },
+    /// A tab on a panel's top border, named by the key that reaches it.
+    ///
+    /// The key rather than the tab's position in the strip: the map a press is
+    /// resolved against describes the previous frame, and an index into a strip
+    /// that has since changed names whichever tab took that position. A
+    /// shortcut names the same place in every frame, and it is what makes this
+    /// gesture the `d`/`c` binding rather than a second route to it (design
+    /// §1).
+    Tab { panel: Panel, shortcut: char },
+    /// Chrome: a border, blank space past the last row, or a body with no rows
+    /// at all.
     Panel(Panel),
 }
 
@@ -42,7 +59,10 @@ impl Click {
     #[must_use]
     pub const fn panel(self) -> Panel {
         match self {
-            Self::Row { panel, .. } | Self::Panel(panel) => panel,
+            Self::Row { panel, .. }
+            | Self::Column { panel, .. }
+            | Self::Tab { panel, .. }
+            | Self::Panel(panel) => panel,
         }
     }
 }

@@ -653,14 +653,19 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The marked cell, and only it, wears the shortcut colour in a title | `each_panel_colours_the_key_that_focuses_it`, `nothing_but_the_shortcut_wears_the_shortcut_colour_in_a_title` (`inbound/render.rs`), `a_hot_key_is_underlined_and_nothing_else_is` (`inbound/theme/mod.rs`) |
 | A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |
 | A click focuses what it lands in | `a_click_focuses_the_panel_it_landed_in`, `a_click_on_chrome_focuses_and_does_nothing_else` |
-| A stale row is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped` |
+| A click on a cell moves both cursors, and on a heading only the column | `a_click_on_a_cell_moves_both_cursors`, `a_click_on_a_heading_moves_the_column_cursor_and_no_row` |
+| A click never changes the selection mode | `a_click_on_a_cell_leaves_the_selection_mode_alone` |
+| A click on a DDL row selects it | `a_click_on_a_ddl_row_moves_the_cursor` |
+| A click on a tab does what its key does | `a_click_on_a_tab_focuses_its_panel_and_draws_it`, `a_click_on_a_tab_the_strip_no_longer_draws_only_focuses`, `a_click_on_a_single_tab_panels_title_focuses_it` |
+| A stale row or column is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped`, `a_click_on_a_ddl_row_that_has_gone_is_dropped_rather_than_clamped`, `a_click_on_a_column_that_has_gone_is_dropped_rather_than_clamped` |
 | A click spends itself on the overlay | `a_click_dismisses_the_overlay_and_does_nothing_else`, `a_wheel_does_not_dismiss_the_overlay` |
 | The wheel scrolls without focusing | `a_wheel_scrolls_the_panel_under_it_without_focusing_it`, `a_wheel_over_the_ddl_panel_scrolls_its_lines`, `a_wheel_over_a_panel_with_nothing_to_scroll_is_inert`, `a_wheel_over_tables_moves_the_viewport_rather_than_the_selection`, `a_wheel_over_tables_no_longer_scrolls_the_ddl_panel_back` |
 | Only the left button and the vertical wheel are bound | `only_the_left_button_is_bound`, `a_release_a_drag_and_a_move_are_dropped`, `a_horizontal_wheel_is_dropped` (`inbound/input.rs`) |
 | A modified gesture is not a binding | `a_modified_press_is_not_a_gesture` (`inbound/input.rs`) |
 | The reader thread's filter agrees with `to_pointer`'s | `is_bound_accepts_everything_to_pointer_would` (`inbound/input.rs`) |
 | The map resolves to the row that was drawn | `the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it`, `the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn`, `the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn` (`inbound/render.rs`) |
-| Chrome is not a row | `a_grids_header_is_chrome_rather_than_its_first_row`, `a_press_on_the_chrome_of_a_panel_names_that_panel`, `the_hint_bar_and_a_frame_below_the_minimum_are_not_clickable` (`inbound/render.rs`) |
+| The map resolves to the column, tab, and wrapped row that were drawn | `the_map_resolves_every_cell_to_the_column_that_drew_it`, `the_map_resolves_every_drawn_tab_to_the_key_that_reaches_it`, `a_single_tab_panel_resolves_its_title_to_its_own_key`, `the_map_resolves_every_line_of_a_wrapped_ddl_row_to_that_row` (`inbound/render.rs`) |
+| Chrome is not a row | `a_grids_heading_names_a_column_rather_than_its_first_row`, `a_press_on_the_chrome_of_a_panel_names_that_panel`, `the_hint_bar_and_a_frame_below_the_minimum_are_not_clickable` (`inbound/render.rs`) |
 | Letters are text in the editor | `a_letter_typed_in_queries_is_text_not_a_shortcut` |
 | `?` is a bind marker in the editor, not the palette | `a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette` |
 | An open palette outranks a panel that takes text | `an_open_palette_outranks_a_panel_that_takes_text` |
@@ -802,7 +807,10 @@ Bound, and spending nothing from §3's budget. See the
 |---|---|---|
 | Left click | A keyspace | Focus Tables, select it, fold/unfold |
 | Left click | A table | Select it, read it into Contents, and focus **Contents** |
-| Left click | A Contents row | Focus Contents, select it |
+| Left click | A Contents cell | Focus Contents, select its row and its column |
+| Left click | A Contents heading | Focus Contents, select that column, leave the row where it is |
+| Left click | A DDL row | Focus DDL, select it |
+| Left click | A tab on a panel's top border | Whatever that tab's key does: focus the panel, and draw the tab |
 | Left click | Chrome | Focus that panel |
 | Left click | Anywhere, overlay up | Dismiss the overlay |
 | Left click | The hint bar | Nothing |
@@ -823,18 +831,24 @@ the press landed, and it does that because the key does: `Enter` and the click
 reach the same state — the rule stated below, held rather than
 bent.
 
-A click on a row's number is a click on that row. `click_at` resolves on the `y`
-axis alone — a press inside a panel's body maps to a row and never consults `x`
-— so the gutter and the column offset, which move only where a row's cells start
-horizontally, change nothing about what a press means
-([table display design](specs/2026-08-10-table-display-design.md) §8).
+A click on a row's number is a click on that row, and names no column: the bar
+and the gutter share one widget column that is not a column of the page
+([table display design](specs/2026-08-10-table-display-design.md) §8), so a
+press there moves the row cursor and leaves the column cursor alone.
 
-Chrome is a border, a title, a grid's header, a notice, the Ddl body, the
-Queries panel, and the blank space past the last row. A row number is not
-chrome: a header is chrome because pressing it means nothing, and a row number
-is part of its row. Every other gesture — right and middle buttons, drags,
-releases, horizontal wheels, and anything with a modifier held — is dropped at
-the edge.
+**A click never changes the selection mode.** It names whatever cells it can
+reach — a cell names both cursors, a heading only the column — and which of them
+the grid draws a band around stays `m`'s business. So a press in row mode still
+moves the column cursor under the highlight, and the next `m` finds it where the
+pointer left it.
+
+Chrome is a border, a notice, the Queries panel, a title away from any tab, the
+blank over a grid's gutter, and the blank space past the last row or column. In
+the DDL panel it is also the blanks between groups and the section headings: the
+body wraps one row over several lines, and those lines belong to no row. A row
+number is not chrome — a row number is part of its row. Every other gesture —
+right and middle buttons, drags, releases, horizontal wheels, and anything with a
+modifier held — is dropped at the edge.
 
 **The hint bar wins over the overlay.** A press on the bar is dropped before
 anything else sees it, including a dismissible overlay, so it never dismisses

@@ -12,38 +12,88 @@ use ratatui::layout::{Position, Rect};
 
 use crate::body::{Body, Unit};
 
+/// A run of screen columns, and what was drawn across it.
+///
+/// Half-open — `start..end`, in absolute frame coordinates — and generic in
+/// what it names, because a grid's columns are named by index and a title
+/// strip's tabs by the key that reaches them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Band<T> {
+    pub(crate) start: u16,
+    pub(crate) end: u16,
+    pub(crate) names: T,
+}
+
+impl<T: Copy> Band<T> {
+    const fn holds(&self, x: u16) -> bool {
+        x >= self.start && x < self.end
+    }
+
+    /// What the band holding `x` names, if one does.
+    fn at(bands: &[Self], x: u16) -> Option<T> {
+        bands
+            .iter()
+            .find(|band| band.holds(x))
+            .map(|band| band.names)
+    }
+}
+
 /// Where each panel's content ended up in the frame just drawn.
 ///
 /// The default is a frame with nothing in it, which nothing can be clicked in
 /// — what a frame below the minimum size reports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FrameMap {
     /// In [`Panel::ALL`] order.
     panels: [PanelHit; 4],
 }
 
 /// One panel, as a press sees it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct PanelHit {
     pub(crate) panel: Panel,
     /// The whole block, borders included.
     pub(crate) area: Rect,
     /// The body, inside the borders.
     pub(crate) inner: Rect,
+    /// The tabs on the top border, each naming the key that reaches it.
+    pub(crate) tabs: Vec<Band<char>>,
+    /// The columns of a grid body, each naming its index in the page.
+    pub(crate) columns: Vec<Band<usize>>,
     pub(crate) rows: Option<RowStrip>,
 }
 
-/// The band of a body that drew rows, and which row sat at its top.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct RowStrip {
-    /// Screen row of the first row drawn — below whatever chrome the body
-    /// spends above it, such as a grid's header.
-    pub(crate) top: u16,
-    /// The row index drawn at [`RowStrip::top`].
-    pub(crate) first: usize,
-    /// How many rows exist, which is what makes the blank space below a short
-    /// list chrome rather than a row.
-    pub(crate) len: usize,
+/// The band of a body that drew rows, and how to name the one at a given
+/// screen row.
+///
+/// Two variants because the two regimes cannot be told apart by a count: a
+/// list stands one row to a line, and the Ddl body wraps one row across
+/// several. A `header` beside a line map would let a caller ask a body that
+/// wraps how many lines its chrome takes, which is not a question it has an
+/// answer to (conventions.md §1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RowStrip {
+    /// One screen row per row.
+    Rows {
+        /// Screen row of the first row drawn — below whatever chrome the body
+        /// spends above it, such as a grid's header.
+        top: u16,
+        /// The row index drawn at `top`.
+        first: usize,
+        /// How many rows exist, which is what makes the blank space below a
+        /// short list chrome rather than a row.
+        len: usize,
+    },
+    /// Wrapped lines, each naming the row it came from.
+    Lines {
+        /// Screen row of the first line drawn.
+        top: u16,
+        /// The line index drawn at `top`.
+        first: usize,
+        /// The row each line belongs to, over the whole body — not only the
+        /// lines scrolled into view.
+        rows: Vec<Option<usize>>,
+    },
 }
 
 impl FrameMap {
@@ -70,11 +120,19 @@ impl FrameMap {
 }
 
 impl PanelHit {
-    pub(crate) fn new(panel: Panel, area: Rect, inner: Rect, body: Option<&Body>) -> Self {
+    pub(crate) fn new(
+        panel: Panel,
+        area: Rect,
+        inner: Rect,
+        tabs: Vec<Band<char>>,
+        body: Option<&Body>,
+    ) -> Self {
         Self {
             panel,
             area,
             inner,
+            tabs,
+            columns: body.map(|body| body.bands.clone()).unwrap_or_default(),
             rows: RowStrip::of(inner, body),
         }
     }
@@ -82,45 +140,93 @@ impl PanelHit {
     fn click_at(&self, position: Position) -> Click {
         let chrome = Click::Panel(self.panel);
 
+        // The strip sits on the top border, which is chrome everywhere else
+        // along its length — so the tabs are asked before the fall-through, not
+        // after it.
+        if position.y == self.area.y
+            && let Some(shortcut) = Band::at(&self.tabs, position.x)
+        {
+            return Click::Tab {
+                panel: self.panel,
+                shortcut,
+            };
+        }
+
         if !self.inner.contains(position) {
             return chrome;
         }
 
-        let Some(strip) = self.rows else {
-            return chrome;
-        };
+        let column = Band::at(&self.columns, position.x);
 
-        if position.y < strip.top {
-            return chrome;
-        }
+        match &self.rows {
+            Some(RowStrip::Rows { top, first, len }) => {
+                // Above the first row and still inside the body is a grid's
+                // heading: it names a column and no row, which is the `h`/`l`
+                // binding rather than a sort nobody asked for (design §1).
+                if position.y < *top {
+                    return match column {
+                        Some(column) => Click::Column {
+                            panel: self.panel,
+                            column,
+                        },
+                        None => chrome,
+                    };
+                }
 
-        let row = strip.first + usize::from(position.y - strip.top);
+                let row = first + usize::from(position.y - top);
 
-        if row >= strip.len {
-            return chrome;
-        }
+                if row >= *len {
+                    return chrome;
+                }
 
-        Click::Row {
-            panel: self.panel,
-            row,
+                Click::Row {
+                    panel: self.panel,
+                    row,
+                    column,
+                }
+            }
+            Some(RowStrip::Lines { top, first, rows }) => {
+                if position.y < *top {
+                    return chrome;
+                }
+
+                let line = first + usize::from(position.y - top);
+
+                match rows.get(line).copied().flatten() {
+                    Some(row) => Click::Row {
+                        panel: self.panel,
+                        row,
+                        column: None,
+                    },
+                    // A blank between two groups, a section heading, or a line
+                    // past the end of a body shorter than its panel.
+                    None => chrome,
+                }
+            }
+            None => chrome,
         }
     }
 }
 
 impl RowStrip {
     /// `None` when the body drew nothing a press can land on: a blank panel, a
-    /// notice, the Ddl body's wrapped lines, or the Queries editor.
+    /// notice, or the Queries editor.
     fn of(inner: Rect, body: Option<&Body>) -> Option<Self> {
         let body = body?;
-        let Unit::Rows { header } = body.unit else {
-            return None;
-        };
 
-        Some(Self {
-            top: inner.y.saturating_add(header),
-            first: body.extent.position,
-            len: body.extent.total,
-        })
+        match &body.unit {
+            Unit::Rows { header } => Some(Self::Rows {
+                top: inner.y.saturating_add(*header),
+                first: body.extent.position,
+                len: body.extent.total,
+            }),
+            Unit::Lines { rows } if rows.is_empty() => None,
+            Unit::Lines { rows } => Some(Self::Lines {
+                top: inner.y,
+                first: body.extent.position,
+                rows: rows.clone(),
+            }),
+        }
     }
 }
 
@@ -129,22 +235,47 @@ mod tests {
     use super::*;
     use ratatui::layout::Margin;
 
+    fn inner(area: Rect) -> Rect {
+        area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        })
+    }
+
     /// A bordered panel at `area` drawing `len` rows from `first`, with
     /// `header` rows of its own chrome above the first one.
     fn listed(panel: Panel, area: Rect, header: u16, first: usize, len: usize) -> PanelHit {
-        let inner = area.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
+        let inner = inner(area);
 
         PanelHit {
             panel,
             area,
             inner,
-            rows: Some(RowStrip {
+            tabs: Vec::new(),
+            columns: Vec::new(),
+            rows: Some(RowStrip::Rows {
                 top: inner.y + header,
                 first,
                 len,
+            }),
+        }
+    }
+
+    /// A bordered panel at `area` whose body wraps its rows over `rows` lines,
+    /// drawn from line `first`.
+    fn wrapped(panel: Panel, area: Rect, first: usize, rows: &[Option<usize>]) -> PanelHit {
+        let inner = inner(area);
+
+        PanelHit {
+            panel,
+            area,
+            inner,
+            tabs: Vec::new(),
+            columns: Vec::new(),
+            rows: Some(RowStrip::Lines {
+                top: inner.y,
+                first,
+                rows: rows.to_vec(),
             }),
         }
     }
@@ -154,11 +285,45 @@ mod tests {
         PanelHit {
             panel,
             area,
-            inner: area.inner(Margin {
-                horizontal: 1,
-                vertical: 1,
-            }),
+            inner: inner(area),
+            tabs: Vec::new(),
+            columns: Vec::new(),
             rows: None,
+        }
+    }
+
+    /// `panel` as a grid: `header` above the rows, and `widths` columns laid
+    /// out from `x` with one spacing column between them.
+    fn gridded(panel: Panel, area: Rect, len: usize, x: u16, widths: &[u16]) -> PanelHit {
+        let inner = inner(area);
+        let mut start = x;
+
+        let columns = widths
+            .iter()
+            .enumerate()
+            .map(|(index, width)| {
+                let band = Band {
+                    start,
+                    end: start + width,
+                    names: index,
+                };
+                start = band.end + 1;
+
+                band
+            })
+            .collect();
+
+        PanelHit {
+            panel,
+            area,
+            inner,
+            tabs: Vec::new(),
+            columns,
+            rows: Some(RowStrip::Rows {
+                top: inner.y + 1,
+                first: 0,
+                len,
+            }),
         }
     }
 
@@ -181,14 +346,16 @@ mod tests {
             map.hit(2, 1),
             Some(Click::Row {
                 panel: Panel::Tables,
-                row: 0
+                row: 0,
+                column: None
             })
         );
         assert_eq!(
             map.hit(2, 3),
             Some(Click::Row {
                 panel: Panel::Tables,
-                row: 2
+                row: 2,
+                column: None
             })
         );
     }
@@ -201,14 +368,15 @@ mod tests {
             map.hit(2, 1),
             Some(Click::Row {
                 panel: Panel::Tables,
-                row: 15
+                row: 15,
+                column: None
             }),
             "the offset is what the row index counts from"
         );
     }
 
     #[test]
-    fn a_header_row_is_chrome_rather_than_the_first_row() {
+    fn a_header_row_over_no_column_is_chrome_rather_than_the_first_row() {
         let map = map(listed(Panel::Tables, Rect::new(0, 0, 16, 7), 1, 0, 3));
 
         assert_eq!(map.hit(2, 1), Some(Click::Panel(Panel::Tables)));
@@ -216,7 +384,8 @@ mod tests {
             map.hit(2, 2),
             Some(Click::Row {
                 panel: Panel::Tables,
-                row: 0
+                row: 0,
+                column: None
             })
         );
     }
@@ -237,7 +406,11 @@ mod tests {
         let map = map(listed(Panel::Tables, Rect::new(0, 0, 16, 7), 0, 0, 5));
 
         assert_eq!(map.hit(0, 0), Some(Click::Panel(Panel::Tables)), "corner");
-        assert_eq!(map.hit(3, 0), Some(Click::Panel(Panel::Tables)), "title");
+        assert_eq!(
+            map.hit(3, 0),
+            Some(Click::Panel(Panel::Tables)),
+            "top border away from any tab"
+        );
         assert_eq!(
             map.hit(15, 2),
             Some(Click::Panel(Panel::Tables)),
@@ -258,6 +431,189 @@ mod tests {
         let map = map(listed(Panel::Tables, Rect::new(0, 0, 16, 7), 0, 0, 5));
 
         assert_eq!(map.hit(2, 11), None, "the hint bar is not a panel");
+    }
+
+    #[test]
+    fn a_press_on_a_tab_names_the_key_that_reaches_it() {
+        let mut ddl = plain(Panel::Ddl, Rect::new(0, 7, 16, 4));
+        ddl.tabs = vec![
+            Band {
+                start: 2,
+                end: 5,
+                names: 'd',
+            },
+            Band {
+                start: 8,
+                end: 15,
+                names: 'c',
+            },
+        ];
+        let map = FrameMap::new([
+            plain(Panel::Tables, Rect::new(0, 0, 16, 7)),
+            ddl,
+            plain(Panel::Contents, Rect::new(16, 0, 24, 8)),
+            plain(Panel::Queries, Rect::new(16, 8, 24, 3)),
+        ]);
+
+        assert_eq!(
+            map.hit(3, 7),
+            Some(Click::Tab {
+                panel: Panel::Ddl,
+                shortcut: 'd'
+            })
+        );
+        assert_eq!(
+            map.hit(9, 7),
+            Some(Click::Tab {
+                panel: Panel::Ddl,
+                shortcut: 'c'
+            })
+        );
+        assert_eq!(
+            map.hit(6, 7),
+            Some(Click::Panel(Panel::Ddl)),
+            "the separator between two tabs is neither of them"
+        );
+        assert_eq!(
+            map.hit(3, 8),
+            Some(Click::Panel(Panel::Ddl)),
+            "a strip lives on the top border and nowhere else"
+        );
+    }
+
+    #[test]
+    fn a_press_on_a_wrapped_body_names_the_row_the_line_came_from() {
+        // Row 0 wrapped to two lines, then a blank, then row 1 on one.
+        let rows = [Some(0), Some(0), None, Some(1)];
+        let map = map(wrapped(Panel::Tables, Rect::new(0, 0, 16, 7), 0, &rows));
+
+        for (line, row) in [(0, 0), (1, 0), (3, 1)] {
+            assert_eq!(
+                map.hit(2, 1 + line),
+                Some(Click::Row {
+                    panel: Panel::Tables,
+                    row,
+                    column: None
+                }),
+                "line {line} was wrapped from row {row}"
+            );
+        }
+
+        assert_eq!(
+            map.hit(2, 3),
+            Some(Click::Panel(Panel::Tables)),
+            "a blank between two groups belongs to no row"
+        );
+    }
+
+    #[test]
+    fn a_scrolled_wrapped_body_resolves_against_the_line_at_its_top() {
+        let rows = [Some(0), Some(0), Some(1), Some(2), Some(2)];
+        let map = map(wrapped(Panel::Tables, Rect::new(0, 0, 16, 7), 2, &rows));
+
+        assert_eq!(
+            map.hit(2, 1),
+            Some(Click::Row {
+                panel: Panel::Tables,
+                row: 1,
+                column: None
+            }),
+            "the offset is what the line index counts from"
+        );
+        assert_eq!(
+            map.hit(2, 5),
+            Some(Click::Panel(Panel::Tables)),
+            "past the last line is blank space, not a row"
+        );
+    }
+
+    /// Contents at 24 columns from x=16: the bar and gutter take x=17, the
+    /// spacing x=18, then two four-wide columns.
+    fn grid_map() -> FrameMap {
+        FrameMap::new([
+            plain(Panel::Tables, Rect::new(0, 0, 16, 7)),
+            plain(Panel::Ddl, Rect::new(0, 7, 16, 4)),
+            gridded(Panel::Contents, Rect::new(16, 0, 24, 8), 2, 19, &[4, 4]),
+            plain(Panel::Queries, Rect::new(16, 8, 24, 3)),
+        ])
+    }
+
+    #[test]
+    fn a_press_in_a_grid_names_the_row_and_the_column_it_landed_in() {
+        let map = grid_map();
+
+        assert_eq!(
+            map.hit(20, 2),
+            Some(Click::Row {
+                panel: Panel::Contents,
+                row: 0,
+                column: Some(0)
+            })
+        );
+        assert_eq!(
+            map.hit(25, 3),
+            Some(Click::Row {
+                panel: Panel::Contents,
+                row: 1,
+                column: Some(1)
+            })
+        );
+    }
+
+    #[test]
+    fn a_press_on_the_gutter_names_a_row_and_no_column() {
+        let map = grid_map();
+
+        assert_eq!(
+            map.hit(17, 2),
+            Some(Click::Row {
+                panel: Panel::Contents,
+                row: 0,
+                column: None
+            }),
+            "the bar and the row number are not a column of the page"
+        );
+    }
+
+    #[test]
+    fn a_press_on_a_heading_cell_names_its_column_and_no_row() {
+        let map = grid_map();
+
+        assert_eq!(
+            map.hit(20, 1),
+            Some(Click::Column {
+                panel: Panel::Contents,
+                column: 0
+            })
+        );
+        assert_eq!(
+            map.hit(25, 1),
+            Some(Click::Column {
+                panel: Panel::Contents,
+                column: 1
+            })
+        );
+        assert_eq!(
+            map.hit(17, 1),
+            Some(Click::Panel(Panel::Contents)),
+            "the blank over the gutter names no column"
+        );
+    }
+
+    #[test]
+    fn a_press_right_of_the_last_column_names_no_column() {
+        let map = grid_map();
+
+        assert_eq!(
+            map.hit(30, 2),
+            Some(Click::Row {
+                panel: Panel::Contents,
+                row: 0,
+                column: None
+            }),
+            "the grid runs out before the panel does"
+        );
+        assert_eq!(map.hit(30, 1), Some(Click::Panel(Panel::Contents)));
     }
 
     #[test]

@@ -471,18 +471,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         // the panel and draws the tab — one press to arrive, whichever tab was
         // last up (docs/shortcuts.md §4). Checked first because `d` is both
         // the panel's letter and its first tab's.
-        Key::Char(key) => {
-            if let Some(tab) = DdlTab::from_shortcut(key) {
-                state.focus = Panel::Ddl;
-                // A tab the strip does not draw is not a place to arrive at:
-                // `c` on a keyspace focuses the panel and no more.
-                if crate::view::ddl_tabs(state).contains(&tab) {
-                    state.ddl.show(tab);
-                }
-            } else if let Some(panel) = Panel::from_shortcut(key) {
-                state.focus = panel;
-            }
-        }
+        Key::Char(key) => show_tab(state, key),
         _ => {}
     }
 
@@ -546,10 +535,31 @@ fn wheel(state: &mut State, panel: Panel, direction: Wheel) {
 fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
     state.focus = click.panel();
 
-    let Click::Row { panel, row } = click else {
-        return Vec::new();
+    let (panel, row, column) = match click {
+        Click::Row { panel, row, column } => (panel, Some(row), column),
+        Click::Column { panel, column } => (panel, None, Some(column)),
+        // A tab is a place, and its key is how one is reached: this is the
+        // `Key::Char` arm of `handle_key`, reached by pointer (design §1).
+        Click::Tab { shortcut, .. } => {
+            show_tab(state, shortcut);
+            return Vec::new();
+        }
+        Click::Panel(_) => return Vec::new(),
     };
 
+    // Neither cursor changes the selection mode. A press names whatever cells
+    // it can, and the mode is what decides which of them the grid draws a band
+    // around — `m` is still the only way to change that.
+    if let Some(column) = column {
+        let columns = state.contents.column_count();
+        if panel == Panel::Contents && column < columns {
+            state.contents.column.go_to(column, columns);
+        }
+    }
+
+    let Some(row) = row else {
+        return Vec::new();
+    };
     let len = row_count(state, panel);
 
     // The map a press was resolved against describes the *previous* frame. A
@@ -569,11 +579,32 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
             state.contents.cursor.go_to(row, len);
             Vec::new()
         }
-        // Queries has no rows at all. Ddl has rows now (design §3), but the
-        // hit map this press was resolved against reports lines, not rows, so
-        // a click cannot name one — click-to-select stays out of scope by
-        // design (design §7).
-        Panel::Ddl | Panel::Queries => Vec::new(),
+        // The offset the viewport owes this cursor is `Msg::Measured`'s to
+        // compute, exactly as it is after `j`: only the renderer knows which
+        // lines the row wrapped to.
+        Panel::Ddl => {
+            state.ddl.cursor.go_to(row, len);
+            Vec::new()
+        }
+        // Queries is an editor: it has no rows for a press to land on.
+        Panel::Queries => Vec::new(),
+    }
+}
+
+/// Focuses the panel a tab's key names, and draws that tab.
+///
+/// Shared with [`handle_key`]'s `Key::Char` arm so a tab reached by pointer and
+/// one reached by key cannot diverge.
+fn show_tab(state: &mut State, shortcut: char) {
+    if let Some(tab) = DdlTab::from_shortcut(shortcut) {
+        state.focus = Panel::Ddl;
+        // A tab the strip does not draw is not a place to arrive at: `c` on a
+        // keyspace focuses the panel and no more.
+        if crate::view::ddl_tabs(state).contains(&tab) {
+            state.ddl.show(tab);
+        }
+    } else if let Some(panel) = Panel::from_shortcut(shortcut) {
+        state.focus = panel;
     }
 }
 
@@ -4538,7 +4569,25 @@ mod tests {
     }
 
     fn click_row(state: &mut State, panel: Panel, row: usize) -> Vec<Effect> {
-        point(state, Pointer::Click(Click::Row { panel, row }))
+        point(
+            state,
+            Pointer::Click(Click::Row {
+                panel,
+                row,
+                column: None,
+            }),
+        )
+    }
+
+    fn click_cell(state: &mut State, panel: Panel, row: usize, column: usize) -> Vec<Effect> {
+        point(
+            state,
+            Pointer::Click(Click::Row {
+                panel,
+                row,
+                column: Some(column),
+            }),
+        )
     }
 
     /// `shop.orders` loaded with `count` single-column rows.
@@ -4559,6 +4608,28 @@ mod tests {
                         )],
                     })
                     .collect(),
+                next: None,
+            },
+        );
+        state
+    }
+
+    /// `shop.orders` loaded with one row of `columns` columns.
+    fn showing_columns(columns: usize) -> State {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: (0..columns).map(|i| format!("c{i}")).collect(),
+                rows: vec![Row {
+                    values: (0..columns)
+                        .map(|i| CqlValue::Int(i64::try_from(i).expect("the fixture is small")))
+                        .collect(),
+                }],
                 next: None,
             },
         );
@@ -4613,6 +4684,159 @@ mod tests {
 
         assert!(effects.is_empty(), "a selection runs no query");
         assert_eq!(state.contents.cursor.index(), 3);
+    }
+
+    #[test]
+    fn a_click_on_a_cell_moves_both_cursors() {
+        let mut state = showing_columns(4);
+
+        let effects = click_cell(&mut state, Panel::Contents, 0, 2);
+
+        assert!(effects.is_empty(), "a selection runs no query");
+        assert_eq!(state.contents.cursor.index(), 0);
+        assert_eq!(state.contents.column.index(), 2);
+    }
+
+    /// A press names whatever cells it can reach; which of them the grid draws
+    /// a band around is the mode's business, and `m` is the only thing that
+    /// changes it.
+    #[test]
+    fn a_click_on_a_cell_leaves_the_selection_mode_alone() {
+        for mode in [
+            SelectionMode::Cell,
+            SelectionMode::Row,
+            SelectionMode::Column,
+        ] {
+            let mut state = showing_columns(4);
+            state.contents.mode = mode;
+
+            click_cell(&mut state, Panel::Contents, 0, 2);
+
+            assert_eq!(state.contents.mode, mode, "from {mode:?}");
+            assert_eq!(state.contents.column.index(), 2, "from {mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_heading_moves_the_column_cursor_and_no_row() {
+        let mut state = showing_columns(4);
+        state.contents.cursor.go_to(0, 1);
+
+        let effects = point(
+            &mut state,
+            Pointer::Click(Click::Column {
+                panel: Panel::Contents,
+                column: 3,
+            }),
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.contents.column.index(), 3);
+        assert_eq!(state.contents.cursor.index(), 0, "a heading names no row");
+    }
+
+    #[test]
+    fn a_click_on_a_column_that_has_gone_is_dropped_rather_than_clamped() {
+        let mut state = showing_columns(2);
+        state.contents.column.go_to(1, 2);
+
+        point(
+            &mut state,
+            Pointer::Click(Click::Column {
+                panel: Panel::Contents,
+                column: 5,
+            }),
+        );
+
+        assert_eq!(
+            state.contents.column.index(),
+            1,
+            "a column the page no longer has moves nothing"
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_ddl_row_moves_the_cursor() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        click_row(&mut state, Panel::Tables, 0);
+        click_row(&mut state, Panel::Tables, 1);
+        let rows = crate::view::ddl_rows(&state);
+        assert!(rows > 2, "the fixture must describe something, got {rows}");
+
+        let effects = click_row(&mut state, Panel::Ddl, 2);
+
+        assert!(effects.is_empty(), "a selection runs no query");
+        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.ddl.cursor.index(), 2);
+    }
+
+    #[test]
+    fn a_click_on_a_ddl_row_that_has_gone_is_dropped_rather_than_clamped() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        click_row(&mut state, Panel::Tables, 0);
+
+        // Nothing is selected, so the panel describes nothing and has no rows.
+        let effects = click_row(&mut state, Panel::Ddl, 3);
+
+        assert!(effects.is_empty());
+        assert_eq!(state.ddl.cursor.index(), 0);
+    }
+
+    #[test]
+    fn a_click_on_a_tab_focuses_its_panel_and_draws_it() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        click_row(&mut state, Panel::Tables, 0);
+        click_row(&mut state, Panel::Tables, 1);
+        state.focus = Panel::Queries;
+
+        let effects = point(
+            &mut state,
+            Pointer::Click(Click::Tab {
+                panel: Panel::Ddl,
+                shortcut: 'c',
+            }),
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.ddl.tab(), DdlTab::Columns);
+    }
+
+    /// The same reachability rule the key obeys: `c` on a keyspace focuses the
+    /// panel and no more, so a press on a strip drawn a frame ago cannot reach
+    /// a tab this frame has not got.
+    #[test]
+    fn a_click_on_a_tab_the_strip_no_longer_draws_only_focuses() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Queries;
+
+        point(
+            &mut state,
+            Pointer::Click(Click::Tab {
+                panel: Panel::Ddl,
+                shortcut: 'c',
+            }),
+        );
+
+        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl);
+    }
+
+    #[test]
+    fn a_click_on_a_single_tab_panels_title_focuses_it() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Queries;
+
+        point(
+            &mut state,
+            Pointer::Click(Click::Tab {
+                panel: Panel::Tables,
+                shortcut: Panel::Tables.shortcut(),
+            }),
+        );
+
+        assert_eq!(state.focus, Panel::Tables);
     }
 
     #[test]

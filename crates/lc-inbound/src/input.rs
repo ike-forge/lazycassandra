@@ -114,7 +114,9 @@ mod tests {
                 panel: Panel::Tables,
                 area: Rect::new(0, 0, 16, 7),
                 inner: Rect::new(1, 1, 14, 5),
-                rows: Some(RowStrip {
+                tabs: Vec::new(),
+                columns: Vec::new(),
+                rows: Some(RowStrip::Rows {
                     top: 1,
                     first: 0,
                     len: 3,
@@ -145,7 +147,8 @@ mod tests {
             to_pointer(left(3, 2), &map()),
             Some(Pointer::Click(Click::Row {
                 panel: Panel::Tables,
-                row: 1
+                row: 1,
+                column: None
             }))
         );
     }

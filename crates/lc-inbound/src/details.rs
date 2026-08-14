@@ -45,6 +45,14 @@ const ELLIPSIS: char = '…';
 pub(crate) struct Laid {
     pub(crate) lines: Vec<Line<'static>>,
     pub(crate) selection: Span,
+    /// The row each line was wrapped from, in step with `lines`. `None` for the
+    /// lines that belong to no row: the blanks between groups, and the section
+    /// headings.
+    ///
+    /// The inverse of [`Laid::selection`], and needed for the same reason it
+    /// is: this is the one panel whose rows do not stand one to a line, so a
+    /// press cannot name a row by arithmetic on the line it landed on.
+    pub(crate) rows: Vec<Option<usize>>,
 }
 
 pub(crate) fn render(
@@ -54,7 +62,7 @@ pub(crate) fn render(
     selected: usize,
     offset: usize,
     theme: Theme,
-) -> (crate::body::Extent, Span) {
+) -> (crate::body::Extent, Span, Vec<Option<usize>>) {
     let laid = lay_out(details, selected, usize::from(area.width), theme);
     let total = laid.lines.len();
     // `Paragraph::scroll` is u16, and a body past 65535 lines is unreachable;
@@ -70,6 +78,7 @@ pub(crate) fn render(
             visible: usize::from(area.height),
         },
         laid.selection,
+        laid.rows,
     )
 }
 
@@ -85,6 +94,7 @@ pub(crate) fn render(
 /// (architecture.md §3).
 pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: Theme) -> Laid {
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut rows: Vec<Option<usize>> = Vec::new();
     let mut selection = Span::default();
     let mut row = 0;
     let mut previous: Option<Group> = None;
@@ -95,6 +105,7 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
         // table is, what it is configured to do.
         if previous.is_some_and(|group| group != section.group) {
             lines.push(Line::raw(""));
+            rows.push(None);
         }
         previous = Some(section.group);
 
@@ -108,6 +119,7 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
                 truncate(&prefixed(icon, &heading.text, width), width),
                 theme.style(heading.token),
             ));
+            rows.push(None);
         }
 
         for detail in &section.rows {
@@ -125,12 +137,17 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
                 };
             }
 
+            rows.extend(std::iter::repeat_n(Some(row), drawn.len()));
             lines.extend(drawn);
             row += 1;
         }
     }
 
-    Laid { lines, selection }
+    Laid {
+        lines,
+        selection,
+        rows,
+    }
 }
 
 /// `text` behind its icon, or bare where the two together would push the name

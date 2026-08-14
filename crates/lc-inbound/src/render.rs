@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::body::Extent;
-use crate::hit::{FrameMap, PanelHit};
+use crate::hit::{Band, FrameMap, PanelHit};
 use crate::layout::{Shell, layout};
 use crate::theme::Theme;
 
@@ -27,7 +27,7 @@ const THUMB: &str = "▐";
 /// re-enters nothing — nobody reads it until a human moves a mouse — so it is
 /// free to depend on the offsets `Geometry` may not
 /// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Rendered {
     pub geometry: Geometry,
     pub map: FrameMap,
@@ -58,13 +58,13 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let mut ddl_lines = 0;
     let mut ddl_selection = DdlSpan::default();
     let mut grid_width = 0;
-    let mut hits = [PanelHit::default(); 4];
+    let mut hits: [PanelHit; 4] = std::array::from_fn(|_| PanelHit::default());
 
     for (index, panel) in view.panels.iter().enumerate() {
         let area = rects.get(panel.panel);
 
         let is_focused_panel = panel.panel == view.focus;
-        let (block, border) = panel_block(panel, area, is_focused_panel, theme);
+        let (block, border, tabs) = panel_block(panel, area, is_focused_panel, theme);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -103,7 +103,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             None => heights[index] = usize::from(inner.height),
         }
 
-        hits[index] = PanelHit::new(panel.panel, area, inner, body.as_ref());
+        hits[index] = PanelHit::new(panel.panel, area, inner, tabs, body.as_ref());
     }
 
     let bar = rects.bar();
@@ -181,14 +181,14 @@ fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
     )
 }
 
-/// The bordered block a panel is drawn in, and the border style the
-/// scrollbars that hang off it share.
+/// The bordered block a panel is drawn in, the border style the scrollbars
+/// that hang off it share, and where each tab of its title landed.
 fn panel_block(
     panel: &lc_domain::view::PanelView,
     area: Rect,
     is_focused_panel: bool,
     theme: Theme,
-) -> (Block<'_>, Style) {
+) -> (Block<'_>, Style, Vec<Band<char>>) {
     let border = if is_focused_panel {
         theme.border_style().patch(theme.style(Token::Focused))
     } else {
@@ -233,7 +233,59 @@ fn panel_block(
         );
     }
 
-    (block, border)
+    (block, border, tab_bands(&tabs, form, lead, area))
+}
+
+/// Where each tab of a title strip landed on the top border.
+///
+/// Walked in step with [`panel_title`], off the same `tabs`, `form` and `lead`
+/// — the strip is measured where it is built, rather than measured a second
+/// time from the panel's state, for the reason the row map is
+/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
+///
+/// Clipped at the right corner: a strip too wide for its border is drawn short
+/// by `ratatui`, and a band running past what was drawn would claim border the
+/// user can see is blank.
+fn tab_bands(tabs: &[&Tab], form: Strip, lead: usize, area: Rect) -> Vec<Band<char>> {
+    let limit = area.right().saturating_sub(1);
+    let mut start = area
+        .x
+        .saturating_add(1)
+        .saturating_add(columns(lead + TITLE_PAD.chars().count()));
+
+    let mut bands = Vec::new();
+
+    for (index, tab) in tabs.iter().enumerate() {
+        if index > 0 {
+            start = start.saturating_add(columns(lc_domain::view::TAB_SEPARATOR.chars().count()));
+        }
+
+        let width = columns(match form {
+            Strip::Short => tab.short().chars().count(),
+            Strip::Full | Strip::Active => tab.text().chars().count(),
+        });
+        let end = start.saturating_add(width).min(limit);
+
+        if let Some(shortcut) = tab.shortcut()
+            && start < end
+        {
+            bands.push(Band {
+                start,
+                end,
+                names: shortcut,
+            });
+        }
+
+        start = start.saturating_add(width);
+    }
+
+    bands
+}
+
+/// A count of characters as a count of terminal columns. Every tab name is
+/// ASCII, and one wider than a `u16` cannot have been drawn.
+fn columns(characters: usize) -> u16 {
+    u16::try_from(characters).unwrap_or(u16::MAX)
 }
 
 /// The blank column between a title and the border either side of it.
@@ -2940,7 +2992,8 @@ mod tests {
                 map.hit(2, y),
                 Some(Click::Row {
                     panel: Panel::Tables,
-                    row: index
+                    row: index,
+                    column: None
                 }),
                 "{name} was drawn on screen row {y}"
             );
@@ -2967,7 +3020,8 @@ mod tests {
                 map.hit(2, y),
                 Some(Click::Row {
                     panel: Panel::Tables,
-                    row: index
+                    row: index,
+                    column: None
                 }),
                 "{name} was drawn on screen row {y}"
             );
@@ -3002,7 +3056,8 @@ mod tests {
                 map.hit(20, y),
                 Some(Click::Row {
                     panel: Panel::Contents,
-                    row: index
+                    row: index,
+                    column: None
                 }),
                 "{label} was drawn on screen row {y}"
             );
@@ -3015,17 +3070,32 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_grids_header_is_chrome_rather_than_its_first_row() {
-        let state = showing(page_of(
+    /// The x of the first cell of screen row `y` holding `text`.
+    fn column_of(buffer: &Buffer, y: u16, text: &str) -> u16 {
+        let line = row(buffer, y);
+        let at = line
+            .find(text)
+            .unwrap_or_else(|| panic!("{text} was not drawn on row {y}: {line:?}"));
+
+        u16::try_from(line[..at].chars().count()).expect("a frame is narrower than u16::MAX")
+    }
+
+    /// A two-column grid. Every value is unique and none is a row number, so
+    /// finding one in the frame finds the cell that drew it rather than the
+    /// gutter beside it.
+    fn grid_state() -> State {
+        showing(page_of(
             &["id", "email"],
             &[
-                &[CqlValue::Int(1), text("ada@example.com")],
-                &[CqlValue::Int(2), text("bob@example.com")],
+                &[text("id-ada"), text("ada@example.com")],
+                &[text("id-bob"), text("bob@example.com")],
             ],
-        ));
+        ))
+    }
 
-        let (buffer, map) = draw_mapped(60, 12, &state);
+    #[test]
+    fn a_grids_heading_names_a_column_rather_than_its_first_row() {
+        let (buffer, map) = draw_mapped(60, 12, &grid_state());
 
         assert!(
             row(&buffer, 1).contains("id") && row(&buffer, 1).contains("email"),
@@ -3037,15 +3107,19 @@ mod tests {
         );
 
         assert_eq!(
-            map.hit(20, 1),
-            Some(Click::Panel(Panel::Contents)),
-            "the header names columns; clicking one sorts nothing"
+            map.hit(column_of(&buffer, 1, "email"), 1),
+            Some(Click::Column {
+                panel: Panel::Contents,
+                column: 1
+            }),
+            "a heading is the column it names"
         );
         assert_eq!(
-            map.hit(20, 2),
+            map.hit(column_of(&buffer, 2, "ada@example.com"), 2),
             Some(Click::Row {
                 panel: Panel::Contents,
-                row: 0
+                row: 0,
+                column: Some(1)
             })
         );
         assert_eq!(
@@ -3056,14 +3130,115 @@ mod tests {
     }
 
     #[test]
+    fn the_map_resolves_every_cell_to_the_column_that_drew_it() {
+        let (buffer, map) = draw_mapped(60, 12, &grid_state());
+
+        for (column, value) in ["id-ada", "ada@example.com"].into_iter().enumerate() {
+            assert_eq!(
+                map.hit(column_of(&buffer, 2, value), 2),
+                Some(Click::Row {
+                    panel: Panel::Contents,
+                    row: 0,
+                    column: Some(column)
+                }),
+                "{value} was drawn in column {column}"
+            );
+        }
+    }
+
+    #[test]
     fn a_press_on_the_chrome_of_a_panel_names_that_panel() {
         let (_buffer, map) = draw_mapped(40, 12, &browsing(&["shop"], 0));
 
         assert_eq!(map.hit(0, 0), Some(Click::Panel(Panel::Tables)), "corner");
-        assert_eq!(map.hit(3, 0), Some(Click::Panel(Panel::Tables)), "title");
-        assert_eq!(map.hit(20, 0), Some(Click::Panel(Panel::Contents)));
-        assert_eq!(map.hit(2, 8), Some(Click::Panel(Panel::Ddl)));
-        assert_eq!(map.hit(20, 9), Some(Click::Panel(Panel::Queries)));
+        assert_eq!(
+            map.hit(0, 8),
+            Some(Click::Panel(Panel::Ddl)),
+            "the Ddl panel's left border"
+        );
+        assert_eq!(
+            map.hit(20, 10),
+            Some(Click::Panel(Panel::Queries)),
+            "the Queries editor takes no press on its lines"
+        );
+    }
+
+    /// The Ddl panel's top border at 100x41 — the body beneath it starts at 25
+    /// (see [`ddl_rows`]).
+    const DDL_BORDER: u16 = 24;
+
+    #[test]
+    fn the_map_resolves_every_drawn_tab_to_the_key_that_reaches_it() {
+        let (buffer, map) = draw_mapped(100, 41, &listing(orders()));
+        let strip = row(&buffer, DDL_BORDER);
+
+        assert!(
+            strip.contains("DDL") && strip.contains("Columns"),
+            "row {DDL_BORDER} must be the strip this test is about: {strip:?}"
+        );
+
+        for (label, shortcut) in [("DDL", 'd'), ("Columns", 'c')] {
+            assert_eq!(
+                map.hit(column_of(&buffer, DDL_BORDER, label), DDL_BORDER),
+                Some(Click::Tab {
+                    panel: Panel::Ddl,
+                    shortcut
+                }),
+                "{label} is reached by {shortcut}, whichever name it is drawn under"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_tab_panel_resolves_its_title_to_its_own_key() {
+        let (buffer, map) = draw_mapped(40, 12, &browsing(&["shop"], 0));
+
+        assert_eq!(
+            map.hit(column_of(&buffer, 0, "Tables"), 0),
+            Some(Click::Tab {
+                panel: Panel::Tables,
+                shortcut: 'a'
+            }),
+            "a panel with one tab is its own tab, and `a` is how it is reached"
+        );
+    }
+
+    #[test]
+    fn the_map_resolves_every_line_of_a_wrapped_ddl_row_to_that_row() {
+        // The Columns tab of `orders()`: the Table identity row is too wide
+        // for 23 columns and wraps onto a second line, and the two rows before
+        // the first column are a blank and a heading (see
+        // `the_columns_tab_draws_every_column_with_its_kind_and_type`).
+        let (buffer, map) = draw_mapped(100, 41, &listing(orders()));
+
+        assert_eq!(
+            ddl_rows(&buffer)[..6],
+            [
+                "\u{f084} Keyspace         shop",
+                "\u{f0ce} Table",
+                "    orders_by_customer",
+                "",
+                "3 columns",
+                "\u{f030b} customer_id      uuid",
+            ],
+            "the lines this test resolves against"
+        );
+
+        let expected = [Some(0), Some(1), Some(1), None, None, Some(2)];
+
+        for (line, row) in expected.into_iter().enumerate() {
+            let y = DDL_BORDER + 1 + u16::try_from(line).expect("six lines");
+            let click = match row {
+                Some(row) => Click::Row {
+                    panel: Panel::Ddl,
+                    row,
+                    column: None,
+                },
+                None => Click::Panel(Panel::Ddl),
+            };
+
+            assert_eq!(map.hit(3, y), Some(click), "line {line}");
+        }
     }
 
     #[test]

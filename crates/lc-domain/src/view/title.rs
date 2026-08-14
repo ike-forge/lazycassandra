@@ -28,6 +28,10 @@ pub struct Tab {
     /// The name to fall back to on a border that cannot hold every full one.
     /// Equal to `text` for a tab with nothing to drop.
     short: String,
+    /// The key that reaches this tab. Kept beside [`Tab::mark`] rather than
+    /// derived from it: the mark is a range into `text`, and a tab drawn under
+    /// its short name has none to derive from.
+    shortcut: Option<char>,
     mark: Option<Range<usize>>,
     /// Whether this is the tab whose body the panel is drawing. Always true
     /// for a panel with one tab.
@@ -106,6 +110,7 @@ impl Tab {
         Self {
             text,
             short,
+            shortcut,
             mark,
             active,
         }
@@ -114,6 +119,12 @@ impl Tab {
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The key that reaches this tab, whichever name it is drawn under.
+    #[must_use]
+    pub const fn shortcut(&self) -> Option<char> {
+        self.shortcut
     }
 
     /// The name to draw where the full strip does not fit.
