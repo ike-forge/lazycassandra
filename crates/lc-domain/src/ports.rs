@@ -7,6 +7,8 @@
 //! Every port is `dyn`-compatible so a fake can be swapped in wholesale, which
 //! is why they use `#[async_trait]` rather than native async fns in traits.
 
+use std::path::Path;
+
 use async_trait::async_trait;
 
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
@@ -44,6 +46,28 @@ pub trait SecretResolver: Send + Sync {
 pub trait Store: Send + Sync {
     async fn record(&self, stmt: &Statement) -> Result<(), StoreError>;
     async fn history(&self, limit: usize) -> Result<Vec<Statement>, StoreError>;
+}
+
+/// Opens a destination for an export.
+///
+/// Refusing to overwrite is this port's job rather than a separate `exists`
+/// call, which would leave a window between asking and creating
+/// (export design §6.1).
+#[async_trait]
+pub trait Writer: Send + Sync {
+    async fn open(&self, path: &Path, overwrite: bool) -> Result<Box<dyn Sink>, ExportError>;
+}
+
+/// An open destination.
+#[async_trait]
+pub trait Sink: Send {
+    async fn write(&mut self, chunk: &str) -> Result<(), ExportError>;
+    /// Flushes and closes.
+    async fn finish(&mut self) -> Result<(), ExportError>;
+    /// Removes the partial file. Infallible from the caller's side: the export
+    /// has already failed, and a failure to clean up is not a second error the
+    /// user can act on (design §4).
+    async fn abort(&mut self);
 }
 
 /// Where a credential comes from.
@@ -85,4 +109,14 @@ pub enum ConfigError {
 pub enum StoreError {
     #[error("store is unavailable: {0}")]
     Unavailable(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExportError {
+    #[error("that file already exists")]
+    Exists,
+    #[error("could not write the file: {0}")]
+    Io(String),
+    #[error("the cluster stopped answering: {0}")]
+    Cluster(DbError),
 }
