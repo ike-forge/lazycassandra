@@ -62,6 +62,13 @@ pub enum Token {
     /// the middle of a wide grid can be traced back to its heading and its row
     /// number (docs/superpowers/specs/2026-08-13-selection-modes-design.md §4).
     Crosshair,
+    /// A row inside the selection the cursor is not on.
+    ///
+    /// A band of its own between [`Token::Selected`] and [`Token::Crosshair`]:
+    /// the cursor has to stay findable inside a range, and the range has to be
+    /// louder than the wash that merely traces a cell back to its heading
+    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §6).
+    Ranged,
     /// A keyspace the user made, in the Tables tree.
     Keyspace,
     /// A table the user made, in the Tables tree.
