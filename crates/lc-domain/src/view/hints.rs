@@ -176,12 +176,12 @@ pub(crate) fn bar(state: &State) -> HintBar {
         .filter(|binding| fits || !binding.keys.contains(&KeyPress::new(Key::Char('?'))))
         .map(rendered)
         .collect();
-    if !state.focus.takes_text() {
+    if !state.focus().takes_text() {
         global.push(rendered(&QUIT));
     }
 
     let mut panel: Vec<Hint> = state
-        .focus
+        .focus()
         .hints()
         .iter()
         .map(|binding| Hint {
@@ -189,7 +189,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
             ..rendered(binding)
         })
         .collect();
-    let filtered = Filtered::of(state.focus).is_some_and(|target| state.filter(target).is_some());
+    let filtered = Filtered::of(state.focus()).is_some_and(|target| state.filter(target).is_some());
     if filtered || selected(state) {
         panel.push(rendered(&CLEAR));
     }
@@ -202,7 +202,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
 /// clears it (docs/shortcuts.md §2) — the same rule that already puts `esc`
 /// on the bar for a panel carrying a filter.
 fn selected(state: &State) -> bool {
-    match state.focus {
+    match state.focus() {
         Panel::Tables => state
             .tables
             .selection
@@ -304,10 +304,9 @@ mod tests {
 
     /// A frame big enough for a palette to draw in.
     fn fits() -> State {
-        State {
-            geometry: Geometry::new([8, 14, 20, 1], 37, 14),
-            ..State::default()
-        }
+        let mut state = State::default();
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+        state
     }
 
     #[test]
@@ -346,10 +345,8 @@ mod tests {
 
     #[test]
     fn the_bar_carries_the_focused_panels_bindings_and_the_global_ones() {
-        let state = State {
-            focus: Panel::Tables,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Tables);
 
         let bar = bar(&state);
 
@@ -361,10 +358,8 @@ mod tests {
     #[test]
     fn no_panel_contributes_an_empty_group_the_reader_has_to_interpret() {
         for panel in Panel::ALL {
-            let state = State {
-                focus: panel,
-                ..fits()
-            };
+            let mut state = fits();
+            state.focus_on(panel);
 
             assert!(
                 !bar(&state).panel.is_empty(),
@@ -375,10 +370,8 @@ mod tests {
 
     #[test]
     fn a_panel_that_takes_text_does_not_claim_q_quits() {
-        let state = State {
-            focus: Panel::Queries,
-            ..fits()
-        };
+        let mut state = fits();
+        state.focus_on(Panel::Queries);
 
         let bar = bar(&state);
 
@@ -423,10 +416,8 @@ mod tests {
 
     #[test]
     fn the_bar_names_what_the_palette_responds_to() {
-        let state = State {
-            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
 
         let bar = bar(&state);
 
@@ -442,13 +433,11 @@ mod tests {
 
     #[test]
     fn the_bar_names_what_the_picker_responds_to() {
-        let state = State {
-            overlay: Some(Overlay::Themes {
-                cursor: Cursor::default(),
-                restored: ThemeChoice::default(),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Themes {
+            cursor: Cursor::default(),
+            restored: ThemeChoice::default(),
+        });
 
         let bar = bar(&state);
 
@@ -472,10 +461,8 @@ mod tests {
     #[test]
     fn the_bar_names_search_in_every_panel_that_can_hold_a_filter() {
         for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
-            let state = State {
-                focus: panel,
-                ..fits()
-            };
+            let mut state = fits();
+            state.focus_on(panel);
 
             assert!(
                 bar(&state).panel.iter().any(|hint| hint.keys == "/"),
@@ -486,20 +473,16 @@ mod tests {
 
     #[test]
     fn the_bar_does_not_name_search_in_queries() {
-        let state = State {
-            focus: Panel::Queries,
-            ..fits()
-        };
+        let mut state = fits();
+        state.focus_on(Panel::Queries);
 
         assert!(bar(&state).panel.iter().all(|hint| hint.keys != "/"));
     }
 
     #[test]
     fn the_bar_names_esc_clear_only_where_a_filter_is_applied() {
-        let mut state = State {
-            focus: Panel::Tables,
-            ..fits()
-        };
+        let mut state = fits();
+        state.focus_on(Panel::Tables);
         assert!(bar(&state).panel.iter().all(|hint| hint.action != "clear"));
 
         state.apply_filter(Filtered::Tables, Filter::new("o"));
@@ -536,7 +519,7 @@ mod tests {
     #[test]
     fn the_queries_bar_names_the_run_binding() {
         let mut state = fits();
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         let panel = bar(&state).panel;
 
@@ -550,7 +533,7 @@ mod tests {
     #[test]
     fn the_queries_bar_names_the_editor_binding_after_run() {
         let mut state = fits();
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         let panel = bar(&state).panel;
 
@@ -568,7 +551,8 @@ mod tests {
     #[test]
     fn no_other_bar_names_the_editor_binding() {
         for focus in [Panel::Tables, Panel::Ddl, Panel::Contents] {
-            let state = State { focus, ..fits() };
+            let mut state = fits();
+            state.focus_on(focus);
 
             assert!(
                 bar(&state).panel.iter().all(|hint| hint.action != "edit"),
@@ -580,7 +564,7 @@ mod tests {
     /// The `Queries` bar with `text` in its buffer, `\n` meaning Enter.
     fn queries_bar(text: &str) -> HintBar {
         let mut state = fits();
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         for character in text.chars() {
             if character == '\n' {
                 state.queries.insert_newline();
@@ -621,10 +605,8 @@ mod tests {
 
     #[test]
     fn the_bar_names_esc_while_a_range_stands() {
-        let mut state = State {
-            focus: Panel::Tables,
-            ..fits()
-        };
+        let mut state = fits();
+        state.focus_on(Panel::Tables);
         state.tables.selection.start(0);
 
         let bar = bar(&state);
@@ -637,10 +619,8 @@ mod tests {
 
     #[test]
     fn the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter() {
-        let state = State {
-            focus: Panel::Tables,
-            ..fits()
-        };
+        let mut state = fits();
+        state.focus_on(Panel::Tables);
 
         assert!(!bar(&state).panel.iter().any(|hint| hint.keys == "esc"));
     }
@@ -648,10 +628,8 @@ mod tests {
     #[test]
     fn nothing_but_the_run_hint_is_ever_inert() {
         for panel in Panel::ALL {
-            let state = State {
-                focus: panel,
-                ..fits()
-            };
+            let mut state = fits();
+            state.focus_on(panel);
             let bar = bar(&state);
 
             for hint in bar.panel.iter().chain(&bar.global) {

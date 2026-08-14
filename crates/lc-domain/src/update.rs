@@ -116,11 +116,9 @@ pub enum Effect {
 /// "Connecting…" (architecture.md §3).
 #[must_use]
 pub fn init(conn: ConnId) -> (State, Vec<Effect>) {
-    let state = State {
-        connection: ConnectionState::Connecting(conn),
-        dirty: true,
-        ..State::default()
-    };
+    let mut state = State::default();
+    state.connection = ConnectionState::Connecting(conn);
+    state.dirty = true;
 
     (state, vec![Effect::Connect(conn)])
 }
@@ -367,7 +365,7 @@ fn quit(state: &mut State) -> Vec<Effect> {
 /// copied (selection-modes design §4). Every projection converges here, so no
 /// shape can reach the clipboard empty.
 fn yank(state: &mut State) -> Vec<Effect> {
-    let line = match state.focus {
+    let line = match state.focus() {
         Panel::Contents => contents(state),
         Panel::Tables => tree_nodes(state),
         Panel::Ddl => detail_rows(state),
@@ -393,7 +391,7 @@ fn yank(state: &mut State) -> Vec<Effect> {
 /// What `y` just took, ready to be lit once the selection that named it is
 /// gone (visual mode design §6.1).
 fn lit(state: &State) -> Flash {
-    let (rows, columns) = match state.focus {
+    let (rows, columns) = match state.focus() {
         Panel::Contents => grid_extent(state),
         Panel::Tables => (
             Some(spanned(state.tables.selection, state.tables.cursor.index())),
@@ -408,7 +406,7 @@ fn lit(state: &State) -> Flash {
         Panel::Queries => (None, None),
     };
 
-    Flash::lit(state.focus, rows, columns)
+    Flash::lit(state.focus(), rows, columns)
 }
 
 /// The range, or the one row the cursor is on when nothing is selected.
@@ -537,7 +535,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
     // said the CQL editor would have to break.
-    if state.focus.takes_text() && edit(state, press.key) {
+    if state.focus().takes_text() && edit(state, press.key) {
         return Vec::new();
     }
 
@@ -545,8 +543,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('q') => return quit(state),
         Key::Char('?') => open_palette(state),
         Key::Escape => escape(state),
-        Key::Tab => state.focus = state.focus.next(),
-        Key::BackTab => state.focus = state.focus.previous(),
+        Key::Tab => state.focus_on(state.focus().next()),
+        Key::BackTab => state.focus_on(state.focus().previous()),
         Key::Char('j') | Key::Down => scroll(state, Motion::Down),
         Key::Char('k') | Key::Up => scroll(state, Motion::Up),
         Key::PageDown => scroll(state, Motion::PageDown),
@@ -559,7 +557,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('/') => open_prompt(state),
         Key::Char('y') => return yank(state),
         Key::Char('m') => {
-            if state.focus == Panel::Contents {
+            if state.focus() == Panel::Contents {
                 // A range's axis is the mode's axis, so carrying one across
                 // would address rows or columns the user never chose — the
                 // argument `DdlPanel::show` already makes for the cursor
@@ -637,7 +635,7 @@ fn wheel(state: &mut State, panel: Panel, direction: Wheel) {
 }
 
 fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
-    state.focus = click.panel();
+    state.focus_on(click.panel());
 
     // A press names one row, so it spends the range rather than standing
     // beside it and making the next `y` lie (design §4).
@@ -707,14 +705,14 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
 /// one reached by key cannot diverge.
 fn show_tab(state: &mut State, shortcut: char) {
     if let Some(tab) = DdlTab::from_shortcut(shortcut) {
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         // A tab the strip does not draw is not a place to arrive at: `c` on a
         // keyspace focuses the panel and no more.
         if crate::view::ddl_tabs(state).contains(&tab) {
             state.ddl.show(tab);
         }
     } else if let Some(panel) = Panel::from_shortcut(shortcut) {
-        state.focus = panel;
+        state.focus_on(panel);
     }
 }
 
@@ -794,7 +792,7 @@ fn restore_theme(state: &mut State) {
 /// filtering (design §3.3) means the panel underneath is the preview of
 /// whatever the buffer holds, from the first frame the prompt is up.
 fn open_prompt(state: &mut State) {
-    let Some(target) = Filtered::of(state.focus) else {
+    let Some(target) = Filtered::of(state.focus()) else {
         return;
     };
 
@@ -864,15 +862,15 @@ fn escape(state: &mut State) {
         return;
     }
 
-    if let Some(target) = Filtered::of(state.focus)
+    if let Some(target) = Filtered::of(state.focus())
         && state.filter(target).is_some()
     {
         state.apply_filter(target, None);
         return;
     }
 
-    if state.focus.takes_text() {
-        state.focus = Panel::default();
+    if state.focus().takes_text() {
+        state.focus_on(Panel::default());
     }
 }
 
@@ -1014,7 +1012,7 @@ enum Transition {
 /// the fix needs a line-to-row map from the renderer, and `home`/`end` are
 /// exact regardless (design §4).
 fn scroll(state: &mut State, motion: Motion) {
-    let panel = state.focus;
+    let panel = state.focus();
     let height = state.geometry.height(panel);
     let len = row_count(state, panel);
 
@@ -1070,7 +1068,7 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
 /// anywhere else: the panel takes text, so the action has no unmodified key
 /// available (external editor design §1).
 fn open_editor(state: &State) -> Vec<Effect> {
-    if state.focus != Panel::Queries {
+    if state.focus() != Panel::Queries {
         return Vec::new();
     }
 
@@ -1090,7 +1088,7 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         // The prompt takes text and pages nothing, so neither spelling does.
         Some(Overlay::Search(_)) => Vec::new(),
         Some(Overlay::Message(_)) | None => {
-            if state.focus.takes_text() {
+            if state.focus().takes_text() {
                 edit(state, key);
             } else if matches!(key, Key::PageDown) {
                 scroll(state, Motion::PageDown);
@@ -1205,7 +1203,7 @@ fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
 
 /// `v`: start extending from the cursor, or freeze what is being extended.
 fn toggle_visual(state: &mut State) {
-    for axis in axes(state, state.focus).into_iter().flatten() {
+    for axis in axes(state, state.focus()).into_iter().flatten() {
         if axis.selection.is_extending() {
             axis.selection.stop(axis.cursor.index());
         } else {
@@ -1219,7 +1217,7 @@ fn toggle_visual(state: &mut State) {
 fn stop_extending(state: &mut State) -> bool {
     let mut stopped = false;
 
-    for axis in axes(state, state.focus).into_iter().flatten() {
+    for axis in axes(state, state.focus()).into_iter().flatten() {
         if axis.selection.is_extending() {
             axis.selection.stop(axis.cursor.index());
             stopped = true;
@@ -1233,7 +1231,7 @@ fn stop_extending(state: &mut State) -> bool {
 fn clear_selection(state: &mut State) -> bool {
     let mut cleared = false;
 
-    for axis in axes(state, state.focus).into_iter().flatten() {
+    for axis in axes(state, state.focus()).into_iter().flatten() {
         if axis.selection.range(0).is_some() {
             axis.selection.clear();
             cleared = true;
@@ -1252,7 +1250,7 @@ fn clear_selection(state: &mut State) -> bool {
 /// end. The anchor and not the range's first row: a selection grown upwards
 /// started at its last one.
 fn collapse_selection(state: &mut State) {
-    for axis in axes(state, state.focus).into_iter().flatten() {
+    for axis in axes(state, state.focus()).into_iter().flatten() {
         if let Some(anchor) = axis.selection.anchor() {
             axis.cursor.go_to(anchor, axis.len);
             axis.selection.clear();
@@ -1446,7 +1444,7 @@ fn activate(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     }
 
-    if state.focus != Panel::Tables {
+    if state.focus() != Panel::Tables {
         return Vec::new();
     }
 
@@ -1476,7 +1474,7 @@ fn activate(state: &mut State) -> Vec<Effect> {
 /// the user cannot predict
 /// (docs/superpowers/specs/2026-08-10-table-display-design.md §1).
 fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
-    state.focus = Panel::Contents;
+    state.focus_on(Panel::Contents);
 
     let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
     submit_into_contents(state, Subject::Table(table), stmt)
@@ -1484,7 +1482,7 @@ fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
 
 /// `ctrl-r`: the Queries buffer, whole, as one statement (design §3).
 fn run(state: &mut State) -> Vec<Effect> {
-    if state.focus != Panel::Queries {
+    if state.focus() != Panel::Queries {
         return Vec::new();
     }
 
@@ -1550,7 +1548,7 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
 /// resolves that in its own vocabulary — the shape `j`/`k` already have
 /// (docs/shortcuts.md §2, docs/superpowers/specs/2026-08-10-table-display-design.md §2).
 fn go_right(state: &mut State) {
-    match state.focus {
+    match state.focus() {
         Panel::Tables => transition(state, Transition::Open),
         Panel::Contents => {
             let len = state.contents.column_count();
@@ -1561,7 +1559,7 @@ fn go_right(state: &mut State) {
 }
 
 fn go_left(state: &mut State) {
-    match state.focus {
+    match state.focus() {
         Panel::Tables => transition(state, Transition::Close),
         Panel::Contents => state.contents.column.up(),
         Panel::Ddl | Panel::Queries => {}
@@ -1610,7 +1608,7 @@ fn follow_grid_columns(state: &mut State) {
 }
 
 fn transition(state: &mut State, transition: Transition) {
-    if state.focus != Panel::Tables {
+    if state.focus() != Panel::Tables {
         return;
     }
 
@@ -1691,22 +1689,19 @@ mod tests {
     }
 
     fn connected(posture: Posture) -> State {
-        State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture,
-                schema: SchemaState::Loading,
-            }),
-            ..State::default()
-        }
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture,
+            schema: SchemaState::Loading,
+        });
+        state
     }
 
     #[test]
     fn a_tick_costs_a_repaint_only_while_something_is_outstanding() {
-        let mut idle = State {
-            dirty: false,
-            ..State::default()
-        };
+        let mut idle = State::default();
+        idle.dirty = false;
 
         assert!(!idle.is_working());
         update(&mut idle, Msg::Tick);
@@ -2254,7 +2249,7 @@ mod tests {
         for (key, focus) in cases {
             let mut state = browsing_tables(&[("a", &["t1"])]);
             state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
-            state.focus = focus;
+            state.focus_on(focus);
             press(&mut state, Key::Char('?'));
             let before = crate::view::view_model(&state);
 
@@ -2634,7 +2629,7 @@ mod tests {
     #[test]
     fn motion_belongs_to_the_focused_panel_only() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         press(&mut state, Key::Char('j'));
 
@@ -2730,10 +2725,8 @@ mod tests {
 
     #[test]
     fn ctrl_e_hands_the_queries_buffer_to_an_editor() {
-        let mut state = State {
-            focus: Panel::Queries,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
         state.queries.replace("SELECT * FROM t");
 
         let effects = ctrl(&mut state, Key::Char('e'));
@@ -2751,10 +2744,8 @@ mod tests {
     #[test]
     fn ctrl_e_is_inert_outside_queries() {
         for focus in [Panel::Tables, Panel::Ddl, Panel::Contents] {
-            let mut state = State {
-                focus,
-                ..State::default()
-            };
+            let mut state = State::default();
+            state.focus_on(focus);
             let before = crate::view::view_model(&state);
 
             assert!(
@@ -2780,11 +2771,9 @@ mod tests {
         ];
 
         for overlay in overlays {
-            let mut state = State {
-                focus: Panel::Queries,
-                overlay: Some(overlay),
-                ..State::default()
-            };
+            let mut state = State::default();
+            state.focus_on(Panel::Queries);
+            state.overlay = Some(overlay);
 
             assert!(ctrl(&mut state, Key::Char('e')).is_empty());
         }
@@ -2834,7 +2823,7 @@ mod tests {
     /// Enter — the same convention `editor.rs`'s own helper uses.
     fn editing(text: &str) -> State {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         type_into(&mut state, text);
         state
     }
@@ -2857,7 +2846,7 @@ mod tests {
         // move, q quits. In the editor they are all just text.
         let state = editing("tacujkhlq");
 
-        assert_eq!(state.focus, Panel::Queries, "no letter moved focus");
+        assert_eq!(state.focus(), Panel::Queries, "no letter moved focus");
         assert_eq!(state.queries.text(), "tacujkhlq");
     }
 
@@ -2877,7 +2866,7 @@ mod tests {
     #[test]
     fn a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette() {
         let mut state = measured(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('?'));
 
@@ -2895,7 +2884,7 @@ mod tests {
     fn an_open_palette_outranks_a_panel_that_takes_text() {
         let mut state = measured(&["a", "b", "c"]);
         press(&mut state, Key::Char('?'));
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('j'));
 
@@ -2910,7 +2899,7 @@ mod tests {
     #[test]
     fn q_does_not_quit_while_the_editor_has_focus() {
         let mut state = browsing(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         let effects = press(&mut state, Key::Char('q'));
 
@@ -2925,7 +2914,7 @@ mod tests {
 
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
         assert_eq!(state.queries.text(), "SELECT", "leaving keeps the buffer");
     }
 
@@ -2941,7 +2930,7 @@ mod tests {
         press(&mut state, Key::Escape);
 
         assert!(state.overlay.is_none());
-        assert_eq!(state.focus, Panel::Queries, "one esc does one thing");
+        assert_eq!(state.focus(), Panel::Queries, "one esc does one thing");
     }
 
     #[test]
@@ -2950,14 +2939,14 @@ mod tests {
 
         press(&mut state, Key::Tab);
 
-        assert_eq!(state.focus, Panel::Tables, "Queries wraps to Tables");
+        assert_eq!(state.focus(), Panel::Tables, "Queries wraps to Tables");
         assert_eq!(state.queries.text(), "SELECT");
     }
 
     #[test]
     fn a_modified_key_is_still_not_text() {
         let mut state = browsing(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         update(
             &mut state,
@@ -2983,7 +2972,7 @@ mod tests {
 
         press(&mut state, Key::Char('b'));
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
         assert_eq!(state.queries.text(), "", "nothing leaked into the buffer");
     }
 
@@ -3104,7 +3093,7 @@ mod tests {
             effects.is_empty(),
             "a range names more than one thing to open"
         );
-        assert_eq!(state.focus, Panel::Tables, "and focus stays put");
+        assert_eq!(state.focus(), Panel::Tables, "and focus stays put");
     }
 
     #[test]
@@ -3229,7 +3218,7 @@ mod tests {
                 next: None,
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         update(
             &mut state,
             Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(width)),
@@ -3277,10 +3266,8 @@ mod tests {
 
     #[test]
     fn a_grid_with_no_page_swallows_horizontal_motion() {
-        let mut state = State {
-            focus: Panel::Contents,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Contents);
 
         press(&mut state, Key::Char('l'));
 
@@ -3291,7 +3278,7 @@ mod tests {
     #[test]
     fn horizontal_motion_belongs_to_the_focused_panel_only() {
         let mut state = grid_of(4, 80);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         press(&mut state, Key::Char('l'));
 
@@ -3459,7 +3446,7 @@ mod tests {
     #[test]
     fn a_tree_transition_belongs_to_the_focused_panel_only() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         press(&mut state, Key::Char('l'));
 
@@ -3596,7 +3583,7 @@ mod tests {
 
         for expected in Panel::CYCLE.into_iter().skip(1).chain([Panel::CYCLE[0]]) {
             press(&mut state, Key::Tab);
-            assert_eq!(state.focus, expected);
+            assert_eq!(state.focus(), expected);
         }
     }
 
@@ -3607,29 +3594,27 @@ mod tests {
         press(&mut state, Key::BackTab);
 
         assert_eq!(
-            state.focus,
+            state.focus(),
             Panel::Queries,
             "stepping back from the first wraps"
         );
 
         press(&mut state, Key::BackTab);
 
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
     }
 
     #[test]
     fn a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text() {
         for from in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
             for to in Panel::ALL {
-                let mut state = State {
-                    focus: from,
-                    ..State::default()
-                };
+                let mut state = State::default();
+                state.focus_on(from);
 
                 press(&mut state, Key::Char(to.shortcut()));
 
                 assert_eq!(
-                    state.focus,
+                    state.focus(),
                     to,
                     "'{}' should reach {to:?} from {from:?}",
                     to.shortcut()
@@ -3646,7 +3631,7 @@ mod tests {
             press(&mut state, Key::Char(panel.shortcut()));
             press(&mut state, Key::Char(panel.shortcut()));
 
-            assert_eq!(state.focus, panel);
+            assert_eq!(state.focus(), panel);
             assert_eq!(
                 state.ddl.tab(),
                 DdlTab::Ddl,
@@ -3661,11 +3646,11 @@ mod tests {
             // A table has to be selected, or the strip draws no Columns tab
             // for the key to arrive at.
             let mut state = browsing_a_table();
-            state.focus = from;
+            state.focus_on(from);
 
             press(&mut state, Key::Char('c'));
 
-            assert_eq!(state.focus, Panel::Ddl, "from {from:?}");
+            assert_eq!(state.focus(), Panel::Ddl, "from {from:?}");
             assert_eq!(state.ddl.tab(), DdlTab::Columns, "from {from:?}");
         }
     }
@@ -3677,7 +3662,7 @@ mod tests {
 
         press(&mut state, Key::Char('c'));
 
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(
             state.ddl.tab(),
             DdlTab::Ddl,
@@ -3692,20 +3677,18 @@ mod tests {
         press(&mut state, Key::Char('c'));
         press(&mut state, Key::Char('d'));
 
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.tab(), DdlTab::Ddl);
     }
 
     #[test]
     fn c_is_text_in_a_panel_that_takes_text() {
-        let mut state = State {
-            focus: Panel::Queries,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('b'));
 
-        assert_eq!(state.focus, Panel::Queries, "focus is the mode");
+        assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
         assert_eq!(state.queries.text(), "b");
         assert_eq!(state.ddl.tab(), DdlTab::Ddl, "and no tab changed under it");
     }
@@ -3713,14 +3696,12 @@ mod tests {
     #[test]
     fn a_shortcut_is_text_in_a_panel_that_takes_text() {
         for to in Panel::ALL {
-            let mut state = State {
-                focus: Panel::Queries,
-                ..State::default()
-            };
+            let mut state = State::default();
+            state.focus_on(Panel::Queries);
 
             press(&mut state, Key::Char(to.shortcut()));
 
-            assert_eq!(state.focus, Panel::Queries, "focus is the mode");
+            assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
             assert_eq!(state.queries.text(), to.shortcut().to_string());
         }
     }
@@ -3736,7 +3717,7 @@ mod tests {
 
             let effects = press(&mut state, Key::Char(panel.shortcut()));
 
-            assert_eq!(state.focus, panel);
+            assert_eq!(state.focus(), panel);
             assert!(
                 effects.is_empty(),
                 "'{}' issued {effects:?}",
@@ -3758,19 +3739,167 @@ mod tests {
             // Focus starts elsewhere, so an unmoved focus is evidence rather
             // than the state it began in.
             let elsewhere = panel.next();
-            let mut state = State {
-                focus: elsewhere,
-                ..State::default()
-            };
+            let mut state = State::default();
+            state.focus_on(elsewhere);
             let shifted = panel.shortcut().to_ascii_uppercase();
 
             press(&mut state, Key::Char(shifted));
 
             assert_eq!(
-                state.focus, elsewhere,
+                state.focus(),
+                elsewhere,
                 "'{shifted}' must stay free for a binding of its own"
             );
         }
+    }
+
+    /// `shop` unfolded, with `orders` at row 1 — a table, not a keyspace.
+    fn tables_state() -> State {
+        let mut state = browsing_tables(&[("shop", &["orders", "users", "products"])]);
+        press(&mut state, Key::Char('l'));
+        state
+    }
+
+    /// Contents focused and showing a loaded page.
+    fn contents_state() -> State {
+        grid_of_rows(2, 3, 80)
+    }
+
+    type Route = (&'static str, Box<dyn Fn(&mut State)>);
+
+    #[test]
+    fn switching_panels_clears_the_selection_of_the_panel_left_behind() {
+        // Every route focus can change by. A selection outliving one of them
+        // would let `y` act on a panel the user is no longer looking at
+        // (multi-group selection design §4).
+        let routes: Vec<Route> = vec![
+            (
+                "tab",
+                Box::new(|state: &mut State| drop(press(state, Key::Tab))),
+            ),
+            (
+                "shift-tab",
+                Box::new(|state: &mut State| drop(press(state, Key::BackTab))),
+            ),
+            (
+                "a",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('a')))),
+            ),
+            (
+                "b",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('b')))),
+            ),
+            (
+                "c",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('c')))),
+            ),
+            (
+                "d",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('d')))),
+            ),
+            (
+                "u",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('u')))),
+            ),
+        ];
+
+        for (name, route) in routes {
+            let mut state = tables_state();
+            state.focus_on(Panel::Tables);
+            state.tables.selection.start(0);
+            state.tables.selection.stop(1);
+
+            route(&mut state);
+
+            if state.focus() == Panel::Tables {
+                continue;
+            }
+
+            assert_eq!(
+                state.tables.selection.range(state.tables.cursor.index()),
+                None,
+                "{name} left Tables holding a selection"
+            );
+        }
+    }
+
+    #[test]
+    fn re_focusing_the_focused_panel_keeps_its_selection() {
+        // Arriving where you already are is not navigation and must not cost
+        // you what you were reading (design §4).
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(1);
+
+        let _ = press(&mut state, Key::Char('a'));
+
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 1)),
+            "`a` on Tables is not a panel switch"
+        );
+    }
+
+    #[test]
+    fn leaving_contents_clears_both_of_its_axes() {
+        let mut state = contents_state();
+        state.focus_on(Panel::Contents);
+        state.contents.rows.start(0);
+        state.contents.rows.stop(1);
+        state.contents.columns.start(0);
+        state.contents.columns.stop(1);
+
+        state.focus_on(Panel::Tables);
+
+        assert_eq!(state.contents.rows.range(0), None, "the row axis survived");
+        assert_eq!(
+            state.contents.columns.range(0),
+            None,
+            "the column axis survived"
+        );
+    }
+
+    #[test]
+    fn a_click_clears_the_selection_of_the_panel_it_leaves() {
+        let mut state = contents_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(1);
+
+        click_row(&mut state, Panel::Contents, 0);
+
+        assert_eq!(state.tables.selection.range(0), None);
+    }
+
+    #[test]
+    fn enter_on_a_table_leaves_no_selection_behind_in_tables() {
+        // `enter` focuses Contents on the table under the cursor; the tree it
+        // leaves must not stay lit behind it.
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.cursor.go_to(1, 4);
+        state.tables.selection.start(1);
+        state.tables.selection.stop(1);
+
+        // Row 1 is `orders`, a table: `enter` on a keyspace opens it and
+        // moves no focus.
+        let _ = press(&mut state, Key::Enter);
+
+        assert_eq!(state.focus(), Panel::Contents);
+        assert_eq!(state.tables.selection.range(1), None);
+    }
+
+    #[test]
+    fn esc_out_of_queries_clears_what_queries_left_behind() {
+        // Queries holds no selection of its own; the panel it hands focus to
+        // must not inherit one either.
+        let mut state = tables_state();
+        state.focus_on(Panel::Queries);
+
+        let _ = press(&mut state, Key::Escape);
+
+        assert_eq!(state.focus(), Panel::Tables);
     }
 
     fn read_shop_orders() -> State {
@@ -3832,7 +3961,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let first = state.contents.outstanding().expect("the panel is waiting");
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
 
         let effects = press(&mut state, Key::Enter);
@@ -3853,30 +3982,30 @@ mod tests {
     #[test]
     fn reading_a_table_lands_focus_in_contents() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('j'));
 
         press(&mut state, Key::Enter);
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
     fn a_click_on_a_table_lands_focus_in_contents_too() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('l'));
 
         click_row(&mut state, Panel::Tables, 1);
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
     fn focus_moves_before_the_page_arrives() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('j'));
 
@@ -3886,7 +4015,7 @@ mod tests {
             matches!(state.contents.state(), ContentsState::Loading { .. }),
             "focus is a consequence of the keypress, not of the network"
         );
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
@@ -3897,22 +4026,22 @@ mod tests {
         // cannot be pulled apart through key presses.
         let mut state = tabled(&[("shop", &["orders"])]);
         state.connection = ConnectionState::Disconnected;
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         read(&mut state, TableRef::new("shop", "orders"));
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
     fn unfolding_a_keyspace_leaves_focus_in_tables() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         press(&mut state, Key::Enter);
 
         assert_eq!(
-            state.focus,
+            state.focus(),
             Panel::Tables,
             "a fold is not a read and moves nothing"
         );
@@ -3921,7 +4050,7 @@ mod tests {
     #[test]
     fn reading_a_table_leaves_the_tree_selection_where_it_was() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('j'));
         let selected = state.tables.cursor.index();
@@ -4000,7 +4129,7 @@ mod tests {
                 next: None,
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         update(
             &mut state,
             Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(7)),
@@ -4042,7 +4171,7 @@ mod tests {
                 next: None,
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         update(
             &mut state,
             Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
@@ -4189,7 +4318,7 @@ mod tests {
     #[test]
     fn a_y_that_yanks_nothing_leaves_the_selection_alone() {
         let mut state = measured(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         state.contents.cursor.go_to(0, 1);
         state.tables.selection.start(0);
 
@@ -4260,7 +4389,7 @@ mod tests {
     #[test]
     fn a_y_that_yanks_nothing_lights_nothing() {
         let mut state = measured(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('y'));
 
@@ -4438,7 +4567,7 @@ mod tests {
     #[test]
     fn y_on_an_empty_panel_yanks_nothing() {
         let mut state = browsing_a_table();
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
     }
@@ -4454,7 +4583,7 @@ mod tests {
     #[test]
     fn y_yanks_a_ddl_row() {
         let mut state = browsing_a_table();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         assert_eq!(
             press(&mut state, Key::Char('y')),
@@ -4594,7 +4723,7 @@ mod tests {
                 next: None,
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         state.contents.mode = SelectionMode::Row;
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
@@ -4612,7 +4741,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let first = state.contents.outstanding().expect("the panel is waiting");
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Enter);
 
@@ -4669,7 +4798,7 @@ mod tests {
         );
         let tree_row = state.tables.cursor.index();
 
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('j'));
 
@@ -4694,7 +4823,7 @@ mod tests {
             },
         );
 
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         for _ in 0..5 {
             press(&mut state, Key::Char('j'));
         }
@@ -4707,7 +4836,7 @@ mod tests {
         let mut state = read_shop_orders();
         let tree_row = state.tables.cursor.index();
 
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::Char('j'));
 
         assert_eq!(state.tables.cursor.index(), tree_row);
@@ -4717,7 +4846,7 @@ mod tests {
     #[test]
     fn motion_in_the_ddl_panel_walks_the_rows_it_describes() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         let rows = crate::view::ddl_rows(&state);
         assert!(rows > 2, "the fixture describes a key and some options");
 
@@ -4740,11 +4869,11 @@ mod tests {
     #[test]
     fn describing_another_node_opens_the_ddl_panel_at_its_first_row() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::End);
         assert!(state.ddl.cursor.index() > 0);
 
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('k'));
 
         assert_eq!(state.ddl.cursor.index(), 0);
@@ -4754,7 +4883,7 @@ mod tests {
     #[test]
     fn a_measurement_pulls_the_viewport_onto_the_selected_row() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         update(
             &mut state,
@@ -4774,7 +4903,7 @@ mod tests {
     #[test]
     fn enter_outside_the_tree_reads_nothing() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
 
         let effects = press(&mut state, Key::Enter);
 
@@ -4851,7 +4980,7 @@ mod tests {
                 page: Box::new(page_of(30)),
             },
         );
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         sized(&mut state, [0, 0, 8, 0], 0);
 
         press(&mut state, Key::PageDown);
@@ -4862,7 +4991,7 @@ mod tests {
     #[test]
     fn motion_in_the_ddl_panel_moves_its_cursor_not_its_focus() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [0, 6, 0, 0], 20);
         let tree_row = state.tables.cursor.index();
         let rows = crate::view::ddl_rows(&state);
@@ -4885,7 +5014,7 @@ mod tests {
     #[test]
     fn ddl_motion_still_moves_the_cursor_before_the_first_measurement() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         let rows = crate::view::ddl_rows(&state);
         assert!(
             rows > 1,
@@ -4942,11 +5071,11 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::End);
         assert!(state.ddl.cursor.index() > 0);
 
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
 
         assert_eq!(
@@ -4960,13 +5089,13 @@ mod tests {
     fn a_new_subject_clears_the_ddl_range() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('l'));
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('v'));
         assert!(state.ddl.selection.range(0).is_some());
 
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         press(&mut state, Key::Char('j'));
 
         assert_eq!(
@@ -4979,11 +5108,11 @@ mod tests {
     #[test]
     fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::End);
         let end = state.ddl.cursor.index();
         assert!(end > 0);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         press(&mut state, Key::Char('l'));
 
@@ -5000,29 +5129,33 @@ mod tests {
     }
 
     #[test]
-    fn unfolding_a_keyspace_leaves_the_ddl_range_alone() {
+    fn leaving_ddl_for_tables_clears_its_range_before_unfolding_ever_runs() {
+        // Once superseded by `switching_panels_clears_the_selection_of_the_panel_left_behind`:
+        // the range used to survive the focus change itself and die only on
+        // whatever motion followed. Now `focus_on` is what clears it, so the
+        // motion after has nothing left to disturb (design §4).
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('v'));
-        let range = state.ddl.selection.range(state.ddl.cursor.index());
-        assert!(range.is_some());
-        state.focus = Panel::Tables;
-
-        press(&mut state, Key::Char('l'));
-
-        assert_eq!(
-            state.ddl.selection.range(state.ddl.cursor.index()),
-            range,
-            "unfolding leaves the panel on the same subject, so it is not a change the range should die on"
+        assert!(
+            state
+                .ddl
+                .selection
+                .range(state.ddl.cursor.index())
+                .is_some()
         );
+
+        state.focus_on(Panel::Tables);
+
+        assert_eq!(state.ddl.selection.range(state.ddl.cursor.index()), None);
     }
 
     #[test]
     fn a_measurement_pulls_a_stale_scroll_offset_back_inside_the_panel() {
         let mut state = browsing(&["a", "b", "c"]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [0, 6, 0, 0], 40);
         state.ddl.scroll.to_end(40, 6);
         assert_eq!(state.ddl.scroll.offset(), 34);
@@ -5046,7 +5179,7 @@ mod tests {
         let conn = current_conn(&state);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('l'));
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         press(&mut state, Key::End);
         assert!(
             state.ddl.cursor.index() > 0,
@@ -5150,7 +5283,7 @@ mod tests {
         let ddl_len = crate::view::ddl_rows(&state);
         state.ddl.cursor.page_down(ddl_len, 3);
         state.ddl.scroll.down(40, 3);
-        state.focus = focus;
+        state.focus_on(focus);
 
         state
     }
@@ -5415,7 +5548,7 @@ mod tests {
         );
 
         assert!(effects.is_empty());
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus(), Panel::Contents);
         assert_eq!(state.contents.column.index(), 3);
         assert_eq!(state.contents.cursor.index(), 0, "a heading names no row");
     }
@@ -5451,7 +5584,7 @@ mod tests {
         let effects = click_row(&mut state, Panel::Ddl, 2);
 
         assert!(effects.is_empty(), "a selection runs no query");
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.cursor.index(), 2);
     }
 
@@ -5472,7 +5605,7 @@ mod tests {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         click_row(&mut state, Panel::Tables, 0);
         click_row(&mut state, Panel::Tables, 1);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         let effects = point(
             &mut state,
@@ -5483,7 +5616,7 @@ mod tests {
         );
 
         assert!(effects.is_empty());
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.tab(), DdlTab::Columns);
     }
 
@@ -5493,7 +5626,7 @@ mod tests {
     #[test]
     fn a_click_on_a_tab_the_strip_no_longer_draws_only_focuses() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         point(
             &mut state,
@@ -5503,14 +5636,14 @@ mod tests {
             }),
         );
 
-        assert_eq!(state.focus, Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.tab(), DdlTab::Ddl);
     }
 
     #[test]
     fn a_click_on_a_single_tab_panels_title_focuses_it() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         point(
             &mut state,
@@ -5520,17 +5653,17 @@ mod tests {
             }),
         );
 
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
     }
 
     #[test]
     fn a_click_focuses_the_panel_it_landed_in() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         click_row(&mut state, Panel::Tables, 0);
 
-        assert_eq!(state.focus, Panel::Tables, "one click focuses and acts");
+        assert_eq!(state.focus(), Panel::Tables, "one click focuses and acts");
         assert_eq!(row_count(&state), 2, "the keyspace unfolded on that click");
     }
 
@@ -5581,7 +5714,7 @@ mod tests {
     fn a_wheel_scrolls_the_panel_under_it_without_focusing_it() {
         let mut state = showing_rows(20);
         state.geometry = Geometry::new([8, 8, 8, 1], 0, 0);
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         point(
             &mut state,
@@ -5597,7 +5730,7 @@ mod tests {
             0,
             "the wheel does not move the selection"
         );
-        assert_eq!(state.focus, Panel::Tables, "focus stays where it was");
+        assert_eq!(state.focus(), Panel::Tables, "focus stays where it was");
     }
 
     #[test]
@@ -5641,7 +5774,7 @@ mod tests {
     #[test]
     fn a_wheel_over_a_panel_with_nothing_to_scroll_is_inert() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         for character in "one\ntwo\nthree\nfour\nfive\n".chars() {
             press(
                 &mut state,
@@ -5652,7 +5785,7 @@ mod tests {
                 },
             );
         }
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
         let cursor_before = state.queries.cursor();
         let text_before = state.queries.text();
 
@@ -5666,7 +5799,7 @@ mod tests {
 
         assert!(effects.is_empty());
         assert_eq!(state.tables.cursor.index(), 0, "no other panel moved");
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
         assert_eq!(
             state.queries.cursor(),
             cursor_before,
@@ -5687,7 +5820,7 @@ mod tests {
         // and `state.ddl.scroll` is left alone (design §7).
         let mut state = browsing(&["a", "b", "c", "d"]);
         state.geometry = Geometry::new([3, 3, 3, 1], 0, 0);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         state.ddl.scroll.down(100, 2);
         let ddl_before = state.ddl.scroll;
         assert_ne!(ddl_before.offset(), 0, "the fixture must start scrolled");
@@ -5703,7 +5836,11 @@ mod tests {
         assert!(effects.is_empty(), "a scroll alone asks for nothing");
         assert_eq!(state.tables.scroll.offset(), 1, "four rows, three visible");
         assert_eq!(state.tables.cursor.index(), 0, "the selection did not move");
-        assert_eq!(state.focus, Panel::Queries, "the wheel does not move focus");
+        assert_eq!(
+            state.focus(),
+            Panel::Queries,
+            "the wheel does not move focus"
+        );
         assert_eq!(
             state.ddl.scroll, ddl_before,
             "no selection changed, so nothing new is described"
@@ -5788,7 +5925,7 @@ mod tests {
     #[test]
     fn a_motion_after_a_wheel_brings_the_selection_back_into_view() {
         let mut state = scrolling_rows(40);
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         for _ in 0..5 {
             roll(&mut state, Panel::Contents, Wheel::Down);
         }
@@ -5807,7 +5944,7 @@ mod tests {
     #[test]
     fn walking_off_the_bottom_still_drags_the_view_with_it() {
         let mut state = scrolling_rows(40);
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
 
         for _ in 0..6 {
             press(&mut state, Key::Char('j'));
@@ -5876,7 +6013,7 @@ mod tests {
     #[test]
     fn a_resize_brings_the_selection_back_into_view() {
         let mut state = scrolling_rows(40);
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         for _ in 0..6 {
             press(&mut state, Key::Char('j'));
         }
@@ -6037,7 +6174,7 @@ mod tests {
 
         let mut elsewhere = browsing_tables(&[("shop", &["orders"])]);
         elsewhere.geometry = geometry;
-        elsewhere.focus = Panel::Ddl;
+        elsewhere.focus_on(Panel::Ddl);
         // Off zero, or `ctrl-y` would find nothing to scroll up over here.
         elsewhere
             .ddl
@@ -6179,7 +6316,7 @@ mod tests {
     fn slash_opens_the_prompt_in_every_panel_that_can_hold_a_filter() {
         for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
             let mut state = browsing_tables(&[("shop", &["orders"])]);
-            state.focus = panel;
+            state.focus_on(panel);
 
             press(&mut state, Key::Char('/'));
 
@@ -6193,10 +6330,8 @@ mod tests {
 
     #[test]
     fn slash_is_text_in_queries_and_opens_nothing() {
-        let mut state = State {
-            focus: Panel::Queries,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('/'));
 
@@ -6329,7 +6464,7 @@ mod tests {
     #[test]
     fn escape_clears_the_focused_panels_filter_when_no_overlay_is_up() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Contents;
+        state.focus_on(Panel::Contents);
         state.apply_filter(Filtered::Contents, Filter::new("o"));
 
         press(&mut state, Key::Escape);
@@ -6429,7 +6564,7 @@ mod tests {
     #[test]
     fn v_selects_in_the_focused_panel_only() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
 
         press(&mut state, Key::Char('v'));
 
@@ -6440,7 +6575,7 @@ mod tests {
     #[test]
     fn v_types_a_v_in_queries() {
         let mut state = browsing(&["a"]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Char('v'));
 
@@ -6489,11 +6624,11 @@ mod tests {
         // unreachable, and stays so, until the vim slice gives Queries a
         // filter to prefer.
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
 
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
     }
 
     #[test]
@@ -6504,7 +6639,7 @@ mod tests {
         press(&mut state, Key::Tab);
         press(&mut state, Key::BackTab);
 
-        assert_eq!(state.focus, Panel::Tables);
+        assert_eq!(state.focus(), Panel::Tables);
         assert!(searching(&state).is_some(), "and the prompt survives");
     }
 
@@ -6558,7 +6693,7 @@ mod tests {
     #[test]
     fn a_ddl_filter_that_shrinks_the_panel_pulls_its_cursor_back() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
         press(&mut state, Key::End);
         let unfiltered = crate::view::ddl_rows(&state);
@@ -6589,7 +6724,7 @@ mod tests {
     #[test]
     fn a_filter_that_empties_table_ddl_leaves_its_cursor_at_rest() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
         press(&mut state, Key::End);
 
@@ -6611,7 +6746,7 @@ mod tests {
     #[test]
     fn clearing_a_ddl_filter_leaves_the_cursor_on_the_index_it_held() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
 
         press(&mut state, Key::Char('/'));
@@ -6641,7 +6776,7 @@ mod tests {
     #[test]
     fn the_measurement_after_a_filter_pulls_a_stale_ddl_offset_back_inside() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
 
         for _ in 0..20 {
@@ -6676,7 +6811,7 @@ mod tests {
     #[test]
     fn escape_clearing_a_ddl_filter_re_follows_the_selection() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('a'));
@@ -6775,7 +6910,7 @@ mod tests {
     fn ctrl_r_outside_queries_runs_nothing() {
         for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
             let mut state = editing("SELECT * FROM shop.orders");
-            state.focus = panel;
+            state.focus_on(panel);
 
             assert!(
                 run_query(&mut state).is_empty(),
@@ -6805,7 +6940,7 @@ mod tests {
         let mut state = read_shop_orders();
         press(&mut state, Key::Enter);
         let read = state.contents.outstanding().expect("the read is in flight");
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         type_into(&mut state, "SELECT * FROM shop.users");
 
         let effects = run_query(&mut state);
@@ -6820,14 +6955,14 @@ mod tests {
     #[test]
     fn reading_a_table_cancels_a_pending_query() {
         let mut state = read_shop_orders();
-        state.focus = Panel::Queries;
+        state.focus_on(Panel::Queries);
         type_into(&mut state, "SELECT * FROM shop.users");
         run_query(&mut state);
         let query = state
             .contents
             .outstanding()
             .expect("the query is in flight");
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         let effects = press(&mut state, Key::Enter);
 

@@ -122,11 +122,9 @@ mod tests {
     use super::wrapped_line_count;
 
     fn draw(width: u16, height: u16, overlay: Option<Message>) -> Buffer {
-        let state = State {
-            connection: ConnectionState::Disconnected,
-            overlay: overlay.map(Overlay::Message),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Disconnected;
+        state.overlay = overlay.map(Overlay::Message);
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 

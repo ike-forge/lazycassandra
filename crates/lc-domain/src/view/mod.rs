@@ -236,7 +236,7 @@ pub fn view_model(state: &State) -> ViewModel {
                 .and_then(|target| state.filter(target))
                 .map(|filter| filter.as_str().to_owned()),
         }),
-        focus: state.focus,
+        focus: state.focus(),
         hints: hints::bar(state),
         overlay: overlay(state),
         activity: if state.is_working() {
@@ -336,10 +336,9 @@ pub(crate) mod tests_support {
     use super::{PanelBody, view_model};
 
     pub(crate) fn state_with(connection: ConnectionState) -> State {
-        State {
-            connection,
-            ..State::default()
-        }
+        let mut state = State::default();
+        state.connection = connection;
+        state
     }
 
     pub(crate) fn connected(schema: Schema) -> State {
@@ -404,10 +403,8 @@ mod tests {
 
     #[test]
     fn focus_mirrors_the_state() {
-        let state = State {
-            focus: Panel::Contents,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Contents);
 
         assert_eq!(view_model(&state).focus, Panel::Contents);
     }
@@ -433,10 +430,8 @@ mod tests {
             message: "no route".to_owned(),
             severity: Severity::Danger,
         };
-        let state = State {
-            overlay: Some(Overlay::Message(message.clone())),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Message(message.clone()));
 
         assert_eq!(
             view_model(&state).overlay,
@@ -464,10 +459,8 @@ mod tests {
         let mut prompt = crate::search::Prompt::opened(crate::search::Filtered::Tables, None);
         prompt.push('o');
         prompt.push('r');
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         assert_eq!(
             view_model(&state).overlay,
@@ -479,10 +472,8 @@ mod tests {
 
     #[test]
     fn an_open_palette_is_projected_as_rows_and_a_selection() {
-        let state = State {
-            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
 
         assert_eq!(
             view_model(&state).overlay,
@@ -498,13 +489,11 @@ mod tests {
         let choice = ThemeChoice::Ported(Ported::CatppuccinMocha);
         let mut cursor = crate::state::Cursor::default();
         cursor.go_to(choice.index(), ThemeChoice::ALL.len());
-        let state = State {
-            overlay: Some(Overlay::Themes {
-                cursor,
-                restored: ThemeChoice::default(),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Themes {
+            cursor,
+            restored: ThemeChoice::default(),
+        });
 
         assert_eq!(
             view_model(&state).overlay,

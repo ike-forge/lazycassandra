@@ -21,7 +21,7 @@ use crate::view::hints::Binding;
 #[derive(Debug, Clone, Default)]
 pub struct State {
     pub connection: ConnectionState,
-    pub focus: Panel,
+    focus: Panel,
     pub tables: TablesPanel,
     pub contents: ContentsPanel,
     pub ddl: DdlPanel,
@@ -854,6 +854,36 @@ impl Geometry {
 }
 
 impl State {
+    #[must_use]
+    pub const fn focus(&self) -> Panel {
+        self.focus
+    }
+
+    /// Moves focus, dropping the selection of the panel being left.
+    ///
+    /// A selection says what the next command acts on and the next command
+    /// acts on what has focus, so two panels holding one say two things and
+    /// `y` answers only one of them. The field is private so this is the only
+    /// way to change focus and the rule cannot be forgotten by a seventh path
+    /// (multi-group selection design §4).
+    pub fn focus_on(&mut self, panel: Panel) {
+        if self.focus == panel {
+            return;
+        }
+
+        match self.focus {
+            Panel::Tables => self.tables.selection.clear(),
+            Panel::Ddl => self.ddl.selection.clear(),
+            Panel::Contents => {
+                self.contents.rows.clear();
+                self.contents.columns.clear();
+            }
+            Panel::Queries => {}
+        }
+
+        self.focus = panel;
+    }
+
     /// Posture of the current connection, or the safe default when there is
     /// none.
     #[must_use]

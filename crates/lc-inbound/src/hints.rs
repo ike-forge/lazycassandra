@@ -138,10 +138,8 @@ mod tests {
     use super::*;
 
     fn bar_of(focus: Panel) -> HintBar {
-        let state = State {
-            focus,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(focus);
         view_model(&state).hints
     }
 
@@ -195,10 +193,8 @@ mod tests {
 
     #[test]
     fn a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel() {
-        let state = State {
-            geometry: fitting_geometry(),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.geometry = fitting_geometry();
         let bar = view_model(&state).hints;
         let drawn = |width: u16| -> String {
             line(&bar, width, Theme::default())

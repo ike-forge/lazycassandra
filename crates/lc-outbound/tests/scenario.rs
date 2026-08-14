@@ -380,7 +380,7 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
     // Deliberately not run yet: the first read has to still be outstanding
     // when the second is issued.
     let first = press(&mut state, Key::Enter);
-    state.focus = Panel::Tables;
+    state.focus_on(Panel::Tables);
     press(&mut state, Key::Char('j'));
     let second = press(&mut state, Key::Enter);
 

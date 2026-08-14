@@ -592,10 +592,8 @@ mod tests {
     use super::*;
 
     fn draw_focused(width: u16, height: u16, focus: Panel) -> Buffer {
-        let state = State {
-            focus,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(focus);
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 
@@ -650,10 +648,8 @@ mod tests {
         let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut terminal =
             Terminal::new(TestBackend::new(40, 12)).expect("TestBackend always initialises");
-        let state = State {
-            focus: Panel::Tables,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(Panel::Tables);
 
         terminal
             .draw(|frame| {
@@ -760,10 +756,8 @@ mod tests {
     fn the_loader_rests_until_something_is_outstanding() {
         // `State::default` is disconnected with nothing in flight.
         let resting = draw(80, 24);
-        let mut state = State {
-            connection: ConnectionState::Connecting(ConnId::next()),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connecting(ConnId::next());
         state.loader.advance(true);
 
         let working = draw_state(80, 24, &state);
@@ -963,14 +957,12 @@ mod tests {
 
     #[test]
     fn nothing_is_drawn_over_the_notice() {
-        let state = State {
-            overlay: Some(Overlay::Message(Message {
-                title: "Cannot connect".to_owned(),
-                message: "no route to host".to_owned(),
-                severity: Severity::Danger,
-            })),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Message(Message {
+            title: "Cannot connect".to_owned(),
+            message: "no route to host".to_owned(),
+            severity: Severity::Danger,
+        }));
         let mut terminal =
             Terminal::new(TestBackend::new(39, 6)).expect("TestBackend always initialises");
 
@@ -1061,14 +1053,12 @@ mod tests {
     const TABLES_ROWS: usize = 3;
 
     fn browsing(names: &[&str], selected: usize) -> State {
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(schema_of(names)),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(schema_of(names)),
+        });
         state.tables.cursor.go_to(selected, names.len());
         // Set with the cursor for the reason `select_contents` sets it: half a
         // state is not a state (list viewport design §6).
@@ -1113,14 +1103,12 @@ mod tests {
 
     #[test]
     fn a_tree_row_wears_the_icon_of_what_it_names() {
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
+        });
         let schema = state.schema().cloned().expect("loaded");
         state.tables.open(&schema);
 
@@ -1184,17 +1172,15 @@ mod tests {
 
     #[test]
     fn an_unfolded_keyspaces_tables_are_indented_beneath_it() {
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(tabled_schema(&[
-                    ("shop", &["orders", "users"]),
-                    ("typezoo", &[]),
-                ])),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(tabled_schema(&[
+                ("shop", &["orders", "users"]),
+                ("typezoo", &[]),
+            ])),
+        });
         let schema = state.schema().cloned().expect("loaded");
         state.tables.open(&schema);
 
@@ -1293,10 +1279,8 @@ mod tests {
 
     #[test]
     fn a_panel_with_nothing_to_list_says_what_it_is_waiting_for() {
-        let state = State {
-            connection: ConnectionState::Connecting(ConnId::next()),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connecting(ConnId::next());
 
         let buffer = draw_state(40, 12, &state);
 
@@ -1305,10 +1289,8 @@ mod tests {
 
     #[test]
     fn a_failure_notice_is_drawn_in_the_danger_style_rather_than_dimmed() {
-        let state = State {
-            connection: ConnectionState::Failed(DbError::Timeout),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Failed(DbError::Timeout);
 
         let buffer = draw_state(40, 12, &state);
         let cell = buffer.cell((1, 1)).expect("inside the panel");
@@ -1329,15 +1311,13 @@ mod tests {
 
     /// A state showing `page` for `shop.orders`, whose partition key is `id`.
     fn showing(page: Page) -> State {
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
-            }),
-            focus: Panel::Contents,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
+        });
+        state.focus_on(Panel::Contents);
         let query = QueryId::next();
         state
             .contents
@@ -2305,7 +2285,7 @@ mod tests {
         // focus elsewhere would notice a future `if focused`.
         let mut state = showing(sized_page(4, 3));
         state.contents.mode = SelectionMode::Cell;
-        state.focus = Panel::Tables;
+        state.focus_on(Panel::Tables);
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -2608,14 +2588,12 @@ mod tests {
                 },
             )]),
         };
-        let mut state = State {
-            connection: ConnectionState::Connected(Connection {
-                id: ConnId::next(),
-                posture: Posture::ReadOnly,
-                schema: SchemaState::Loaded(schema.clone()),
-            }),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(schema.clone()),
+        });
         state.tables.open(&schema);
         state.tables.open(&schema);
         state
@@ -2814,7 +2792,7 @@ mod tests {
     #[test]
     fn every_line_of_a_selected_property_is_highlighted() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         // `bloom_filter_fp_chance` and its value need 26 of the body's 23
         // columns, so this row is one cursor stop drawn across two lines. Six
         // rows in: the keyspace, the table, one partition and two clustering
@@ -2834,7 +2812,7 @@ mod tests {
     #[test]
     fn a_one_line_property_has_exactly_its_own_line_reversed() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         state.ddl.cursor.go_to(5, lc_domain::view::ddl_rows(&state));
 
         let buffer = draw_state(104, 41, &state);
@@ -2852,7 +2830,7 @@ mod tests {
     #[test]
     fn the_ddl_body_reserves_a_column_for_the_selection_bar() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         // `bloom_filter_fp_chance` and its value need more than the body's 23
         // columns, so this row is one cursor stop drawn across two lines.
         state.ddl.cursor.go_to(6, lc_domain::view::ddl_rows(&state));
@@ -2884,7 +2862,7 @@ mod tests {
     #[test]
     fn a_section_heading_is_never_drawn_as_the_selection() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         state.ddl.cursor.to_start();
 
         let buffer = draw_state(104, 41, &state);
@@ -2906,7 +2884,7 @@ mod tests {
     #[test]
     fn a_ranged_ddl_row_carries_the_bar_and_the_band() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         state.ddl.cursor.to_start();
         // Row 1 is the table identity row, which wraps to two lines
         // (`a_selected_tables_shape_is_drawn_above_its_options`); row 2 is
@@ -2938,7 +2916,7 @@ mod tests {
         // `Paragraph` needs no such guard because it only ever draws the lines
         // it is scrolled to. This is what checks that argument.
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         let details = ddl_details(&state);
         state.ddl.cursor.go_to(0, details.row_count());
 
@@ -2970,7 +2948,7 @@ mod tests {
     #[test]
     fn a_selected_block_scrolled_partly_out_of_view_keeps_its_visible_lines_highlighted() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         let details = ddl_details(&state);
         let last = details.row_count() - 1;
         state.ddl.cursor.go_to(last, details.row_count());
@@ -3013,7 +2991,7 @@ mod tests {
     #[test]
     fn the_reported_span_indexes_the_rows_a_filter_left() {
         let mut state = describing(orders());
-        state.focus = Panel::Ddl;
+        state.focus_on(Panel::Ddl);
         // The table's own name, `order_date` and `order_id` by name, and
         // `comment` by its value; the keyspace and the partition key's column
         // miss, so the partition section goes with it.
@@ -3673,10 +3651,8 @@ mod tests {
 
     /// A state focused on `focus`, with `text` in the Queries buffer.
     fn with_query(text: &str, focus: Panel) -> State {
-        let mut state = State {
-            focus,
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.focus_on(focus);
         for character in text.chars() {
             if character == '\n' {
                 state.queries.insert_newline();
@@ -3831,14 +3807,12 @@ mod tests {
 
     #[test]
     fn an_overlay_hides_the_cursor_even_when_the_editor_is_focused() {
-        let state = State {
-            overlay: Some(Overlay::Message(Message {
-                title: "Query failed".to_owned(),
-                message: "boom".to_owned(),
-                severity: Severity::Danger,
-            })),
-            ..with_query("SELECT", Panel::Queries)
-        };
+        let mut state = with_query("SELECT", Panel::Queries);
+        state.overlay = Some(Overlay::Message(Message {
+            title: "Query failed".to_owned(),
+            message: "boom".to_owned(),
+            severity: Severity::Danger,
+        }));
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
@@ -3855,10 +3829,8 @@ mod tests {
         // meant no cursor showed at all. Now the prompt is a text field with
         // a cursor of its own, on the bar row — still not the editor's, for
         // the same reason as before (design §5.2).
-        let state = State {
-            overlay: Some(Overlay::Search(Prompt::opened(Filtered::Tables, None))),
-            ..with_query("SELECT", Panel::Queries)
-        };
+        let mut state = with_query("SELECT", Panel::Queries);
+        state.overlay = Some(Overlay::Search(Prompt::opened(Filtered::Tables, None)));
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
@@ -3973,10 +3945,8 @@ mod tests {
         // The marker's whole point: a filter that survives a focus change
         // has to say so from the panel it is applied to, not from the bar,
         // which only ever describes the focused panel (design §5.1).
-        let mut state = State {
-            focus: Panel::Contents,
-            ..browsing(&["shop"], 0)
-        };
+        let mut state = browsing(&["shop"], 0);
+        state.focus_on(Panel::Contents);
         state.apply_filter(Filtered::Tables, Filter::new("ord"));
 
         let buffer = draw_state(80, 24, &state);
@@ -3992,10 +3962,8 @@ mod tests {
         let mut prompt = Prompt::opened(Filtered::Tables, None);
         prompt.push('o');
         prompt.push('r');
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         let buffer = draw_state(80, 24, &state);
         let bar = row(&buffer, 23);
@@ -4016,10 +3984,8 @@ mod tests {
         let mut prompt = Prompt::opened(Filtered::Tables, None);
         prompt.push('o');
         prompt.push('r');
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
@@ -4040,10 +4006,8 @@ mod tests {
         for c in "a query long enough to overrun a narrow terminal's hint bar".chars() {
             prompt.push(c);
         }
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         let (_, cursor) = drawn_with_cursor(40, 24, &state);
         let cursor = cursor.expect("the prompt draws a cursor");
@@ -4059,10 +4023,8 @@ mod tests {
     fn the_prompts_query_carries_a_theme_token() {
         let mut prompt = Prompt::opened(Filtered::Tables, None);
         prompt.push('o');
-        let state = State {
-            overlay: Some(Overlay::Search(prompt)),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Search(prompt));
 
         let buffer = draw_state(80, 24, &state);
         // Column 9: one past the loader and `bar_split`'s gap, landing on
@@ -4090,10 +4052,8 @@ mod tests {
     }
 
     fn with_palette(width: u16, height: u16) -> Buffer {
-        let state = State {
-            overlay: Some(Overlay::Commands(CommandsPanel::opened())),
-            ..State::default()
-        };
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
 
