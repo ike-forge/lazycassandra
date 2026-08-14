@@ -1210,14 +1210,11 @@ fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
     }
 }
 
-/// `v`: start extending from the cursor, or freeze what is being extended.
+/// `v`: freeze, drop or open a group at the cursor (multi-group selection
+/// design §1).
 fn toggle_visual(state: &mut State) {
     for axis in axes(state, state.focus()).into_iter().flatten() {
-        if axis.selection.is_extending() {
-            axis.selection.stop(axis.cursor.index());
-        } else {
-            axis.selection.start(axis.cursor.index());
-        }
+        axis.selection.toggle(axis.cursor.index());
     }
 }
 
@@ -6584,6 +6581,55 @@ mod tests {
         press(&mut state, Key::Char('v'));
 
         assert_eq!(state.queries.text(), "v");
+    }
+
+    #[test]
+    fn v_builds_two_groups_and_esc_takes_both() {
+        // v j v, walk away, v — the gesture the design opens with (§1).
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+
+        let _ = press(&mut state, Key::Char('v'));
+        let _ = press(&mut state, Key::Char('j'));
+        let _ = press(&mut state, Key::Char('v'));
+        let _ = press(&mut state, Key::Char('j'));
+        let _ = press(&mut state, Key::Char('j'));
+        let _ = press(&mut state, Key::Char('v'));
+        let _ = press(&mut state, Key::Char('v'));
+
+        let selected = state.tables.selection.ranges(state.tables.cursor.index());
+        assert_eq!(selected.groups().count(), 2, "the gap kept them apart");
+        assert_eq!(selected.indices().collect::<Vec<_>>(), vec![0, 1, 3]);
+
+        let _ = press(&mut state, Key::Escape);
+
+        assert!(
+            !state.tables.selection.is_active(),
+            "one esc takes every group"
+        );
+    }
+
+    #[test]
+    fn v_on_a_selected_row_drops_that_group_only() {
+        let mut state = tables_state();
+        state.focus_on(Panel::Tables);
+        state.tables.selection.start(0);
+        state.tables.selection.stop(1);
+        state.tables.selection.start(3);
+        state.tables.selection.stop(3);
+        state.tables.cursor.go_to(0, 4);
+
+        let _ = press(&mut state, Key::Char('v'));
+
+        assert_eq!(
+            state
+                .tables
+                .selection
+                .ranges(state.tables.cursor.index())
+                .indices()
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
     }
 
     #[test]

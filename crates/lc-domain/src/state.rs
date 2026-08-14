@@ -606,6 +606,31 @@ impl Selection {
         self.extending = false;
     }
 
+    /// `v`: freeze what is being extended, drop the group under the cursor, or
+    /// open a new group there.
+    ///
+    /// The third arm pays for the first. Accumulating means `v` no longer
+    /// discards, so without a way to drop a group the only way back from a
+    /// mis-added one would be to clear everything — and the row to press it on
+    /// is the row the user is already looking at
+    /// (multi-group selection design §1).
+    pub fn toggle(&mut self, cursor: usize) {
+        if self.extending {
+            self.stop(cursor);
+            return;
+        }
+
+        if let Some(dropped) = self.groups.remove_holding(cursor) {
+            if self.anchor.is_some_and(|anchor| dropped.contains(anchor)) {
+                self.anchor = None;
+            }
+
+            return;
+        }
+
+        self.start(cursor);
+    }
+
     pub fn clear(&mut self) {
         *self = Self::default();
     }
@@ -1728,6 +1753,63 @@ mod tests {
 
         assert_eq!(selection.ranges(0), Ranges::of(Range::new(2, 4)));
         assert_eq!(selection.anchor(), Some(4));
+    }
+
+    #[test]
+    fn v_freezes_then_opens_a_second_group_then_drops_one() {
+        let mut selection = Selection::default();
+        selection.toggle(0);
+        selection.toggle(1);
+
+        assert_eq!(selection.ranges(1), Ranges::of(Range::new(0, 1)));
+
+        selection.toggle(3);
+        selection.toggle(3);
+
+        let mut both = Ranges::of(Range::new(0, 1));
+        both.insert(Range::new(3, 3));
+        assert_eq!(selection.ranges(3), both, "the first group survived");
+
+        selection.toggle(0);
+
+        assert_eq!(
+            selection.ranges(0),
+            Ranges::of(Range::new(3, 3)),
+            "v on a held row drops the group holding it"
+        );
+    }
+
+    #[test]
+    fn dropping_the_group_holding_the_anchor_takes_the_anchor() {
+        // Homing `y` to a group the user just dropped would send the cursor
+        // where they never were (design §3).
+        let mut selection = Selection::default();
+        selection.toggle(2);
+        selection.toggle(4);
+
+        assert_eq!(selection.anchor(), Some(2));
+
+        selection.toggle(3);
+
+        assert_eq!(selection.anchor(), None);
+        assert!(!selection.is_active());
+    }
+
+    #[test]
+    fn dropping_another_group_keeps_the_anchor() {
+        let mut selection = Selection::default();
+        selection.toggle(0);
+        selection.toggle(0);
+        selection.toggle(5);
+        selection.toggle(5);
+
+        selection.toggle(0);
+
+        assert_eq!(
+            selection.anchor(),
+            Some(5),
+            "the anchor's group still stands"
+        );
     }
 
     #[test]
