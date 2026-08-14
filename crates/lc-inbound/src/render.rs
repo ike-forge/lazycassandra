@@ -1907,6 +1907,39 @@ mod tests {
         );
     }
 
+    /// §5.1's inversion is a projection of every group a multi-group `y` took,
+    /// not just the one range the single-group test above pins
+    /// (multi-group selection design §8).
+    #[test]
+    fn a_multi_group_yanks_afterglow_inverts_every_group_it_took() {
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 0));
+        ranges.insert(Range::new(2, 2));
+
+        let mut flashed = showing(sized_page(2, 4));
+        flashed.contents.mode = SelectionMode::Row;
+        flashed.contents.cursor.go_to(3, 4);
+        flashed.flash = Some(Flash::lit(Panel::Contents, ranges, Ranges::default()));
+
+        let cell = |state: &State, row: u16| {
+            let buffer = draw_state(60, 12, state);
+            let area = block_area(&buffer, "Table contents");
+            buffer
+                .cell((area.x + 4, area.y + 2 + row))
+                .expect("inside the panel")
+                .clone()
+        };
+        let reversed =
+            |state: &State, row: u16| cell(state, row).modifier.contains(Modifier::REVERSED);
+
+        assert!(reversed(&flashed, 0), "the first group inverts");
+        assert!(
+            !reversed(&flashed, 1),
+            "the gap between groups stays unpainted"
+        );
+        assert!(reversed(&flashed, 2), "the second group inverts too");
+    }
+
     /// The flash reaches the panel whose `y` lit it and no other.
     #[test]
     fn a_yank_in_the_tree_lights_the_tree_alone() {

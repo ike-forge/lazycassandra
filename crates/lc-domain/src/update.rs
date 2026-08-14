@@ -4735,10 +4735,9 @@ mod tests {
             panic!("y raised no yank");
         };
 
-        assert_eq!(payload.lines().count(), 2);
-        assert!(
-            !payload.contains("\n\n"),
-            "no separator between groups (design §5)"
+        assert_eq!(
+            payload, "shop\nshop.products",
+            "row order, not insertion order (design §5)"
         );
     }
 
@@ -4785,6 +4784,10 @@ mod tests {
             state.tables.cursor.index(),
             1,
             "there is no row the anchor could send it to that the user chose"
+        );
+        assert!(
+            !state.tables.selection.is_active(),
+            "a yank spends the selection even when it has no anchor"
         );
     }
 

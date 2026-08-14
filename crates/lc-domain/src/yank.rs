@@ -590,7 +590,10 @@ mod tests {
 
         let yanked = grid_block(&rows, &Ranges::of(Range::new(0, 0)), &columns);
 
-        assert_eq!(yanked.split(',').count(), 2, "two columns, one line");
+        assert_eq!(
+            yanked, "r0c0,r0c3",
+            "the disjoint columns, not merely two of them"
+        );
     }
 
     #[test]

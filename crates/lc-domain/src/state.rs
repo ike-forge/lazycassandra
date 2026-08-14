@@ -1762,6 +1762,24 @@ mod tests {
     }
 
     #[test]
+    fn clamping_away_the_anchors_group_does_not_hand_it_to_a_survivor() {
+        // Two frozen groups; the anchor's own group is dropped by the clamp,
+        // but a surviving group happens to contain the pulled-back index too.
+        // The anchor must not be adopted by a group that never held it
+        // (multi-group selection design §2, §3).
+        let mut selection = Selection::default();
+        selection.start(0);
+        selection.stop(4);
+        selection.start(7);
+        selection.stop(8);
+
+        selection.clamp_to(5);
+
+        assert_eq!(selection.ranges(0), Ranges::of(Range::new(0, 4)));
+        assert_eq!(selection.anchor(), None);
+    }
+
+    #[test]
     fn v_freezes_then_opens_a_second_group_then_drops_one() {
         let mut selection = Selection::default();
         selection.toggle(0);
