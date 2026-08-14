@@ -8,7 +8,7 @@ use crate::cell;
 use crate::contents::{ContentsState, GridPage, SelectionMode, Subject, TableRef};
 use crate::model::{CqlValue, Schema};
 use crate::search::Filter;
-use crate::state::{Panel, State};
+use crate::state::{Panel, Ranges, State};
 use crate::style::Token;
 
 use super::{PanelBody, failure, waiting};
@@ -89,20 +89,36 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
     }
 
     let flash = super::flash_over(state, Panel::Contents);
-    let (rows_range, columns_range) = match flash {
-        Some(flash) => (flash.rows(), flash.columns()),
+    let (rows_ranges, columns_ranges) = match flash {
+        Some(flash) => (flash.rows().clone(), flash.columns().clone()),
         None => match state.contents.mode {
             SelectionMode::Row => (
-                state.contents.rows.range(state.contents.cursor.index()),
-                None,
+                state
+                    .contents
+                    .rows
+                    .range(state.contents.cursor.index())
+                    .map_or_else(Ranges::default, Ranges::of),
+                Ranges::default(),
             ),
             SelectionMode::Column => (
-                None,
-                state.contents.columns.range(state.contents.column.index()),
+                Ranges::default(),
+                state
+                    .contents
+                    .columns
+                    .range(state.contents.column.index())
+                    .map_or_else(Ranges::default, Ranges::of),
             ),
             SelectionMode::Cell => (
-                state.contents.rows.range(state.contents.cursor.index()),
-                state.contents.columns.range(state.contents.column.index()),
+                state
+                    .contents
+                    .rows
+                    .range(state.contents.cursor.index())
+                    .map_or_else(Ranges::default, Ranges::of),
+                state
+                    .contents
+                    .columns
+                    .range(state.contents.column.index())
+                    .map_or_else(Ranges::default, Ranges::of),
             ),
         },
     };
@@ -134,8 +150,8 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         column: state.contents.column.index(),
         mode: state.contents.mode,
         gutter: crate::grid::gutter(page.rows.len()),
-        rows_range,
-        columns_range,
+        rows_ranges,
+        columns_ranges,
         flash: flash.is_some(),
     }
 }
@@ -583,16 +599,20 @@ mod tests {
         state.contents.rows.stop(2);
 
         let PanelBody::Grid {
-            rows_range,
-            columns_range,
+            rows_ranges,
+            columns_ranges,
             ..
         } = contents_body(&state)
         else {
             panic!("a loaded page draws a grid");
         };
 
-        assert_eq!(rows_range, Some(crate::state::Range::new(0, 2)));
-        assert_eq!(columns_range, None, "column mode never extended");
+        assert_eq!(rows_ranges, Ranges::of(crate::state::Range::new(0, 2)));
+        assert_eq!(
+            columns_ranges,
+            Ranges::default(),
+            "column mode never extended"
+        );
     }
 
     #[test]
@@ -607,12 +627,13 @@ mod tests {
         state.contents.columns.start(0);
         state.contents.columns.stop(1);
 
-        let PanelBody::Grid { columns_range, .. } = contents_body(&state) else {
+        let PanelBody::Grid { columns_ranges, .. } = contents_body(&state) else {
             panic!("a loaded page draws a grid");
         };
 
         assert_eq!(
-            columns_range, None,
+            columns_ranges,
+            Ranges::default(),
             "row mode has no column axis, so a held columns range must not be projected"
         );
     }
@@ -632,12 +653,13 @@ mod tests {
         state.contents.rows.start(0);
         state.contents.rows.stop(1);
 
-        let PanelBody::Grid { rows_range, .. } = contents_body(&state) else {
+        let PanelBody::Grid { rows_ranges, .. } = contents_body(&state) else {
             panic!("a loaded page draws a grid");
         };
 
         assert_eq!(
-            rows_range, None,
+            rows_ranges,
+            Ranges::default(),
             "column mode has no row axis, so a held rows range must not be projected"
         );
     }

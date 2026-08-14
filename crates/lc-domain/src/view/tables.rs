@@ -1,7 +1,7 @@
 //! The Tables panel's projection: the keyspace/table tree as drawable rows.
 
 use crate::model::{KeyspaceKind, Schema};
-use crate::state::{ConnectionState, Flash, Panel, SchemaState, State};
+use crate::state::{ConnectionState, Flash, Panel, Ranges, SchemaState, State};
 use crate::style::Token;
 use crate::tree::{Node, TablesPanel};
 
@@ -58,7 +58,7 @@ pub(super) fn body(state: &State) -> PanelBody {
     }
 }
 
-fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<Flash>) -> PanelBody {
+fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<&Flash>) -> PanelBody {
     let nodes = tables.rows(schema);
     let rows: Vec<TreeRow> = nodes
         .iter()
@@ -85,9 +85,14 @@ fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<Flash>) -> PanelBod
         rows,
         selected: tables.cursor.index(),
         offset: tables.scroll.offset(),
-        range: flash.map_or_else(
-            || tables.selection.range(tables.cursor.index()),
-            Flash::rows,
+        ranges: flash.map_or_else(
+            || {
+                tables
+                    .selection
+                    .range(tables.cursor.index())
+                    .map_or_else(Ranges::default, Ranges::of)
+            },
+            |flash| flash.rows().clone(),
         ),
         flash: flash.is_some(),
     }
@@ -360,10 +365,10 @@ mod tests {
         let mut state = tabled(&[("shop", &["orders"])]);
         state.tables.selection.start(0);
 
-        let PanelBody::Tree { range, .. } = tables_body(&state) else {
+        let PanelBody::Tree { ranges, .. } = tables_body(&state) else {
             panic!("a loaded schema draws a tree");
         };
 
-        assert_eq!(range, Some(crate::state::Range::new(0, 0)));
+        assert_eq!(ranges, Ranges::of(crate::state::Range::new(0, 0)));
     }
 }

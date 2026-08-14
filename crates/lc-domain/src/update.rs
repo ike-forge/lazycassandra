@@ -13,8 +13,8 @@ use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, Flash, Geometry, Message, Overlay, Panel, Range, SchemaState, Scroll,
-    Selection, State,
+    ConnectionState, Cursor, Flash, Geometry, Message, Overlay, Panel, Range, Ranges, SchemaState,
+    Scroll, Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
@@ -392,18 +392,24 @@ fn yank(state: &mut State) -> Vec<Effect> {
 /// gone (visual mode design §6.1).
 fn lit(state: &State) -> Flash {
     let (rows, columns) = match state.focus() {
-        Panel::Contents => grid_extent(state),
+        Panel::Contents => {
+            let (rows, columns) = grid_extent(state);
+            (
+                rows.map_or_else(Ranges::default, Ranges::of),
+                columns.map_or_else(Ranges::default, Ranges::of),
+            )
+        }
         Panel::Tables => (
-            Some(spanned(state.tables.selection, state.tables.cursor.index())),
-            None,
+            Ranges::of(spanned(state.tables.selection, state.tables.cursor.index())),
+            Ranges::default(),
         ),
         Panel::Ddl => (
-            Some(spanned(state.ddl.selection, state.ddl.cursor.index())),
-            None,
+            Ranges::of(spanned(state.ddl.selection, state.ddl.cursor.index())),
+            Ranges::default(),
         ),
         // Unreachable: the editor yanks nothing, so `yank` has already
         // returned by the time this is asked.
-        Panel::Queries => (None, None),
+        Panel::Queries => (Ranges::default(), Ranges::default()),
     };
 
     Flash::lit(state.focus(), rows, columns)
@@ -419,9 +425,10 @@ fn spanned(selection: Selection, cursor: usize) -> Range {
 /// The rectangle `y` reads out of the grid, on each of its two axes.
 ///
 /// `None` on an axis is the whole of it — the convention the view model's
-/// `rows_range` and `columns_range` already carry, and what row mode and
-/// column mode take. The one place the mode decides which axes it bounds, so
-/// what is copied and what is lit afterwards cannot answer differently.
+/// `rows_ranges` and `columns_ranges` already carry, empty for `None`, and
+/// what row mode and column mode take. The one place the mode decides which
+/// axes it bounds, so what is copied and what is lit afterwards cannot answer
+/// differently.
 fn grid_extent(state: &State) -> (Option<Range>, Option<Range>) {
     let rows = spanned(state.contents.rows, state.contents.cursor.index());
     let columns = spanned(state.contents.columns, state.contents.column.index());
@@ -4349,11 +4356,11 @@ mod tests {
 
         let flash = state.flash.expect("the yank lit what it copied");
         assert_eq!(flash.panel(), Panel::Contents);
-        assert_eq!(flash.rows(), Some(Range::new(1, 2)));
-        assert_eq!(flash.columns(), Some(Range::new(0, 1)));
+        assert_eq!(flash.rows(), &Ranges::of(Range::new(1, 2)));
+        assert_eq!(flash.columns(), &Ranges::of(Range::new(0, 1)));
     }
 
-    /// `None` on an axis is every row or every column of it — the convention
+    /// Empty on an axis is every row or every column of it — the convention
     /// the view model's ranges already carry, and what row mode yanks.
     #[test]
     fn row_mode_lights_the_whole_row_and_column_mode_the_whole_column() {
@@ -4361,16 +4368,24 @@ mod tests {
         press(&mut rows, Key::Char('y'));
 
         let flash = rows.flash.expect("lit");
-        assert_eq!(flash.rows(), Some(Range::new(0, 0)));
-        assert_eq!(flash.columns(), None, "row mode yanks every column");
+        assert_eq!(flash.rows(), &Ranges::of(Range::new(0, 0)));
+        assert_eq!(
+            flash.columns(),
+            &Ranges::default(),
+            "row mode yanks every column"
+        );
 
         let mut columns = grid_of_named_cells(3, 4);
         columns.contents.mode = SelectionMode::Column;
         press(&mut columns, Key::Char('y'));
 
         let flash = columns.flash.expect("lit");
-        assert_eq!(flash.rows(), None, "column mode yanks every row");
-        assert_eq!(flash.columns(), Some(Range::new(0, 0)));
+        assert_eq!(
+            flash.rows(),
+            &Ranges::default(),
+            "column mode yanks every row"
+        );
+        assert_eq!(flash.columns(), &Ranges::of(Range::new(0, 0)));
     }
 
     /// Nothing was selected, so what the flash marks is the one row `y` took —
@@ -4383,7 +4398,7 @@ mod tests {
 
         let flash = state.flash.expect("lit");
         assert_eq!(flash.panel(), Panel::Tables);
-        assert_eq!(flash.rows(), Some(Range::new(0, 0)));
+        assert_eq!(flash.rows(), &Ranges::of(Range::new(0, 0)));
     }
 
     #[test]

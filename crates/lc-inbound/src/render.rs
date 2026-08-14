@@ -576,8 +576,8 @@ mod tests {
     use lc_domain::posture::Posture;
     use lc_domain::search::{Filter, Filtered, Prompt};
     use lc_domain::state::{
-        Connection, ConnectionState, Flash, Geometry, Message, Overlay, Panel, Range, SchemaState,
-        Selection,
+        Connection, ConnectionState, Flash, Geometry, Message, Overlay, Panel, Range, Ranges,
+        SchemaState, Selection,
     };
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
@@ -1277,6 +1277,71 @@ mod tests {
         );
     }
 
+    fn draw_view(width: u16, height: u16, view: &ViewModel) -> Buffer {
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| {
+                render(frame, view, Theme::default());
+            })
+            .expect("TestBackend always draws");
+
+        terminal.backend().buffer().clone()
+    }
+
+    /// A tree body drawn with `ranges` in place of whatever the cursor's own
+    /// selection would project — the cursor sits on the gap between two
+    /// groups so it never contends with a band for the same row.
+    fn render_tree_with(ranges: Ranges) -> Buffer {
+        let state = browsing(&["a", "b", "c"], 1);
+        let mut view = view_model(&state);
+        let PanelBody::Tree {
+            rows,
+            selected,
+            offset,
+            flash,
+            ..
+        } = view.panels[0].body.clone()
+        else {
+            panic!("a loaded schema draws a tree");
+        };
+        view.panels[0].body = PanelBody::Tree {
+            rows,
+            selected,
+            offset,
+            ranges,
+            flash,
+        };
+
+        draw_view(40, 12, &view)
+    }
+
+    fn banded(buffer: &Buffer, row: u16) -> bool {
+        let band = Theme::default()
+            .style(Token::Ranged)
+            .bg
+            .expect("a ranged row spends a background");
+
+        buffer.cell((1, 1 + row)).expect("inside the panel").bg == band
+    }
+
+    #[test]
+    fn two_groups_band_separately_with_the_gap_left_unpainted() {
+        // A gap is the absence of a band. Giving it one would make a selection of
+        // two groups louder than the same rows selected as one
+        // (multi-group selection design §6).
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 0));
+        ranges.insert(Range::new(2, 2));
+
+        let buffer = render_tree_with(ranges);
+
+        assert!(banded(&buffer, 0), "the first group lost its band");
+        assert!(!banded(&buffer, 1), "the gap took a band");
+        assert!(banded(&buffer, 2), "the second group lost its band");
+    }
+
     #[test]
     fn a_panel_with_nothing_to_list_says_what_it_is_waiting_for() {
         let mut state = State::default();
@@ -1796,7 +1861,11 @@ mod tests {
         let mut flashed = showing(sized_page(2, 4));
         flashed.contents.mode = SelectionMode::Row;
         flashed.contents.cursor.go_to(3, 4);
-        flashed.flash = Some(Flash::lit(Panel::Contents, Some(Range::new(0, 1)), None));
+        flashed.flash = Some(Flash::lit(
+            Panel::Contents,
+            Ranges::of(Range::new(0, 1)),
+            Ranges::default(),
+        ));
 
         let cell = |state: &State, row: u16| {
             let buffer = draw_state(60, 12, state);
@@ -1833,7 +1902,11 @@ mod tests {
     #[test]
     fn a_yank_in_the_tree_lights_the_tree_alone() {
         let mut state = showing(sized_page(2, 4));
-        state.flash = Some(Flash::lit(Panel::Tables, Some(Range::new(0, 0)), None));
+        state.flash = Some(Flash::lit(
+            Panel::Tables,
+            Ranges::of(Range::new(0, 0)),
+            Ranges::default(),
+        ));
 
         let buffer = draw_state(60, 12, &state);
         let tree = block_area(&buffer, "Tables");
@@ -2922,7 +2995,7 @@ mod tests {
 
         // 40x20: a fourteen-column, nine-row Ddl body — narrow enough that
         // `orders()` wraps well past it.
-        let total = crate::details::lay_out(&details, 0, Marked::none(), 14, Theme::default())
+        let total = crate::details::lay_out(&details, 0, &Marked::none(), 14, Theme::default())
             .lines
             .len();
         assert!(
@@ -2956,7 +3029,7 @@ mod tests {
         // `comment` is the last row and wraps to three lines at this width.
         // Scrolled until its first line is the eighth of the nine visible, two
         // of them are in view and the third is below the fold.
-        let laid = crate::details::lay_out(&details, last, Marked::none(), 14, Theme::default());
+        let laid = crate::details::lay_out(&details, last, &Marked::none(), 14, Theme::default());
         let total = laid.lines.len();
         assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
         for _ in 0..laid.selection.first - 7 {
@@ -3145,7 +3218,7 @@ mod tests {
             crate::details::lay_out(
                 &ddl_details(&describing(orders())),
                 0,
-                Marked::none(),
+                &Marked::none(),
                 14,
                 Theme::default()
             )
@@ -3203,7 +3276,7 @@ mod tests {
         let all = crate::details::lay_out(
             &ddl_details(&state),
             0,
-            Marked::none(),
+            &Marked::none(),
             WIDTH,
             Theme::default(),
         )

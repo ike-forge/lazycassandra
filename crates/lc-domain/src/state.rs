@@ -690,13 +690,13 @@ impl Selection {
 ///
 /// It carries the rectangle rather than reading the selection back, because by
 /// the time it is drawn there is no selection left to read. `rows` and
-/// `columns` follow the view model's convention: `None` on an axis is the
+/// `columns` follow the view model's convention: empty on an axis is the
 /// whole of it, which is what row mode and column mode take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flash {
     panel: Panel,
-    rows: Option<Range>,
-    columns: Option<Range>,
+    rows: Ranges,
+    columns: Ranges,
     remaining: usize,
 }
 
@@ -710,7 +710,7 @@ pub const FLASH_TICKS: usize = 12;
 
 impl Flash {
     #[must_use]
-    pub const fn lit(panel: Panel, rows: Option<Range>, columns: Option<Range>) -> Self {
+    pub fn lit(panel: Panel, rows: Ranges, columns: Ranges) -> Self {
         Self {
             panel,
             rows,
@@ -728,18 +728,18 @@ impl Flash {
     }
 
     #[must_use]
-    pub const fn panel(self) -> Panel {
+    pub const fn panel(&self) -> Panel {
         self.panel
     }
 
     #[must_use]
-    pub const fn rows(self) -> Option<Range> {
-        self.rows
+    pub const fn rows(&self) -> &Ranges {
+        &self.rows
     }
 
     #[must_use]
-    pub const fn columns(self) -> Option<Range> {
-        self.columns
+    pub const fn columns(&self) -> &Ranges {
+        &self.columns
     }
 }
 

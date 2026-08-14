@@ -65,7 +65,7 @@ pub(crate) fn render(
     details: &Details,
     selected: usize,
     offset: usize,
-    marked: Marked,
+    marked: &Marked,
     theme: Theme,
 ) -> (crate::body::Extent, Span, Vec<Option<usize>>) {
     let laid = lay_out(details, selected, marked, usize::from(area.width), theme);
@@ -100,7 +100,7 @@ pub(crate) fn render(
 pub(crate) fn lay_out(
     details: &Details,
     selected: usize,
-    marked: Marked,
+    marked: &Marked,
     width: usize,
     theme: Theme,
 ) -> Laid {
@@ -873,12 +873,12 @@ mod tests {
         };
 
         assert_eq!(
-            lay_out(&details, 0, Marked::none(), 28, Theme::default()).selection,
+            lay_out(&details, 0, &Marked::none(), 28, Theme::default()).selection,
             Span { first: 0, lines: 1 },
             "the identity row opens the body, so nothing precedes it"
         );
 
-        let laid = lay_out(&details, 1, Marked::none(), 28, Theme::default());
+        let laid = lay_out(&details, 1, &Marked::none(), 28, Theme::default());
 
         assert_eq!(
             laid.selection,
@@ -889,7 +889,7 @@ mod tests {
         let laid = lay_out(
             &details,
             details.row_count() - 1,
-            Marked::none(),
+            &Marked::none(),
             28,
             Theme::default(),
         );
@@ -922,7 +922,7 @@ mod tests {
             }],
         };
 
-        let laid = lay_out(&details, usize::MAX, Marked::none(), 28, theme);
+        let laid = lay_out(&details, usize::MAX, &Marked::none(), 28, theme);
         let section = theme.style(Token::Section);
 
         assert_eq!(laid.lines[0].style, section);

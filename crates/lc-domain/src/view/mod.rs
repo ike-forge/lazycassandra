@@ -26,7 +26,7 @@ use crate::commands::{self, CommandRow};
 use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
 use crate::model::DbError;
-use crate::state::{Message, Overlay, Panel, Range, State};
+use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
 use crate::theme::ThemeChoice;
 
@@ -150,10 +150,10 @@ pub enum PanelBody {
         /// derives, so a wheel can move it without moving `selected`
         /// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §2).
         offset: usize,
-        /// The rows `v` has selected. `None` means no selection is active
-        /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
-        range: Option<Range>,
-        /// Set while `range` is a yank's afterglow rather than a live
+        /// The rows `v` has selected, as groups. Empty means no selection is
+        /// active (multi-group selection design §6).
+        ranges: Ranges,
+        /// Set while `ranges` is a yank's afterglow rather than a live
         /// selection, which the renderer paints louder (visual mode design §6.1).
         flash: bool,
     },
@@ -169,8 +169,8 @@ pub enum PanelBody {
         /// [`PanelBody::Grid::selected`] carry.
         selected: usize,
         offset: usize,
-        /// The rows `v` has selected, as [`PanelBody::Tree::range`].
-        range: Option<Range>,
+        /// The rows `v` has selected, as [`PanelBody::Tree::ranges`].
+        ranges: Ranges,
         /// As [`PanelBody::Tree::flash`].
         flash: bool,
     },
@@ -200,15 +200,15 @@ pub enum PanelBody {
         /// Character columns the row-number gutter takes, or zero for a grid
         /// with no rows.
         gutter: u16,
-        /// The rows `v` has selected while extending the row axis. `None`
+        /// The rows `v` has selected while extending the row axis. Empty
         /// means that axis was never extended, which `body.rs`'s `ranged`
         /// reads as "every row" when painting a rectangle and as "no gutter
         /// bar" when marking rows.
-        rows_range: Option<Range>,
+        rows_ranges: Ranges,
         /// The columns `v` has selected while extending the column axis.
-        /// `None` means that axis was never extended, which `body.rs`'s
+        /// Empty means that axis was never extended, which `body.rs`'s
         /// `ranged` reads as "every column" when painting a rectangle.
-        columns_range: Option<Range>,
+        columns_ranges: Ranges,
         /// Set while the two ranges are a yank's afterglow rather than a live
         /// selection, as [`PanelBody::Tree::flash`].
         flash: bool,
@@ -220,8 +220,8 @@ pub enum PanelBody {
 /// It outranks the selection wherever it is lit, and cannot contend with one:
 /// the yank spent the selection that named it, and the next input puts the
 /// flash out before it can reach a new one (visual mode design §6.1).
-fn flash_over(state: &State, panel: Panel) -> Option<crate::state::Flash> {
-    state.flash.filter(|flash| flash.panel() == panel)
+fn flash_over(state: &State, panel: Panel) -> Option<&crate::state::Flash> {
+    state.flash.as_ref().filter(|flash| flash.panel() == panel)
 }
 
 /// Project `state` into the frame a renderer draws.
