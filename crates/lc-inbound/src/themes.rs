@@ -32,7 +32,7 @@ fn rect(area: Rect, rows: usize) -> Option<Rect> {
     ))
 }
 
-pub(crate) fn render(frame: &mut Frame, labels: &[&str], selected: usize, theme: Theme) {
+pub(crate) fn render(frame: &mut Frame, labels: &[String], selected: usize, theme: Theme) {
     let Some(area) = rect(frame.area(), labels.len()) else {
         return;
     };
@@ -52,7 +52,7 @@ pub(crate) fn render(frame: &mut Frame, labels: &[&str], selected: usize, theme:
 
     let items: Vec<ListItem> = labels
         .iter()
-        .map(|label| ListItem::new((*label).to_owned()))
+        .map(|label| ListItem::new(label.clone()))
         .collect();
     let mut state = ListState::default().with_selected(Some(selected));
 
@@ -67,22 +67,33 @@ pub(crate) fn render(frame: &mut Frame, labels: &[&str], selected: usize, theme:
 mod tests {
     use lc_domain::state::{Cursor, Overlay, State};
     use lc_domain::view::view_model;
-    use lc_domain::{Ported, ThemeChoice};
+    use lc_domain::{BuiltIn, Ported, ThemeChoice};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Cell;
 
     use super::*;
 
-    fn drawn(width: u16, height: u16, choice: ThemeChoice) -> String {
+    fn index_of(built_in: BuiltIn) -> usize {
+        BuiltIn::ALL
+            .iter()
+            .position(|b| *b == built_in)
+            .expect("listed")
+    }
+
+    fn drawn(width: u16, height: u16, choice: &ThemeChoice) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a backend");
         let mut state = State::default();
         let mut cursor = Cursor::default();
-        cursor.go_to(choice.index(), ThemeChoice::ALL.len());
-        state.theme = choice;
+        let index = BuiltIn::ALL
+            .iter()
+            .position(|built_in| ThemeChoice::from(*built_in) == *choice)
+            .unwrap_or(0);
+        cursor.go_to(index, BuiltIn::ALL.len());
+        state.theme = choice.clone();
         state.overlay = Some(Overlay::Themes {
             cursor,
-            restored: choice,
+            restored: choice.clone(),
         });
 
         terminal
@@ -102,20 +113,17 @@ mod tests {
 
     #[test]
     fn the_picker_lists_every_theme() {
-        let frame = drawn(80, 24, ThemeChoice::default());
+        let frame = drawn(80, 24, &ThemeChoice::default());
 
-        for choice in ThemeChoice::ALL {
-            assert!(
-                frame.contains(choice.label()),
-                "{} is missing",
-                choice.label()
-            );
+        for built_in in BuiltIn::ALL {
+            let label = built_in.label();
+            assert!(frame.contains(label), "{label} is missing");
         }
     }
 
     #[test]
     fn a_frame_too_narrow_for_the_list_draws_none_of_it() {
-        let frame = drawn(WIDTH - 1, 24, ThemeChoice::default());
+        let frame = drawn(WIDTH - 1, 24, &ThemeChoice::default());
 
         assert!(
             !frame.contains("Catppuccin"),
@@ -129,20 +137,23 @@ mod tests {
         let choice = ThemeChoice::Ported(Ported::CatppuccinMocha);
         let mut state = State::default();
         let mut cursor = Cursor::default();
-        cursor.go_to(choice.index(), ThemeChoice::ALL.len());
-        state.theme = choice;
+        cursor.go_to(
+            index_of(BuiltIn::Ported(Ported::CatppuccinMocha)),
+            BuiltIn::ALL.len(),
+        );
+        state.theme = choice.clone();
         state.overlay = Some(Overlay::Themes {
             cursor,
-            restored: choice,
+            restored: choice.clone(),
         });
 
         terminal
             .draw(|frame| {
-                crate::render::render(frame, &view_model(&state), Theme::of(choice));
+                crate::render::render(frame, &view_model(&state), Theme::of(&choice));
             })
             .expect("a frame");
 
-        let selection_bg = Theme::of(choice).palette().selection_bg;
+        let selection_bg = Theme::of(&choice).palette().selection_bg;
         assert!(
             terminal
                 .backend()

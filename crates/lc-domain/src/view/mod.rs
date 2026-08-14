@@ -28,7 +28,7 @@ use crate::ddl::DdlTab;
 use crate::model::DbError;
 use crate::state::{Message, Overlay, Panel, Range, State};
 use crate::style::{Severity, Token};
-use crate::theme::ThemeChoice;
+use crate::theme::{BuiltIn, ThemeChoice};
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +84,7 @@ pub enum OverlayView {
     },
     /// The theme picker's rows and where its cursor is.
     Themes {
-        labels: Vec<&'static str>,
+        labels: Vec<String>,
         selected: usize,
     },
 }
@@ -106,9 +106,9 @@ fn overlay(state: &State) -> Option<OverlayView> {
             query: prompt.query().to_owned(),
         }),
         Overlay::Themes { cursor, .. } => Some(OverlayView::Themes {
-            labels: ThemeChoice::ALL
+            labels: BuiltIn::ALL
                 .iter()
-                .map(|choice| choice.label())
+                .map(|built_in| built_in.label().to_owned())
                 .collect(),
             selected: cursor.index(),
         }),
@@ -246,7 +246,7 @@ pub fn view_model(state: &State) -> ViewModel {
         } else {
             Activity::Resting
         },
-        theme: state.theme,
+        theme: state.theme.clone(),
     }
 }
 
@@ -495,9 +495,13 @@ mod tests {
 
     #[test]
     fn an_open_picker_is_projected_as_every_theme_and_the_cursors_position() {
-        let choice = ThemeChoice::Ported(Ported::CatppuccinMocha);
+        let built_in = BuiltIn::Ported(Ported::CatppuccinMocha);
+        let index = BuiltIn::ALL
+            .iter()
+            .position(|b| *b == built_in)
+            .expect("listed");
         let mut cursor = crate::state::Cursor::default();
-        cursor.go_to(choice.index(), ThemeChoice::ALL.len());
+        cursor.go_to(index, BuiltIn::ALL.len());
         let state = State {
             overlay: Some(Overlay::Themes {
                 cursor,
@@ -509,11 +513,11 @@ mod tests {
         assert_eq!(
             view_model(&state).overlay,
             Some(OverlayView::Themes {
-                labels: ThemeChoice::ALL
+                labels: BuiltIn::ALL
                     .iter()
-                    .map(|choice| choice.label())
+                    .map(|built_in| built_in.label().to_owned())
                     .collect(),
-                selected: choice.index(),
+                selected: index,
             })
         );
     }

@@ -88,7 +88,7 @@ fn draw(terminal: &mut DefaultTerminal, state: &State) -> Result<Rendered> {
     let mut rendered = Rendered::default();
     let view = view_model(state);
 
-    terminal.draw(|frame| rendered = lc_inbound::render(frame, &view, Theme::of(view.theme)))?;
+    terminal.draw(|frame| rendered = lc_inbound::render(frame, &view, Theme::of(&view.theme)))?;
 
     Ok(rendered)
 }

@@ -95,18 +95,22 @@ pub struct Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::of(ThemeChoice::default())
+        Self::of(&ThemeChoice::default())
     }
 }
 
 impl Theme {
     /// The palette `choice` names. The one place a theme name becomes a
     /// colour (architecture.md §6).
+    ///
+    /// `Custom` falls back to the default palette: resolving a config's
+    /// custom theme against its declared roles is `lc-app`'s wiring to do,
+    /// not this lookup's — nothing in this crate can see the config that
+    /// would answer it.
     #[must_use]
-    pub const fn of(choice: ThemeChoice) -> Self {
+    pub fn of(choice: &ThemeChoice) -> Self {
         Self {
             palette: match choice {
-                ThemeChoice::Ours(Ours::DefaultDark) => &ours::default::DARK,
                 ThemeChoice::Ours(Ours::DefaultLight) => &ours::default::LIGHT,
                 ThemeChoice::Ours(Ours::AshDark) => &ours::ash::DARK,
                 ThemeChoice::Ours(Ours::AshLight) => &ours::ash::LIGHT,
@@ -118,6 +122,13 @@ impl Theme {
                 ThemeChoice::Ported(Ported::CatppuccinFrappe) => &ported::catppuccin::FRAPPE,
                 ThemeChoice::Ported(Ported::CatppuccinMacchiato) => &ported::catppuccin::MACCHIATO,
                 ThemeChoice::Ported(Ported::CatppuccinMocha) => &ported::catppuccin::MOCHA,
+                // Resolving a config's custom theme against its declared
+                // roles is `lc-app`'s wiring to do, not this lookup's —
+                // nothing in this crate can see the config that would
+                // answer it.
+                ThemeChoice::Ours(Ours::DefaultDark) | ThemeChoice::Custom(_) => {
+                    &ours::default::DARK
+                }
             },
         }
     }
@@ -237,6 +248,8 @@ fn fg(color: Color) -> Style {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use lc_domain::BuiltIn;
+
     use super::*;
     use crate::theme::contrast::{luminance, ratio};
 
@@ -320,7 +333,7 @@ pub(crate) mod tests {
     #[test]
     fn every_palette_of_ours_reads_on_every_ground_it_declares() {
         for choice in Ours::ALL {
-            let palette = Theme::of(ThemeChoice::Ours(choice)).palette();
+            let palette = Theme::of(&ThemeChoice::Ours(choice)).palette();
 
             for (role, colour) in foregrounds(palette) {
                 for (ground, name) in [
@@ -346,7 +359,7 @@ pub(crate) mod tests {
     #[test]
     fn the_neutral_ramp_of_ours_is_a_staircase() {
         for choice in Ours::ALL {
-            let palette = Theme::of(ThemeChoice::Ours(choice)).palette();
+            let palette = Theme::of(&ThemeChoice::Ours(choice)).palette();
 
             assert!(
                 ratio(palette.text, palette.dim) >= 1.35,
@@ -367,7 +380,7 @@ pub(crate) mod tests {
     #[test]
     fn every_border_of_ours_is_perceptible() {
         for choice in Ours::ALL {
-            let palette = Theme::of(ThemeChoice::Ours(choice)).palette();
+            let palette = Theme::of(&ThemeChoice::Ours(choice)).palette();
 
             for (role, colour) in [("border", palette.border), ("focus", palette.focus)] {
                 let ratio = ratio(colour, palette.base);
@@ -382,8 +395,8 @@ pub(crate) mod tests {
     /// (visual mode design §6).
     #[test]
     fn the_bands_paint_a_background_and_spend_no_foreground() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
+        for choice in BuiltIn::ALL {
+            let theme = Theme::of(&choice.into());
 
             for token in EVERY_TOKEN {
                 let style = theme.style(token);
@@ -408,8 +421,8 @@ pub(crate) mod tests {
     /// either it would make one of the three unreadable as a rank.
     #[test]
     fn the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row() {
-        for choice in ThemeChoice::ALL {
-            let palette = Theme::of(choice).palette();
+        for choice in BuiltIn::ALL {
+            let palette = Theme::of(&choice.into()).palette();
 
             let base = luminance(palette.base);
             let wash = luminance(palette.crosshair);
@@ -446,8 +459,8 @@ pub(crate) mod tests {
     fn the_crosshair_is_fainter_than_the_cursor_row() {
         const FLOOR: f64 = 1.04;
 
-        for choice in ThemeChoice::ALL {
-            let palette = Theme::of(choice).palette();
+        for choice in BuiltIn::ALL {
+            let palette = Theme::of(&choice.into()).palette();
 
             for (role, colour) in [
                 ("the cursor row", palette.selection_bg),
@@ -476,9 +489,9 @@ pub(crate) mod tests {
 
     #[test]
     fn every_choice_maps_to_a_palette_of_its_own() {
-        let palettes: Vec<Palette> = ThemeChoice::ALL
+        let palettes: Vec<Palette> = BuiltIn::ALL
             .iter()
-            .map(|choice| *Theme::of(*choice).palette())
+            .map(|built_in| *Theme::of(&(*built_in).into()).palette())
             .collect();
 
         for (index, palette) in palettes.iter().enumerate() {
@@ -488,7 +501,7 @@ pub(crate) mod tests {
                     .skip(index + 1)
                     .all(|other| other != palette),
                 "{:?} shares a palette with a later theme",
-                ThemeChoice::ALL[index]
+                BuiltIn::ALL[index]
             );
         }
     }
@@ -533,8 +546,8 @@ pub(crate) mod tests {
     /// both, and nothing else in the UI spends it (design §3.1).
     #[test]
     fn a_hot_key_is_underlined_and_nothing_else_is() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
+        for choice in BuiltIn::ALL {
+            let theme = Theme::of(&choice.into());
 
             for token in EVERY_TOKEN {
                 let underlined = theme
@@ -595,8 +608,8 @@ pub(crate) mod tests {
     /// measures (design §4.1).
     #[test]
     fn no_token_recedes_with_a_modifier() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
+        for choice in BuiltIn::ALL {
+            let theme = Theme::of(&choice.into());
 
             for token in EVERY_TOKEN {
                 assert!(
@@ -612,8 +625,8 @@ pub(crate) mod tests {
     /// same.
     #[test]
     fn the_two_de_emphasis_tokens_are_different_colours() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
+        for choice in BuiltIn::ALL {
+            let theme = Theme::of(&choice.into());
 
             assert_ne!(
                 theme.style(Token::Muted).fg,

@@ -629,7 +629,7 @@ mod tests {
                 render(
                     frame,
                     &view_model(&state),
-                    Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha)),
+                    Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha)),
                 );
             })
             .expect("TestBackend always draws");
@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn focus_wins_over_a_flavours_own_panel_border() {
-        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
+        let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut terminal =
             Terminal::new(TestBackend::new(40, 12)).expect("TestBackend always initialises");
         let state = State {
@@ -686,7 +686,7 @@ mod tests {
                 render(
                     frame,
                     &view_model(&state),
-                    Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha)),
+                    Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha)),
                 );
             })
             .expect("TestBackend always draws");
@@ -2057,7 +2057,7 @@ mod tests {
     /// wherever the theme keeps its colours (design §4).
     #[test]
     fn a_key_columns_heading_keeps_its_colour_under_the_wash() {
-        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
+        let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
         state.contents.mode = SelectionMode::Cell;
 
@@ -2088,7 +2088,7 @@ mod tests {
     /// entirely would go unnoticed.
     #[test]
     fn the_crosshair_leaves_a_flavours_column_colours_alone() {
-        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
+        let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut state = showing(page_of(
             &["id", "value"],
             &[

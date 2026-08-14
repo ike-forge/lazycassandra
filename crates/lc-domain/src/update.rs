@@ -17,7 +17,7 @@ use crate::state::{
     Selection, State,
 };
 use crate::style::Severity;
-use crate::theme::ThemeChoice;
+use crate::theme::{BuiltIn, ThemeChoice};
 use crate::tree::Node;
 
 /// How many rows one look at a table brings back.
@@ -780,8 +780,8 @@ fn raise(state: &mut State, message: Message) {
 /// resize-shrink close in [`measured`], which share this one — so the second
 /// of those two cannot copy the check and diverge from the first.
 fn restore_theme(state: &mut State) {
-    if let Some(Overlay::Themes { restored, .. }) = state.overlay {
-        state.theme = restored;
+    if let Some(Overlay::Themes { restored, .. }) = &state.overlay {
+        state.theme = restored.clone();
     }
 }
 
@@ -941,11 +941,15 @@ fn open_themes(state: &mut State) {
     }
 
     let mut cursor = Cursor::default();
-    cursor.go_to(state.theme.index(), ThemeChoice::ALL.len());
+    let index = BuiltIn::ALL
+        .iter()
+        .position(|built_in| ThemeChoice::from(*built_in) == state.theme)
+        .unwrap_or(0);
+    cursor.go_to(index, BuiltIn::ALL.len());
 
     state.overlay = Some(Overlay::Themes {
         cursor,
-        restored: state.theme,
+        restored: state.theme.clone(),
     });
 }
 
@@ -974,7 +978,7 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
         _ => {}
     }
 
-    let last = ThemeChoice::ALL.len();
+    let last = BuiltIn::ALL.len();
     let height = state.geometry.command_rows();
     let Some(Overlay::Themes { cursor, .. }) = &mut state.overlay else {
         return Vec::new();
@@ -989,9 +993,9 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 
     if let Some(Overlay::Themes { cursor, .. }) = &state.overlay
-        && let Some(choice) = ThemeChoice::ALL.get(cursor.index())
+        && let Some(built_in) = BuiltIn::ALL.get(cursor.index())
     {
-        state.theme = *choice;
+        state.theme = ThemeChoice::from(*built_in);
     }
 
     Vec::new()
@@ -2287,6 +2291,13 @@ mod tests {
         );
     }
 
+    fn index_of(built_in: BuiltIn) -> usize {
+        BuiltIn::ALL
+            .iter()
+            .position(|b| *b == built_in)
+            .expect("listed")
+    }
+
     #[test]
     fn the_picker_opens_on_the_theme_in_force() {
         let mut state = measured(&["a"]);
@@ -2296,7 +2307,7 @@ mod tests {
 
         assert_eq!(
             theme_picker(&state),
-            Some(ThemeChoice::Ported(Ported::CatppuccinFrappe).index())
+            Some(index_of(BuiltIn::Ported(Ported::CatppuccinFrappe)))
         );
     }
 
@@ -2309,7 +2320,7 @@ mod tests {
 
         assert_eq!(
             state.theme,
-            ThemeChoice::ALL[1],
+            ThemeChoice::from(BuiltIn::ALL[1]),
             "the frame repaints as you browse"
         );
     }
@@ -2322,7 +2333,7 @@ mod tests {
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Enter);
 
-        assert_eq!(state.theme, ThemeChoice::ALL[1]);
+        assert_eq!(state.theme, ThemeChoice::from(BuiltIn::ALL[1]));
         assert!(state.overlay.is_none());
     }
 
@@ -2344,20 +2355,23 @@ mod tests {
         let mut state = measured(&["a"]);
 
         ctrl(&mut state, Key::Char('t'));
-        for _ in 0..ThemeChoice::ALL.len() * 2 {
+        for _ in 0..BuiltIn::ALL.len() * 2 {
             press(&mut state, Key::Char('j'));
         }
-        assert_eq!(state.theme, ThemeChoice::ALL[ThemeChoice::ALL.len() - 1]);
+        assert_eq!(
+            state.theme,
+            ThemeChoice::from(BuiltIn::ALL[BuiltIn::ALL.len() - 1])
+        );
         assert_eq!(
             theme_picker(&state),
-            Some(ThemeChoice::ALL.len() - 1),
+            Some(BuiltIn::ALL.len() - 1),
             "the cursor itself must stop at the last row, not merely the theme it read out"
         );
 
-        for _ in 0..ThemeChoice::ALL.len() * 2 {
+        for _ in 0..BuiltIn::ALL.len() * 2 {
             press(&mut state, Key::Char('k'));
         }
-        assert_eq!(state.theme, ThemeChoice::ALL[0]);
+        assert_eq!(state.theme, ThemeChoice::from(BuiltIn::ALL[0]));
         assert_eq!(theme_picker(&state), Some(0));
     }
 
@@ -2370,19 +2384,19 @@ mod tests {
 
         assert_eq!(
             theme_picker(&state),
-            Some(ThemeChoice::ALL.len() - 1),
+            Some(BuiltIn::ALL.len() - 1),
             "the list is shorter than the block drawing it, so one page is all of it"
         );
         assert_eq!(
             state.theme,
-            ThemeChoice::ALL[ThemeChoice::ALL.len() - 1],
+            ThemeChoice::from(BuiltIn::ALL[BuiltIn::ALL.len() - 1]),
             "a page is a move, and every move previews"
         );
 
         press(&mut state, Key::PageUp);
 
         assert_eq!(theme_picker(&state), Some(0));
-        assert_eq!(state.theme, ThemeChoice::ALL[0]);
+        assert_eq!(state.theme, ThemeChoice::from(BuiltIn::ALL[0]));
     }
 
     #[test]
@@ -2392,7 +2406,7 @@ mod tests {
         ctrl(&mut state, Key::Char('t'));
         ctrl(&mut state, Key::Char('d'));
 
-        assert_eq!(theme_picker(&state), Some(ThemeChoice::ALL.len() - 1));
+        assert_eq!(theme_picker(&state), Some(BuiltIn::ALL.len() - 1));
 
         ctrl(&mut state, Key::Char('u'));
 
