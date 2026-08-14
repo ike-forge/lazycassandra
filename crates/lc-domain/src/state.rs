@@ -5,11 +5,13 @@
 //! panels; deferring until that shape is known rather than guessing at it.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use crate::commands::CommandsPanel;
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::editor::Editor;
+use crate::export::ExportForm;
 use crate::model::{ConnId, DbError, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::search::{Filter, Filtered, Prompt};
@@ -47,6 +49,10 @@ pub struct State {
     pub should_quit: bool,
     /// The theme in force. A name; `lc-inbound` owns what it looks like.
     pub theme: ThemeChoice,
+    /// The process's working directory, for the export form's prefilled path.
+    /// Passed in by `lc-app` at startup: the domain cannot read it and must
+    /// not learn how (export design §2.1).
+    pub cwd: PathBuf,
 }
 
 /// The loader's phase.
@@ -149,6 +155,10 @@ pub enum Overlay {
         cursor: Cursor,
         restored: ThemeChoice,
     },
+    /// The export form. Its overwrite confirmation is a field on the form
+    /// rather than a sixth variant here, so "a confirmation with nothing
+    /// behind it" cannot be written down (export design §7).
+    Export(ExportForm),
 }
 
 impl ConnectionState {
@@ -221,6 +231,10 @@ const DDL_HINTS: &[Binding] = &[
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::ctrl(Key::Char('e'))],
+        action: "export",
+    },
     Binding {
         keys: &[KeyPress::new(Key::Char('m'))],
         action: "mode",

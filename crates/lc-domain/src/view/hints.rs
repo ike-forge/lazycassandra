@@ -166,6 +166,16 @@ pub(crate) fn bar(state: &State) -> HintBar {
         };
     }
 
+    // The form claims every key, so the panel underneath answers to nothing —
+    // the same rule `Search` follows above. The form's own bar is a later
+    // task's, once it has one.
+    if matches!(state.overlay, Some(Overlay::Export(_))) {
+        return HintBar {
+            panel: Vec::new(),
+            global: Vec::new(),
+        };
+    }
+
     // `?` promises a palette that draws; below `command_rows()` it would
     // not, so the bar drops the promise rather than make it (design §5.1).
     // Matched by key rather than sliced off the front, so a reorder of
@@ -235,15 +245,20 @@ fn selected(state: &State) -> bool {
 /// first frame the user sees. Matched by press rather than by action, for the
 /// same reason `?` is above.
 ///
-/// Nothing else in the bar is conditional today; the mechanism is general and
-/// this is its one use.
+/// `ctrl-e` over Contents is refused the same way, on an empty grid
+/// (export design §1).
 fn liveness(state: &State, binding: &Binding) -> Liveness {
     let runs = binding.keys == [KeyPress::ctrl(Key::Char('r'))];
     if runs && state.queries.text().trim().is_empty() {
-        Liveness::Inert
-    } else {
-        Liveness::Live
+        return Liveness::Inert;
     }
+
+    let exports = binding.action == "export";
+    if exports && state.contents.row_count() == 0 {
+        return Liveness::Inert;
+    }
+
+    Liveness::Live
 }
 
 fn rendered(binding: &Binding) -> Hint {
@@ -656,7 +671,9 @@ mod tests {
 
             for hint in bar.panel.iter().chain(&bar.global) {
                 assert!(
-                    hint.liveness == Liveness::Live || hint.action == "run",
+                    hint.liveness == Liveness::Live
+                        || hint.action == "run"
+                        || hint.action == "export",
                     "{panel:?}'s '{} {}' is inert and nothing says why",
                     hint.keys,
                     hint.action

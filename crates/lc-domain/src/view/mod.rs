@@ -112,6 +112,9 @@ fn overlay(state: &State) -> Option<OverlayView> {
                 .collect(),
             selected: cursor.index(),
         }),
+        // The form claims keys from this task on, but has nothing to draw
+        // until `OverlayView::Export` exists, in a later task.
+        Overlay::Export(_) => None,
     }
 }
 

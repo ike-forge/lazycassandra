@@ -7,6 +7,7 @@
 use crate::commands::CommandsPanel;
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
+use crate::export::{ExportForm, Fetched};
 use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
@@ -469,6 +470,13 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return search_key(state, press.key);
     }
 
+    // The form takes text on one of its four stops, so it claims every
+    // printable key the way a prompt does — and hands most of them nowhere on
+    // the other three (export design §2).
+    if matches!(state.overlay, Some(Overlay::Export(_))) {
+        return export_key(state, press.key);
+    }
+
     // Focus is the mode. A panel that takes text claims every printable key
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
@@ -790,7 +798,7 @@ fn escape(state: &mut State) {
             state.theme = restored;
             return;
         }
-        Some(Overlay::Message(_) | Overlay::Commands(_)) => return,
+        Some(Overlay::Message(_) | Overlay::Commands(_) | Overlay::Export(_)) => return,
         None => {}
     }
 
@@ -997,8 +1005,22 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
             open_themes(state);
             Vec::new()
         }
-        Key::Char('e') => open_editor(state),
+        Key::Char('e') => ctrl_e(state),
         _ => Vec::new(),
+    }
+}
+
+/// `ctrl-e` opens the user's editor on the Queries buffer and the export form
+/// over the Contents grid. Two meanings, each gated on its own panel — the
+/// shape `ctrl-r` already has (export design §1).
+fn ctrl_e(state: &mut State) -> Vec<Effect> {
+    match state.focus {
+        Panel::Queries => open_editor(state),
+        Panel::Contents => {
+            open_export(state);
+            Vec::new()
+        }
+        Panel::Tables | Panel::Ddl => Vec::new(),
     }
 }
 
@@ -1015,6 +1037,121 @@ fn open_editor(state: &State) -> Vec<Effect> {
     }]
 }
 
+/// Refused over a grid with no rows.
+fn open_export(state: &mut State) {
+    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+        return;
+    };
+
+    let rows = page.page().rows.len();
+    if rows == 0 {
+        return;
+    }
+
+    let form = ExportForm::opened(subject.clone(), Fetched::of(rows), &state.cwd);
+    state.overlay = Some(Overlay::Export(form));
+    state.dirty = true;
+}
+
+/// What [`export_key`]'s form-only match decided, resolved against `state`
+/// once the form's borrow has ended.
+enum Outcome {
+    Nothing,
+    Close,
+    Run,
+}
+
+/// Every key the export form claims.
+///
+/// The confirmation route is checked before the form is borrowed mutably, so
+/// it never holds one; the rest of the table runs inside a scoped block that
+/// borrows `form` and reports an [`Outcome`], leaving `state` free again for
+/// [`start_export`] and the overlay assignment below — `palette_key` and
+/// `search_key` split the same borrow the same way.
+fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
+    let confirming =
+        matches!(&state.overlay, Some(Overlay::Export(form)) if form.confirm().is_some());
+    if confirming {
+        return confirm_key(state, key);
+    }
+
+    let outcome = {
+        let Some(Overlay::Export(form)) = &mut state.overlay else {
+            return Vec::new();
+        };
+
+        match key {
+            Key::Escape => Outcome::Close,
+            Key::Tab => {
+                form.tab();
+                Outcome::Nothing
+            }
+            Key::BackTab => {
+                form.back_tab();
+                Outcome::Nothing
+            }
+            Key::Char(' ') if !form.stop().takes_text() => {
+                if form.activate() {
+                    Outcome::Run
+                } else {
+                    Outcome::Nothing
+                }
+            }
+            Key::Enter if !form.stop().takes_text() => Outcome::Run,
+            Key::Char('j') | Key::Down if !form.stop().takes_text() => {
+                form.down();
+                Outcome::Nothing
+            }
+            Key::Char('k') | Key::Up if !form.stop().takes_text() => {
+                form.up();
+                Outcome::Nothing
+            }
+            _ if form.stop().takes_text() => {
+                edit_path(form, key);
+                Outcome::Nothing
+            }
+            _ => Outcome::Nothing,
+        }
+    };
+
+    state.dirty = true;
+
+    match outcome {
+        Outcome::Nothing => Vec::new(),
+        Outcome::Close => {
+            state.overlay = None;
+            Vec::new()
+        }
+        Outcome::Run => start_export(state),
+    }
+}
+
+/// The path stop's keys. Every printable key is a character there and the
+/// editing keys move within the line (design §2).
+fn edit_path(form: &mut ExportForm, key: Key) {
+    let line = form.path_mut();
+
+    match key {
+        Key::Char(character) => line.insert(character),
+        Key::Backspace => line.delete_back(),
+        Key::Delete => line.delete_forward(),
+        Key::Left => line.left(),
+        Key::Right => line.right(),
+        Key::Home => line.home(),
+        Key::End => line.end(),
+        _ => {}
+    }
+}
+
+/// Filled in when `Effect::Export` exists (Task 7).
+fn start_export(_state: &mut State) -> Vec<Effect> {
+    Vec::new()
+}
+
+fn confirm_key(_state: &mut State, _key: Key) -> Vec<Effect> {
+    Vec::new()
+}
+
 /// `ctrl-d`/`ctrl-u`, dispatched to whatever `key` would reach unmodified.
 ///
 /// Delegating rather than paging here is what keeps the two spellings from
@@ -1023,8 +1160,9 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
     match &state.overlay {
         Some(Overlay::Commands(_)) => palette_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
-        // The prompt takes text and pages nothing, so neither spelling does.
-        Some(Overlay::Search(_)) => Vec::new(),
+        // The prompt takes text and pages nothing, so neither spelling does;
+        // the form has nothing paged either, whichever stop it is on.
+        Some(Overlay::Search(_) | Overlay::Export(_)) => Vec::new(),
         Some(Overlay::Message(_)) | None => {
             if state.focus.takes_text() {
                 edit(state, key);
@@ -2013,7 +2151,10 @@ mod tests {
     fn palette(state: &State) -> Option<&CommandsPanel> {
         match state.overlay.as_ref()? {
             Overlay::Commands(panel) => Some(panel),
-            Overlay::Message(_) | Overlay::Search(_) | Overlay::Themes { .. } => None,
+            Overlay::Message(_)
+            | Overlay::Search(_)
+            | Overlay::Themes { .. }
+            | Overlay::Export(_) => None,
         }
     }
 
@@ -6762,5 +6903,154 @@ mod tests {
         press(&mut state, Key::Escape);
         assert_eq!(state.contents.rows.range(0), None);
         assert_eq!(state.contents.columns.range(0), None);
+    }
+
+    fn contents_showing(rows: usize) -> State {
+        let mut state = State {
+            focus: Panel::Contents,
+            ..connected(Posture::ReadOnly)
+        };
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(query, page_of(rows));
+        state
+    }
+
+    fn open_form(state: &mut State) {
+        handle_key(state, KeyPress::ctrl(Key::Char('e')));
+    }
+
+    fn form_of(state: &State) -> &crate::export::ExportForm {
+        match state.overlay.as_ref() {
+            Some(Overlay::Export(form)) => form,
+            _ => panic!("the export form is up"),
+        }
+    }
+
+    #[test]
+    fn ctrl_e_over_a_loaded_contents_panel_opens_the_export_form() {
+        let mut state = contents_showing(5);
+
+        open_form(&mut state);
+
+        assert_eq!(form_of(&state).title(), "Export table shop.orders");
+    }
+
+    #[test]
+    fn ctrl_e_does_nothing_over_an_empty_contents_panel() {
+        let mut state = contents_showing(0);
+
+        open_form(&mut state);
+
+        assert!(state.overlay.is_none());
+    }
+
+    /// The chord keeps its Queries meaning; the two are gated on focus, the
+    /// way ctrl-r already is (design §1).
+    #[test]
+    fn ctrl_e_in_queries_still_opens_the_external_editor() {
+        let mut state = State {
+            focus: Panel::Queries,
+            ..connected(Posture::ReadOnly)
+        };
+
+        let effects = handle_key(&mut state, KeyPress::ctrl(Key::Char('e')));
+
+        assert!(matches!(effects.as_slice(), [Effect::OpenEditor { .. }]));
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn the_form_records_how_much_of_the_result_is_in_memory() {
+        let mut complete = contents_showing(7);
+        open_form(&mut complete);
+        assert_eq!(
+            form_of(&complete).fetched(),
+            crate::export::Fetched::Everything(7)
+        );
+
+        let mut capped = contents_showing(ROW_LIMIT);
+        open_form(&mut capped);
+        assert_eq!(
+            form_of(&capped).fetched(),
+            crate::export::Fetched::Some(ROW_LIMIT)
+        );
+    }
+
+    #[test]
+    fn tab_moves_between_the_forms_stops_rather_than_between_panels() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+
+        assert_eq!(form_of(&state).stop(), crate::export::Stop::Format);
+        assert_eq!(state.focus, Panel::Contents, "focus did not move");
+    }
+
+    #[test]
+    fn space_toggles_the_focused_radio() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        assert_eq!(form_of(&state).scope(), crate::export::Scope::Fetched);
+    }
+
+    #[test]
+    fn a_printable_key_types_itself_only_on_the_path_stop() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Char('x')));
+        assert_eq!(
+            form_of(&state).scope(),
+            crate::export::Scope::Whole,
+            "an unclaimed key on a radio does nothing"
+        );
+
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Char('x')));
+
+        assert!(form_of(&state).path().text().ends_with('x'));
+    }
+
+    #[test]
+    fn space_on_the_path_stop_types_a_space() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        assert!(form_of(&state).path().text().ends_with(' '));
+    }
+
+    #[test]
+    fn q_does_not_quit_while_the_form_is_up() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+
+        handle_key(&mut state, KeyPress::new(Key::Char('q')));
+
+        assert!(
+            !state.should_quit,
+            "the overlay claims every unmodified key"
+        );
+    }
+
+    #[test]
+    fn esc_closes_the_form_and_writes_nothing() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Escape));
+
+        assert!(state.overlay.is_none());
+        assert!(effects.is_empty());
     }
 }
