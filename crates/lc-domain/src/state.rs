@@ -165,7 +165,10 @@ pub enum Overlay {
 ///
 /// A list rather than a [`Message`]: a config load yields many entries, and
 /// `overlay.rs`'s sizing under-counts an embedded newline by its own
-/// admission, so a multi-line message truncates (design §9).
+/// admission, so a multi-line message truncates (design §9). The cursor is
+/// private for [`CommandsPanel`]'s reason: every motion goes through a named
+/// method here, so nothing outside this module can seat it past the last row
+/// (conventions.md §1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticsPanel {
     rows: Vec<Diagnostic>,
@@ -173,6 +176,7 @@ pub struct DiagnosticsPanel {
 }
 
 impl DiagnosticsPanel {
+    /// Opens on the first diagnostic.
     #[must_use]
     pub fn new(rows: Vec<Diagnostic>) -> Self {
         Self {
@@ -181,18 +185,47 @@ impl DiagnosticsPanel {
         }
     }
 
+    /// Every diagnostic the config load produced, in the order it produced
+    /// them.
     #[must_use]
     pub fn rows(&self) -> &[Diagnostic] {
         &self.rows
     }
 
+    /// The selected row, as an index into [`Self::rows`].
     #[must_use]
     pub const fn selected(&self) -> usize {
         self.cursor.index()
     }
 
-    pub fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
+    /// Moves to the next diagnostic, stopping on the last one.
+    pub fn down(&mut self) {
+        self.cursor.down(self.rows.len());
+    }
+
+    /// Moves to the previous diagnostic, stopping on the first one.
+    pub fn up(&mut self) {
+        self.cursor.up();
+    }
+
+    /// Moves a screen of diagnostics down, stopping on the last one.
+    pub fn page_down(&mut self, height: usize) {
+        self.cursor.page_down(self.rows.len(), height);
+    }
+
+    /// Moves a screen of diagnostics up, stopping on the first one.
+    pub fn page_up(&mut self, height: usize) {
+        self.cursor.page_up(height);
+    }
+
+    /// Moves to the first diagnostic.
+    pub fn to_start(&mut self) {
+        self.cursor.to_start();
+    }
+
+    /// Moves to the last diagnostic.
+    pub fn to_end(&mut self) {
+        self.cursor.to_end(self.rows.len());
     }
 }
 

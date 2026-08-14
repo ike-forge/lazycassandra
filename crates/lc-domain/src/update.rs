@@ -953,16 +953,14 @@ fn diagnostics_key(state: &mut State, key: Key) -> Vec<Effect> {
     let Some(Overlay::Diagnostics(panel)) = &mut state.overlay else {
         return Vec::new();
     };
-    let len = panel.rows().len();
-    let cursor = panel.cursor_mut();
 
     match key {
-        Key::Char('j') | Key::Down => cursor.down(len),
-        Key::Char('k') | Key::Up => cursor.up(),
-        Key::PageDown => cursor.page_down(len, height),
-        Key::PageUp => cursor.page_up(height),
-        Key::Home => cursor.to_start(),
-        Key::End => cursor.to_end(len),
+        Key::Char('j') | Key::Down => panel.down(),
+        Key::Char('k') | Key::Up => panel.up(),
+        Key::PageDown => panel.page_down(height),
+        Key::PageUp => panel.page_up(height),
+        Key::Home => panel.to_start(),
+        Key::End => panel.to_end(),
         _ => {}
     }
 
@@ -2016,6 +2014,50 @@ mod tests {
             state.overlay.is_none(),
             "esc dismisses this overlay like every other"
         );
+    }
+
+    fn diagnostic(message: &str) -> Diagnostic {
+        Diagnostic {
+            origin: Origin::new("./.lazycassandra.toml"),
+            span: None,
+            severity: Severity::Danger,
+            message: message.to_owned(),
+        }
+    }
+
+    fn diagnostics_cursor(state: &State) -> usize {
+        let Some(Overlay::Diagnostics(panel)) = &state.overlay else {
+            panic!("the diagnostics overlay is open");
+        };
+        panel.selected()
+    }
+
+    #[test]
+    fn a_single_diagnostic_leaves_the_cursor_nowhere_to_go() {
+        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic("one")]);
+
+        let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
+        let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
+
+        assert_eq!(diagnostics_cursor(&state), 0);
+    }
+
+    #[test]
+    fn motion_walks_the_diagnostics_and_stops_on_the_last_row() {
+        let diagnostics = vec![diagnostic("one"), diagnostic("two"), diagnostic("three")];
+        let (mut state, _) = init(ConnId::next(), Config::default(), diagnostics);
+
+        for _ in 0..5 {
+            let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
+        }
+        assert_eq!(
+            diagnostics_cursor(&state),
+            2,
+            "the cursor stops on the last row rather than running off the list"
+        );
+
+        let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('k'))));
+        assert_eq!(diagnostics_cursor(&state), 1);
     }
 
     #[test]
