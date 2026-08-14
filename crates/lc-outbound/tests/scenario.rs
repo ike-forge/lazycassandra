@@ -3,13 +3,7 @@
 //! Deterministic: no clock, no socket, no runtime beyond the one `#[tokio::test]`
 //! provides to await the port.
 
-use std::collections::{BTreeMap, VecDeque};
-
-use lc_domain::model::{
-    Column, ConnId, CqlValue, DbError, Key, KeyPress, Keyspace, Page, PrimaryKey, Replication, Row,
-    Schema, Statement, Table, TableOptions,
-};
-use lc_domain::ports::Cluster;
+use lc_domain::model::{ConnId, CqlValue, DbError, Key, KeyPress, Page, Row, Statement};
 use lc_domain::posture::Posture;
 use lc_domain::state::Panel;
 use lc_domain::style::Token;
@@ -18,82 +12,8 @@ use lc_domain::view::{DetailRow, Details, OverlayView, PanelBody, RowKind, Secti
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
 
-fn schema_of(names: &[&str]) -> Schema {
-    tabled_schema_of(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
-}
-
-fn table(name: &str) -> Table {
-    Table {
-        name: name.to_owned(),
-        primary_key: PrimaryKey {
-            partition: vec![Column {
-                name: "id".to_owned(),
-                cql_type: "uuid".to_owned(),
-            }],
-            clustering: Vec::new(),
-        },
-        static_columns: Vec::new(),
-        regular_columns: Vec::new(),
-        options: TableOptions::new(BTreeMap::from([
-            ("comment".to_owned(), format!("The {name} table.")),
-            ("gc_grace_seconds".to_owned(), "864000".to_owned()),
-        ])),
-    }
-}
-
-/// `(keyspace name, its table names)`.
-fn tabled_schema_of(keyspaces: &[(&str, &[&str])]) -> Schema {
-    Schema {
-        keyspaces: keyspaces
-            .iter()
-            .map(|(name, tables)| {
-                (
-                    (*name).to_owned(),
-                    Keyspace {
-                        name: (*name).to_owned(),
-                        replication: Replication::SimpleStrategy { factor: 1 },
-                        tables: tables
-                            .iter()
-                            .map(|t| ((*t).to_owned(), table(t)))
-                            .collect::<BTreeMap<_, _>>(),
-                    },
-                )
-            })
-            .collect(),
-    }
-}
-
-/// Runs the effects a session produces, feeding results back through `update`
-/// exactly as `lc-app`'s runtime does.
-async fn run(cluster: &dyn Cluster, state: &mut State, effects: Vec<Effect>) {
-    let mut pending: VecDeque<Effect> = effects.into();
-
-    while let Some(effect) = pending.pop_front() {
-        let msg = match effect {
-            Effect::Connect(conn) => match cluster.connect(conn).await {
-                Ok(posture) => Msg::Connected { conn, posture },
-                Err(error) => Msg::ConnectFailed { conn, error },
-            },
-            Effect::LoadSchema(conn) => match cluster.describe(conn).await {
-                Ok(schema) => Msg::SchemaLoaded {
-                    conn,
-                    schema: Box::new(schema),
-                },
-                Err(error) => Msg::SchemaFailed { conn, error },
-            },
-            Effect::Execute { conn, query, stmt } => match cluster.execute(conn, &stmt).await {
-                Ok(page) => Msg::PageReady {
-                    query,
-                    page: Box::new(page),
-                },
-                Err(error) => Msg::Failed { query, error },
-            },
-            _ => continue,
-        };
-
-        pending.extend(update(state, msg));
-    }
-}
+mod support;
+use support::{press, run, schema_of, tabled_schema_of};
 
 #[tokio::test]
 async fn connecting_and_describing_fills_the_tables_panel() {
@@ -221,8 +141,8 @@ async fn pressing_h_from_a_table_lands_on_its_parent_keyspace() {
     );
 }
 
-/// The keyspace's one table, its partition key `id` (see [`table`]) and a
-/// regular column.
+/// The keyspace's one table, its partition key `id` (see `support::table`)
+/// and a regular column.
 fn customers() -> Page {
     Page {
         columns: vec!["id".to_owned(), "email".to_owned()],
@@ -239,10 +159,6 @@ fn customers() -> Page {
         ],
         next: None,
     }
-}
-
-fn press(state: &mut State, key: Key) -> Vec<Effect> {
-    update(state, Msg::Input(KeyPress::new(key)))
 }
 
 /// Connect, describe, unfold `shop`, step onto `orders`.

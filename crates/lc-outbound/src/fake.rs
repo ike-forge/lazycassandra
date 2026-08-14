@@ -5,11 +5,13 @@
 //! behind `#[cfg(test)]`. Deterministic by construction — no clock, no socket
 //! (conventions.md §4).
 
-use std::sync::{Mutex, PoisonError};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use lc_domain::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
-use lc_domain::ports::Cluster;
+use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
 use lc_domain::posture::Posture;
 
 #[derive(Debug, Default)]
@@ -30,6 +32,11 @@ pub struct FakeCluster {
     /// Pages `execute_paged` walks, in order. Empty means one page — whatever
     /// `execute` would return — and no cursor.
     pages: Vec<Page>,
+    /// The page index at which `execute_paged` fails instead of handing back
+    /// the scripted page, and what it fails with. Every page before it is
+    /// still delivered, so a scenario can prove a mid-export abort rather
+    /// than a first-page one.
+    failing_page: Option<(usize, DbError)>,
 }
 
 impl FakeCluster {
@@ -64,6 +71,16 @@ impl FakeCluster {
     #[must_use]
     pub fn paging(self, pages: Vec<Page>) -> Self {
         Self { pages, ..self }
+    }
+
+    /// Fails `execute_paged` when the cursor names `index` rather than
+    /// handing back the scripted page there.
+    #[must_use]
+    pub fn failing_page(self, index: usize, error: DbError) -> Self {
+        Self {
+            failing_page: Some((index, error)),
+            ..self
+        }
     }
 
     /// Every statement `execute` has been handed, in order.
@@ -147,7 +164,106 @@ impl Cluster for FakeCluster {
             .and_then(|PagingState(bytes)| bytes.first().copied())
             .map_or(0, usize::from);
 
+        if let Some((fails_at, error)) = &self.failing_page
+            && index == *fails_at
+        {
+            return Err(error.clone());
+        }
+
         Ok(self.pages.get(index).cloned().unwrap_or_default())
+    }
+}
+
+/// A [`Writer`] that keeps what it was given in memory.
+///
+/// Ships in the crate rather than behind `#[cfg(test)]` for the reason
+/// [`FakeCluster`] does: the scenario tier drives whole exports through it.
+#[derive(Debug, Default, Clone)]
+pub struct FakeWriter {
+    written: Arc<Mutex<String>>,
+    aborted: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
+    /// Whether `open` refuses every path as already taken.
+    exists: bool,
+}
+
+impl FakeWriter {
+    /// Everything every chunk was handed, concatenated.
+    #[must_use]
+    pub fn written(&self) -> String {
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// A writer that refuses every path as already taken.
+    #[must_use]
+    pub fn refusing_because_it_exists() -> Self {
+        Self {
+            exists: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether `abort` was called.
+    #[must_use]
+    pub fn aborted(&self) -> bool {
+        self.aborted.load(Ordering::Relaxed)
+    }
+
+    /// Whether `finish` was called. A run that aborts must never also finish
+    /// (design §4).
+    #[must_use]
+    pub fn finished(&self) -> bool {
+        self.finished.load(Ordering::Relaxed)
+    }
+}
+
+#[async_trait]
+impl Writer for FakeWriter {
+    async fn open(&self, _path: &Path, _overwrite: bool) -> Result<Box<dyn Sink>, ExportError> {
+        if self.exists {
+            return Err(ExportError::Exists);
+        }
+
+        Ok(Box::new(FakeSink {
+            written: Arc::clone(&self.written),
+            aborted: Arc::clone(&self.aborted),
+            finished: Arc::clone(&self.finished),
+        }))
+    }
+}
+
+/// The open half of a [`FakeWriter`], sharing its state so a scenario can
+/// still observe it after `open` has handed the sink away.
+struct FakeSink {
+    written: Arc<Mutex<String>>,
+    aborted: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl Sink for FakeSink {
+    async fn write(&mut self, chunk: &str) -> Result<(), ExportError> {
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_str(chunk);
+        Ok(())
+    }
+
+    async fn finish(&mut self) -> Result<(), ExportError> {
+        self.finished.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    async fn abort(&mut self) {
+        self.aborted.store(true, Ordering::Relaxed);
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 }
 
