@@ -994,7 +994,7 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     if matches!(
         state.overlay,
-        Some(Overlay::Commands(_) | Overlay::Themes { .. })
+        Some(Overlay::Commands(_) | Overlay::Themes { .. } | Overlay::Export(_))
     ) {
         return Vec::new();
     }
@@ -1053,8 +1053,7 @@ fn open_export(state: &mut State) {
     state.dirty = true;
 }
 
-/// What [`export_key`]'s form-only match decided, resolved against `state`
-/// once the form's borrow has ended.
+/// What [`export_key`]'s form-only match decided.
 enum Outcome {
     Nothing,
     Close,
@@ -1063,11 +1062,8 @@ enum Outcome {
 
 /// Every key the export form claims.
 ///
-/// The confirmation route is checked before the form is borrowed mutably, so
-/// it never holds one; the rest of the table runs inside a scoped block that
-/// borrows `form` and reports an [`Outcome`], leaving `state` free again for
-/// [`start_export`] and the overlay assignment below — `palette_key` and
-/// `search_key` split the same borrow the same way.
+/// A confirmation in front of the form is resolved first, through
+/// [`confirm_key`].
 fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
     let confirming =
         matches!(&state.overlay, Some(Overlay::Export(form)) if form.confirm().is_some());
@@ -7052,5 +7048,33 @@ mod tests {
 
         assert!(state.overlay.is_none());
         assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn the_theme_picker_cannot_replace_an_open_export_form() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+
+        handle_key(&mut state, KeyPress::ctrl(Key::Char('t')));
+
+        assert!(
+            matches!(state.overlay, Some(Overlay::Export(_))),
+            "a chord must not discard the form and the path typed into it"
+        );
+    }
+
+    #[test]
+    fn a_second_ctrl_e_leaves_the_open_form_as_it_was() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Char('x')));
+        let typed = form_of(&state).path().text().to_owned();
+
+        handle_key(&mut state, KeyPress::ctrl(Key::Char('e')));
+
+        assert_eq!(form_of(&state).path().text(), typed);
+        assert_eq!(form_of(&state).stop(), crate::export::Stop::Path);
     }
 }
