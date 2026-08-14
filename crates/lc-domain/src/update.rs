@@ -13,7 +13,8 @@ use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, SchemaState, Scroll, State,
+    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, SchemaState, Scroll, Selection,
+    State,
 };
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
@@ -467,6 +468,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
                 state.contents.mode = state.contents.mode.next();
             }
         }
+        Key::Char('v') => toggle_visual(state),
         // Last, so every binding above keeps precedence over a panel key. A
         // DDL tab is a place the same way a panel is, so its key both focuses
         // the panel and draws the tab — one press to arrive, whichever tab was
@@ -748,6 +750,12 @@ fn escape(state: &mut State) {
         None => {}
     }
 
+    // Above the filter for the reason the overlay is above both: the thing
+    // most recently put on screen comes off first (design §1).
+    if stop_extending(state) || clear_selection(state) {
+        return;
+    }
+
     if let Some(target) = Filtered::of(state.focus)
         && state.filter(target).is_some()
     {
@@ -1011,6 +1019,61 @@ fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
     }
 }
 
+/// The selections `panel` holds. Two for the grid, which selects on both axes
+/// (design §3); none for Queries, which is an editor.
+fn selections(state: &mut State, panel: Panel) -> [Option<&mut Selection>; 2] {
+    match panel {
+        Panel::Tables => [Some(&mut state.tables.selection), None],
+        Panel::Ddl => [Some(&mut state.ddl.selection), None],
+        // The grid's two axes are Task 4's; Queries is an editor and never
+        // has one.
+        Panel::Contents | Panel::Queries => [None, None],
+    }
+}
+
+/// `v`: start extending from the cursor, or freeze what is being extended.
+fn toggle_visual(state: &mut State) {
+    let cursor = cursor_index(state, state.focus);
+
+    for selection in selections(state, state.focus).into_iter().flatten() {
+        if selection.is_extending() {
+            selection.stop(cursor);
+        } else {
+            selection.start(cursor);
+        }
+    }
+}
+
+/// `esc`'s second rung: leave visual mode, keeping the range. Reports whether
+/// there was one to leave.
+fn stop_extending(state: &mut State) -> bool {
+    let cursor = cursor_index(state, state.focus);
+    let mut stopped = false;
+
+    for selection in selections(state, state.focus).into_iter().flatten() {
+        if selection.is_extending() {
+            selection.stop(cursor);
+            stopped = true;
+        }
+    }
+
+    stopped
+}
+
+/// `esc`'s third rung: drop the range. Reports whether there was one.
+fn clear_selection(state: &mut State) -> bool {
+    let mut cleared = false;
+
+    for selection in selections(state, state.focus).into_iter().flatten() {
+        if selection.range(0).is_some() {
+            selection.clear();
+            cleared = true;
+        }
+    }
+
+    cleared
+}
+
 /// Records what the last frame turned out to be, and repairs whatever that
 /// invalidates.
 ///
@@ -1156,6 +1219,12 @@ fn clamp_lists(state: &mut State) {
     // is — a schema reload that shrinks a table changes no geometry, so no
     // measurement arrives to clamp against.
     state.ddl.cursor.clamp_to(crate::view::ddl_rows(state));
+
+    // Beside the cursor clamps and for the same reason: a schema reload or a
+    // fold that shrinks a list changes no geometry, so no measurement arrives
+    // to clamp against (design §2).
+    state.tables.selection.clamp_to(tree_rows(state));
+    state.ddl.selection.clamp_to(crate::view::ddl_rows(state));
 }
 
 /// Pulls the offset of each list whose selection moved, so the selection is
@@ -1416,7 +1485,7 @@ mod tests {
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::search::{Filter, Filtered, Prompt};
-    use crate::state::{Connection, Span};
+    use crate::state::{Connection, Range, Span};
     use crate::theme::Ported;
     use crate::tree::tests_support::schema_of as tabled_schema;
     use crate::view::tests_support::tabled;
@@ -5679,6 +5748,130 @@ mod tests {
             state.filter(Filtered::Tables).map(Filter::as_str),
             Some("o"),
             "one press does one thing"
+        );
+    }
+
+    #[test]
+    fn v_starts_a_range_at_the_cursor_and_motion_extends_it() {
+        let mut state = browsing(&["a", "b", "c", "d"]);
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(1, 3))
+        );
+    }
+
+    #[test]
+    fn a_second_v_freezes_the_range_and_the_cursor_walks_out_of_it() {
+        let mut state = browsing(&["a", "b", "c", "d"]);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.tables.cursor.index(), 2);
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 1)),
+            "a frozen range does not follow the cursor"
+        );
+    }
+
+    #[test]
+    fn escape_freezes_a_live_range_before_it_clears_one() {
+        let mut state = browsing(&["a", "b", "c", "d"]);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Escape);
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 1)),
+            "the first press leaves visual mode and keeps the range"
+        );
+
+        press(&mut state, Key::Escape);
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            None,
+            "the second clears it"
+        );
+    }
+
+    #[test]
+    fn escape_prefers_the_selection_to_the_filter() {
+        let mut state = browsing(&["alpha", "beta"]);
+        state.apply_filter(Filtered::Tables, Filter::new("a"));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Escape);
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(state.tables.selection.range(0), None);
+        assert!(
+            state.filter(Filtered::Tables).is_some(),
+            "the range came off first; the filter is still applied"
+        );
+    }
+
+    #[test]
+    fn v_selects_in_the_focused_panel_only() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Ddl;
+
+        press(&mut state, Key::Char('v'));
+
+        assert_eq!(state.tables.selection.range(0), None);
+        assert!(state.ddl.selection.is_extending());
+    }
+
+    #[test]
+    fn v_types_a_v_in_queries() {
+        let mut state = browsing(&["a"]);
+        state.focus = Panel::Queries;
+
+        press(&mut state, Key::Char('v'));
+
+        assert_eq!(state.queries.text(), "v");
+    }
+
+    #[test]
+    fn a_filter_clears_the_range_it_would_renumber() {
+        let mut state = browsing(&["alpha", "beta", "gamma"]);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+
+        state.apply_filter(Filtered::Tables, Filter::new("a"));
+
+        assert_eq!(state.tables.selection.range(0), None);
+    }
+
+    #[test]
+    fn a_range_over_a_list_that_shrank_is_pulled_back() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::End);
+        press(&mut state, Key::Char('v'));
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 2))
+        );
+
+        press(&mut state, Key::Home);
+        press(&mut state, Key::Char('h'));
+
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 0)),
+            "folding the keyspace took the two table rows with it"
         );
     }
 

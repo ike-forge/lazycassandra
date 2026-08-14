@@ -823,7 +823,8 @@ impl State {
     /// Not a `&mut Option<Filter>` handed out: repairing what a filter
     /// invalidates — a cursor left pointing past the rows the panel now has —
     /// belongs here rather than to every caller that sets one. The Tables
-    /// cursor clamp lands with the filtered tree it needs.
+    /// cursor clamp lands with the filtered tree it needs. A filter renumbers
+    /// the rows under a range, so the repair it owes includes dropping one.
     pub fn apply_filter(&mut self, target: Filtered, filter: Option<Filter>) {
         match target {
             Filtered::Tables => {
@@ -832,6 +833,7 @@ impl State {
                 if let Some(rows) = rows {
                     self.tables.cursor.clamp_to(rows);
                 }
+                self.tables.selection.clear();
             }
             // No repair here, and the two halves of the panel are repaired
             // elsewhere for different reasons (design §3.3). Its offset is
@@ -843,7 +845,10 @@ impl State {
             // message against `view::ddl_rows`, which counts the *filtered*
             // rows — so the clamp lands on the same keystroke that applied the
             // filter, with no line count involved.
-            Filtered::Ddl => self.ddl.set_filter(filter),
+            Filtered::Ddl => {
+                self.ddl.set_filter(filter);
+                self.ddl.selection.clear();
+            }
             Filtered::Contents => self.contents.set_filter(filter),
         }
     }
