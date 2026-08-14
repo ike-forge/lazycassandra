@@ -784,19 +784,36 @@ pub(crate) mod tests {
         );
     }
 
+    /// Totality alone would pass if two arms aliased the same field — both
+    /// roles would still differ from the default. Pairwise distinctness is
+    /// what catches that, the same shape
+    /// `every_choice_maps_to_a_palette_of_its_own` checks palettes with.
     #[test]
-    fn every_role_reaches_a_field_of_the_palette() {
+    fn every_role_reaches_a_distinct_field_of_the_palette() {
         let marker = Color::Rgb(1, 2, 3);
+        let palettes: Vec<Palette> = Role::ALL
+            .iter()
+            .map(|role| {
+                let mut palette = ours::default::DARK;
+                palette.set(*role, marker);
+                palette
+            })
+            .collect();
 
-        for role in Role::ALL {
-            let mut palette = ours::default::DARK;
-            palette.set(role, marker);
-
+        for (index, palette) in palettes.iter().enumerate() {
             assert_ne!(
-                palette,
+                *palette,
                 ours::default::DARK,
                 "`{}` set nothing — Role and Palette have drifted",
-                role.key()
+                Role::ALL[index].key()
+            );
+            assert!(
+                palettes
+                    .iter()
+                    .skip(index + 1)
+                    .all(|other| other != palette),
+                "`{}` sets the same field as a later role — Role and Palette have aliased",
+                Role::ALL[index].key()
             );
         }
     }

@@ -967,17 +967,6 @@ fn diagnostics_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `ctrl-t` opens the theme picker, seated on the theme in force.
-///
-/// Refused where the frame cannot draw a list, for the reason [`open_palette`]
-/// gives. Gated on the palette's own room rather than on a measurement of its
-/// own: the picker is the smaller block, so a frame that holds a palette holds
-/// a picker.
-///
-/// Refused over a live prompt too, which no unmodified key needs to say: the
-/// ctrl layer is dispatched above every overlay, so this is the one opener a
-/// prompt cannot swallow, and replacing one would strand the panel under a
-/// half-typed query with nothing left holding the filter it had.
 /// Where `choice` sits in the picker's list: the built-ins, then the
 /// config's own, in config order — the same order [`crate::view`] labels it.
 fn theme_picker_index(config: &Config, choice: &ThemeChoice) -> Option<usize> {
@@ -1009,6 +998,17 @@ fn theme_at_picker_index(config: &Config, index: usize) -> Option<ThemeChoice> {
         })
 }
 
+/// `ctrl-t` opens the theme picker, seated on the theme in force.
+///
+/// Refused where the frame cannot draw a list, for the reason [`open_palette`]
+/// gives. Gated on the palette's own room rather than on a measurement of its
+/// own: the picker is the smaller block, so a frame that holds a palette holds
+/// a picker.
+///
+/// Refused over a live prompt too, which no unmodified key needs to say: the
+/// ctrl layer is dispatched above every overlay, so this is the one opener a
+/// prompt cannot swallow, and replacing one would strand the panel under a
+/// half-typed query with nothing left holding the filter it had.
 fn open_themes(state: &mut State) {
     if state.geometry.command_rows() == 0 || matches!(state.overlay, Some(Overlay::Search(_))) {
         return;
