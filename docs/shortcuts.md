@@ -142,6 +142,12 @@ palette — a frame too small to draw a list gets neither — and it is also
 refused over a live search prompt (see the prompt's subsection above). The
 palette carries a row for it.
 
+The list is the twelve built-in themes, followed by whatever `[[themes]]`
+the config layers define — a config-defined theme is never listed before a
+built-in, so the picker's first twelve rows are the same across every
+project. A config file with no custom themes leaves the list exactly as it
+was before config existed.
+
 | Key | Effect |
 |---|---|
 | `j` / `k`, `Down` / `Up` | Moves the cursor, **and sets `State.theme`** — the frame repaints in that theme immediately. |
@@ -164,6 +170,25 @@ The picker is behind ctrl because no shifted letter is bound in the program:
 `T` was the one exception and has been given back, so `A`, `B`, `C`, `D`, `T`
 and `U` are now unbound alike (§2, §4). `t` itself is free again since the
 focus letters moved to `a`/`b`/`c`/`d`.
+
+### The configuration diagnostics overlay
+
+`Overlay::Diagnostics` opens itself, once, at startup — there is no key that
+opens it, because there is nothing to preview: it exists only to say what a
+config file got wrong before the first frame is drawn. If neither config
+file has a problem it never appears at all.
+
+| Key | Effect |
+|---|---|
+| `j` / `k`, `Down` / `Up` | Moves the cursor. |
+| `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen. |
+| `Home` / `End` | To the first / last diagnostic. |
+| `Esc` | Closes it. |
+
+Unlike the palette, the prompt and the theme picker, `q` does nothing here
+rather than quitting: a diagnostics list is read once and dismissed, and the
+one key a user reaches for on a screen full of text they did not ask to read
+is `Esc`, not `q` — see [design](specs/2026-08-14-configuration-design.md) §9.
 
 ### Motion
 
@@ -561,6 +586,12 @@ every step (§1's picker subsection, themes design §6). Like the palette it
 also leaves `q` quitting rather than swallowing it: a key that means quit
 everywhere except in one overlay is not a key anyone can trust without
 looking, so an overlay that changes that meaning has to say so.
+
+The configuration diagnostics overlay sits at the same rank, but is entered
+by nothing the user presses — it opens itself at startup, if either config
+file had something to report, and is left with `Esc` alone. It takes motion
+the same as the palette and the picker, and it is the one overlay of the
+four where `q` does not quit: see its own subsection above.
 
 **`Esc` resolves in one order, first hit wins.** An overlay up is dismissed
 first — a search prompt cancels, restoring the filter it found applied; the

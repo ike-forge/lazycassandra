@@ -26,6 +26,31 @@ mise run check   # fmt, clippy with warnings denied, licences and advisories
 mise run ci      # everything CI gates on
 ```
 
+## Configuration
+
+Two TOML files, layered lowest to highest: a user-level
+`$XDG_CONFIG_HOME/lazycassandra/config.toml`, and a project
+`.lazycassandra.toml` — the LazySQL model. **The project file is meant to be
+committed to git**, so a teammate clones the repo, runs `lazycassandra`, and
+is connected. Both are optional.
+
+```toml
+theme = "default-dark"
+
+[[connections]]
+name     = "dev"
+hosts    = ["127.0.0.1:9042"]
+posture  = "read-only"
+username = "cassandra"
+password = { env = "DEV_CASSANDRA_PW" }
+```
+
+A file that gets something wrong does not stop the tool — the smallest
+addressable unit is dropped and every drop is reported in a diagnostics
+overlay at startup. See
+[docs/superpowers/specs/2026-08-14-configuration-design.md](docs/superpowers/specs/2026-08-14-configuration-design.md)
+for the full schema and the reasoning behind it.
+
 ## Clipboard
 
 `y` copies the focused row by two routes at once, because neither reaches

@@ -8,9 +8,10 @@ guessed at.
 shell rendering, the driver decided (§8), the first end-to-end query path: a
 keypress becomes an `Effect::Execute` and a driver page becomes a grid
 navigable in both axes, a writable CQL buffer in the Queries panel
-(`editor.rs`), and a themed renderer with a runtime picker (`T`) over five
-themes (§6).
-**Last updated:** 2026-08-10
+(`editor.rs`), a themed renderer with a runtime picker (`ctrl-t`) over twelve built-in
+themes plus whatever a config file adds (§6), and layered TOML configuration
+with startup diagnostics (§7).
+**Last updated:** 2026-08-15
 
 ---
 
@@ -220,8 +221,8 @@ async.
 | Port | Responsibility |
 |---|---|
 | `Cluster` | connect, describe schema, execute, fetch page, node/table state |
-| `ConfigSource` | locate and layer config files |
-| `SecretResolver` | resolve a credential reference (env / file / command) to a value |
+| `ConfigSource` | locate, layer and validate config files; never fails |
+| `SecretResolver` | resolve a credential (literal / env / file) to a value |
 | `Store` | query history, saved queries |
 
 Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
@@ -247,21 +248,22 @@ enum Token {
 }
 ```
 
-A theme is a `Palette` — a struct of 28 plain `Color` fields, no
+A theme is a `Palette` — a struct of 30 plain `Color` fields, no
 `Option<Color>` — plus one `Token -> ratatui::Style` function shared by every
 theme, both in `lc-inbound`. `ThemeChoice` lives in `lc-domain` instead,
-because a theme *name* is not a colour: `State.theme` holds one, and
-`Theme::of` in `lc-inbound` is the single place a name becomes a `Palette`.
+because a theme *name* is not a colour: `State.theme` holds one.
 
-`ThemeChoice` splits into two variants, `Ours(Ours)` and `Ported(Ported)`.
-`Ours` holds the eight palettes we author — Default, Ash, Beacon and Quill,
-each light and dark — and `Ported` holds the four Catppuccin flavours we take
-as given. The split is structural rather than a naming convention because the
-contrast sweep — in `theme::tests`, over the ratios `contrast.rs` computes —
-is written against `Ours::ALL`: it takes an `Ours` and cannot name a `Ported`
-theme by type, so "we impose no contrast requirement on a ported palette" is a
-fact the compiler enforces, not a policy someone could forget to apply. Adding
-a ported theme is one enum variant and one `const`, with no test to appease.
+`ThemeChoice` has three variants: `Ours(Ours)` and `Ported(Ported)` for the
+twelve built-ins, and `Custom(ThemeName)` for a palette a config file
+supplies under `[[themes]]`. `Ours` holds the eight palettes we author —
+Default, Ash, Beacon and Quill, each light and dark — and `Ported` holds the
+four Catppuccin flavours we take as given. The `Ours`/`Ported` split is
+structural rather than a naming convention because the contrast sweep — in
+`theme::tests`, over the ratios `contrast.rs` computes — is written against
+`Ours::ALL`: it takes an `Ours` and cannot name a `Ported` theme by type, so
+"we impose no contrast requirement on a ported palette" is a fact the
+compiler enforces, not a policy someone could forget to apply. Adding a
+ported theme is one enum variant and one `const`, with no test to appease.
 
 Adding one of ours is not enforced by the type system, because `Ours::ALL` is
 a hand-written array and the compiler cannot check that it lists every
@@ -272,32 +274,38 @@ then fails until `ALL` lists it too. Two steps, both of which have to be taken
 before the build is green again — but a deliberate edit to both could still
 leave a palette unswept.
 
-Practical consequence: nothing in the domain has to change to add a theme,
-and no theme can invent a meaning the domain didn't define. See
-specs/2026-08-13-colour-palettes-design.md for the roles, all twelve themes,
-and the runtime picker (`T`).
+A built-in resolves through `Theme::of`, the match from name to `Palette`
+that reads the built-in's own `const`. A custom one does not — `Theme::of`
+alone cannot answer for a palette it never sees. Resolution goes through
+`lc-inbound`'s `Themes` table instead, built once at startup from
+`Config.themes`: for each custom theme it starts from the palette `extends`
+names and overwrites the stated roles, so a partial palette is always
+complete. `Theme::of(choice)` becomes `themes.get(&choice)` — one lookup, no
+per-frame work, and the same table answers for a built-in and a custom theme
+alike.
+
+Practical consequence: nothing in the domain has to change to add a
+built-in theme, and no theme can invent a meaning the domain didn't define.
+See specs/2026-08-13-colour-palettes-design.md for the roles, all twelve
+built-in themes, and the runtime picker (`ctrl-t`).
 
 ## 7. Configuration
 
 Layered, lowest to highest: built-in defaults → user config
-(`$XDG_CONFIG_HOME/lazycassandra/config.yml`) → project `.lazycassandra.yml` →
-environment → command-line flags.
+(`$XDG_CONFIG_HOME/lazycassandra/config.toml`) → project
+`.lazycassandra.toml`. Environment and command-line layers are designed for
+and not yet built.
 
-Loading and merging is `lc-outbound`; the merged, validated result is a domain
-type. Invalid config fails at startup with a pointed message, not lazily on
-first use.
+Discovery, parsing, merging and validation are `lc-outbound`; the merged,
+validated result is `lc_domain::config::Config`, which is total — `Option`
+lives in the wire structs and stops there. A file that is wrong does not
+stop the tool: the smallest addressable unit is dropped, the rest applies,
+and every drop is reported in a modal at startup.
 
-**Secrets are references, never values** (VISION §6). The config type makes this
-unrepresentable rather than merely discouraged:
+Credentials are `Literal`, `Env` or `File`. There is no `Command` variant,
+so nothing in the configuration path executes anything.
 
-```rust
-enum CredentialRef { Env(String), File(PathBuf), Command(Vec<String>) }
-```
-
-There is no `Password(String)` variant, so a literal password in a committed
-file is a parse error rather than a leak. Resolution happens through
-`SecretResolver` at connect time, and resolved secrets are never written back to
-disk or into the history store.
+Full design: specs/2026-08-14-configuration-design.md.
 
 ## 8. Driver — decided
 
