@@ -230,6 +230,18 @@ impl TablesPanel {
             self.cursor.go_to(index, rows.len());
         }
     }
+
+    /// Whether the range covers more than the row the cursor is on.
+    ///
+    /// What makes `Enter` inert and the Table DDL panel describe nothing: both
+    /// act on one node, and a range names several
+    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §4).
+    #[must_use]
+    pub fn selects_many(&self) -> bool {
+        self.selection
+            .range(self.cursor.index())
+            .is_some_and(|range| range.rows() > 1)
+    }
 }
 
 /// Schema builders shared by every module in this crate that projects a tree.

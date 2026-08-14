@@ -196,7 +196,14 @@ pub(super) fn body(state: &State) -> PanelBody {
 /// [`ddl_rows`](super::ddl_rows) counts the rows the panel actually draws: the
 /// cursor is clamped against that count, and a count of rows nobody can see
 /// would let it walk off the end of a filtered panel (design §3.3).
+///
+/// A range covering more than one row also answers `None`: the panel
+/// describes one node, and a range names several (design §4).
 pub(super) fn of(state: &State) -> Option<Details> {
+    if state.tables.selects_many() {
+        return None;
+    }
+
     let schema = state.schema()?;
 
     let mut details = match (state.tables.selected(schema)?, shown_tab(state)) {
@@ -1143,6 +1150,22 @@ mod tests {
         };
 
         assert_eq!(selected, 3);
+    }
+
+    #[test]
+    fn a_multi_row_selection_leaves_the_panel_describing_nothing() {
+        let mut state = tabled(&[("shop", &["orders", "users"])]);
+        let schema = state.schema().expect("just loaded").clone();
+        state.tables.toggle(&schema);
+        let len = state.tables.rows(&schema).len();
+
+        state.tables.selection.start(state.tables.cursor.index());
+        state.tables.cursor.down(len);
+
+        assert!(
+            of(&state).is_none(),
+            "a panel that describes one node has nothing to say about three"
+        );
     }
 
     #[test]

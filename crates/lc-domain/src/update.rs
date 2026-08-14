@@ -544,6 +544,12 @@ fn wheel(state: &mut State, panel: Panel, direction: Wheel) {
 fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
     state.focus = click.panel();
 
+    // A press names one row, so it spends the range rather than standing
+    // beside it and making the next `y` lie (design §4).
+    for selection in selections(state, click.panel()).into_iter().flatten() {
+        selection.clear();
+    }
+
     let (panel, row, column) = match click {
         Click::Row { panel, row, column } => (panel, Some(row), column),
         Click::Column { panel, column } => (panel, None, Some(column)),
@@ -1290,6 +1296,10 @@ fn follow_moved_cursors(state: &mut State, before: [usize; 2]) {
 
 /// `Enter` and `Space`: unfold a keyspace, or read a table.
 fn activate(state: &mut State) -> Vec<Effect> {
+    if state.tables.selects_many() {
+        return Vec::new();
+    }
+
     if state.focus != Panel::Tables {
         return Vec::new();
     }
@@ -2932,6 +2942,65 @@ mod tests {
             effects.is_empty(),
             "folding is a pure state change and must emit no effect (table-list design §2)"
         );
+    }
+
+    #[test]
+    fn enter_is_inert_while_more_than_one_row_is_selected() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            effects.is_empty(),
+            "a range names more than one thing to open"
+        );
+        assert_eq!(state.focus, Panel::Tables, "and focus stays put");
+    }
+
+    #[test]
+    fn enter_still_reads_a_table_with_one_row_selected() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Execute { .. })),
+            "pressing v must not blank the panel before anything has been extended"
+        );
+    }
+
+    #[test]
+    fn a_click_clears_the_range_it_lands_beside() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+
+        update(
+            &mut state,
+            Msg::Pointer(Pointer::Click(Click::Row {
+                panel: Panel::Tables,
+                row: 2,
+                column: None,
+            })),
+        );
+
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            None,
+            "pointing at one row is saying: this one"
+        );
+        assert_eq!(state.tables.cursor.index(), 2);
     }
 
     /// One key for one action: `Space` was `Enter`'s synonym and is now free
@@ -6463,6 +6532,7 @@ mod tests {
     #[test]
     fn v_in_cell_mode_extends_a_rectangle() {
         let mut state = grid_of_named_cells(3, 4);
+        press(&mut state, Key::Char('l'));
 
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
@@ -6470,11 +6540,13 @@ mod tests {
 
         assert_eq!(
             state.contents.rows.range(state.contents.cursor.index()),
-            Some(Range::new(0, 1))
+            Some(Range::new(0, 1)),
+            "the row anchor was set before the column moved off zero"
         );
         assert_eq!(
             state.contents.columns.range(state.contents.column.index()),
-            Some(Range::new(0, 1))
+            Some(Range::new(1, 2)),
+            "the column anchor was set after `l`, not swapped with the row's"
         );
     }
 
