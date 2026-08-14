@@ -13,7 +13,7 @@ mod contrast;
 
 use std::collections::BTreeMap;
 
-use lc_domain::config::CustomTheme;
+use lc_domain::config::{Background, CustomTheme};
 use lc_domain::posture::Posture;
 use lc_domain::style::{Severity, Token};
 use lc_domain::theme::{Role, ThemeName};
@@ -270,11 +270,12 @@ impl Theme {
 #[derive(Debug, Clone, Default)]
 pub struct Themes {
     custom: BTreeMap<ThemeName, Palette>,
+    background: Background,
 }
 
 impl Themes {
     #[must_use]
-    pub fn new(themes: &[CustomTheme]) -> Self {
+    pub fn new(themes: &[CustomTheme], background: Background) -> Self {
         let custom = themes
             .iter()
             .map(|theme| {
@@ -288,7 +289,7 @@ impl Themes {
             })
             .collect();
 
-        Self { custom }
+        Self { custom, background }
     }
 
     /// The palette `choice` names.
@@ -298,13 +299,34 @@ impl Themes {
     /// than a path anything takes.
     #[must_use]
     pub fn get(&self, choice: &ThemeChoice) -> Theme {
-        match choice {
+        let palette = match choice {
             ThemeChoice::Custom(name) => self.custom.get(name).map_or_else(
-                || Theme::of(&ThemeChoice::default()),
-                |palette| Theme { palette: *palette },
+                || Theme::of(&ThemeChoice::default()).palette(),
+                |palette| *palette,
             ),
-            built_in => Theme::of(built_in),
+            built_in => Theme::of(built_in).palette(),
+        };
+
+        Theme {
+            palette: self.grounded(palette),
         }
+    }
+
+    /// Overrides `base` and nothing else.
+    ///
+    /// `surface`, `selection_bg` and `crosshair` stay the palette's, so an
+    /// overlay and the cursor row keep the contrast they were measured for
+    /// even when the field behind them is the user's (design §4).
+    fn grounded(&self, mut palette: Palette) -> Palette {
+        match self.background {
+            Background::Theme => {}
+            // Not a colour: paint nothing, which is the only mechanism that
+            // lets a translucent or blurred terminal show through.
+            Background::Terminal => palette.base = Color::Reset,
+            Background::Fixed(rgb) => palette.base = Color::Rgb(rgb.red, rgb.green, rgb.blue),
+        }
+
+        palette
     }
 }
 
@@ -747,7 +769,7 @@ pub(crate) mod tests {
                 },
             )]),
         };
-        let themes = Themes::new(std::slice::from_ref(&custom));
+        let themes = Themes::new(std::slice::from_ref(&custom), Background::Theme);
         let resolved = themes
             .get(&ThemeChoice::Custom(custom.name.clone()))
             .palette();
@@ -763,7 +785,52 @@ pub(crate) mod tests {
 
     #[test]
     fn a_built_in_resolves_the_same_through_the_table_as_it_does_directly() {
-        let themes = Themes::new(&[]);
+        let themes = Themes::new(&[], Background::Theme);
+
+        for built_in in BuiltIn::ALL {
+            let choice = ThemeChoice::from(built_in);
+
+            assert_eq!(themes.get(&choice).palette(), Theme::of(&choice).palette());
+        }
+    }
+
+    #[test]
+    fn a_fixed_background_replaces_base_and_leaves_the_measured_grounds_alone() {
+        let themes = Themes::new(
+            &[],
+            Background::Fixed(Rgb {
+                red: 0x0b,
+                green: 0x0d,
+                blue: 0x12,
+            }),
+        );
+        let resolved = themes.get(&ThemeChoice::Ours(Ours::AshDark)).palette();
+        let original = Theme::of(&ThemeChoice::Ours(Ours::AshDark)).palette();
+
+        assert_eq!(resolved.base, Color::Rgb(0x0b, 0x0d, 0x12));
+        assert_eq!(
+            resolved.surface, original.surface,
+            "an overlay keeps the contrast it was measured for"
+        );
+        assert_eq!(resolved.selection_bg, original.selection_bg);
+        assert_eq!(resolved.crosshair, original.crosshair);
+    }
+
+    #[test]
+    fn a_terminal_background_paints_nothing_so_a_translucent_terminal_shows_through() {
+        let themes = Themes::new(&[], Background::Terminal);
+        let resolved = themes.get(&ThemeChoice::Ours(Ours::AshDark)).palette();
+
+        assert_eq!(
+            resolved.base,
+            Color::Reset,
+            "a colour would paint over exactly what this option exists to reveal"
+        );
+    }
+
+    #[test]
+    fn the_default_background_leaves_every_palette_as_its_author_wrote_it() {
+        let themes = Themes::new(&[], Background::Theme);
 
         for built_in in BuiltIn::ALL {
             let choice = ThemeChoice::from(built_in);
@@ -774,7 +841,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_name_no_theme_claims_falls_back_to_the_default_rather_than_panicking() {
-        let themes = Themes::new(&[]);
+        let themes = Themes::new(&[], Background::Theme);
         let missing = ThemeChoice::Custom(ThemeName::try_new("nowhere").expect("valid"));
 
         assert_eq!(
