@@ -468,6 +468,12 @@ impl Range {
 /// of step with it. Freezing is the one moment the derived range is written
 /// down, and it is written down exactly because the cursor is about to stop
 /// meaning it.
+///
+/// A frozen range keeps its anchor beside it rather than only its ends. The
+/// two are not the same question — the ends say which rows are selected, the
+/// anchor says which of them the user started from — and `y` sends the cursor
+/// home to the anchor, so a range that only knew its ends could not answer it
+/// once the cursor had left (design §7).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Selection {
     #[default]
@@ -475,10 +481,22 @@ pub enum Selection {
     Extending {
         anchor: usize,
     },
-    Held(Range),
+    Held {
+        anchor: usize,
+        range: Range,
+    },
 }
 
 impl Selection {
+    /// A frozen range between the two ends, in either order.
+    #[must_use]
+    pub const fn held(anchor: usize, cursor: usize) -> Self {
+        Self::Held {
+            anchor,
+            range: Range::new(anchor, cursor),
+        }
+    }
+
     /// Starts extending from `cursor`, discarding whatever was held.
     pub const fn start(&mut self, cursor: usize) {
         *self = Self::Extending { anchor: cursor };
@@ -488,7 +506,7 @@ impl Selection {
     /// it. Does nothing to a range already frozen.
     pub const fn stop(&mut self, cursor: usize) {
         if let Self::Extending { anchor } = *self {
-            *self = Self::Held(Range::new(anchor, cursor));
+            *self = Self::held(anchor, cursor);
         }
     }
 
@@ -508,7 +526,16 @@ impl Selection {
         match self {
             Self::None => None,
             Self::Extending { anchor } => Some(Range::new(anchor, cursor)),
-            Self::Held(range) => Some(range),
+            Self::Held { range, .. } => Some(range),
+        }
+    }
+
+    /// The end the user started from, which `y` sends the cursor back to.
+    #[must_use]
+    pub const fn anchor(self) -> Option<usize> {
+        match self {
+            Self::None => None,
+            Self::Extending { anchor } | Self::Held { anchor, .. } => Some(anchor),
         }
     }
 
@@ -533,14 +560,17 @@ impl Selection {
                     *self = Self::Extending { anchor: last };
                 }
             }
-            Self::Held(range) => {
+            Self::Held { anchor, range } => {
                 if range.first > last {
                     *self = Self::None;
                 } else if range.last > last {
-                    *self = Self::Held(Range {
-                        first: range.first,
-                        last,
-                    });
+                    *self = Self::Held {
+                        anchor: if anchor > last { last } else { anchor },
+                        range: Range {
+                            first: range.first,
+                            last,
+                        },
+                    };
                 }
             }
         }
@@ -1524,6 +1554,44 @@ mod tests {
 
         assert_eq!(selection.range(0), Some(Range::new(0, 4)));
         assert!(selection.is_extending());
+    }
+
+    #[test]
+    fn a_selection_remembers_which_end_it_grew_from() {
+        let mut upwards = Selection::default();
+        upwards.start(9);
+
+        assert_eq!(upwards.anchor(), Some(9));
+
+        upwards.stop(2);
+
+        assert_eq!(
+            upwards.anchor(),
+            Some(9),
+            "freezing the range must not lose which end the cursor came from"
+        );
+        assert_eq!(upwards.range(0), Some(Range::new(2, 9)));
+    }
+
+    #[test]
+    fn nothing_selected_anchors_nowhere() {
+        assert_eq!(Selection::None.anchor(), None);
+    }
+
+    #[test]
+    fn a_truncated_range_pulls_its_anchor_back_too() {
+        let mut selection = Selection::default();
+        selection.start(9);
+        selection.stop(2);
+
+        selection.clamp_to(5);
+
+        assert_eq!(selection.range(0), Some(Range::new(2, 4)));
+        assert_eq!(
+            selection.anchor(),
+            Some(4),
+            "an anchor left past the end would send a cursor off the list"
+        );
     }
 
     #[test]

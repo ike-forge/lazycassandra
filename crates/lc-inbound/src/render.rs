@@ -574,8 +574,7 @@ mod tests {
     use lc_domain::posture::Posture;
     use lc_domain::search::{Filter, Filtered, Prompt};
     use lc_domain::state::{
-        Connection, ConnectionState, Geometry, Message, Overlay, Panel, Range, SchemaState,
-        Selection,
+        Connection, ConnectionState, Geometry, Message, Overlay, Panel, SchemaState, Selection,
     };
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
@@ -1268,7 +1267,7 @@ mod tests {
     #[test]
     fn a_ranged_tree_row_carries_the_bar_and_the_band() {
         let mut state = browsing(&["shop", "typezoo", "system"], 0);
-        state.tables.selection = Selection::Held(Range::new(0, 1));
+        state.tables.selection = Selection::held(0, 1);
 
         let buffer = draw_state(40, 12, &state);
 
@@ -1808,7 +1807,7 @@ mod tests {
         let mut state = showing(sized_page(2, 4));
         state.contents.mode = SelectionMode::Row;
         state.contents.cursor.down(4);
-        state.contents.rows = Selection::Held(Range::new(0, 2));
+        state.contents.rows = Selection::held(0, 2);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -1844,8 +1843,8 @@ mod tests {
         // The grid opens in row mode, and only cell mode has a rectangle: the
         // projection gives a column range on no other (visual mode design §3).
         state.contents.mode = SelectionMode::Cell;
-        state.contents.rows = Selection::Held(Range::new(0, 1));
-        state.contents.columns = Selection::Held(Range::new(0, 1));
+        state.contents.rows = Selection::held(0, 1);
+        state.contents.columns = Selection::held(0, 1);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -1875,7 +1874,7 @@ mod tests {
     fn a_column_range_bands_its_columns_and_lights_no_gutter_bar() {
         let mut state = showing(sized_page(3, 3));
         state.contents.mode = SelectionMode::Column;
-        state.contents.columns = Selection::Held(Range::new(0, 1));
+        state.contents.columns = Selection::held(0, 1);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -2167,8 +2166,8 @@ mod tests {
     fn a_ranged_cell_keeps_its_band_where_the_crosshair_crosses_it() {
         let mut state = showing(sized_page(4, 3));
         state.contents.mode = SelectionMode::Cell;
-        state.contents.rows = Selection::Held(Range::new(0, 1));
-        state.contents.columns = Selection::Held(Range::new(0, 1));
+        state.contents.rows = Selection::held(0, 1);
+        state.contents.columns = Selection::held(0, 1);
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -2348,7 +2347,7 @@ mod tests {
         // check keyed on the drawn position rather than the page column would
         // either band the wrong cell or, since no drawn position is 6, band
         // nothing at all in a window this size.
-        state.contents.columns = Selection::Held(Range::new(6, 6));
+        state.contents.columns = Selection::held(6, 6);
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -2797,7 +2796,7 @@ mod tests {
         // Row 1 is the table identity row, which wraps to two lines
         // (`a_selected_tables_shape_is_drawn_above_its_options`); row 2 is
         // `customer_id`, outside the range.
-        state.ddl.selection = Selection::Held(Range::new(0, 1));
+        state.ddl.selection = Selection::held(0, 1);
 
         let buffer = draw_state(100, 41, &state);
         let rows = ddl_rows(&buffer);
