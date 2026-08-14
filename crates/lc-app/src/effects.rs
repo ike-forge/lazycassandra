@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use lc_domain::ports::Cluster;
+use lc_domain::ports::{Cluster, Writer};
 use lc_domain::{Effect, Msg};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -19,7 +19,12 @@ use crate::input::Incoming;
 /// stream every frame is written to, so it is handled below like the rest.
 /// `Quit` needs no work here — `update` has already set
 /// `State::should_quit`.
-pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, effect: &Effect) {
+pub(crate) fn run(
+    tx: &UnboundedSender<Incoming>,
+    cluster: &Arc<dyn Cluster>,
+    writer: &Arc<dyn Writer>,
+    effect: &Effect,
+) {
     match effect {
         Effect::Connect(conn) => {
             let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
@@ -89,13 +94,28 @@ pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, ef
             crate::clipboard::hand_off(line);
         }
 
-        // `Export` is not wired to a port yet — the paging loop that drives
-        // `Writer`/`Sink` and reports `Msg::ExportProgress`/`ExportFinished`
-        // is a later task's.
-        Effect::Cancel(_)
-        | Effect::RecordHistory(_)
-        | Effect::OpenEditor { .. }
-        | Effect::Export { .. }
-        | Effect::Quit => {}
+        Effect::Export {
+            conn,
+            job,
+            source,
+            destination,
+            format,
+            overwrite,
+        } => crate::export::spawn(
+            tx,
+            cluster,
+            writer,
+            crate::export::Job {
+                conn: *conn,
+                id: *job,
+                source: source.clone(),
+                destination: destination.clone(),
+                format: *format,
+                overwrite: *overwrite,
+            },
+        ),
+
+        Effect::Cancel(_) | Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {
+        }
     }
 }
