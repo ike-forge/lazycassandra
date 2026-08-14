@@ -67,6 +67,10 @@ const GLOBAL: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('y'))],
         action: "yank",
     },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('v'))],
+        action: "select rows",
+    },
 ];
 
 /// `/` joins the focused panel's own group, not `GLOBAL`: it does nothing in
@@ -400,6 +404,14 @@ mod tests {
             }),
             "the palette claims to be complete, and ctrl-r is the one binding no key types"
         );
+    }
+
+    #[test]
+    fn the_catalogue_lists_visual_mode() {
+        assert!(rows().contains(&CommandRow::Command {
+            keys: "v".to_owned(),
+            action: "select rows",
+        }));
     }
 
     #[test]

@@ -13,7 +13,8 @@ use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, SchemaState, Scroll, State,
+    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, Range, SchemaState, Scroll,
+    Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
@@ -129,7 +130,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     let subject = described(state);
     let cursors = cursor_indices(state);
     let scrolls = (state.tables.scroll, state.contents.scroll);
-    let columns = state.contents.columns;
+    let column_scroll = state.contents.column_scroll;
 
     let effects = apply(state, msg);
 
@@ -139,6 +140,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     if described(state) != subject {
         state.ddl.cursor.to_start();
         state.ddl.scroll.to_start();
+        state.ddl.selection.clear();
     }
 
     clamp_lists(state);
@@ -153,7 +155,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
 
     // `Msg::Measured` marks nothing dirty by itself, so a clamp it provoked
     // would otherwise not be drawn until the next unrelated keypress.
-    if (state.tables.scroll, state.contents.scroll) != scrolls || state.contents.columns != columns
+    if (state.tables.scroll, state.contents.scroll) != scrolls
+        || state.contents.column_scroll != column_scroll
     {
         state.mark_dirty();
     }
@@ -334,23 +337,34 @@ fn quit(state: &mut State) -> Vec<Effect> {
 /// Nothing under the cursor yanks nothing: there is nothing there to say
 /// anything about (yank design §1).
 ///
-/// An empty line raises no effect either. `Effect::Yank` becomes an OSC 52
-/// sequence, and an empty payload asks the terminal to clear its clipboard, so
-/// a projection with nothing to say must say nothing rather than wipe what the
-/// user had copied (selection-modes design §4). Every projection converges
-/// here, so no shape can reach the clipboard empty.
+/// A payload holding nothing but `,` and `\n` raises no effect either.
+/// `Effect::Yank` becomes an OSC 52 sequence, and an empty payload asks the
+/// terminal to clear its clipboard, so a projection with nothing but
+/// delimiters to say must say nothing rather than wipe what the user had
+/// copied (selection-modes design §4). Every projection converges here, so no
+/// shape can reach the clipboard empty.
 fn yank(state: &State) -> Vec<Effect> {
     let line = match state.focus {
         Panel::Contents => contents(state),
-        Panel::Tables => tree_node(state),
-        Panel::Ddl => detail_row(state),
+        Panel::Tables => tree_nodes(state),
+        Panel::Ddl => detail_rows(state),
         Panel::Queries => None,
     };
 
-    line.filter(|line| !line.is_empty())
+    // A payload of nothing but delimiters says nothing, and `Effect::Yank`
+    // becomes an OSC 52 sequence: an empty one asks the terminal to clear the
+    // clipboard (design §5).
+    line.filter(|line| line.chars().any(|c| c != ',' && c != '\n'))
         .map(Effect::Yank)
         .into_iter()
         .collect()
+}
+
+/// The range, or the one row the cursor is on when nothing is selected.
+fn spanned(selection: Selection, cursor: usize) -> Range {
+    selection
+        .range(cursor)
+        .unwrap_or_else(|| Range::new(cursor, cursor))
 }
 
 /// Which of the grid's two cursors `y` means is what the selection mode
@@ -360,34 +374,53 @@ fn contents(state: &State) -> Option<String> {
         return None;
     };
     let page = page.page();
+    let rows = spanned(state.contents.rows, state.contents.cursor.index());
+    let columns = spanned(state.contents.columns, state.contents.column.index());
 
     match state.contents.mode {
-        SelectionMode::Row => {
-            let row = page.rows.get(state.contents.cursor.index())?;
-
-            Some(crate::yank::grid_row(row))
-        }
-        SelectionMode::Cell => {
-            let row = page.rows.get(state.contents.cursor.index())?;
-            let value = row.values.get(state.contents.column.index())?;
-
-            crate::yank::grid_cell(value)
-        }
-        SelectionMode::Column => Some(crate::yank::grid_column(
+        SelectionMode::Row => Some(crate::yank::grid_block(
             &page.rows,
-            state.contents.column.index(),
+            rows,
+            Range::new(0, page.columns.len().saturating_sub(1)),
         )),
+        SelectionMode::Cell => {
+            if rows.rows() == 1 && columns.rows() == 1 {
+                let row = page.rows.get(rows.first())?;
+                let value = row.values.get(columns.first())?;
+
+                return crate::yank::grid_cell(value);
+            }
+
+            Some(crate::yank::grid_block(&page.rows, rows, columns))
+        }
+        SelectionMode::Column => Some(crate::yank::grid_columns(&page.rows, columns)),
     }
 }
 
-fn tree_node(state: &State) -> Option<String> {
+fn tree_nodes(state: &State) -> Option<String> {
     let schema = state.schema()?;
+    let rows = state.tables.rows(schema);
+    let range = spanned(state.tables.selection, state.tables.cursor.index());
 
-    Some(crate::yank::node(&state.tables.selected(schema)?))
+    Some(crate::yank::lines(
+        rows.iter()
+            .enumerate()
+            .filter(|(index, _)| range.contains(*index))
+            .map(|(_, node)| crate::yank::node(node)),
+    ))
 }
 
-fn detail_row(state: &State) -> Option<String> {
-    Some(crate::yank::detail_row(&crate::view::ddl_row(state)?))
+fn detail_rows(state: &State) -> Option<String> {
+    let details = crate::view::details_of(state)?;
+    let range = spanned(state.ddl.selection, state.ddl.cursor.index());
+
+    Some(crate::yank::lines(
+        details
+            .rows()
+            .enumerate()
+            .filter(|(index, _)| range.contains(*index))
+            .map(|(_, row)| crate::yank::detail_row(row)),
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -463,9 +496,16 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('y') => return yank(state),
         Key::Char('m') => {
             if state.focus == Panel::Contents {
+                // A range's axis is the mode's axis, so carrying one across
+                // would address rows or columns the user never chose — the
+                // argument `DdlPanel::show` already makes for the cursor
+                // (design §3).
+                state.contents.rows.clear();
+                state.contents.columns.clear();
                 state.contents.mode = state.contents.mode.next();
             }
         }
+        Key::Char('v') => toggle_visual(state),
         // Last, so every binding above keeps precedence over a panel key. A
         // DDL tab is a place the same way a panel is, so its key both focuses
         // the panel and draws the tab — one press to arrive, whichever tab was
@@ -534,6 +574,12 @@ fn wheel(state: &mut State, panel: Panel, direction: Wheel) {
 
 fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
     state.focus = click.panel();
+
+    // A press names one row, so it spends the range rather than standing
+    // beside it and making the next `y` lie (design §4).
+    for selection in selections(state, click.panel()).into_iter().flatten() {
+        selection.clear();
+    }
 
     let (panel, row, column) = match click {
         Click::Row { panel, row, column } => (panel, Some(row), column),
@@ -729,10 +775,11 @@ fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `Esc` resolves in one order, first hit wins: the overlay, then the focused
-/// panel's filter, then leaving a panel that takes text. One press does one of
-/// the three, never two — the thing most recently put on screen comes off
-/// first (panel search design §6).
+/// `Esc` resolves in one order, first hit wins: the overlay; then freezing an
+/// extending range; then clearing a frozen range; then the focused panel's
+/// filter; then leaving a panel that takes text (Queries hands focus back to
+/// Tables). One press does one of the five, never two — the thing most
+/// recently put on screen comes off first (panel search design §6).
 fn escape(state: &mut State) {
     match state.overlay.take() {
         Some(Overlay::Search(prompt)) => {
@@ -745,6 +792,12 @@ fn escape(state: &mut State) {
         }
         Some(Overlay::Message(_) | Overlay::Commands(_)) => return,
         None => {}
+    }
+
+    // Above the filter for the reason the overlay is above both: the thing
+    // most recently put on screen comes off first (design §1).
+    if stop_extending(state) || clear_selection(state) {
+        return;
     }
 
     if let Some(target) = Filtered::of(state.focus)
@@ -1010,6 +1063,89 @@ fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
     }
 }
 
+/// The selections `panel` holds. Two for the grid, which selects on both axes
+/// (design §3); none for Queries, which is an editor.
+fn selections(state: &mut State, panel: Panel) -> [Option<&mut Selection>; 2] {
+    match panel {
+        Panel::Tables => [Some(&mut state.tables.selection), None],
+        Panel::Ddl => [Some(&mut state.ddl.selection), None],
+        Panel::Contents => match state.contents.mode {
+            SelectionMode::Row => [Some(&mut state.contents.rows), None],
+            SelectionMode::Column => [Some(&mut state.contents.columns), None],
+            SelectionMode::Cell => [
+                Some(&mut state.contents.rows),
+                Some(&mut state.contents.columns),
+            ],
+        },
+        Panel::Queries => [None, None],
+    }
+}
+
+/// `v`: start extending from the cursor, or freeze what is being extended.
+fn toggle_visual(state: &mut State) {
+    let cursors = axis_cursors(state, state.focus);
+
+    for (selection, cursor) in selections(state, state.focus)
+        .into_iter()
+        .zip(cursors)
+        .filter_map(|(selection, cursor)| Some((selection?, cursor)))
+    {
+        if selection.is_extending() {
+            selection.stop(cursor);
+        } else {
+            selection.start(cursor);
+        }
+    }
+}
+
+/// Where each of `panel`'s selections has its far end, in the order
+/// [`selections`] returns them.
+fn axis_cursors(state: &State, panel: Panel) -> [usize; 2] {
+    match panel {
+        Panel::Contents => match state.contents.mode {
+            SelectionMode::Column => [state.contents.column.index(), 0],
+            SelectionMode::Row | SelectionMode::Cell => {
+                [state.contents.cursor.index(), state.contents.column.index()]
+            }
+        },
+        Panel::Tables | Panel::Ddl | Panel::Queries => [cursor_index(state, panel), 0],
+    }
+}
+
+/// `esc`'s second rung: leave visual mode, keeping the range. Reports whether
+/// there was one to leave.
+fn stop_extending(state: &mut State) -> bool {
+    let cursors = axis_cursors(state, state.focus);
+    let mut stopped = false;
+
+    for (selection, cursor) in selections(state, state.focus)
+        .into_iter()
+        .zip(cursors)
+        .filter_map(|(selection, cursor)| Some((selection?, cursor)))
+    {
+        if selection.is_extending() {
+            selection.stop(cursor);
+            stopped = true;
+        }
+    }
+
+    stopped
+}
+
+/// `esc`'s third rung: drop the range. Reports whether there was one.
+fn clear_selection(state: &mut State) -> bool {
+    let mut cleared = false;
+
+    for selection in selections(state, state.focus).into_iter().flatten() {
+        if selection.range(0).is_some() {
+            selection.clear();
+            cleared = true;
+        }
+    }
+
+    cleared
+}
+
 /// Records what the last frame turned out to be, and repairs whatever that
 /// invalidates.
 ///
@@ -1155,6 +1291,18 @@ fn clamp_lists(state: &mut State) {
     // is — a schema reload that shrinks a table changes no geometry, so no
     // measurement arrives to clamp against.
     state.ddl.cursor.clamp_to(crate::view::ddl_rows(state));
+
+    // Beside the cursor clamps and for the same reason: a schema reload or a
+    // fold that shrinks a list changes no geometry, so no measurement arrives
+    // to clamp against (design §2).
+    state.tables.selection.clamp_to(tree_rows(state));
+    state.ddl.selection.clamp_to(crate::view::ddl_rows(state));
+
+    state.contents.rows.clamp_to(state.contents.row_count());
+    state
+        .contents
+        .columns
+        .clamp_to(state.contents.column_count());
 }
 
 /// Pulls the offset of each list whose selection moved, so the selection is
@@ -1180,6 +1328,10 @@ fn follow_moved_cursors(state: &mut State, before: [usize; 2]) {
 
 /// `Enter` and `Space`: unfold a keyspace, or read a table.
 fn activate(state: &mut State) -> Vec<Effect> {
+    if state.tables.selects_many() {
+        return Vec::new();
+    }
+
     if state.focus != Panel::Tables {
         return Vec::new();
     }
@@ -1325,13 +1477,13 @@ fn follow_grid_columns(state: &mut State) {
     let column = state.contents.column.index();
 
     let Some((widths, available)) = grid_columns(state) else {
-        state.contents.columns = ColumnScroll::default();
+        state.contents.column_scroll = ColumnScroll::default();
         return;
     };
 
     // Moved out and back so the widths can stay borrowed from the page they
     // were measured with rather than be copied per tick.
-    let mut columns = state.contents.columns;
+    let mut columns = state.contents.column_scroll;
     // Clamp first, follow second, mirroring `clamp_lists` before
     // `follow_moved_cursors` on the row axis: the clamp answers "is the
     // offset too far right for this page and this width", which can leave the
@@ -1340,7 +1492,7 @@ fn follow_grid_columns(state: &mut State) {
     columns.clamp_to(widths, available);
     columns.follow(column, widths, available);
 
-    state.contents.columns = columns;
+    state.contents.column_scroll = columns;
 }
 
 fn transition(state: &mut State, transition: Transition) {
@@ -1415,7 +1567,7 @@ mod tests {
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::search::{Filter, Filtered, Prompt};
-    use crate::state::{Connection, Span};
+    use crate::state::{Connection, Range, Span};
     use crate::theme::Ported;
     use crate::tree::tests_support::schema_of as tabled_schema;
     use crate::view::tests_support::tabled;
@@ -2824,6 +2976,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn enter_is_inert_while_more_than_one_row_is_selected() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            effects.is_empty(),
+            "a range names more than one thing to open"
+        );
+        assert_eq!(state.focus, Panel::Tables, "and focus stays put");
+    }
+
+    #[test]
+    fn enter_still_reads_a_table_with_one_row_selected() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Execute { .. })),
+            "pressing v must not blank the panel before anything has been extended"
+        );
+    }
+
+    #[test]
+    fn a_click_clears_the_range_it_lands_beside() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+
+        update(
+            &mut state,
+            Msg::Pointer(Pointer::Click(Click::Row {
+                panel: Panel::Tables,
+                row: 2,
+                column: None,
+            })),
+        );
+
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            None,
+            "pointing at one row is saying: this one"
+        );
+        assert_eq!(state.tables.cursor.index(), 2);
+    }
+
     /// One key for one action: `Space` was `Enter`'s synonym and is now free
     /// (docs/shortcuts.md §2, §3).
     #[test]
@@ -2960,7 +3171,7 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(state.contents.column.index(), 0);
-        assert_eq!(state.contents.columns.first(), 0);
+        assert_eq!(state.contents.column_scroll.first(), 0);
     }
 
     #[test]
@@ -2983,14 +3194,14 @@ mod tests {
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             0,
             "column 1 is already drawn"
         );
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             1,
             "the shortest move that draws column 2"
         );
@@ -3002,7 +3213,11 @@ mod tests {
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
-        assert_eq!(state.contents.columns.first(), 0, "all four fit at 80");
+        assert_eq!(
+            state.contents.column_scroll.first(),
+            0,
+            "all four fit at 80"
+        );
 
         update(
             &mut state,
@@ -3010,7 +3225,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             2,
             "the selected column must stay drawn after a resize"
         );
@@ -3022,7 +3237,11 @@ mod tests {
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
-        assert_eq!(state.contents.columns.first(), 2, "two of four fit at 8");
+        assert_eq!(
+            state.contents.column_scroll.first(),
+            2,
+            "two of four fit at 8"
+        );
 
         update(
             &mut state,
@@ -3030,7 +3249,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             0,
             "all four fit again, so none may be left hidden behind the offset"
         );
@@ -3047,7 +3266,7 @@ mod tests {
         // nothing was drawn, so the grid has no width at all.
         update(&mut state, Msg::Measured(Geometry::default()));
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             3,
             "with no room, the cursor's column is the only one worth drawing"
         );
@@ -3058,7 +3277,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             0,
             "restoring the size undoes it, without the user pressing h"
         );
@@ -3963,6 +4182,113 @@ mod tests {
         );
     }
 
+    fn yanked(effects: &[Effect]) -> Option<&str> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Yank(line) => Some(line.as_str()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn y_yanks_every_row_of_a_range_one_per_line() {
+        let mut state = grid_of_named_cells(2, 3);
+        state.contents.mode = SelectionMode::Row;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(yanked(&effects), Some("r0c0,r0c1\nr1c0,r1c1"));
+    }
+
+    #[test]
+    fn y_in_cell_mode_yanks_the_block_and_nothing_outside_it() {
+        let mut state = grid_of_named_cells(3, 3);
+        state.contents.mode = SelectionMode::Cell;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('l'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(yanked(&effects), Some("r0c0,r0c1\nr1c0,r1c1"));
+    }
+
+    #[test]
+    fn y_on_a_single_cell_still_yanks_it_bare() {
+        let mut state = grid_of_named_cells(2, 2);
+        state.contents.mode = SelectionMode::Cell;
+        press(&mut state, Key::Char('v'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(
+            yanked(&effects),
+            Some("r0c0"),
+            "one cell is not a range; adding quotes would put back the delimiter there is none of"
+        );
+    }
+
+    #[test]
+    fn y_in_column_mode_yanks_one_line_per_column() {
+        let mut state = grid_of_named_cells(3, 2);
+        state.contents.mode = SelectionMode::Column;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('l'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(yanked(&effects), Some("r0c0,r1c0\nr0c1,r1c1"));
+    }
+
+    #[test]
+    fn y_yanks_every_node_of_a_tree_range() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(yanked(&effects), Some("shop\nshop.orders\nshop.users"));
+    }
+
+    #[test]
+    fn a_payload_of_nothing_but_delimiters_reaches_no_clipboard() {
+        // `grid_of_rows` fills its cells with `Int(1)`; this needs nulls, so
+        // the page is built here rather than borrowed from it.
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["a".to_owned(), "b".to_owned()],
+                rows: vec![
+                    Row {
+                        values: vec![CqlValue::Null, CqlValue::Null],
+                    };
+                    2
+                ],
+                next: None,
+            },
+        );
+        state.focus = Panel::Contents;
+        state.contents.mode = SelectionMode::Row;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(
+            effects.is_empty(),
+            "a block of nulls says nothing, and an empty payload clears the clipboard"
+        );
+    }
+
     #[test]
     fn a_page_for_a_cancelled_query_never_reaches_the_panel() {
         let mut state = read_shop_orders();
@@ -4313,6 +4639,26 @@ mod tests {
     }
 
     #[test]
+    fn a_new_subject_clears_the_ddl_range() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+        assert!(state.ddl.selection.range(0).is_some());
+
+        state.focus = Panel::Tables;
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.ddl.selection.range(state.ddl.cursor.index()),
+            None,
+            "the rows the range addressed belong to the node that was on screen"
+        );
+    }
+
+    #[test]
     fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.focus = Panel::Ddl;
@@ -4333,6 +4679,26 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(state.ddl.cursor.index(), 0);
+    }
+
+    #[test]
+    fn unfolding_a_keyspace_leaves_the_ddl_range_alone() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        state.focus = Panel::Ddl;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+        let range = state.ddl.selection.range(state.ddl.cursor.index());
+        assert!(range.is_some());
+        state.focus = Panel::Tables;
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(
+            state.ddl.selection.range(state.ddl.cursor.index()),
+            range,
+            "unfolding leaves the panel on the same subject, so it is not a change the range should die on"
+        );
     }
 
     #[test]
@@ -5674,6 +6040,130 @@ mod tests {
     }
 
     #[test]
+    fn v_starts_a_range_at_the_cursor_and_motion_extends_it() {
+        let mut state = browsing(&["a", "b", "c", "d"]);
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(1, 3))
+        );
+    }
+
+    #[test]
+    fn a_second_v_freezes_the_range_and_the_cursor_walks_out_of_it() {
+        let mut state = browsing(&["a", "b", "c", "d"]);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.tables.cursor.index(), 2);
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 1)),
+            "a frozen range does not follow the cursor"
+        );
+    }
+
+    #[test]
+    fn escape_freezes_a_live_range_before_it_clears_one() {
+        let mut state = browsing(&["a", "b", "c", "d"]);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Escape);
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 1)),
+            "the first press leaves visual mode and keeps the range"
+        );
+
+        press(&mut state, Key::Escape);
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            None,
+            "the second clears it"
+        );
+    }
+
+    #[test]
+    fn escape_prefers_the_selection_to_the_filter() {
+        let mut state = browsing(&["alpha", "beta"]);
+        state.apply_filter(Filtered::Tables, Filter::new("a"));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Escape);
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(state.tables.selection.range(0), None);
+        assert!(
+            state.filter(Filtered::Tables).is_some(),
+            "the range came off first; the filter is still applied"
+        );
+    }
+
+    #[test]
+    fn v_selects_in_the_focused_panel_only() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus = Panel::Ddl;
+
+        press(&mut state, Key::Char('v'));
+
+        assert_eq!(state.tables.selection.range(0), None);
+        assert!(state.ddl.selection.is_extending());
+    }
+
+    #[test]
+    fn v_types_a_v_in_queries() {
+        let mut state = browsing(&["a"]);
+        state.focus = Panel::Queries;
+
+        press(&mut state, Key::Char('v'));
+
+        assert_eq!(state.queries.text(), "v");
+    }
+
+    #[test]
+    fn a_filter_clears_the_range_it_would_renumber() {
+        let mut state = browsing(&["alpha", "beta", "gamma"]);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+
+        state.apply_filter(Filtered::Tables, Filter::new("a"));
+
+        assert_eq!(state.tables.selection.range(0), None);
+    }
+
+    #[test]
+    fn a_range_over_a_list_that_shrank_is_pulled_back() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::End);
+        press(&mut state, Key::Char('v'));
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 2))
+        );
+
+        press(&mut state, Key::Home);
+        press(&mut state, Key::Char('h'));
+
+        assert_eq!(
+            state.tables.selection.range(state.tables.cursor.index()),
+            Some(Range::new(0, 0)),
+            "folding the keyspace took the two table rows with it"
+        );
+    }
+
+    #[test]
     fn escape_leaves_queries_when_nothing_else_claims_it() {
         // Rung 3 alone (§6): no overlay, no filter (Queries cannot hold one
         // yet — design §8), so `esc` falls through to leaving the editor.
@@ -6186,5 +6676,91 @@ mod tests {
 
         assert_eq!(state.queries.text(), format!("{before}m"));
         assert_eq!(state.contents.mode, SelectionMode::Row);
+    }
+
+    #[test]
+    fn v_in_row_mode_extends_rows_and_leaves_the_columns_alone() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.mode = SelectionMode::Row;
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.contents.rows.range(state.contents.cursor.index()),
+            Some(Range::new(0, 1))
+        );
+        assert_eq!(state.contents.columns.range(0), None);
+    }
+
+    #[test]
+    fn v_in_column_mode_extends_columns_and_leaves_the_rows_alone() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.mode = SelectionMode::Column;
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(
+            state.contents.columns.range(state.contents.column.index()),
+            Some(Range::new(0, 1))
+        );
+        assert_eq!(state.contents.rows.range(0), None);
+    }
+
+    #[test]
+    fn v_in_cell_mode_extends_a_rectangle() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.mode = SelectionMode::Cell;
+        press(&mut state, Key::Char('l'));
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(
+            state.contents.rows.range(state.contents.cursor.index()),
+            Some(Range::new(0, 1)),
+            "the row anchor was set before the column moved off zero"
+        );
+        assert_eq!(
+            state.contents.columns.range(state.contents.column.index()),
+            Some(Range::new(1, 2)),
+            "the column anchor was set after `l`, not swapped with the row's"
+        );
+    }
+
+    #[test]
+    fn m_clears_the_range_it_would_reinterpret() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.mode = SelectionMode::Cell;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+
+        press(&mut state, Key::Char('m'));
+
+        assert_eq!(state.contents.rows.range(0), None);
+        assert_eq!(state.contents.columns.range(0), None);
+        assert_eq!(
+            state.contents.mode,
+            SelectionMode::Row,
+            "the mode still cycles"
+        );
+    }
+
+    #[test]
+    fn escape_unwinds_both_axes_together() {
+        let mut state = grid_of_named_cells(3, 4);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Escape);
+        assert!(!state.contents.rows.is_extending());
+        assert!(state.contents.rows.range(0).is_some());
+
+        press(&mut state, Key::Escape);
+        assert_eq!(state.contents.rows.range(0), None);
+        assert_eq!(state.contents.columns.range(0), None);
     }
 }

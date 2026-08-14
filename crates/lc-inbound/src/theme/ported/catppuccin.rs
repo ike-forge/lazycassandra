@@ -20,6 +20,9 @@ struct Flavour {
     /// subtle, and spending `surface0` on it would make the crosshair as loud as
     /// an overlay.
     crosshair: Color,
+    /// The per-channel midpoint of `crosshair` and `surface1`: not upstream's
+    /// either, for the same reason `crosshair` is not.
+    ranged: Color,
     overlay1: Color,
     subtext1: Color,
     subtext0: Color,
@@ -51,6 +54,7 @@ impl Flavour {
             focus: self.blue,
             selection_bg: self.surface1,
             crosshair: self.crosshair,
+            ranged: self.ranged,
             selection_fg: self.text,
             selection_bar: self.yellow,
             shortcut: self.yellow,
@@ -90,6 +94,7 @@ const LATTE_FLAVOUR: Flavour = Flavour {
     surface0: rgb(0xccd0da),
     surface1: rgb(0xbcc0cc),
     crosshair: rgb(0xe5e7ed),
+    ranged: rgb(0xd0d3dc),
     overlay1: rgb(0x8c8fa1),
     subtext1: rgb(0x5c5f77),
     subtext0: rgb(0x6c6f85),
@@ -115,6 +120,7 @@ const FRAPPE_FLAVOUR: Flavour = Flavour {
     surface0: rgb(0x414559),
     surface1: rgb(0x51576d),
     crosshair: rgb(0x373b4e),
+    ranged: rgb(0x44495d),
     overlay1: rgb(0x838ba7),
     subtext1: rgb(0xb5bfe2),
     subtext0: rgb(0xa5adce),
@@ -140,6 +146,7 @@ const MACCHIATO_FLAVOUR: Flavour = Flavour {
     surface0: rgb(0x363a4f),
     surface1: rgb(0x494d64),
     crosshair: rgb(0x2b2f42),
+    ranged: rgb(0x3a3e53),
     overlay1: rgb(0x8087a2),
     subtext1: rgb(0xb8c0e0),
     subtext0: rgb(0xa5adcb),
@@ -165,6 +172,7 @@ const MOCHA_FLAVOUR: Flavour = Flavour {
     surface0: rgb(0x313244),
     surface1: rgb(0x45475a),
     crosshair: rgb(0x262637),
+    ranged: rgb(0x353648),
     overlay1: rgb(0x7f849c),
     subtext1: rgb(0xbac2de),
     subtext0: rgb(0xa6adc8),

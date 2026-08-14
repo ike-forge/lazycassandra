@@ -7,6 +7,7 @@
 
 use crate::cell;
 use crate::model::{ClusteringOrder, CqlValue, Row};
+use crate::state::Range;
 use crate::tree::Node;
 use crate::view::{ColumnKind, DetailRow};
 
@@ -97,6 +98,44 @@ pub fn node(node: &Node<'_>) -> String {
     };
 
     line(&fields)
+}
+
+/// Several lines as one payload: no trailing newline, for the reason a single
+/// line has none — a paste into a shell must not submit itself
+/// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §5).
+#[must_use]
+pub fn lines(items: impl Iterator<Item = String>) -> String {
+    items.collect::<Vec<_>>().join("\n")
+}
+
+/// A rectangle of the page: one line per row, holding the columns inside
+/// `columns` and no others. A range spanning every column is the rows
+/// themselves, which is what row mode yanks (design §5).
+#[must_use]
+pub fn grid_block(rows: &[Row], selected: Range, columns: Range) -> String {
+    lines(
+        rows.iter()
+            .enumerate()
+            .filter(|(index, _)| selected.contains(*index))
+            .map(|(_, row)| {
+                let fields: Vec<String> = (columns.first()..=columns.last())
+                    .filter_map(|column| row.values.get(column))
+                    .map(value)
+                    .collect();
+
+                line(&fields)
+            }),
+    )
+}
+
+/// One line per column, each being that column's values top to bottom.
+///
+/// Not the rectangle read row-wise: a column already yanks as its values in
+/// order (yank design §1), and a range of columns is that, once per column
+/// (design §5).
+#[must_use]
+pub fn grid_columns(rows: &[Row], columns: Range) -> String {
+    lines((columns.first()..=columns.last()).map(|column| grid_column(rows, column)))
 }
 
 fn escaped(field: &str) -> String {
@@ -394,5 +433,90 @@ mod tests {
         ];
 
         assert_eq!(grid_column(&rows, 0), "alice,");
+    }
+
+    #[test]
+    fn lines_join_without_a_trailing_newline() {
+        assert_eq!(
+            lines(["a".to_owned(), "b".to_owned()].into_iter()),
+            "a\nb",
+            "a trailing newline would make a paste into a shell submit itself"
+        );
+    }
+
+    #[test]
+    fn a_block_yanks_one_line_per_row_and_only_the_columns_inside_it() {
+        let rows = vec![
+            Row {
+                values: vec![
+                    CqlValue::Int(1),
+                    CqlValue::Text("alice".to_owned()),
+                    CqlValue::Text("x".to_owned()),
+                ],
+            },
+            Row {
+                values: vec![
+                    CqlValue::Int(2),
+                    CqlValue::Text("bob".to_owned()),
+                    CqlValue::Text("y".to_owned()),
+                ],
+            },
+            Row {
+                values: vec![
+                    CqlValue::Int(3),
+                    CqlValue::Text("carol".to_owned()),
+                    CqlValue::Text("z".to_owned()),
+                ],
+            },
+        ];
+
+        assert_eq!(
+            grid_block(&rows, Range::new(0, 1), Range::new(1, 2)),
+            "alice,x\nbob,y"
+        );
+    }
+
+    #[test]
+    fn a_block_spanning_every_column_is_the_rows_themselves() {
+        let rows = vec![
+            Row {
+                values: vec![CqlValue::Int(1), CqlValue::Null],
+            },
+            Row {
+                values: vec![CqlValue::Int(2), CqlValue::Text("bob".to_owned())],
+            },
+        ];
+
+        assert_eq!(
+            grid_block(&rows, Range::new(0, 1), Range::new(0, 1)),
+            "1,\n2,bob"
+        );
+    }
+
+    #[test]
+    fn a_column_range_yanks_one_line_per_column() {
+        let rows = vec![
+            Row {
+                values: vec![CqlValue::Int(1), CqlValue::Text("alice".to_owned())],
+            },
+            Row {
+                values: vec![CqlValue::Int(2), CqlValue::Text("bob".to_owned())],
+            },
+        ];
+
+        assert_eq!(
+            grid_columns(&rows, Range::new(0, 1)),
+            "1,2\nalice,bob",
+            "a column is its values top to bottom, and a range of columns is that once per column"
+        );
+    }
+
+    #[test]
+    fn a_block_ending_past_the_page_yanks_what_is_there() {
+        let rows = vec![Row {
+            values: vec![CqlValue::Int(1)],
+        }];
+
+        assert_eq!(grid_block(&rows, Range::new(0, 4), Range::new(0, 4)), "1");
     }
 }

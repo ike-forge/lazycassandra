@@ -55,6 +55,10 @@ pub(crate) struct Palette {
     /// colour under text whose contrast nobody measures is how the palette this
     /// replaces became unreadable (design §1).
     pub(crate) crosshair: Color,
+    /// A row inside a selection the cursor is not on: the per-channel
+    /// midpoint of `crosshair` and `selection_bg`, so a range outreads the
+    /// wash without drowning out the cursor row itself.
+    pub(crate) ranged: Color,
     /// The cursor row's text, where a cell spends no colour of its own.
     pub(crate) selection_fg: Color,
     /// The one-cell gutter mark on the cursor row.
@@ -185,6 +189,7 @@ impl Theme {
                 .add_modifier(Modifier::UNDERLINED),
             Token::Selected => selected(palette),
             Token::Crosshair => crosshair(palette),
+            Token::Ranged => ranged(palette),
             Token::Match => fg(palette.match_).add_modifier(Modifier::BOLD),
             // A modifier rather than a colour, because it has to read
             // *against* the highlighted row whatever colour that row is.
@@ -219,6 +224,13 @@ fn crosshair(palette: &Palette) -> Style {
     Style::new().bg(palette.crosshair)
 }
 
+/// The rows a range holds, other than the cursor's own.
+///
+/// Spends no foreground, for the reason [`crosshair`] spends none.
+fn ranged(palette: &Palette) -> Style {
+    Style::new().bg(palette.ranged)
+}
+
 fn fg(color: Color) -> Style {
     Style::new().fg(color)
 }
@@ -244,6 +256,7 @@ pub(crate) mod tests {
             surface: _,
             selection_bg: _,
             crosshair: _,
+            ranged: _,
             border: _,
             text,
             dim,
@@ -315,6 +328,7 @@ pub(crate) mod tests {
                     (palette.surface, "surface"),
                     (palette.selection_bg, "selection_bg"),
                     (palette.crosshair, "crosshair"),
+                    (palette.ranged, "ranged"),
                 ] {
                     let ratio = ratio(colour, ground);
                     assert!(
@@ -362,38 +376,57 @@ pub(crate) mod tests {
         }
     }
 
-    /// Every theme, ported ones included: a palette paints its field once,
-    /// through `ground`, and a token that painted a background of its own
-    /// would put a patch of some other colour over it (design §4.2).
-    ///
-    /// The cursor row is one of the two that do, and the crosshair — the wash
-    /// under the cursor's row and column in cell mode — is the other. Neither
-    /// spends anything else: a foreground there would overwrite every role
-    /// colour under the band through `Style::patch`, flattening `partition`,
-    /// `table` and the rest — which is why `selection_fg` exists as a measured
-    /// colour the token never spends.
+    /// The three tokens that paint a field, and no others. `Ranged` joins the
+    /// two: a range is a band like the cursor row, and spends no foreground for
+    /// the same reason — a foreground would flatten every role colour under it
+    /// (visual mode design §6).
     #[test]
-    fn the_two_bands_paint_a_background_and_spend_no_foreground() {
+    fn the_bands_paint_a_background_and_spend_no_foreground() {
         for choice in ThemeChoice::ALL {
             let theme = Theme::of(choice);
 
             for token in EVERY_TOKEN {
-                let background = theme.style(token).bg;
+                let style = theme.style(token);
 
-                if matches!(token, Token::Selected | Token::Crosshair) {
-                    assert!(background.is_some(), "{choice:?}: {token:?} is a band");
+                if matches!(token, Token::Selected | Token::Crosshair | Token::Ranged) {
+                    assert!(style.bg.is_some(), "{choice:?}: {token:?} is a band");
                     assert_eq!(
-                        theme.style(token).fg,
-                        None,
+                        style.fg, None,
                         "{choice:?}: {token:?} overwrote the colours under it"
                     );
                 } else {
                     assert_eq!(
-                        background, None,
+                        style.bg, None,
                         "{choice:?}: {token:?} painted its own field"
                     );
                 }
             }
+        }
+    }
+
+    /// The range sits between the wash and the cursor row: on the far side of
+    /// either it would make one of the three unreadable as a rank.
+    #[test]
+    fn the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row() {
+        for choice in ThemeChoice::ALL {
+            let palette = Theme::of(choice).palette();
+
+            let base = luminance(palette.base);
+            let wash = luminance(palette.crosshair);
+            let range = luminance(palette.ranged);
+            let row = luminance(palette.selection_bg);
+
+            let ordered = if wash >= base {
+                wash <= range && range <= row
+            } else {
+                wash >= range && range >= row
+            };
+
+            assert!(
+                ordered,
+                "{choice:?}: crosshair {wash:.4}, ranged {range:.4}, selection_bg {row:.4} \
+                 do not run in one direction from base {base:.4}"
+            );
         }
     }
 
@@ -523,7 +556,7 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 29] = [
+    pub(super) const EVERY_TOKEN: [Token; 30] = [
         Token::PartitionKey,
         Token::ClusteringKey,
         Token::StaticColumn,
@@ -545,6 +578,7 @@ pub(crate) mod tests {
         Token::Selected,
         Token::SelectedCell,
         Token::Crosshair,
+        Token::Ranged,
         Token::Shortcut,
         Token::HintKey,
         Token::HintAction,

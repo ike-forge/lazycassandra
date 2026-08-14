@@ -203,12 +203,22 @@ const TABLES_HINTS: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('/'))],
         action: "search",
     },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('v'))],
+        action: "select",
+    },
 ];
 
-const DDL_HINTS: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Char('/'))],
-    action: "search",
-}];
+const DDL_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Char('/'))],
+        action: "search",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('v'))],
+        action: "select",
+    },
+];
 
 const CONTENTS_HINTS: &[Binding] = &[
     Binding {
@@ -218,6 +228,10 @@ const CONTENTS_HINTS: &[Binding] = &[
     Binding {
         keys: &[KeyPress::new(Key::Char('/'))],
         action: "search",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('v'))],
+        action: "select",
     },
 ];
 
@@ -385,6 +399,144 @@ impl Cursor {
 
     pub const fn to_end(&mut self, len: usize) {
         self.go_to(len.saturating_sub(1), len);
+    }
+}
+
+/// An inclusive run of rows, which cannot be built the wrong way round.
+///
+/// `first <= last` by construction, so nothing downstream compares the two
+/// ends before drawing between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Range {
+    first: usize,
+    last: usize,
+}
+
+impl Range {
+    /// The run between the two ends, in either order.
+    #[must_use]
+    pub const fn new(anchor: usize, cursor: usize) -> Self {
+        if anchor <= cursor {
+            Self {
+                first: anchor,
+                last: cursor,
+            }
+        } else {
+            Self {
+                first: cursor,
+                last: anchor,
+            }
+        }
+    }
+
+    #[must_use]
+    pub const fn first(self) -> usize {
+        self.first
+    }
+
+    #[must_use]
+    pub const fn last(self) -> usize {
+        self.last
+    }
+
+    #[must_use]
+    pub const fn contains(self, index: usize) -> bool {
+        self.first <= index && index <= self.last
+    }
+
+    /// How many rows the run holds. Never zero — which is why this is not
+    /// `len`, whose `is_empty` counterpart would answer a question a range
+    /// cannot ask.
+    #[must_use]
+    pub const fn rows(self) -> usize {
+        self.last - self.first + 1
+    }
+}
+
+/// A run of rows a panel has selected, and whether the cursor is still one end
+/// of it (docs/superpowers/specs/2026-08-14-visual-mode-design.md §2).
+///
+/// While extending, the far end is the panel's own cursor rather than a second
+/// index stored here: a range that is a function of the cursor cannot fall out
+/// of step with it. Freezing is the one moment the derived range is written
+/// down, and it is written down exactly because the cursor is about to stop
+/// meaning it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Selection {
+    #[default]
+    None,
+    Extending {
+        anchor: usize,
+    },
+    Held(Range),
+}
+
+impl Selection {
+    /// Starts extending from `cursor`, discarding whatever was held.
+    pub const fn start(&mut self, cursor: usize) {
+        *self = Self::Extending { anchor: cursor };
+    }
+
+    /// Freezes the range the cursor currently makes, so the cursor can leave
+    /// it. Does nothing to a range already frozen.
+    pub const fn stop(&mut self, cursor: usize) {
+        if let Self::Extending { anchor } = *self {
+            *self = Self::Held(Range::new(anchor, cursor));
+        }
+    }
+
+    pub const fn clear(&mut self) {
+        *self = Self::None;
+    }
+
+    #[must_use]
+    pub const fn is_extending(self) -> bool {
+        matches!(self, Self::Extending { .. })
+    }
+
+    /// The rows selected, given where the cursor is now. The one way out, so
+    /// no caller can read an anchor and forget the cursor.
+    #[must_use]
+    pub const fn range(self, cursor: usize) -> Option<Range> {
+        match self {
+            Self::None => None,
+            Self::Extending { anchor } => Some(Range::new(anchor, cursor)),
+            Self::Held(range) => Some(range),
+        }
+    }
+
+    /// Pulls a selection back over a list that shrank.
+    ///
+    /// An end past the last row comes back onto it; a held range whose *first*
+    /// row has gone clears instead, because a range that slid down onto the
+    /// survivors would address rows the user never pointed at — the rule the
+    /// pointer already follows for a stale row (mouse input design §6).
+    pub const fn clamp_to(&mut self, len: usize) {
+        if len == 0 {
+            *self = Self::None;
+            return;
+        }
+
+        let last = len - 1;
+
+        match *self {
+            Self::None => {}
+            Self::Extending { anchor } => {
+                if anchor > last {
+                    *self = Self::Extending { anchor: last };
+                }
+            }
+            Self::Held(range) => {
+                if range.first > last {
+                    *self = Self::None;
+                } else if range.last > last {
+                    *self = Self::Held(Range {
+                        first: range.first,
+                        last,
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -685,7 +837,8 @@ impl State {
     /// Not a `&mut Option<Filter>` handed out: repairing what a filter
     /// invalidates — a cursor left pointing past the rows the panel now has —
     /// belongs here rather than to every caller that sets one. The Tables
-    /// cursor clamp lands with the filtered tree it needs.
+    /// cursor clamp lands with the filtered tree it needs. A filter renumbers
+    /// the rows under a range, so the repair it owes includes dropping one.
     pub fn apply_filter(&mut self, target: Filtered, filter: Option<Filter>) {
         match target {
             Filtered::Tables => {
@@ -694,6 +847,7 @@ impl State {
                 if let Some(rows) = rows {
                     self.tables.cursor.clamp_to(rows);
                 }
+                self.tables.selection.clear();
             }
             // No repair here, and the two halves of the panel are repaired
             // elsewhere for different reasons (design §3.3). Its offset is
@@ -705,7 +859,13 @@ impl State {
             // message against `view::ddl_rows`, which counts the *filtered*
             // rows — so the clamp lands on the same keystroke that applied the
             // filter, with no line count involved.
-            Filtered::Ddl => self.ddl.set_filter(filter),
+            Filtered::Ddl => {
+                self.ddl.set_filter(filter);
+                self.ddl.selection.clear();
+            }
+            // No range repair here either: this filter only flags matching
+            // cells and never renumbers a row, so a range still addresses
+            // exactly what it did before the filter changed.
             Filtered::Contents => self.contents.set_filter(filter),
         }
     }
@@ -1241,6 +1401,126 @@ mod tests {
         scroll.follow_span(Span::default(), 10);
 
         assert_eq!(scroll.offset(), before);
+    }
+
+    #[test]
+    fn a_range_is_the_two_ends_in_order_whichever_way_it_was_made() {
+        let down = Range::new(2, 5);
+        let up = Range::new(5, 2);
+
+        assert_eq!((down.first(), down.last()), (2, 5));
+        assert_eq!(
+            (up.first(), up.last()),
+            (2, 5),
+            "extending upwards is the same range"
+        );
+        assert_eq!(down.rows(), 4);
+        assert!(down.contains(2) && down.contains(5) && !down.contains(6));
+    }
+
+    #[test]
+    fn a_fresh_selection_selects_nothing() {
+        assert_eq!(Selection::default().range(3), None);
+        assert!(!Selection::default().is_extending());
+    }
+
+    #[test]
+    fn an_extending_selection_follows_the_cursor_in_both_directions() {
+        let mut selection = Selection::default();
+        selection.start(4);
+
+        assert_eq!(selection.range(4), Some(Range::new(4, 4)));
+        assert_eq!(selection.range(9), Some(Range::new(4, 9)));
+        assert_eq!(selection.range(0), Some(Range::new(0, 4)));
+    }
+
+    #[test]
+    fn stopping_freezes_the_range_the_cursor_had() {
+        let mut selection = Selection::default();
+        selection.start(4);
+
+        selection.stop(9);
+
+        assert!(!selection.is_extending());
+        assert_eq!(
+            selection.range(0),
+            Some(Range::new(4, 9)),
+            "the cursor has left the range behind, and it stays where it was"
+        );
+    }
+
+    #[test]
+    fn starting_again_over_a_held_range_replaces_it() {
+        let mut selection = Selection::default();
+        selection.start(4);
+        selection.stop(9);
+
+        selection.start(1);
+
+        assert_eq!(selection.range(2), Some(Range::new(1, 2)));
+    }
+
+    #[test]
+    fn clearing_leaves_nothing_selected() {
+        let mut selection = Selection::default();
+        selection.start(4);
+        selection.stop(9);
+
+        selection.clear();
+
+        assert_eq!(selection.range(9), None);
+    }
+
+    #[test]
+    fn a_truncated_range_keeps_the_rows_that_survive() {
+        let mut selection = Selection::default();
+        selection.start(2);
+        selection.stop(9);
+
+        selection.clamp_to(5);
+
+        assert_eq!(selection.range(0), Some(Range::new(2, 4)));
+    }
+
+    #[test]
+    fn a_range_whose_first_row_is_gone_clears_rather_than_sliding() {
+        let mut selection = Selection::default();
+        selection.start(7);
+        selection.stop(9);
+
+        selection.clamp_to(5);
+
+        assert_eq!(
+            selection.range(0),
+            None,
+            "a range that slid onto surviving rows would address rows nobody chose"
+        );
+    }
+
+    #[test]
+    fn an_extending_anchor_is_pulled_back_into_the_list() {
+        let mut selection = Selection::default();
+        selection.start(9);
+
+        selection.clamp_to(5);
+
+        assert_eq!(selection.range(0), Some(Range::new(0, 4)));
+        assert!(selection.is_extending());
+    }
+
+    #[test]
+    fn an_empty_list_holds_no_selection() {
+        let mut extending = Selection::default();
+        extending.start(3);
+        let mut held = Selection::default();
+        held.start(0);
+        held.stop(3);
+
+        extending.clamp_to(0);
+        held.clamp_to(0);
+
+        assert_eq!(extending.range(0), None);
+        assert_eq!(held.range(0), None);
     }
 
     #[test]

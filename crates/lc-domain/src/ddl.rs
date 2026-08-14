@@ -6,7 +6,7 @@
 //! field on `State` (architecture.md §11).
 
 use crate::search::Filter;
-use crate::state::{Cursor, Scroll};
+use crate::state::{Cursor, Scroll, Selection};
 
 /// Which of the panel's two tabs is drawn.
 ///
@@ -73,6 +73,9 @@ impl DdlTab {
 pub struct DdlPanel {
     pub cursor: Cursor,
     pub scroll: Scroll,
+    /// The rows `v` has selected, if any
+    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
+    pub selection: Selection,
     /// Private for the reason the filter is: a tab change owes a cursor and a
     /// viewport that address the rows of the tab now drawn, and a public field
     /// would let a caller skip that repair.
@@ -95,9 +98,11 @@ impl DdlPanel {
     ///
     /// The two tabs describe different rows, so a cursor carried across would
     /// land on a row the user never chose — and on a shorter tab, past the end
-    /// until the next `Msg::Measured` clamped it. Arriving at the tab already
-    /// drawn is not a change: `a` is how focus comes back to the panel, and it
-    /// may not cost the user the row they were reading.
+    /// until the next `Msg::Measured` clamped it. The same argument holds for
+    /// a range: it addresses rows of the tab that drew it, so it does not
+    /// survive the tab that follows. Arriving at the tab already drawn is not
+    /// a change: `a` is how focus comes back to the panel, and it may not
+    /// cost the user the row they were reading or the range they had marked.
     pub fn show(&mut self, tab: DdlTab) {
         if self.tab == tab {
             return;
@@ -106,6 +111,7 @@ impl DdlPanel {
         self.tab = tab;
         self.cursor.to_start();
         self.scroll.to_start();
+        self.selection.clear();
     }
 
     /// The filter narrowing the panel's body, if any.
@@ -124,6 +130,7 @@ impl DdlPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::Range;
 
     #[test]
     fn a_panel_opens_on_the_tab_that_describes_the_table() {
@@ -181,6 +188,28 @@ mod tests {
 
         assert_eq!(panel.cursor.index(), 4);
         assert_eq!(panel.scroll.offset(), 1);
+    }
+
+    #[test]
+    fn a_tab_change_clears_the_range() {
+        let mut panel = DdlPanel::default();
+        panel.selection.start(1);
+        panel.selection.stop(3);
+
+        panel.show(DdlTab::Columns);
+
+        assert_eq!(panel.selection.range(0), None);
+    }
+
+    #[test]
+    fn arriving_at_the_tab_already_drawn_leaves_the_range_alone() {
+        let mut panel = DdlPanel::default();
+        panel.selection.start(1);
+        panel.selection.stop(3);
+
+        panel.show(DdlTab::Ddl);
+
+        assert_eq!(panel.selection.range(0), Some(Range::new(1, 3)));
     }
 
     #[test]

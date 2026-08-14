@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use crate::model::{Keyspace, Schema, Table};
 use crate::search::Filter;
-use crate::state::{Cursor, Scroll};
+use crate::state::{Cursor, Scroll, Selection};
 
 /// The Tables panel's own state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -17,6 +17,9 @@ pub struct TablesPanel {
     /// The first row drawn. Moved by a wheel on its own, and pulled after a
     /// cursor motion (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
+    /// The rows `v` has selected, if any
+    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
+    pub selection: Selection,
     /// Keyspaces showing their tables.
     ///
     /// Private for the reason [`Cursor`]'s index is: the only ways in are the
@@ -226,6 +229,18 @@ impl TablesPanel {
         if let Some(index) = found {
             self.cursor.go_to(index, rows.len());
         }
+    }
+
+    /// Whether the range covers more than the row the cursor is on.
+    ///
+    /// What makes `Enter` inert and the Table DDL panel describe nothing: both
+    /// act on one node, and a range names several
+    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §4).
+    #[must_use]
+    pub fn selects_many(&self) -> bool {
+        self.selection
+            .range(self.cursor.index())
+            .is_some_and(|range| range.rows() > 1)
     }
 }
 

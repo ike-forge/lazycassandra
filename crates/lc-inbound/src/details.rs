@@ -23,7 +23,7 @@
 
 use lc_domain::grid::BAR;
 use lc_domain::model::ClusteringOrder;
-use lc_domain::state::Span;
+use lc_domain::state::{Range, Span};
 use lc_domain::style::Token;
 use lc_domain::view::{ColumnKind, DetailRow, Details, Group, IdentityKind};
 use ratatui::Frame;
@@ -62,9 +62,10 @@ pub(crate) fn render(
     details: &Details,
     selected: usize,
     offset: usize,
+    range: Option<Range>,
     theme: Theme,
 ) -> (crate::body::Extent, Span, Vec<Option<usize>>) {
-    let laid = lay_out(details, selected, usize::from(area.width), theme);
+    let laid = lay_out(details, selected, range, usize::from(area.width), theme);
     let total = laid.lines.len();
     // `Paragraph::scroll` is u16, and a body past 65535 lines is unreachable;
     // the extent keeps the offset itself, so the thumb stays right regardless.
@@ -93,7 +94,13 @@ pub(crate) fn render(
 /// caller happens to scroll into view — an offset must never feed back into
 /// what is measured, or a redraw could chase its own tail
 /// (architecture.md §3).
-pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: Theme) -> Laid {
+pub(crate) fn lay_out(
+    details: &Details,
+    selected: usize,
+    range: Option<Range>,
+    width: usize,
+    theme: Theme,
+) -> Laid {
     // Every row reserves the bar's column, the Tables tree's way and the
     // Contents grid's, so nothing shifts sideways as the cursor moves
     // (docs/superpowers/specs/2026-08-10-table-display-design.md §4.2). A
@@ -142,6 +149,9 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
                     first: lines.len(),
                     lines: drawn.len(),
                 };
+            } else if range.is_some_and(|range| range.contains(row)) {
+                let band = theme.style(Token::Ranged);
+                drawn = drawn.into_iter().map(|line| patched(line, band)).collect();
             }
 
             rows.extend(std::iter::repeat_n(Some(row), drawn.len()));
@@ -154,7 +164,11 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
         .into_iter()
         .zip(&rows)
         .map(|(line, row)| match row {
-            Some(row) => barred(line, *row == selected, theme),
+            Some(row) => barred(
+                line,
+                *row == selected || range.is_some_and(|range| range.contains(*row)),
+                theme,
+            ),
             None => line,
         })
         .collect();
@@ -166,16 +180,16 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
     }
 }
 
-/// `line` behind the bar column, marked where the line was wrapped from the
-/// cursor's row — every one of them, since the highlight covers every one.
-/// Only a row's lines take it: a heading and a group's blank line cannot be
-/// selected, so neither pays the column.
+/// `line` behind the bar column, marked where the line was wrapped from a row
+/// the mark belongs to — every one of them, since the highlight covers every
+/// one. Only a row's lines take it: a heading and a group's blank line cannot
+/// be selected, so neither pays the column.
 ///
 /// Prepended after the highlight is patched on, or the bar would be repainted
 /// in the selection's own foreground and stop reading as a bar.
-fn barred(mut line: Line<'static>, is_selected: bool, theme: Theme) -> Line<'static> {
+fn barred(mut line: Line<'static>, marked: bool, theme: Theme) -> Line<'static> {
     line.spans
-        .insert(0, crate::body::selection_bar(is_selected, theme));
+        .insert(0, crate::body::selection_bar(marked, theme));
     line
 }
 
@@ -742,12 +756,12 @@ mod tests {
         };
 
         assert_eq!(
-            lay_out(&details, 0, 28, Theme::default()).selection,
+            lay_out(&details, 0, None, 28, Theme::default()).selection,
             Span { first: 0, lines: 1 },
             "the identity row opens the body, so nothing precedes it"
         );
 
-        let laid = lay_out(&details, 1, 28, Theme::default());
+        let laid = lay_out(&details, 1, None, 28, Theme::default());
 
         assert_eq!(
             laid.selection,
@@ -755,7 +769,13 @@ mod tests {
             "identity, blank, section heading, then the first column"
         );
 
-        let laid = lay_out(&details, details.row_count() - 1, 28, Theme::default());
+        let laid = lay_out(
+            &details,
+            details.row_count() - 1,
+            None,
+            28,
+            Theme::default(),
+        );
         assert!(laid.selection.lines > 1, "the comment wraps");
         assert_eq!(
             laid.selection.first + laid.selection.lines,
@@ -785,7 +805,7 @@ mod tests {
             }],
         };
 
-        let laid = lay_out(&details, usize::MAX, 28, theme);
+        let laid = lay_out(&details, usize::MAX, None, 28, theme);
         let section = theme.style(Token::Section);
 
         assert_eq!(laid.lines[0].style, section);

@@ -8,7 +8,7 @@
 use crate::grid::ColumnScroll;
 use crate::model::{DbError, Page, QueryId};
 use crate::search::Filter;
-use crate::state::{Cursor, Scroll};
+use crate::state::{Cursor, Scroll, Selection};
 
 /// The Contents panel's own state.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -24,7 +24,12 @@ pub struct ContentsPanel {
     /// The first row drawn (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
     /// The first column drawn (docs/superpowers/specs/2026-08-10-table-display-design.md §5).
-    pub columns: ColumnScroll,
+    pub column_scroll: ColumnScroll,
+    /// The rows `v` has selected, and the columns — which of the two `v`
+    /// extends is what [`SelectionMode`] answers
+    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
+    pub rows: Selection,
+    pub columns: Selection,
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
     state: ContentsState,
@@ -222,7 +227,9 @@ impl ContentsPanel {
         self.cursor = Cursor::default();
         self.column = Cursor::default();
         self.scroll = Scroll::default();
-        self.columns = ColumnScroll::default();
+        self.column_scroll = ColumnScroll::default();
+        self.rows = Selection::default();
+        self.columns = Selection::default();
     }
 
     /// Applies a page, if it is the one being waited on.
@@ -244,7 +251,9 @@ impl ContentsPanel {
         self.cursor = Cursor::default();
         self.column = Cursor::default();
         self.scroll = Scroll::default();
-        self.columns = ColumnScroll::default();
+        self.column_scroll = ColumnScroll::default();
+        self.rows = Selection::default();
+        self.columns = Selection::default();
     }
 
     /// Records a failure, if it belongs to the query being waited on.
@@ -525,7 +534,7 @@ mod tests {
 
         assert_eq!(panel.column_count(), 0);
         assert_eq!(panel.column.index(), 0);
-        assert_eq!(panel.columns.first(), 0);
+        assert_eq!(panel.column_scroll.first(), 0);
     }
 
     #[test]
@@ -559,7 +568,7 @@ mod tests {
         panel.page_ready(query, wide_page(4));
         panel.cursor.go_to(0, 1);
         panel.column.go_to(3, 4);
-        panel.columns.follow(3, &[1, 1, 1, 1], 4);
+        panel.column_scroll.follow(3, &[1, 1, 1, 1], 4);
 
         panel.requested(
             QueryId::next(),
@@ -567,7 +576,7 @@ mod tests {
         );
 
         assert_eq!(panel.column.index(), 0);
-        assert_eq!(panel.columns.first(), 0);
+        assert_eq!(panel.column_scroll.first(), 0);
     }
 
     #[test]
@@ -582,7 +591,7 @@ mod tests {
         );
 
         assert_eq!(panel.column.index(), 0);
-        assert_eq!(panel.columns.first(), 0);
+        assert_eq!(panel.column_scroll.first(), 0);
     }
 
     #[test]
@@ -622,5 +631,18 @@ mod tests {
         assert_eq!(panel.mode, SelectionMode::Column);
         assert_eq!(panel.cursor.index(), 0);
         assert_eq!(panel.column.index(), 0);
+    }
+
+    #[test]
+    fn a_new_request_clears_both_ranges() {
+        let mut panel = ContentsPanel::default();
+        panel.rows.start(0);
+        panel.rows.stop(3);
+        panel.columns.start(1);
+
+        panel.requested(QueryId::next(), Subject::Typed("select 1".to_owned()));
+
+        assert_eq!(panel.rows.range(0), None);
+        assert_eq!(panel.columns.range(0), None);
     }
 }
