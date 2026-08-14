@@ -8,6 +8,7 @@ pub mod commands;
 pub mod contents;
 pub mod ddl;
 pub mod editor;
+pub mod export;
 pub mod grid;
 pub mod model;
 pub mod pointer;

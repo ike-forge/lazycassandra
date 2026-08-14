@@ -15,7 +15,7 @@ use crate::view::{ColumnKind, DetailRow};
 /// without the trailing newline that would make a paste into a shell submit
 /// itself (design §2).
 #[must_use]
-fn line(fields: &[String]) -> String {
+pub(crate) fn line(fields: &[String]) -> String {
     fields
         .iter()
         .map(|field| escaped(field.as_str()))
