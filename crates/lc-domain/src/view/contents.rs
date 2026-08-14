@@ -5,7 +5,7 @@
 //! 8).
 
 use crate::cell;
-use crate::contents::{ContentsState, GridPage, Subject, TableRef};
+use crate::contents::{ContentsState, GridPage, SelectionMode, Subject, TableRef};
 use crate::model::{CqlValue, Schema};
 use crate::search::Filter;
 use crate::state::State;
@@ -88,6 +88,21 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         return waiting("No rows");
     }
 
+    let (rows_range, columns_range) = match state.contents.mode {
+        SelectionMode::Row => (
+            state.contents.rows.range(state.contents.cursor.index()),
+            None,
+        ),
+        SelectionMode::Column => (
+            None,
+            state.contents.columns.range(state.contents.column.index()),
+        ),
+        SelectionMode::Cell => (
+            state.contents.rows.range(state.contents.cursor.index()),
+            state.contents.columns.range(state.contents.column.index()),
+        ),
+    };
+
     PanelBody::Grid {
         columns: page
             .columns
@@ -115,8 +130,8 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         column: state.contents.column.index(),
         mode: state.contents.mode,
         gutter: crate::grid::gutter(page.rows.len()),
-        rows_range: state.contents.rows.range(state.contents.cursor.index()),
-        columns_range: state.contents.columns.range(state.contents.column.index()),
+        rows_range,
+        columns_range,
     }
 }
 
@@ -573,5 +588,52 @@ mod tests {
 
         assert_eq!(rows_range, Some(crate::state::Range::new(0, 2)));
         assert_eq!(columns_range, None, "column mode never extended");
+    }
+
+    #[test]
+    fn row_mode_projects_no_columns_range_even_when_one_is_held() {
+        let mut state = showing(page_of(
+            &["id", "name"],
+            &[&[CqlValue::Int(1), CqlValue::Int(2)]],
+        ));
+        state.contents.mode = SelectionMode::Row;
+        state.contents.rows.start(0);
+        state.contents.rows.stop(0);
+        state.contents.columns.start(0);
+        state.contents.columns.stop(1);
+
+        let PanelBody::Grid { columns_range, .. } = contents_body(&state) else {
+            panic!("a loaded page draws a grid");
+        };
+
+        assert_eq!(
+            columns_range, None,
+            "row mode has no column axis, so a held columns range must not be projected"
+        );
+    }
+
+    #[test]
+    fn column_mode_projects_no_rows_range_even_when_one_is_held() {
+        let mut state = showing(page_of(
+            &["id", "name"],
+            &[
+                &[CqlValue::Int(1), CqlValue::Int(2)],
+                &[CqlValue::Int(3), CqlValue::Int(4)],
+            ],
+        ));
+        state.contents.mode = SelectionMode::Column;
+        state.contents.columns.start(0);
+        state.contents.columns.stop(0);
+        state.contents.rows.start(0);
+        state.contents.rows.stop(1);
+
+        let PanelBody::Grid { rows_range, .. } = contents_body(&state) else {
+            panic!("a loaded page draws a grid");
+        };
+
+        assert_eq!(
+            rows_range, None,
+            "column mode has no row axis, so a held rows range must not be projected"
+        );
     }
 }
