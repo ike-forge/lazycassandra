@@ -1138,12 +1138,12 @@ mod tests {
         let rows = ddl_rows(&buffer);
 
         assert!(
-            rows[0].starts_with(&format!("{}Keyspace", crate::icons::KEYSPACE)),
+            rows[0].starts_with(&format!("▌{}Keyspace", crate::icons::KEYSPACE)),
             "the panel names its keyspace as the tree does, got {:?}",
             rows[0]
         );
         assert!(
-            rows[1].starts_with(&format!("{}Table", crate::icons::TABLE)),
+            rows[1].starts_with(&format!(" {}Table", crate::icons::TABLE)),
             "and its table likewise, got {:?}",
             rows[1]
         );
@@ -1168,9 +1168,10 @@ mod tests {
         assert_eq!(
             ddl_rows(&buffer)[..3],
             [
-                format!("{}Keyspace         shop", crate::icons::KEYSPACE),
-                format!("{}Table", crate::icons::TABLE),
-                "    orders_by_customer".to_owned(),
+                // The cursor opens on the first row, which is where the bar is.
+                format!("▌{}Keyspace         shop", crate::icons::KEYSPACE),
+                format!(" {}Table", crate::icons::TABLE),
+                "     orders_by_customer".to_owned(),
             ]
         );
     }
@@ -2304,13 +2305,13 @@ mod tests {
     }
 
     /// Inside the Ddl panel's border at 100x41: fourteen rows of 23 columns.
-    /// The body's text, from past the selection bar's column: what the bar
-    /// itself draws is `the_ddl_body_reserves_a_column_for_the_selection_bar`'s
-    /// subject, and every other test here is about the lines beside it.
+    /// The body's lines, the selection bar's column included — so a row opens
+    /// with the blank it reserves for the bar and a heading, which is no cursor
+    /// stop, opens at the margin.
     fn ddl_rows(buffer: &Buffer) -> Vec<String> {
         (25..39)
             .map(|y| {
-                (2..25)
+                (1..25)
                     .filter_map(|x| buffer.cell((x, y)))
                     .map(Cell::symbol)
                     .collect::<String>()
@@ -2342,17 +2343,18 @@ mod tests {
         assert_eq!(
             ddl_rows(&buffer)[..9],
             [
-                "\u{f084} Keyspace         shop",
-                "\u{f0ce} Table",
-                "    orders_by_customer",
+                // The cursor opens on this row, which is where the bar is.
+                "▌\u{f084} Keyspace         shop",
+                " \u{f0ce} Table",
+                "     orders_by_customer",
                 "",
                 "4 columns",
-                "\u{f030b} customer_id      uuid",
-                "\u{f030b} order_date       date",
-                "\u{f030b} order_id     timeuuid",
+                " \u{f030b} customer_id      uuid",
+                " \u{f030b} order_date       date",
+                " \u{f030b} order_id     timeuuid",
                 // No glyph outside the primary key: the row's colour is what
                 // says a column is static.
-                "  region           text",
+                "   region           text",
             ]
         );
     }
@@ -2430,26 +2432,29 @@ mod tests {
         assert_eq!(
             ddl_rows(&buffer),
             [
-                "\u{f084} Keyspace         shop",
-                "\u{f0ce} Table",
-                "    orders_by_customer",
+                // The cursor opens on this row, which is where the bar is.
+                "▌\u{f084} Keyspace         shop",
+                " \u{f0ce} Table",
+                "     orders_by_customer",
                 // The blank row between what the panel is about and the shape
                 // of what it is about.
                 "",
+                // A heading opens at the margin: it is no cursor stop, so it
+                // keeps the column every row spends on the bar.
                 "\u{f030b} Partition Key",
-                "  customer_id      uuid",
+                "   customer_id      uuid",
                 "\u{f030b} Clustering Key",
-                "  order_date ↓     date",
-                "  order_id ↑   timeuuid",
+                "   order_date ↓     date",
+                "   order_id ↑   timeuuid",
                 // And the one splitting what the table is from what it is
                 // configured to do.
                 "",
                 "\u{f013} Options",
-                "gc_grace_seconds 864000",
+                " gc_grace_seconds 864000",
                 // `bloom_filter_fp_chance` and its value need 26 of the
                 // body's 23, so it keeps the wrapped shape.
-                "bloom_filter_fp_chance",
-                "  0.01",
+                " bloom_filter_fp_chance",
+                "   0.01",
                 // `comment` sorts last and now falls below the fold, which is
                 // what the scrollbar beside it says.
             ]
@@ -2472,7 +2477,7 @@ mod tests {
     /// The text a Ddl body row drew, at the same coordinates [`ddl_rows`]
     /// reads.
     fn row_text(buffer: &Buffer, row: u16) -> String {
-        (2..25)
+        (1..25)
             .filter_map(|x| buffer.cell((x, row)))
             .map(Cell::symbol)
             .collect::<String>()
@@ -2536,9 +2541,17 @@ mod tests {
         );
         assert_eq!(bar(37), "▌");
         assert_eq!(bar(38), "▌");
-        assert!(
-            (25..37).all(|y| bar(y) == " "),
-            "every other line pays the column and marks nothing"
+        // The rows of the shape and the one option above the cursor's: each
+        // pays the column and marks nothing. 28 and 34 are the blanks between
+        // the groups, and 29, 31 and 35 are headings — no cursor stop among
+        // them, so none of them pays it.
+        for y in [25, 26, 27, 30, 32, 33, 36] {
+            assert_eq!(bar(y), " ", "row {y} is a row the cursor is not on");
+        }
+        assert_eq!(
+            bar(35),
+            crate::icons::SETTINGS.trim_end(),
+            "a heading opens at the margin, in the column a row spends on the bar"
         );
     }
 
@@ -2667,7 +2680,7 @@ mod tests {
         assert_eq!(span.lines, 1, "comment fits one line at this width");
         assert_eq!(
             row_text(&buffer, row),
-            "comment  Order history.",
+            "▌comment  Order history.",
             "the last surviving row, not the third row of the unfiltered list"
         );
         assert_eq!(
@@ -2746,7 +2759,7 @@ mod tests {
         assert_eq!(
             rows,
             [
-                "\u{f084} Keyspace         shop",
+                "▌\u{f084} Keyspace         shop",
                 "",
                 "\u{f013} Replication",
                 "class    SimpleStrategy"
@@ -3257,12 +3270,13 @@ mod tests {
         assert_eq!(
             ddl_rows(&buffer)[..6],
             [
-                "\u{f084} Keyspace         shop",
-                "\u{f0ce} Table",
-                "    orders_by_customer",
+                // The cursor opens on this row, which is where the bar is.
+                "▌\u{f084} Keyspace         shop",
+                " \u{f0ce} Table",
+                "     orders_by_customer",
                 "",
                 "3 columns",
-                "\u{f030b} customer_id      uuid",
+                " \u{f030b} customer_id      uuid",
             ],
             "the lines this test resolves against"
         );

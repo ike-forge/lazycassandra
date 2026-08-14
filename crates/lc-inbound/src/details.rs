@@ -94,10 +94,12 @@ pub(crate) fn render(
 /// what is measured, or a redraw could chase its own tail
 /// (architecture.md §3).
 pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: Theme) -> Laid {
-    // The bar's column is reserved on every line, the Tables tree's way and the
+    // Every row reserves the bar's column, the Tables tree's way and the
     // Contents grid's, so nothing shifts sideways as the cursor moves
-    // (docs/superpowers/specs/2026-08-10-table-display-design.md §4.2).
-    let width = width.saturating_sub(usize::from(BAR));
+    // (docs/superpowers/specs/2026-08-10-table-display-design.md §4.2). A
+    // heading is no cursor stop, so it opens at the margin and keeps the
+    // column for its own text.
+    let content = width.saturating_sub(usize::from(BAR));
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut rows: Vec<Option<usize>> = Vec::new();
     let mut selection = Span::default();
@@ -128,7 +130,7 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
         }
 
         for detail in &section.rows {
-            let mut drawn = row_lines(detail, width, style, theme);
+            let mut drawn = row_lines(detail, content, style, theme);
 
             if row == selected {
                 let highlight = theme.style(Token::Selected);
@@ -151,7 +153,10 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
     let lines = lines
         .into_iter()
         .zip(&rows)
-        .map(|(line, row)| barred(line, *row == Some(selected), theme))
+        .map(|(line, row)| match row {
+            Some(row) => barred(line, *row == selected, theme),
+            None => line,
+        })
         .collect();
 
     Laid {
@@ -163,6 +168,8 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
 
 /// `line` behind the bar column, marked where the line was wrapped from the
 /// cursor's row — every one of them, since the highlight covers every one.
+/// Only a row's lines take it: a heading and a group's blank line cannot be
+/// selected, so neither pays the column.
 ///
 /// Prepended after the highlight is patched on, or the bar would be repainted
 /// in the selection's own foreground and stop reading as a bar.
