@@ -7,7 +7,7 @@
 use crate::commands::CommandsPanel;
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
-use crate::export::{Confirm, ExportForm, Fetched, Format, Scope};
+use crate::export::{Confirm, ExportForm, Fetched, Format, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
@@ -1133,7 +1133,7 @@ fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
                     Outcome::Nothing
                 }
             }
-            Key::Enter if !form.stop().takes_text() => Outcome::Run,
+            Key::Enter if form.stop() == Stop::Export => Outcome::Run,
             Key::Char('j') | Key::Down if !form.stop().takes_text() => {
                 form.down();
                 Outcome::Nothing
@@ -7198,6 +7198,37 @@ mod tests {
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
 
         assert!(form_of(&state).path().text().ends_with(' '));
+    }
+
+    /// `Space` is the form's activation key (design §2). `Enter` reaches the
+    /// Export button because a focused button is what it means everywhere
+    /// else — but a radio group is not a button, and a keystroke there must
+    /// not write a file.
+    #[test]
+    fn enter_on_a_radio_group_does_not_run_the_export() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Enter));
+
+        assert!(effects.is_empty());
+        assert!(
+            matches!(state.overlay, Some(Overlay::Export(_))),
+            "the form is still up"
+        );
+    }
+
+    #[test]
+    fn enter_on_the_export_stop_runs_it() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Enter));
+
+        assert!(matches!(effects.as_slice(), [Effect::Export { .. }]));
     }
 
     #[test]

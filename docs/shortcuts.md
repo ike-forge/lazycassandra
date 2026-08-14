@@ -179,8 +179,9 @@ does nothing here.
 |---|---|
 | `Tab` / `Shift-Tab` | Move to the next / previous of the form's four stops, wrapping. |
 | `Space` | Activates the focused stop: on a radio group, advances to the next enabled option, wrapping; on the Export stop, runs the export. |
+| `Enter` | Runs the export, and only from the Export stop. On the Scope or Format radio it does nothing — a radio group is not a button, and a keystroke landing there must not write a file. |
 | `j` / `k`, `Down` / `Up` | Move within a radio group — the second way to reach what `Space` also reaches there. |
-| any printable key, `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Text, and only on the path stop — the panel-that-takes-text rule, applied inside an overlay (§2). `Space` types a space there rather than activating anything. |
+| any printable key, `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Text, and only on the path stop — the panel-that-takes-text rule, applied inside an overlay (§2). `Space` types a space there rather than activating anything, and `Enter` does nothing there either. |
 | `Esc` | Closes the form and writes nothing. |
 
 `ctrl-d`/`ctrl-u` are the only ctrl chords answered while the form is up —
@@ -871,6 +872,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A second `ctrl-e`, and the picker's own opener, leave an open form alone | `a_second_ctrl_e_leaves_the_open_form_as_it_was`, `the_theme_picker_cannot_replace_an_open_export_form` |
 | `Tab`/`Shift-Tab` walk the form's own stops, not the panels | `tab_moves_between_the_forms_stops_rather_than_between_panels` |
 | `Space` toggles the focused radio, and types a space only on the path stop | `space_toggles_the_focused_radio`, `space_on_the_path_stop_types_a_space` |
+| `Enter` runs the export only from the Export stop, and is inert on a radio group | `enter_on_the_export_stop_runs_it`, `enter_on_a_radio_group_does_not_run_the_export` |
 | A printable key is text only on the path stop | `a_printable_key_types_itself_only_on_the_path_stop` |
 | `q` does not quit while the form is up | `q_does_not_quit_while_the_form_is_up` |
 | `Esc` closes the form and writes nothing | `esc_closes_the_form_and_writes_nothing` |
