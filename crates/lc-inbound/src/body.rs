@@ -553,7 +553,7 @@ impl Marked {
     /// colour:
     /// `the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row`
     /// pins `Selected` above `Ranged` in each of them, dark and light
-    /// (design §8).
+    /// (visual mode design §6.1).
     const fn band(flash: bool) -> Token {
         if flash {
             Token::Selected

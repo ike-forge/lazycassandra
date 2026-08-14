@@ -154,7 +154,7 @@ pub enum PanelBody {
         /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
         range: Option<Range>,
         /// Set while `range` is a yank's afterglow rather than a live
-        /// selection, which the renderer paints louder (design §8).
+        /// selection, which the renderer paints louder (visual mode design §6.1).
         flash: bool,
     },
     /// A heading and grouped rows: what is selected, described.
@@ -219,7 +219,7 @@ pub enum PanelBody {
 ///
 /// It outranks the selection wherever it is lit, and cannot contend with one:
 /// the yank spent the selection that named it, and the next input puts the
-/// flash out before it can reach a new one (design §8).
+/// flash out before it can reach a new one (visual mode design §6.1).
 fn flash_over(state: &State, panel: Panel) -> Option<crate::state::Flash> {
     state.flash.filter(|flash| flash.panel() == panel)
 }

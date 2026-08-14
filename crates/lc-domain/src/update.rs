@@ -193,7 +193,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         // The flash is a moment rather than a state, and the next input is the
         // end of it: left standing, it would contend with a fresh `v` for the
-        // same band (design §8).
+        // same band (visual mode design §6.1).
         Msg::Input(press) => {
             state.flash = None;
             handle_key(state, press)
@@ -380,7 +380,7 @@ fn yank(state: &mut State) -> Vec<Effect> {
     let Some(line) = line.filter(|line| line.chars().any(|c| c != ',' && c != '\n')) else {
         // A `y` that said nothing has nothing to show and nothing to reset:
         // spending the selection here would punish the user for pressing `y`
-        // on a null (design §7).
+        // on a null (visual mode design §5.1).
         return Vec::new();
     };
 
@@ -391,7 +391,7 @@ fn yank(state: &mut State) -> Vec<Effect> {
 }
 
 /// What `y` just took, ready to be lit once the selection that named it is
-/// gone (design §8).
+/// gone (visual mode design §6.1).
 fn lit(state: &State) -> Flash {
     let (rows, columns) = match state.focus {
         Panel::Contents => grid_extent(state),
@@ -1244,7 +1244,7 @@ fn clear_selection(state: &mut State) -> bool {
 }
 
 /// `y`'s second half: spend the selection and send each cursor back to the end
-/// it grew from (design §7).
+/// it grew from (visual mode design §5.1).
 ///
 /// A yank is one gesture rather than a mode the user is left standing in — the
 /// range has been said, so it stops being drawn, and the cursor goes back to
@@ -4100,7 +4100,7 @@ mod tests {
     }
 
     /// `y` is one gesture: it copies, and then it puts the panel back where
-    /// the user started it from (design §7).
+    /// the user started it from (visual mode design §5.1).
     #[test]
     fn y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor() {
         let mut state = grid_of_named_cells(3, 4);
@@ -4185,7 +4185,7 @@ mod tests {
     }
 
     /// Nothing yanked is nothing said, and a `y` that said nothing must not
-    /// move the cursor or throw the selection away either (design §7).
+    /// move the cursor or throw the selection away either (visual mode design §5.1).
     #[test]
     fn a_y_that_yanks_nothing_leaves_the_selection_alone() {
         let mut state = measured(&["a"]);
@@ -4205,7 +4205,7 @@ mod tests {
 
     /// The selection stops being drawn on `y`, so without this the copy would
     /// leave no mark at all and the user would have nothing but the absence of
-    /// a range to tell them it happened (design §8).
+    /// a range to tell them it happened (visual mode design §6.1).
     #[test]
     fn y_lights_up_what_it_yanked() {
         let mut state = grid_of_named_cells(3, 4);

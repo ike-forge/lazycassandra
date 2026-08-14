@@ -476,7 +476,7 @@ impl Range {
 /// two are not the same question — the ends say which rows are selected, the
 /// anchor says which of them the user started from — and `y` sends the cursor
 /// home to the anchor, so a range that only knew its ends could not answer it
-/// once the cursor had left (design §7).
+/// once the cursor had left (visual mode design §5.1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Selection {
     #[default]
@@ -581,7 +581,7 @@ impl Selection {
 }
 
 /// The afterglow a `y` leaves on what it copied
-/// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §8).
+/// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §6.1).
 ///
 /// A yank spends the selection, so without this the only sign it happened
 /// would be a band disappearing. The flash holds what was taken, brightly,

@@ -1807,7 +1807,7 @@ mod tests {
     /// A yank spends the selection that named the rows, so the flash is the
     /// only thing left saying what was copied — and it has to be louder than
     /// the band that was standing there a frame ago, or the copy reads as the
-    /// selection simply vanishing (design §8).
+    /// selection simply vanishing (visual mode design §6.1).
     #[test]
     fn a_yanks_afterglow_is_louder_than_the_range_it_replaces() {
         let mut ranged = showing(sized_page(2, 4));
