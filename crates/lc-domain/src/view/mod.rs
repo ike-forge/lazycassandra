@@ -254,6 +254,13 @@ pub fn ddl_row(state: &State) -> Option<DetailRow> {
         .cloned()
 }
 
+/// The whole Table DDL projection a range reads, where [`ddl_row`] is the one
+/// row a cursor names.
+#[must_use]
+pub fn details_of(state: &State) -> Option<Details> {
+    details::of(state)
+}
+
 /// The tabs the Ddl panel offers for what the Tables cursor is on.
 ///
 /// Public because the key that reaches a tab must not store one the strip

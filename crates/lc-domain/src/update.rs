@@ -13,8 +13,8 @@ use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, SchemaState, Scroll, Selection,
-    State,
+    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, Range, SchemaState, Scroll,
+    Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
@@ -345,15 +345,25 @@ fn quit(state: &mut State) -> Vec<Effect> {
 fn yank(state: &State) -> Vec<Effect> {
     let line = match state.focus {
         Panel::Contents => contents(state),
-        Panel::Tables => tree_node(state),
-        Panel::Ddl => detail_row(state),
+        Panel::Tables => tree_nodes(state),
+        Panel::Ddl => detail_rows(state),
         Panel::Queries => None,
     };
 
-    line.filter(|line| !line.is_empty())
+    // A payload of nothing but delimiters says nothing, and `Effect::Yank`
+    // becomes an OSC 52 sequence: an empty one asks the terminal to clear the
+    // clipboard (design §5).
+    line.filter(|line| line.chars().any(|c| c != ',' && c != '\n'))
         .map(Effect::Yank)
         .into_iter()
         .collect()
+}
+
+/// The range, or the one row the cursor is on when nothing is selected.
+fn spanned(selection: Selection, cursor: usize) -> Range {
+    selection
+        .range(cursor)
+        .unwrap_or_else(|| Range::new(cursor, cursor))
 }
 
 /// Which of the grid's two cursors `y` means is what the selection mode
@@ -363,34 +373,53 @@ fn contents(state: &State) -> Option<String> {
         return None;
     };
     let page = page.page();
+    let rows = spanned(state.contents.rows, state.contents.cursor.index());
+    let columns = spanned(state.contents.columns, state.contents.column.index());
 
     match state.contents.mode {
-        SelectionMode::Row => {
-            let row = page.rows.get(state.contents.cursor.index())?;
-
-            Some(crate::yank::grid_row(row))
-        }
-        SelectionMode::Cell => {
-            let row = page.rows.get(state.contents.cursor.index())?;
-            let value = row.values.get(state.contents.column.index())?;
-
-            crate::yank::grid_cell(value)
-        }
-        SelectionMode::Column => Some(crate::yank::grid_column(
+        SelectionMode::Row => Some(crate::yank::grid_block(
             &page.rows,
-            state.contents.column.index(),
+            rows,
+            Range::new(0, page.columns.len().saturating_sub(1)),
         )),
+        SelectionMode::Cell => {
+            if rows.rows() == 1 && columns.rows() == 1 {
+                let row = page.rows.get(rows.first())?;
+                let value = row.values.get(columns.first())?;
+
+                return crate::yank::grid_cell(value);
+            }
+
+            Some(crate::yank::grid_block(&page.rows, rows, columns))
+        }
+        SelectionMode::Column => Some(crate::yank::grid_columns(&page.rows, columns)),
     }
 }
 
-fn tree_node(state: &State) -> Option<String> {
+fn tree_nodes(state: &State) -> Option<String> {
     let schema = state.schema()?;
+    let rows = state.tables.rows(schema);
+    let range = spanned(state.tables.selection, state.tables.cursor.index());
 
-    Some(crate::yank::node(&state.tables.selected(schema)?))
+    Some(crate::yank::lines(
+        rows.iter()
+            .enumerate()
+            .filter(|(index, _)| range.contains(*index))
+            .map(|(_, node)| crate::yank::node(node)),
+    ))
 }
 
-fn detail_row(state: &State) -> Option<String> {
-    Some(crate::yank::detail_row(&crate::view::ddl_row(state)?))
+fn detail_rows(state: &State) -> Option<String> {
+    let details = crate::view::details_of(state)?;
+    let range = spanned(state.ddl.selection, state.ddl.cursor.index());
+
+    Some(crate::yank::lines(
+        details
+            .rows()
+            .enumerate()
+            .filter(|(index, _)| range.contains(*index))
+            .map(|(_, row)| crate::yank::detail_row(row)),
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -4148,6 +4177,111 @@ mod tests {
         assert_eq!(
             press(&mut state, Key::Char('y')),
             vec![Effect::Yank("shop.orders".to_owned())]
+        );
+    }
+
+    fn yanked(effects: &[Effect]) -> Option<&str> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Yank(line) => Some(line.as_str()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn y_yanks_every_row_of_a_range_one_per_line() {
+        let mut state = grid_of_named_cells(2, 3);
+        state.contents.mode = SelectionMode::Row;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(yanked(&effects), Some("r0c0,r0c1\nr1c0,r1c1"));
+    }
+
+    #[test]
+    fn y_in_cell_mode_yanks_the_block_and_nothing_outside_it() {
+        let mut state = grid_of_named_cells(3, 3);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('l'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(yanked(&effects), Some("r0c0,r0c1\nr1c0,r1c1"));
+    }
+
+    #[test]
+    fn y_on_a_single_cell_still_yanks_it_bare() {
+        let mut state = grid_of_named_cells(2, 2);
+        press(&mut state, Key::Char('v'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(
+            yanked(&effects),
+            Some("r0c0"),
+            "one cell is not a range; adding quotes would put back the delimiter there is none of"
+        );
+    }
+
+    #[test]
+    fn y_in_column_mode_yanks_one_line_per_column() {
+        let mut state = grid_of_named_cells(3, 2);
+        state.contents.mode = SelectionMode::Column;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('l'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(yanked(&effects), Some("r0c0,r1c0\nr0c1,r1c1"));
+    }
+
+    #[test]
+    fn y_yanks_every_node_of_a_tree_range() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(yanked(&effects), Some("shop\nshop.orders\nshop.users"));
+    }
+
+    #[test]
+    fn a_payload_of_nothing_but_delimiters_reaches_no_clipboard() {
+        // `grid_of_rows` fills its cells with `Int(1)`; this needs nulls, so
+        // the page is built here rather than borrowed from it.
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["a".to_owned(), "b".to_owned()],
+                rows: vec![
+                    Row {
+                        values: vec![CqlValue::Null, CqlValue::Null],
+                    };
+                    2
+                ],
+                next: None,
+            },
+        );
+        state.focus = Panel::Contents;
+        state.contents.mode = SelectionMode::Row;
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(
+            effects.is_empty(),
+            "a block of nulls says nothing, and an empty payload clears the clipboard"
         );
     }
 
