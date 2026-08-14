@@ -243,21 +243,7 @@ pub fn ddl_rows(state: &State) -> usize {
     details::of(state).map_or(0, |details| details.row_count())
 }
 
-/// The Table DDL row the panel's cursor is on, whichever tab is drawn.
-///
-/// Owned rather than borrowed: [`details::of`] builds the projection fresh,
-/// so there is nothing for a reference to outlive
-/// (docs/superpowers/specs/2026-08-13-yank-design.md §2.3).
-#[must_use]
-pub fn ddl_row(state: &State) -> Option<DetailRow> {
-    details::of(state)?
-        .rows()
-        .nth(state.ddl.cursor.index())
-        .cloned()
-}
-
-/// The whole Table DDL projection a range reads, where [`ddl_row`] is the one
-/// row a cursor names.
+/// The whole Table DDL projection a range reads.
 #[must_use]
 pub fn details_of(state: &State) -> Option<Details> {
     details::of(state)
