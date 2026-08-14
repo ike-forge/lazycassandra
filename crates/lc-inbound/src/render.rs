@@ -744,7 +744,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open | / search | tab panel | q quit",
+            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open | / search | v select | tab panel | q quit",
             "the loader takes the leading cells and the hints follow it"
         );
         assert!(

@@ -203,12 +203,22 @@ const TABLES_HINTS: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('/'))],
         action: "search",
     },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('v'))],
+        action: "select",
+    },
 ];
 
-const DDL_HINTS: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Char('/'))],
-    action: "search",
-}];
+const DDL_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Char('/'))],
+        action: "search",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('v'))],
+        action: "select",
+    },
+];
 
 const CONTENTS_HINTS: &[Binding] = &[
     Binding {
@@ -218,6 +228,10 @@ const CONTENTS_HINTS: &[Binding] = &[
     Binding {
         keys: &[KeyPress::new(Key::Char('/'))],
         action: "search",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('v'))],
+        action: "select",
     },
 ];
 

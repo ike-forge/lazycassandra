@@ -2,7 +2,7 @@
 
 use crate::model::{Key, KeyPress};
 use crate::search::Filtered;
-use crate::state::{Overlay, State};
+use crate::state::{Overlay, Panel, State};
 
 /// A binding, keyed by the presses `handle_key` actually matches on.
 ///
@@ -189,11 +189,44 @@ pub(crate) fn bar(state: &State) -> HintBar {
             ..rendered(binding)
         })
         .collect();
-    if Filtered::of(state.focus).is_some_and(|target| state.filter(target).is_some()) {
+    let filtered = Filtered::of(state.focus).is_some_and(|target| state.filter(target).is_some());
+    if filtered || selected(state) {
         panel.push(rendered(&CLEAR));
     }
 
     HintBar { panel, global }
+}
+
+/// Whether the focused panel is carrying a live range. A hint must be true in
+/// the frame it is drawn in, and under a live range `esc` unconditionally
+/// clears it (docs/shortcuts.md §2) — the same rule that already puts `esc`
+/// on the bar for a panel carrying a filter.
+fn selected(state: &State) -> bool {
+    match state.focus {
+        Panel::Tables => state
+            .tables
+            .selection
+            .range(state.tables.cursor.index())
+            .is_some(),
+        Panel::Ddl => state
+            .ddl
+            .selection
+            .range(state.ddl.cursor.index())
+            .is_some(),
+        Panel::Contents => {
+            state
+                .contents
+                .rows
+                .range(state.contents.cursor.index())
+                .is_some()
+                || state
+                    .contents
+                    .columns
+                    .range(state.contents.column.index())
+                    .is_some()
+        }
+        Panel::Queries => false,
+    }
 }
 
 /// `ctrl-r` on an empty or whitespace-only buffer submits nothing, silently
@@ -584,6 +617,32 @@ mod tests {
             run_hint(&queries_bar("SELECT * FROM shop.orders")).liveness,
             Liveness::Live
         );
+    }
+
+    #[test]
+    fn the_bar_names_esc_while_a_range_stands() {
+        let mut state = State {
+            focus: Panel::Tables,
+            ..fits()
+        };
+        state.tables.selection.start(0);
+
+        let bar = bar(&state);
+
+        assert!(
+            bar.panel.iter().any(|hint| hint.keys == "esc"),
+            "under a live range, pressing esc unconditionally does something"
+        );
+    }
+
+    #[test]
+    fn the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter() {
+        let state = State {
+            focus: Panel::Tables,
+            ..fits()
+        };
+
+        assert!(!bar(&state).panel.iter().any(|hint| hint.keys == "esc"));
     }
 
     #[test]
