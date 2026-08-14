@@ -222,6 +222,7 @@ pub enum Mouse {
     Off,
 }
 
+/// The consistency level the driver requests for every statement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Consistency {
     Any,
@@ -236,6 +237,7 @@ pub enum Consistency {
     LocalOne,
 }
 
+/// The wire compression the driver negotiates with the cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Compression {
     None,
@@ -256,6 +258,7 @@ pub enum Credential {
     File(PathBuf),
 }
 
+/// One cluster to connect to, as a config file names it under `[[connections]]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionConfig {
     pub name: ConnectionName,
@@ -266,12 +269,19 @@ pub struct ConnectionConfig {
     pub password: Option<Credential>,
 }
 
+/// How the Contents grid renders and pages what it reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GridConfig {
     pub max_column_width: MaxColumnWidth,
     pub row_limit: RowLimit,
 }
 
+/// Driver-level settings applied to every connection.
+///
+/// Global rather than per-connection: nothing in the design so far calls for
+/// one cluster to page or time out differently from another, so there is
+/// only one of these per [`Config`] rather than one per
+/// [`ConnectionConfig`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DriverConfig {
     pub page_size: PageSize,
@@ -281,6 +291,11 @@ pub struct DriverConfig {
     pub compression: Compression,
 }
 
+/// Where a grid export is written.
+///
+/// Both fields are `Option` rather than defaulted: there is no export
+/// feature yet to give a bare `path` or `prefix` meaning, so an unstated
+/// value stays absent instead of being guessed at.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExportConfig {
     pub path: Option<PathBuf>,

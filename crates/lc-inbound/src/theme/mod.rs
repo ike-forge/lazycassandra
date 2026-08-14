@@ -108,9 +108,14 @@ impl Theme {
     /// not this lookup's — nothing in this crate can see the config that
     /// would answer it.
     #[must_use]
+    // `DefaultDark` and `Custom` share a body by coincidence, not by design —
+    // the latter is a stand-in for resolution a later task adds, and merging
+    // the two arms would read as if that were intentional aliasing.
+    #[allow(clippy::match_same_arms)]
     pub fn of(choice: &ThemeChoice) -> Self {
         Self {
             palette: match choice {
+                ThemeChoice::Ours(Ours::DefaultDark) => &ours::default::DARK,
                 ThemeChoice::Ours(Ours::DefaultLight) => &ours::default::LIGHT,
                 ThemeChoice::Ours(Ours::AshDark) => &ours::ash::DARK,
                 ThemeChoice::Ours(Ours::AshLight) => &ours::ash::LIGHT,
@@ -122,13 +127,7 @@ impl Theme {
                 ThemeChoice::Ported(Ported::CatppuccinFrappe) => &ported::catppuccin::FRAPPE,
                 ThemeChoice::Ported(Ported::CatppuccinMacchiato) => &ported::catppuccin::MACCHIATO,
                 ThemeChoice::Ported(Ported::CatppuccinMocha) => &ported::catppuccin::MOCHA,
-                // Resolving a config's custom theme against its declared
-                // roles is `lc-app`'s wiring to do, not this lookup's —
-                // nothing in this crate can see the config that would
-                // answer it.
-                ThemeChoice::Ours(Ours::DefaultDark) | ThemeChoice::Custom(_) => {
-                    &ours::default::DARK
-                }
+                ThemeChoice::Custom(_) => &ours::default::DARK,
             },
         }
     }
