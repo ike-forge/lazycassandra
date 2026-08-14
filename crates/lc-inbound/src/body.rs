@@ -128,8 +128,17 @@ pub(crate) fn render(
             selected,
             offset,
             range,
+            flash,
         } => Some(Body {
-            extent: tree(frame, area, rows, *selected, *offset, *range, theme),
+            extent: tree(
+                frame,
+                area,
+                rows,
+                *selected,
+                *offset,
+                Marked::new(*range, *flash),
+                theme,
+            ),
             columns: None,
             bands: Vec::new(),
             unit: Unit::Rows { header: 0 },
@@ -140,9 +149,17 @@ pub(crate) fn render(
             selected,
             offset,
             range,
+            flash,
         } => {
-            let (extent, selection, rows) =
-                crate::details::render(frame, area, details, *selected, *offset, *range, theme);
+            let (extent, selection, rows) = crate::details::render(
+                frame,
+                area,
+                details,
+                *selected,
+                *offset,
+                Marked::new(*range, *flash),
+                theme,
+            );
             Some(Body {
                 extent,
                 columns: None,
@@ -158,35 +175,8 @@ pub(crate) fn render(
             unit: Unit::Lines { rows: Vec::new() },
             selection: Span::default(),
         }),
-        PanelBody::Grid {
-            columns,
-            rows,
-            selected,
-            offset,
-            first_column,
-            column,
-            mode,
-            gutter,
-            rows_range,
-            columns_range,
-        } => {
-            let (extent, horizontal, bands) = grid(
-                frame,
-                area,
-                &GridView {
-                    columns,
-                    rows,
-                    selected: *selected,
-                    offset: *offset,
-                    first_column: *first_column,
-                    column: *column,
-                    mode: *mode,
-                    gutter: *gutter,
-                    rows_range: *rows_range,
-                    columns_range: *columns_range,
-                },
-                theme,
-            );
+        PanelBody::Grid { .. } => {
+            let (extent, horizontal, bands) = grid(frame, area, &grid_view(body)?, theme);
 
             Some(Body {
                 extent,
@@ -230,15 +220,20 @@ fn tree(
     rows: &[TreeRow],
     selected: usize,
     offset: usize,
-    range: Option<Range>,
+    marked: Marked,
     theme: Theme,
 ) -> Extent {
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
         .map(|(index, row)| {
-            let ranged = range.is_some_and(|range| range.contains(index));
-            item(row, index == selected || ranged, ranged, theme)
+            let ranged = marked.holds(index);
+            item(
+                row,
+                index == selected || ranged,
+                ranged.then_some(marked.band),
+                theme,
+            )
         })
         .collect();
     let height = usize::from(area.height);
@@ -279,15 +274,9 @@ struct GridView<'a> {
     rows_range: Option<Range>,
     /// [`GridView::rows_range`]'s counterpart for the column axis.
     columns_range: Option<Range>,
-}
-
-/// Which of `TableState`'s three selections this frame carries. A row scrolled
-/// out of view is `None` in `Cell` and `Row` alike; a column selection does not
-/// depend on where the row viewport sits (design §4).
-enum Selection {
-    Cell(Option<(usize, usize)>),
-    Row(Option<usize>),
-    Column(Option<usize>),
+    /// What the two ranges are painted with — [`Token::Ranged`] for a live
+    /// selection, the louder [`Token::Selected`] for a yank's afterglow.
+    band: Token,
 }
 
 fn grid(
@@ -307,6 +296,7 @@ fn grid(
         gutter,
         rows_range,
         columns_range,
+        band,
     } = *view;
 
     // Both the window `visible` judges against and the extent the scrollbar is
@@ -362,6 +352,7 @@ fn grid(
         gutter,
         rows_range,
         columns_range,
+        band,
     };
     let body = rows
         .iter()
@@ -385,26 +376,23 @@ fn grid(
     // vertical band is gated on the same answer.
     let selected_column = drawn.contains(&column).then_some(drawn_column);
 
-    let (table, selection) = match mode {
+    // Which of `TableState`'s three selections this frame carries. A row
+    // scrolled out of view is `None` in cell and row mode alike; a column
+    // selection does not depend on where the row viewport sits (design §4).
+    let empty = TableState::default().with_offset(offset);
+    let (table, mut state) = match mode {
         SelectionMode::Cell => (
             table.cell_highlight_style(theme.style(Token::SelectedCell)),
-            Selection::Cell(row.map(|row| (row, drawn_column))),
+            empty.with_selected_cell(row.map(|row| (row, drawn_column))),
         ),
         SelectionMode::Row => (
             table.row_highlight_style(theme.style(Token::Selected)),
-            Selection::Row(row),
+            empty.with_selected(row),
         ),
         SelectionMode::Column => (
             table.column_highlight_style(theme.style(Token::Selected)),
-            Selection::Column(selected_column),
+            empty.with_selected_column(selected_column),
         ),
-    };
-
-    let mut state = TableState::default().with_offset(offset);
-    state = match selection {
-        Selection::Cell(cell) => state.with_selected_cell(cell),
-        Selection::Row(row) => state.with_selected(row),
-        Selection::Column(column) => state.with_selected_column(column),
     };
 
     if matches!(mode, SelectionMode::Cell) {
@@ -498,6 +486,41 @@ fn ranged(
         && columns_range.is_none_or(|range| range.contains(column))
 }
 
+/// The grid's fields, read off the body that carries them. `None` for every
+/// other body, which is unreachable: the caller matched `Grid` to get here.
+fn grid_view(body: &PanelBody) -> Option<GridView<'_>> {
+    let PanelBody::Grid {
+        columns,
+        rows,
+        selected,
+        offset,
+        first_column,
+        column,
+        mode,
+        gutter,
+        rows_range,
+        columns_range,
+        flash,
+    } = body
+    else {
+        return None;
+    };
+
+    Some(GridView {
+        columns,
+        rows,
+        selected: *selected,
+        offset: *offset,
+        first_column: *first_column,
+        column: *column,
+        mode: *mode,
+        gutter: *gutter,
+        rows_range: *rows_range,
+        columns_range: *columns_range,
+        band: Marked::band(*flash),
+    })
+}
+
 /// What one row of the grid's body needs, gathered here rather than passed as
 /// seven more parameters of `grid_row` (the reason [`GridView`] itself is a
 /// struct).
@@ -509,6 +532,53 @@ struct GridRow<'a> {
     gutter: u16,
     rows_range: Option<Range>,
     columns_range: Option<Range>,
+    band: Token,
+}
+
+/// A run of rows marked out, and what it is painted with.
+///
+/// The two travel together because a range that lost its band would be drawn
+/// as an ordinary selection — which is exactly what a yank's afterglow must
+/// not look like.
+#[derive(Clone, Copy)]
+pub(crate) struct Marked {
+    pub(crate) range: Option<Range>,
+    pub(crate) band: Token,
+}
+
+impl Marked {
+    /// A yank's afterglow takes the loudest of the three bands, so a copy
+    /// reads as a flash against the range that was standing there a frame ago.
+    /// Which token that is holds in every palette rather than by choice of
+    /// colour:
+    /// `the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row`
+    /// pins `Selected` above `Ranged` in each of them, dark and light
+    /// (design §8).
+    const fn band(flash: bool) -> Token {
+        if flash {
+            Token::Selected
+        } else {
+            Token::Ranged
+        }
+    }
+
+    const fn new(range: Option<Range>, flash: bool) -> Self {
+        Self {
+            range,
+            band: Self::band(flash),
+        }
+    }
+
+    /// Nothing marked out. The band is the one an ordinary selection takes,
+    /// which nothing paints while `range` is `None`.
+    #[cfg(test)]
+    pub(crate) const fn none() -> Self {
+        Self::new(None, false)
+    }
+
+    pub(crate) fn holds(self, index: usize) -> bool {
+        self.range.is_some_and(|range| range.contains(index))
+    }
 }
 
 /// One row of the grid's body: the bar-and-gutter cell, then the columns
@@ -546,7 +616,7 @@ fn grid_row(index: usize, cells: &[GridCell], layout: &GridRow, theme: Theme) ->
                         Some(
                             cell_style(cell, theme)
                                 .unwrap_or_default()
-                                .patch(theme.style(Token::Ranged)),
+                                .patch(theme.style(layout.band)),
                         )
                     } else {
                         cell_style(cell, theme)
@@ -686,7 +756,7 @@ fn truncated(text: &str, width: u16) -> String {
     out
 }
 
-fn item(row: &TreeRow, marked: bool, ranged: bool, theme: Theme) -> ListItem<'static> {
+fn item(row: &TreeRow, marked: bool, band: Option<Token>, theme: Theme) -> ListItem<'static> {
     // A keyspace opens at the margin and its tables hang off it, so the shape
     // of the tree is the indentation and no separate fold marker is spent on
     // saying what the drawn rows already say
@@ -723,10 +793,9 @@ fn item(row: &TreeRow, marked: bool, ranged: bool, theme: Theme) -> ListItem<'st
 
     let item = ListItem::new(line);
 
-    if ranged {
-        item.style(theme.style(Token::Ranged))
-    } else {
-        item
+    match band {
+        Some(band) => item.style(theme.style(band)),
+        None => item,
     }
 }
 

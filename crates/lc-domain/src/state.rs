@@ -41,6 +41,9 @@ pub struct State {
     /// only as [`crate::Msg::Tick`], so this is the whole of what the renderer
     /// is told about it.
     pub loader: Loader,
+    /// What the last `y` copied, lit for as long as [`Flash`] lasts. `None`
+    /// once it has faded or the next key has ended it.
+    pub flash: Option<Flash>,
     /// Set when something changed that the next frame must show. Avoids
     /// repainting on every keypress of a held-down `j` (architecture.md §3).
     pub dirty: bool,
@@ -574,6 +577,68 @@ impl Selection {
                 }
             }
         }
+    }
+}
+
+/// The afterglow a `y` leaves on what it copied
+/// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §8).
+///
+/// A yank spends the selection, so without this the only sign it happened
+/// would be a band disappearing. The flash holds what was taken, brightly,
+/// for long enough to read and no longer.
+///
+/// It carries the rectangle rather than reading the selection back, because by
+/// the time it is drawn there is no selection left to read. `rows` and
+/// `columns` follow the view model's convention: `None` on an axis is the
+/// whole of it, which is what row mode and column mode take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Flash {
+    panel: Panel,
+    rows: Option<Range>,
+    columns: Option<Range>,
+    remaining: usize,
+}
+
+/// How long the afterglow lasts, counted in [`crate::Msg::Tick`]s.
+///
+/// Elapsed time reaches the domain only as ticks, so a duration is a count
+/// here: twelve of `lc-app`'s forty-millisecond ticks, a little under half a
+/// second. Long enough to catch the eye, short enough that it is over before
+/// the next key.
+pub const FLASH_TICKS: usize = 12;
+
+impl Flash {
+    #[must_use]
+    pub const fn lit(panel: Panel, rows: Option<Range>, columns: Option<Range>) -> Self {
+        Self {
+            panel,
+            rows,
+            columns,
+            remaining: FLASH_TICKS,
+        }
+    }
+
+    /// Burns one tick. Reports whether the frame changed — which only the tick
+    /// that puts the flash out does, so a flash costs two repaints rather than
+    /// one per tick ([`Loader::advance`]'s rule).
+    pub const fn spend(&mut self) -> bool {
+        self.remaining = self.remaining.saturating_sub(1);
+        self.remaining == 0
+    }
+
+    #[must_use]
+    pub const fn panel(self) -> Panel {
+        self.panel
+    }
+
+    #[must_use]
+    pub const fn rows(self) -> Option<Range> {
+        self.rows
+    }
+
+    #[must_use]
+    pub const fn columns(self) -> Option<Range> {
+        self.columns
     }
 }
 

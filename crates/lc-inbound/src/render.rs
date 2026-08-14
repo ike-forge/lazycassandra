@@ -563,6 +563,7 @@ fn bar(
 
 #[cfg(test)]
 mod tests {
+    use crate::body::Marked;
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{SelectionMode, Subject, TableRef};
     use lc_domain::ddl::DdlTab;
@@ -574,7 +575,8 @@ mod tests {
     use lc_domain::posture::Posture;
     use lc_domain::search::{Filter, Filtered, Prompt};
     use lc_domain::state::{
-        Connection, ConnectionState, Geometry, Message, Overlay, Panel, SchemaState, Selection,
+        Connection, ConnectionState, Flash, Geometry, Message, Overlay, Panel, Range, SchemaState,
+        Selection,
     };
     use lc_domain::style::Severity;
     use lc_domain::view::PanelBody;
@@ -1802,6 +1804,76 @@ mod tests {
         );
     }
 
+    /// A yank spends the selection that named the rows, so the flash is the
+    /// only thing left saying what was copied — and it has to be louder than
+    /// the band that was standing there a frame ago, or the copy reads as the
+    /// selection simply vanishing (design §8).
+    #[test]
+    fn a_yanks_afterglow_is_louder_than_the_range_it_replaces() {
+        let mut ranged = showing(sized_page(2, 4));
+        ranged.contents.mode = SelectionMode::Row;
+        ranged.contents.cursor.go_to(3, 4);
+        ranged.contents.rows = Selection::held(0, 1);
+
+        let mut flashed = showing(sized_page(2, 4));
+        flashed.contents.mode = SelectionMode::Row;
+        flashed.contents.cursor.go_to(3, 4);
+        flashed.flash = Some(Flash::lit(Panel::Contents, Some(Range::new(0, 1)), None));
+
+        let bg = |state: &State, row: u16| {
+            let buffer = draw_state(60, 12, state);
+            let area = block_area(&buffer, "Table contents");
+            buffer
+                .cell((area.x + 4, area.y + 2 + row))
+                .expect("inside the panel")
+                .bg
+        };
+        let palette = Theme::default().palette();
+
+        assert_eq!(bg(&ranged, 0), palette.ranged);
+        assert_eq!(
+            bg(&flashed, 0),
+            palette.selection_bg,
+            "the afterglow takes the loudest band, which is the cursor row's"
+        );
+        assert_eq!(
+            bg(&flashed, 2),
+            bg(&ranged, 2),
+            "and it lights only the rows the yank took"
+        );
+    }
+
+    /// The flash reaches the panel whose `y` lit it and no other.
+    #[test]
+    fn a_yank_in_the_tree_lights_the_tree_alone() {
+        let mut state = showing(sized_page(2, 4));
+        state.flash = Some(Flash::lit(Panel::Tables, Some(Range::new(0, 0)), None));
+
+        let buffer = draw_state(60, 12, &state);
+        let palette = Theme::default().palette();
+        let tree = block_area(&buffer, "Tables");
+        let grid = block_area(&buffer, "Table contents");
+
+        assert_eq!(
+            buffer
+                .cell((tree.x + 2, tree.y + 1))
+                .expect("inside the panel")
+                .bg,
+            palette.selection_bg
+        );
+        // Row 2, not the grid's own row 0: that one carries the cursor band in
+        // this palette's loudest colour whether or not anything flashed, and
+        // would pass this assertion for the wrong reason.
+        assert_ne!(
+            buffer
+                .cell((grid.x + 4, grid.y + 4))
+                .expect("inside the panel")
+                .bg,
+            palette.selection_bg,
+            "a flash lit over the tree reaches no other panel"
+        );
+    }
+
     #[test]
     fn every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them() {
         let mut state = showing(sized_page(2, 4));
@@ -2829,7 +2901,7 @@ mod tests {
 
         // 40x20: a fourteen-column, nine-row Ddl body — narrow enough that
         // `orders()` wraps well past it.
-        let total = crate::details::lay_out(&details, 0, None, 14, Theme::default())
+        let total = crate::details::lay_out(&details, 0, Marked::none(), 14, Theme::default())
             .lines
             .len();
         assert!(
@@ -2863,7 +2935,7 @@ mod tests {
         // `comment` is the last row and wraps to three lines at this width.
         // Scrolled until its first line is the eighth of the nine visible, two
         // of them are in view and the third is below the fold.
-        let laid = crate::details::lay_out(&details, last, None, 14, Theme::default());
+        let laid = crate::details::lay_out(&details, last, Marked::none(), 14, Theme::default());
         let total = laid.lines.len();
         assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
         for _ in 0..laid.selection.first - 7 {
@@ -3052,7 +3124,7 @@ mod tests {
             crate::details::lay_out(
                 &ddl_details(&describing(orders())),
                 0,
-                None,
+                Marked::none(),
                 14,
                 Theme::default()
             )
@@ -3107,8 +3179,14 @@ mod tests {
         const HEIGHT: usize = 5;
 
         let state = describing(orders());
-        let all =
-            crate::details::lay_out(&ddl_details(&state), 0, None, WIDTH, Theme::default()).lines;
+        let all = crate::details::lay_out(
+            &ddl_details(&state),
+            0,
+            Marked::none(),
+            WIDTH,
+            Theme::default(),
+        )
+        .lines;
         assert!(
             all.len() > HEIGHT,
             "the fixture must overflow the panel or this test proves nothing"

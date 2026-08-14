@@ -9,7 +9,7 @@
 use crate::ddl::DdlTab;
 use crate::model::{ClusteringOrder, Column, Keyspace, Replication, Table};
 use crate::search::Filter;
-use crate::state::State;
+use crate::state::{Flash, Panel, State};
 use crate::style::Token;
 use crate::tree::Node;
 
@@ -266,11 +266,17 @@ fn scrolled(state: &State, details: Details) -> PanelBody {
         });
     }
 
+    let flash = super::flash_over(state, Panel::Ddl);
+
     PanelBody::Details {
         details,
         selected: state.ddl.cursor.index(),
         offset: state.ddl.scroll.offset(),
-        range: state.ddl.selection.range(state.ddl.cursor.index()),
+        range: flash.map_or_else(
+            || state.ddl.selection.range(state.ddl.cursor.index()),
+            Flash::rows,
+        ),
+        flash: flash.is_some(),
     }
 }
 
