@@ -45,8 +45,13 @@ thiserror = "2.0.19"
 # own column widths, and `chars().count()` is the wrong answer for the text a
 # Cassandra cluster will certainly hold.
 unicode-width = "0.2.2"
+# `process` and `io-util` are the clipboard helper: a child that owns an X or
+# Wayland selection outlives the yank that spawned it, so it is reaped by the
+# runtime rather than waited for (yank design §3, amended).
 tokio = { version = "1.53.1", features = [
+    "io-util",
     "macros",
+    "process",
     "rt-multi-thread",
     "sync",
     "time",

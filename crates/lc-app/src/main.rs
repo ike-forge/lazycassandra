@@ -3,6 +3,7 @@
 //! Deliberately thin: wiring, not logic (architecture.md §2). It is the only
 //! crate that sees all three layers.
 
+mod clipboard;
 mod editor;
 mod effects;
 mod input;

@@ -28,9 +28,21 @@ mise run ci      # everything CI gates on
 
 ## Clipboard
 
-`y` copies the focused row through OSC 52, which needs a terminal that
-supports it (Windows Terminal, WezTerm, kitty, alacritty; tmux with
-`set-clipboard on`). On a terminal without it, `y` does nothing observable.
+`y` copies the focused row by two routes at once, because neither reaches
+everywhere:
+
+- **OSC 52**, which asks the terminal. Needs a terminal that supports it
+  (Windows Terminal, WezTerm, kitty, alacritty) and a multiplexer that
+  forwards it (tmux with `set-clipboard on` — though some builds parse the
+  sequence and forward nothing). This is the route that survives SSH onto a
+  host with no display of its own.
+- **A helper process**, which asks the platform: `clip.exe` under WSL,
+  `wl-copy` under Wayland, `xclip` under X11, `pbcopy` on macOS. Whichever the
+  environment offers, first that will run.
+
+Where both work they are told the same line, so it does not matter which one
+the clipboard listened to. On a host with neither — no display, no interop,
+and a terminal that ignores OSC 52 — `y` still does nothing observable.
 
 ## Fixture cluster
 
