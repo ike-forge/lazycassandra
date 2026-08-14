@@ -9,7 +9,7 @@ use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
 use crate::export::{ExportForm, Fetched};
 use crate::grid::{self, ColumnScroll};
-use crate::model::{ConnId, DbError, Key, KeyPress, Page, PagingState, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, Key, KeyPress, Page, QueryId, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
@@ -88,11 +88,6 @@ pub enum Effect {
         conn: ConnId,
         query: QueryId,
         stmt: Box<Statement>,
-    },
-    FetchNextPage {
-        conn: ConnId,
-        query: QueryId,
-        cursor: PagingState,
     },
     Cancel(QueryId),
     RecordHistory(Box<Statement>),

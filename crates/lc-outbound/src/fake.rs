@@ -27,6 +27,9 @@ pub struct FakeCluster {
     /// The statements `execute` was asked for, in order. Behind a lock
     /// because the port takes `&self`; a scenario asserts on it afterwards.
     executed: Mutex<Vec<Statement>>,
+    /// Pages `execute_paged` walks, in order. Empty means one page — whatever
+    /// `execute` would return — and no cursor.
+    pages: Vec<Page>,
 }
 
 impl FakeCluster {
@@ -52,6 +55,15 @@ impl FakeCluster {
             execute_error: Some(error),
             ..self
         }
+    }
+
+    /// The pages `execute_paged` walks through, in order.
+    ///
+    /// The cursor is the index of the page that follows, so a scripted run
+    /// needs no driver and no clock.
+    #[must_use]
+    pub fn paging(self, pages: Vec<Page>) -> Self {
+        Self { pages, ..self }
     }
 
     /// Every statement `execute` has been handed, in order.
@@ -109,7 +121,88 @@ impl Cluster for FakeCluster {
             .map_or_else(|| Ok(self.page.clone()), Err)
     }
 
-    async fn fetch_page(&self, _conn: ConnId, _cursor: &PagingState) -> Result<Page, DbError> {
-        Ok(self.page.clone())
+    async fn execute_paged(
+        &self,
+        _conn: ConnId,
+        stmt: &Statement,
+        cursor: Option<&PagingState>,
+    ) -> Result<Page, DbError> {
+        self.executed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(stmt.clone());
+
+        if let Some(error) = self.execute_error.clone() {
+            return Err(error);
+        }
+
+        if self.pages.is_empty() {
+            return Ok(Page {
+                next: None,
+                ..self.page.clone()
+            });
+        }
+
+        let index = cursor
+            .and_then(|PagingState(bytes)| bytes.first().copied())
+            .map_or(0, usize::from);
+
+        Ok(self.pages.get(index).cloned().unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lc_domain::model::{CqlValue, Row};
+
+    fn page(id: i64, next: Option<u8>) -> Page {
+        Page {
+            columns: vec!["id".to_owned()],
+            rows: vec![Row {
+                values: vec![CqlValue::Int(id)],
+            }],
+            next: next.map(|byte| PagingState(vec![byte])),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_scripted_cluster_hands_back_its_pages_in_order() {
+        let cluster =
+            FakeCluster::default().paging(vec![page(1, Some(1)), page(2, Some(2)), page(3, None)]);
+        let conn = ConnId::next();
+        let stmt = Statement::typed("SELECT * FROM shop.orders");
+
+        let first = cluster
+            .execute_paged(conn, &stmt, None)
+            .await
+            .expect("a page");
+        assert_eq!(first, page(1, Some(1)));
+
+        let cursor = first.next.clone().expect("a cursor");
+        let second = cluster
+            .execute_paged(conn, &stmt, Some(&cursor))
+            .await
+            .expect("a page");
+        assert_eq!(second, page(2, Some(2)));
+
+        let cursor = second.next.clone().expect("a cursor");
+        let third = cluster
+            .execute_paged(conn, &stmt, Some(&cursor))
+            .await
+            .expect("a page");
+        assert_eq!(third.next, None, "the last page hands back no cursor");
+    }
+
+    #[tokio::test]
+    async fn an_unscripted_cluster_pages_once_and_stops() {
+        let cluster = FakeCluster::default();
+
+        let page = cluster
+            .execute_paged(ConnId::next(), &Statement::typed("SELECT 1"), None)
+            .await
+            .expect("a page");
+
+        assert_eq!(page.next, None);
     }
 }

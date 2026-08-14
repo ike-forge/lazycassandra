@@ -23,7 +23,19 @@ pub trait Cluster: Send + Sync {
     async fn connect(&self, conn: ConnId) -> Result<Posture, DbError>;
     async fn describe(&self, conn: ConnId) -> Result<Schema, DbError>;
     async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError>;
-    async fn fetch_page(&self, conn: ConnId, cursor: &PagingState) -> Result<Page, DbError>;
+
+    /// One page of `stmt`, continuing from `cursor` when there is one.
+    ///
+    /// Replaces a `fetch_page(conn, cursor)` that could not be implemented:
+    /// scylla's `query_single_page` needs the statement alongside the paging
+    /// state, and a cursor alone identifies nothing the driver can resume
+    /// (export design §6.2).
+    async fn execute_paged(
+        &self,
+        conn: ConnId,
+        stmt: &Statement,
+        cursor: Option<&PagingState>,
+    ) -> Result<Page, DbError>;
 }
 
 /// Locates and layers configuration files (architecture.md §7).

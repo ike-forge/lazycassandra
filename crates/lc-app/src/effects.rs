@@ -89,10 +89,7 @@ pub(crate) fn run(tx: &UnboundedSender<Incoming>, cluster: &Arc<dyn Cluster>, ef
             crate::clipboard::hand_off(line);
         }
 
-        Effect::FetchNextPage { .. }
-        | Effect::Cancel(_)
-        | Effect::RecordHistory(_)
-        | Effect::OpenEditor { .. }
-        | Effect::Quit => {}
+        Effect::Cancel(_) | Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {
+        }
     }
 }
