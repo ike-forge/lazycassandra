@@ -723,16 +723,17 @@ mod tests {
 
     #[test]
     fn the_four_panels_are_drawn_where_the_draft_puts_them() {
-        // At 40x12 the sidebar sits on its 16-column floor, Tables takes 7
-        // rows to Ddl's 4, and Queries sits on its 3-row floor.
+        // At 40x12 the sidebar sits on its 16-column floor, Tables takes 5
+        // rows to Ddl's 6, and Queries sits on its 3-row floor.
         let buffer = draw(40, 12);
 
         assert_eq!(row(&buffer, 0), "╭── Tables ────╮╭── Table contents ────╮");
         assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
-        assert_eq!(row(&buffer, 6), "╰──────────────╯│                      │");
+        assert_eq!(row(&buffer, 4), "╰──────────────╯│                      │");
         // Nothing is selected, so the panel offers no Columns tab and the
         // strip is the one name.
-        assert_eq!(row(&buffer, 7), "╭── DDL ───────╮╰──────────────────────╯");
+        assert_eq!(row(&buffer, 5), "╭── DDL ───────╮│                      │");
+        assert_eq!(row(&buffer, 7), "│              │╰──────────────────────╯");
         assert_eq!(row(&buffer, 8), "│              │╭── Queries ───────────╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
@@ -832,7 +833,7 @@ mod tests {
         // Top-left corner of each panel; Tables is focused by default.
         assert!(bold(0, 0), "Tables is focused");
         assert!(!bold(16, 0), "Contents is not");
-        assert!(!bold(0, 7), "Ddl is not");
+        assert!(!bold(0, 5), "Ddl is not");
         assert!(!bold(16, 8), "Queries is not");
     }
 
@@ -882,7 +883,7 @@ mod tests {
 
         assert!(bold(16, 0), "Contents is focused");
         assert!(!bold(0, 0), "Tables is not");
-        assert!(!bold(0, 7), "Ddl is not");
+        assert!(!bold(0, 5), "Ddl is not");
         assert!(!bold(16, 8), "Queries is not");
     }
 
@@ -894,12 +895,12 @@ mod tests {
                 == Theme::default().palette().shortcut
         };
 
-        // "╭── Tables" and "╭── Table contents" on row 0, "╭── DDL" on row 7,
+        // "╭── Tables" and "╭── Table contents" on row 0, "╭── DDL" on row 5,
         // "╭── Queries" on row 8 — a corner, the inset and `TITLE_PAD` precede
         // each name.
         assert!(marked(5, 0), "Tables marks its a");
         assert!(marked(22, 0), "Table contents marks its b");
-        assert!(marked(4, 7), "DDL marks its D");
+        assert!(marked(4, 5), "DDL marks its D");
         assert!(marked(21, 8), "Queries marks its u");
     }
 
@@ -1053,6 +1054,9 @@ mod tests {
         }
     }
 
+    /// Rows of body the Tables panel has at 40x12, where these tests draw it.
+    const TABLES_ROWS: usize = 3;
+
     fn browsing(names: &[&str], selected: usize) -> State {
         let mut state = State {
             connection: ConnectionState::Connected(Connection {
@@ -1063,10 +1067,9 @@ mod tests {
             ..State::default()
         };
         state.tables.cursor.go_to(selected, names.len());
-        // Five rows of body at the sizes these tests draw. Set with the cursor
-        // for the reason `select_contents` sets it: half a state is not a
-        // state (list viewport design §6).
-        state.tables.scroll.follow(selected, 5);
+        // Set with the cursor for the reason `select_contents` sets it: half a
+        // state is not a state (list viewport design §6).
+        state.tables.scroll.follow(selected, TABLES_ROWS);
         state
     }
 
@@ -1194,22 +1197,19 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
 
+        // Four rows of tree in three rows of panel, so the border carries the
+        // scrollbar and `typezoo` is below the fold.
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop       ││Press Enter on a table│"
+            "│▌\u{f084} shop       ▐│Press Enter on a table│"
         );
         assert_eq!(
             row(&buffer, 2),
-            "│ ├─ \u{f0ce} orders  ││                      │"
+            "│ ├─ \u{f0ce} orders  ▐│                      │"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│ └─ \u{f0ce} users   ││                      │"
-        );
-        assert_eq!(
-            row(&buffer, 4),
-            "│ \u{f084} typezoo    ││                      │",
-            "a keyspace with no tables draws no marker"
+            "│ └─ \u{f0ce} users   ▐│                      │"
         );
     }
 
@@ -2304,12 +2304,18 @@ mod tests {
         state
     }
 
-    /// Inside the Ddl panel's border at 100x41: fourteen rows of 23 columns.
+    /// The Ddl panel's top border at 104x41; its body opens on the row below.
+    const DDL_BORDER: u16 = 16;
+    const DDL_BODY: u16 = DDL_BORDER + 1;
+    /// One past the body's last row: the panel's bottom border.
+    const DDL_END: u16 = 39;
+
+    /// Inside the Ddl panel's border at 104x41: twenty-two rows of 23 columns.
     /// The body's lines, the selection bar's column included — so a row opens
     /// with the blank it reserves for the bar and a heading, which is no cursor
     /// stop, opens at the margin.
     fn ddl_rows(buffer: &Buffer) -> Vec<String> {
-        (25..39)
+        (DDL_BODY..DDL_END)
             .map(|y| {
                 (1..25)
                     .filter_map(|x| buffer.cell((x, y)))
@@ -2430,7 +2436,7 @@ mod tests {
         let buffer = draw_state(104, 41, &describing(orders()));
 
         assert_eq!(
-            ddl_rows(&buffer),
+            ddl_rows(&buffer)[..15],
             [
                 // The cursor opens on this row, which is where the bar is.
                 "▌\u{f084} Keyspace         shop",
@@ -2455,13 +2461,16 @@ mod tests {
                 // body's 23, so it keeps the wrapped shape.
                 " bloom_filter_fp_chance",
                 "   0.01",
-                // `comment` sorts last and now falls below the fold, which is
-                // what the scrollbar beside it says.
+                " comment  Order history.",
             ]
+        );
+        assert!(
+            ddl_rows(&buffer)[15..].iter().all(String::is_empty),
+            "`comment` sorts last, and the panel has room to spare beneath it"
         );
     }
 
-    /// Every row inside the Ddl body (100x41, see [`ddl_rows`]) whose first
+    /// Every row inside the Ddl body (104x41, see [`ddl_rows`]) whose first
     /// content cell carries the background `Token::Selected` gives.
     fn highlighted_rows(buffer: &Buffer) -> Vec<u16> {
         let highlight = Theme::default()
@@ -2469,7 +2478,7 @@ mod tests {
             .bg
             .expect("the cursor row spends a background");
 
-        (25..39)
+        (DDL_BODY..DDL_END)
             .filter(|&y| buffer.cell((1, y)).is_some_and(|cell| cell.bg == highlight))
             .collect()
     }
@@ -2499,7 +2508,7 @@ mod tests {
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [37, 38],
+            [29, 30],
             "a wrapped value is one cursor stop, so exactly its own two lines \
              are the selection — not fewer, and not bleeding into comment below"
         );
@@ -2515,7 +2524,7 @@ mod tests {
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [36],
+            [28],
             "gc_grace_seconds fits one line, so exactly it is the selection"
         );
     }
@@ -2536,20 +2545,20 @@ mod tests {
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [37, 38],
+            [29, 30],
             "the fixture's two lines"
         );
-        assert_eq!(bar(37), "▌");
-        assert_eq!(bar(38), "▌");
+        assert_eq!(bar(29), "▌");
+        assert_eq!(bar(30), "▌");
         // The rows of the shape and the one option above the cursor's: each
-        // pays the column and marks nothing. 28 and 34 are the blanks between
-        // the groups, and 29, 31 and 35 are headings — no cursor stop among
+        // pays the column and marks nothing. 20 and 26 are the blanks between
+        // the groups, and 21, 23 and 27 are headings — no cursor stop among
         // them, so none of them pays it.
-        for y in [25, 26, 27, 30, 32, 33, 36] {
+        for y in [17, 18, 19, 22, 24, 25, 28] {
             assert_eq!(bar(y), " ", "row {y} is a row the cursor is not on");
         }
         assert_eq!(
-            bar(35),
+            bar(27),
             crate::icons::SETTINGS.trim_end(),
             "a heading opens at the margin, in the column a row spends on the bar"
         );
@@ -2588,16 +2597,16 @@ mod tests {
         let details = ddl_details(&state);
         state.ddl.cursor.go_to(0, details.row_count());
 
-        // 40x20: a fourteen-column, five-row Ddl body — narrow enough that
+        // 40x20: a fourteen-column, nine-row Ddl body — narrow enough that
         // `orders()` wraps well past it.
         let total = crate::details::lay_out(&details, 0, 14, Theme::default())
             .lines
             .len();
         assert!(
-            total > 5,
+            total > 9,
             "the fixture must overflow the panel or this test proves nothing"
         );
-        state.ddl.scroll.to_end(total, 5);
+        state.ddl.scroll.to_end(total, 9);
 
         let highlight = Theme::default()
             .style(Token::Selected)
@@ -2605,7 +2614,7 @@ mod tests {
             .expect("the cursor row spends a background");
         let buffer = draw_state(40, 20, &state);
         let selected =
-            (13..18).any(|y| buffer.cell((1, y)).expect("inside the panel").bg == highlight);
+            (9..18).any(|y| buffer.cell((1, y)).expect("inside the panel").bg == highlight);
 
         assert!(
             !selected,
@@ -2622,13 +2631,13 @@ mod tests {
         state.ddl.cursor.go_to(last, details.row_count());
 
         // `comment` is the last row and wraps to three lines at this width.
-        // Scrolled until its first line is the fourth of the five visible, two
+        // Scrolled until its first line is the eighth of the nine visible, two
         // of them are in view and the third is below the fold.
         let laid = crate::details::lay_out(&details, last, 14, Theme::default());
         let total = laid.lines.len();
         assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
-        for _ in 0..laid.selection.first - 3 {
-            state.ddl.scroll.down(total, 5);
+        for _ in 0..laid.selection.first - 7 {
+            state.ddl.scroll.down(total, 9);
         }
 
         let highlight = Theme::default()
@@ -2673,9 +2682,9 @@ mod tests {
         let span = geometry_of(104, 41, &state).ddl_selection();
         let buffer = draw_state(104, 41, &state);
 
-        // The body's first line is drawn at row 25 (see `ddl_rows`), and the
+        // The body's first line is drawn at `DDL_BODY` (see `ddl_rows`), and the
         // panel is not scrolled, so a span index is a row offset from there.
-        let row = 25 + u16::try_from(span.first).expect("a short body");
+        let row = DDL_BODY + u16::try_from(span.first).expect("a short body");
 
         assert_eq!(span.lines, 1, "comment fits one line at this width");
         assert_eq!(
@@ -2720,13 +2729,13 @@ mod tests {
             .fg
             .expect("the clustering key spends a colour");
 
-        assert_eq!(colour(29), partition, "Partition Key");
-        assert_eq!(colour(30), partition, "its column");
-        assert_eq!(colour(31), clustering, "Clustering Key");
-        assert_eq!(colour(32), clustering, "its column");
-        // 34 is the blank row the settings group opens with.
+        assert_eq!(colour(21), partition, "Partition Key");
+        assert_eq!(colour(22), partition, "its column");
+        assert_eq!(colour(23), clustering, "Clustering Key");
+        assert_eq!(colour(24), clustering, "its column");
+        // 26 is the blank row the settings group opens with.
         assert_eq!(
-            colour(35),
+            colour(27),
             theme
                 .style(Token::Section)
                 .fg
@@ -2734,7 +2743,7 @@ mod tests {
             "Options names a group rather than a schema concept"
         );
         assert_eq!(
-            colour(36),
+            colour(28),
             theme
                 .style(Token::PropertyName)
                 .fg
@@ -2802,12 +2811,12 @@ mod tests {
 
     #[test]
     fn the_frame_reports_what_each_panel_can_show() {
-        // At 40x20: a 16-column sidebar, Tables 12 rows tall and Ddl 7, so
-        // ten and five rows of content inside their borders.
+        // At 40x20: a 16-column sidebar, Tables 8 rows tall and Ddl 11, so
+        // six and nine rows of content inside their borders.
         let geometry = geometry_of(40, 20, &describing(orders()));
 
-        assert_eq!(geometry.height(Panel::Tables), 10);
-        assert_eq!(geometry.height(Panel::Ddl), 5);
+        assert_eq!(geometry.height(Panel::Tables), 6);
+        assert_eq!(geometry.height(Panel::Ddl), 9);
         assert_eq!(
             geometry.ddl_lines(),
             crate::details::lay_out(&ddl_details(&describing(orders())), 0, 14, Theme::default())
@@ -2908,7 +2917,7 @@ mod tests {
     /// The Tables panel's right border at 40x12: column 15, between the
     /// corners at rows 0 and 6.
     fn tables_border(buffer: &Buffer) -> String {
-        (1..6)
+        (1..4)
             .filter_map(|y| buffer.cell((15, y)))
             .map(Cell::symbol)
             .collect()
@@ -2923,7 +2932,7 @@ mod tests {
 
         assert!(
             tables_border(&buffer).contains(THUMB),
-            "the thumb says how far through twelve keyspaces five rows are"
+            "the thumb says how far through twelve keyspaces three rows are"
         );
     }
 
@@ -2952,7 +2961,7 @@ mod tests {
         let border = tables_border(&draw_state(40, 12, &browsing(&refs, 0)));
         let track: String = border.chars().skip_while(|c| *c == '▐').collect();
 
-        assert!(!track.is_empty(), "twelve keyspaces do not fit five rows");
+        assert!(!track.is_empty(), "twelve keyspaces do not fit three rows");
         assert!(
             track.chars().all(|c| c == '│'),
             "the track has to be the border glyph, or the panel grows a second \
@@ -2994,21 +3003,21 @@ mod tests {
 
         assert_eq!(
             tables_border(&buffer),
-            "│││││",
+            "│││",
             "nothing is hidden, so nothing says otherwise"
         );
     }
 
     #[test]
     fn the_selection_stays_visible_when_the_list_outgrows_the_panel() {
-        // Six rows of content fit in an eight-row Tables panel at this size;
+        // Three rows of content fit in a five-row Tables panel at this size;
         // twelve keyspaces force the scroll a plain `List` (no `ListState`)
         // would silently fail to perform.
         let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
 
         let buffer = draw_state(40, 12, &browsing(&refs, 11));
-        let rows: Vec<String> = (1..7).map(|y| row(&buffer, y)).collect();
+        let rows: Vec<String> = (1..4).map(|y| row(&buffer, y)).collect();
 
         assert!(
             rows.iter().any(|line| line.contains("ks11")),
@@ -3218,10 +3227,6 @@ mod tests {
             "the Queries editor takes no press on its lines"
         );
     }
-
-    /// The Ddl panel's top border at 104x41 — the body beneath it starts at 25
-    /// (see [`ddl_rows`]).
-    const DDL_BORDER: u16 = 24;
 
     #[test]
     fn the_map_resolves_every_drawn_tab_to_the_key_that_reaches_it() {

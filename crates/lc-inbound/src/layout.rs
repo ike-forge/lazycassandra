@@ -1,13 +1,16 @@
 //! Panel geometry.
 //!
-//! Proportions come from docs/ui-draft.png; the floors and the collapse rule
-//! from docs/superpowers/specs/2026-08-08-four-panel-layout-design.md §3.
+//! Proportions come from docs/ui-draft.png, except the sidebar's own split:
+//! Ddl takes 60% of it to the draft's 40, because the tabs beneath it — the
+//! table's shape and its column list — outgrow a tree of keyspaces. The floors
+//! and the collapse rule are from
+//! docs/superpowers/specs/2026-08-08-four-panel-layout-design.md §3.
 
 use lc_domain::state::Panel;
 use ratatui::layout::Rect;
 
 const SIDEBAR_PERCENT: u16 = 25;
-const DDL_PERCENT: u16 = 40;
+const DDL_PERCENT: u16 = 60;
 const QUERIES_PERCENT: u16 = 10;
 
 /// Two borders and one line of content. Below this a block shows nothing.
@@ -135,8 +138,8 @@ mod tests {
     fn the_draft_proportions_hold_when_there_is_room() {
         let r = rects(100, 100);
 
-        assert_eq!(r.get(Panel::Tables), Rect::new(0, 0, 25, 60));
-        assert_eq!(r.get(Panel::Ddl), Rect::new(0, 60, 25, 39));
+        assert_eq!(r.get(Panel::Tables), Rect::new(0, 0, 25, 40));
+        assert_eq!(r.get(Panel::Ddl), Rect::new(0, 40, 25, 59));
         assert_eq!(r.get(Panel::Contents), Rect::new(25, 0, 75, 90));
         assert_eq!(r.get(Panel::Queries), Rect::new(25, 90, 75, 9));
     }
@@ -145,7 +148,7 @@ mod tests {
     fn the_layout_is_offset_by_the_area_origin() {
         let r = panels(Rect::new(7, 3, 100, 100));
 
-        assert_eq!(r.get(Panel::Tables), Rect::new(7, 3, 25, 60));
+        assert_eq!(r.get(Panel::Tables), Rect::new(7, 3, 25, 40));
         assert_eq!(r.get(Panel::Queries), Rect::new(32, 93, 75, 9));
     }
 
