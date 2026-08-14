@@ -879,6 +879,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Space` toggles the focused radio, and types a space only on the path stop | `space_toggles_the_focused_radio`, `space_on_the_path_stop_types_a_space` |
 | `Enter` runs the export only from the Export stop, and is inert on a radio group | `enter_on_the_export_stop_runs_it`, `enter_on_a_radio_group_does_not_run_the_export` |
 | A printable key is text only on the path stop | `a_printable_key_types_itself_only_on_the_path_stop` |
+| A path too long for the field is drawn around its cursor | `a_path_too_long_for_the_field_is_drawn_around_its_cursor`, `a_window_holds_the_end_of_a_line_the_cursor_is_at_the_end_of`, `a_window_follows_the_cursor_back_into_the_middle_of_a_line` |
 | `q` does not quit while the form is up | `q_does_not_quit_while_the_form_is_up` |
 | `Esc` closes the form and writes nothing | `esc_closes_the_form_and_writes_nothing` |
 | An existing destination reopens the form asking to overwrite, putting back whatever it replaces | `an_existing_file_reopens_the_form_asking_to_overwrite`, `an_existing_file_landing_on_an_open_picker_puts_the_theme_back` |

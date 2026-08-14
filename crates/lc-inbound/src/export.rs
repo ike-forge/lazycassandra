@@ -63,6 +63,8 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     frame.buffer_mut().set_style(area, theme.overlay_ground());
     frame.render_widget(block, area);
 
+    let (visible, caret) = window(&view.path, view.cursor, usize::from(inner.width));
+
     let lines = vec![
         radio(
             &view.scope_labels[0],
@@ -81,7 +83,7 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
         TextLine::default(),
         formats(view, theme),
         TextLine::default(),
-        path(view, theme),
+        path(&visible, view.stop == Stop::Path, theme),
         TextLine::default(),
         button("Export", view.stop == Stop::Export, theme),
     ];
@@ -89,7 +91,7 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     frame.render_widget(Paragraph::new(lines), inner);
 
     if view.stop == Stop::Path {
-        set_caret(frame, inner, view);
+        set_caret(frame, inner, &visible, caret);
     }
 }
 
@@ -133,14 +135,39 @@ fn formats(view: &ExportView, theme: Theme) -> TextLine<'static> {
     TextLine::from(spans)
 }
 
-fn path(view: &ExportView, theme: Theme) -> TextLine<'_> {
-    let style = theme.style(if view.stop == Stop::Path {
+fn path(visible: &str, focused: bool, theme: Theme) -> TextLine<'static> {
+    let style = theme.style(if focused {
         Token::Selected
     } else {
         Token::HintAction
     });
 
-    TextLine::from(Span::styled(view.path.as_str(), style))
+    TextLine::from(Span::styled(visible.to_owned(), style))
+}
+
+/// The slice of `path` a field `width` columns wide shows, and the caret's
+/// column within it.
+///
+/// The window follows the cursor the way [`lc_domain::grid::ColumnScroll`]
+/// follows a column, computed per frame rather than kept: the field's width is
+/// a constant of this module and the caret is the only thing the window has to
+/// contain, so there is no offset for the domain to remember. It earns its
+/// place on the first frame — the path is prefilled with `cwd` joined to a
+/// filename, which on any real working directory is longer than the 54 columns
+/// inside the block, and the field used to draw the head of it with the caret
+/// pinned to the right edge and the filename off screen (final review I5).
+fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
+    let width = width.max(1);
+    let len = path.chars().count();
+    // One past the last character is a caret position too, so the window that
+    // holds the end of a full line stops one character short of `width`.
+    let furthest = (len + 1).saturating_sub(width);
+    let first = cursor.saturating_sub(width - 1).min(furthest);
+
+    (
+        path.chars().skip(first).take(width).collect(),
+        cursor - first,
+    )
 }
 
 fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'_> {
@@ -154,14 +181,13 @@ fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'_> {
 }
 
 /// Positions the caret over the path field, measuring the way
-/// `render::render_prompt` measures its query: `cursor` is a character
-/// offset into `view.path`, converted to a column through `Line::width()`
-/// rather than added straight to `x`, so a multi-byte or double-width
-/// character before the caret is not counted as one column. Clamped to the
-/// inner rect so a path wider than the field cannot push it outside the
-/// block.
-fn set_caret(frame: &mut Frame, inner: Rect, view: &ExportView) {
-    let prefix: String = view.path.chars().take(view.cursor).collect();
+/// `render::render_prompt` measures its query: `caret` is a character offset
+/// into the drawn window, converted to a column through `Line::width()` rather
+/// than added straight to `x`, so a multi-byte or double-width character
+/// before it is not counted as one column. Clamped to the inner rect, which a
+/// window of double-width characters can still reach the end of.
+fn set_caret(frame: &mut Frame, inner: Rect, visible: &str, caret: usize) {
+    let prefix: String = visible.chars().take(caret).collect();
     let taken = u16::try_from(TextLine::raw(prefix).width()).unwrap_or(inner.width);
     let cursor_x = (inner.x + taken).min(inner.right().saturating_sub(1));
 
@@ -299,6 +325,54 @@ mod tests {
         let drawn = text(&drawn(20, 6, form(Fetched::Some(200))));
 
         assert!(!drawn.contains("Export the whole table"));
+    }
+
+    /// The prefill is `cwd` joined with a filename, which outgrows the field
+    /// on any real working directory — so on the first frame the user could
+    /// not see the name they were about to write, and the caret sat pinned to
+    /// the right edge wherever the cursor was (final review I5).
+    #[test]
+    fn a_path_too_long_for_the_field_is_drawn_around_its_cursor() {
+        let long = std::path::PathBuf::from(format!("/home/ike/{}", "deep/".repeat(20)));
+        let form = ExportForm::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Fetched::Some(200),
+            &long,
+        );
+        let drawn = text(&drawn(80, 24, form));
+
+        assert!(
+            drawn.contains("shop.orders.csv"),
+            "the cursor opens on the filename, so the filename is what shows"
+        );
+    }
+
+    #[test]
+    fn a_window_that_fits_is_the_whole_line() {
+        assert_eq!(super::window("abc", 3, 10), ("abc".to_owned(), 3));
+    }
+
+    #[test]
+    fn a_window_holds_the_end_of_a_line_the_cursor_is_at_the_end_of() {
+        let (visible, caret) = super::window("abcdef", 6, 4);
+
+        assert_eq!(visible, "def");
+        assert_eq!(caret, 3, "one past the last character, inside the field");
+    }
+
+    #[test]
+    fn a_window_follows_the_cursor_back_into_the_middle_of_a_line() {
+        let (visible, caret) = super::window("abcdef", 1, 3);
+
+        assert_eq!(visible, "abc");
+        assert_eq!(caret, 1);
+    }
+
+    /// Windowing by character, as the cursor counts: slicing a path by bytes
+    /// panics on the ones a filesystem accepts.
+    #[test]
+    fn a_window_counts_characters_rather_than_bytes() {
+        assert_eq!(super::window("aéb", 3, 10), ("aéb".to_owned(), 3));
     }
 
     /// What the domain gates `ctrl-e` on is this function, so it has to agree

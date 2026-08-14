@@ -204,6 +204,7 @@ impl Line {
         Self { text, cursor }
     }
 
+    /// The line as typed.
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
@@ -215,12 +216,14 @@ impl Line {
         self.cursor
     }
 
+    /// Types `character` at the cursor, which moves past it.
     pub fn insert(&mut self, character: char) {
         let at = self.byte_offset(self.cursor);
         self.text.insert(at, character);
         self.cursor += 1;
     }
 
+    /// `Backspace`: takes the character behind the cursor, if there is one.
     pub fn delete_back(&mut self) {
         if self.cursor == 0 {
             return;
@@ -231,6 +234,7 @@ impl Line {
         self.text.remove(at);
     }
 
+    /// `Delete`: takes the character under the cursor, if there is one.
     pub fn delete_forward(&mut self) {
         if self.cursor >= self.len() {
             return;
@@ -240,18 +244,22 @@ impl Line {
         self.text.remove(at);
     }
 
+    /// `←`, stopping at the start.
     pub const fn left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
     }
 
+    /// `→`, stopping one past the last character, where typing appends.
     pub fn right(&mut self) {
         self.cursor = self.cursor.saturating_add(1).min(self.len());
     }
 
+    /// `Home`.
     pub const fn home(&mut self) {
         self.cursor = 0;
     }
 
+    /// `End`.
     pub fn end(&mut self) {
         self.cursor = self.len();
     }
