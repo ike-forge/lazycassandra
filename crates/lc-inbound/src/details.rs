@@ -103,7 +103,7 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
             .map_or_else(Style::new, |token| theme.style(token));
 
         if let Some(heading) = &section.heading {
-            let icon = crate::icons::section(heading.token);
+            let icon = crate::icons::section(heading.token, section.group);
             lines.push(Line::styled(
                 truncate(&prefixed(icon, &heading.text, width), width),
                 theme.style(heading.token),

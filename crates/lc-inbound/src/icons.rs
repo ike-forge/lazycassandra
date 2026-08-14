@@ -11,7 +11,7 @@
 //! codepoint chosen for a font is not a name (design §4).
 
 use lc_domain::style::Token;
-use lc_domain::view::RowKind;
+use lc_domain::view::{Group, RowKind};
 
 /// `nf-fa-key`, in front of a keyspace. The solid cut rather than
 /// `nf-md-key`'s: a filled shape reads as the larger glyph at a size no
@@ -25,6 +25,10 @@ pub(crate) const TABLE: &str = "\u{f0ce} ";
 /// keyspace's key: two different things wearing one glyph would say they are
 /// the same thing.
 pub(crate) const KEY: &str = "\u{f030b} ";
+/// `nf-fa-cog`, in front of the heading of a settings section — a table's
+/// Options, a keyspace's Replication. The outline cut: a cog is all teeth, and
+/// filling it at one cell leaves a blob.
+pub(crate) const SETTINGS: &str = "\u{f013} ";
 
 pub(crate) const fn tree_row(kind: RowKind) -> &'static str {
     match kind {
@@ -52,12 +56,14 @@ pub(crate) fn identity(token: Token) -> &'static str {
     }
 }
 
-/// The icon for a section heading, which only the two key sections get: the
-/// Options heading names a list of settings, and the Columns tab wears the
-/// glyph on its rows rather than over them (design §3).
-pub(crate) fn section(token: Token) -> &'static str {
-    match token {
-        Token::PartitionKey | Token::ClusteringKey => KEY,
+/// The icon for a section heading: the key glyph over a key section, the cog
+/// over a settings one. The group and not the token alone decides, because
+/// `Token::Section` also wears the Columns tab's count heading, and that tab
+/// wears its glyphs on the rows rather than over them (design §3).
+pub(crate) fn section(token: Token, group: Group) -> &'static str {
+    match (token, group) {
+        (Token::PartitionKey | Token::ClusteringKey, _) => KEY,
+        (_, Group::Settings) => SETTINGS,
         _ => "",
     }
 }

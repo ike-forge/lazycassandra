@@ -1079,7 +1079,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ddl_identity_rows_wear_the_tree_icons_and_a_key_section_the_key_one() {
+    fn the_ddl_identity_rows_wear_the_tree_icons_and_each_heading_its_own() {
         // Wide enough that every label has room for its icon; the panel that
         // has not is the subject of its own test.
         let buffer = draw_state(160, 41, &describing(orders()));
@@ -1101,8 +1101,9 @@ mod tests {
             "got {rows:?}"
         );
         assert!(
-            rows.iter().any(|line| line.starts_with("Options")),
-            "a section that is not a key wears no icon, got {rows:?}"
+            rows.iter()
+                .any(|line| *line == format!("{}Options", crate::icons::SETTINGS)),
+            "and a settings section the cog, got {rows:?}"
         );
     }
 
@@ -2378,7 +2379,7 @@ mod tests {
                 // And the one splitting what the table is from what it is
                 // configured to do.
                 "",
-                "Options",
+                "\u{f013} Options",
                 "gc_grace_seconds 864000",
                 // `bloom_filter_fp_chance` and its value need 26 of the
                 // body's 23, so it keeps the wrapped shape.
@@ -2465,7 +2466,7 @@ mod tests {
         for row in highlighted {
             let text = row_text(&buffer, row);
             assert!(
-                !text.ends_with("Partition Key") && !text.starts_with("Options"),
+                !text.ends_with("Partition Key") && !text.ends_with("Options"),
                 "row {row} is a heading: {text:?}"
             );
         }
@@ -2653,7 +2654,7 @@ mod tests {
             [
                 "\u{f084} Keyspace         shop",
                 "",
-                "Replication",
+                "\u{f013} Replication",
                 "class    SimpleStrategy"
             ],
             "no table is selected, so the panel names only the keyspace"
