@@ -21,6 +21,7 @@
 //! clipping the rest — so a highlight above or below the offset is simply
 //! never drawn, and there is nothing here to guard.
 
+use lc_domain::grid::BAR;
 use lc_domain::model::ClusteringOrder;
 use lc_domain::state::Span;
 use lc_domain::style::Token;
@@ -93,6 +94,10 @@ pub(crate) fn render(
 /// what is measured, or a redraw could chase its own tail
 /// (architecture.md §3).
 pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: Theme) -> Laid {
+    // The bar's column is reserved on every line, the Tables tree's way and the
+    // Contents grid's, so nothing shifts sideways as the cursor moves
+    // (docs/superpowers/specs/2026-08-10-table-display-design.md §4.2).
+    let width = width.saturating_sub(usize::from(BAR));
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut rows: Vec<Option<usize>> = Vec::new();
     let mut selection = Span::default();
@@ -143,11 +148,28 @@ pub(crate) fn lay_out(details: &Details, selected: usize, width: usize, theme: T
         }
     }
 
+    let lines = lines
+        .into_iter()
+        .zip(&rows)
+        .map(|(line, row)| barred(line, *row == Some(selected), theme))
+        .collect();
+
     Laid {
         lines,
         selection,
         rows,
     }
+}
+
+/// `line` behind the bar column, marked where the line was wrapped from the
+/// cursor's row — every one of them, since the highlight covers every one.
+///
+/// Prepended after the highlight is patched on, or the bar would be repainted
+/// in the selection's own foreground and stop reading as a bar.
+fn barred(mut line: Line<'static>, is_selected: bool, theme: Theme) -> Line<'static> {
+    line.spans
+        .insert(0, crate::body::selection_bar(is_selected, theme));
+    line
 }
 
 /// `text` behind its icon, or bare where the two together would push the name

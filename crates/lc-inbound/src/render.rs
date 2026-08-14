@@ -1163,7 +1163,7 @@ mod tests {
     fn a_name_with_no_room_beside_its_label_wraps_rather_than_abbreviating() {
         // The Ddl body is 23 columns at this width, and the label spends ten
         // of them, so the table's name cannot share the line it labels.
-        let buffer = draw_state(100, 41, &listing(orders()));
+        let buffer = draw_state(104, 41, &listing(orders()));
 
         assert_eq!(
             ddl_rows(&buffer)[..3],
@@ -1374,6 +1374,7 @@ mod tests {
         let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
         let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
         let mut state = showing(page_of(&["id"], &rows));
+        state.contents.mode = SelectionMode::Cell;
         state.contents.scroll.follow(12, 1);
 
         let highlight = Theme::default()
@@ -1395,6 +1396,7 @@ mod tests {
         // viewport, does highlight it — so the absence above is the rule at
         // work rather than a fixture that stopped drawing rows.
         let mut on_screen = showing(page_of(&["id"], &rows));
+        on_screen.contents.mode = SelectionMode::Cell;
         on_screen.contents.cursor.go_to(12, 20);
         on_screen.contents.scroll.follow(12, 5);
         let buffer = draw_state(60, 12, &on_screen);
@@ -1677,6 +1679,7 @@ mod tests {
             &["id"],
             &[&[CqlValue::Int(1)], &[CqlValue::Int(2)]],
         ));
+        state.contents.mode = SelectionMode::Cell;
         state.contents.cursor.down(2);
 
         let highlight = Theme::default()
@@ -1817,6 +1820,7 @@ mod tests {
         let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
         let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
         let mut state = showing(page_of(&["id"], &rows));
+        state.contents.mode = SelectionMode::Cell;
 
         let crosshair = Theme::default()
             .style(Token::Crosshair)
@@ -1856,7 +1860,8 @@ mod tests {
     #[test]
     fn a_key_columns_heading_keeps_its_colour_under_the_wash() {
         let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
-        let state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
+        let mut state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
+        state.contents.mode = SelectionMode::Cell;
 
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
@@ -1893,6 +1898,7 @@ mod tests {
                 &[CqlValue::Int(3), CqlValue::Null],
             ],
         ));
+        state.contents.mode = SelectionMode::Cell;
         state.contents.column.go_to(1, 2);
 
         let buffer = draw_state_with(60, 12, &state, theme);
@@ -1998,7 +2004,9 @@ mod tests {
 
     #[test]
     fn the_selected_cell_is_marked_apart_from_the_rest_of_its_row() {
-        let buffer = frame_showing_grid(4, 40, 3);
+        let mut state = showing(sized_page(4, 3));
+        state.contents.mode = SelectionMode::Cell;
+        let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let underlined = |x: u16, y: u16| {
             buffer
@@ -2034,6 +2042,7 @@ mod tests {
         // is live. True by construction today, so only a fixture drawn with
         // focus elsewhere would notice a future `if focused`.
         let mut state = showing(sized_page(4, 3));
+        state.contents.mode = SelectionMode::Cell;
         state.focus = Panel::Tables;
 
         let buffer = draw_state(40, 12, &state);
@@ -2089,6 +2098,7 @@ mod tests {
         let page = sized_page(12, 3);
         let widths = lc_domain::grid::widths(&page);
         let mut state = showing(page);
+        state.contents.mode = SelectionMode::Cell;
         let available = lc_domain::grid::available(22, 1);
 
         for column in path {
@@ -2294,10 +2304,13 @@ mod tests {
     }
 
     /// Inside the Ddl panel's border at 100x41: fourteen rows of 23 columns.
+    /// The body's text, from past the selection bar's column: what the bar
+    /// itself draws is `the_ddl_body_reserves_a_column_for_the_selection_bar`'s
+    /// subject, and every other test here is about the lines beside it.
     fn ddl_rows(buffer: &Buffer) -> Vec<String> {
         (25..39)
             .map(|y| {
-                (1..24)
+                (2..25)
                     .filter_map(|x| buffer.cell((x, y)))
                     .map(Cell::symbol)
                     .collect::<String>()
@@ -2324,7 +2337,7 @@ mod tests {
             ..orders()
         };
 
-        let buffer = draw_state(100, 41, &listing(table));
+        let buffer = draw_state(104, 41, &listing(table));
 
         assert_eq!(
             ddl_rows(&buffer)[..9],
@@ -2392,7 +2405,7 @@ mod tests {
     fn a_sidebar_on_its_usual_width_still_names_both_tabs() {
         // At 100 columns the sidebar is 25, and the strip needs 13 of the 21
         // a border that wide has to spend on a title.
-        let buffer = draw_state(100, 41, &listing(orders()));
+        let buffer = draw_state(104, 41, &listing(orders()));
         let border = row(&buffer, top_border(&buffer, "DDL").1);
 
         assert!(border.contains("DDL - Columns"), "got {border:?}");
@@ -2412,7 +2425,7 @@ mod tests {
 
     #[test]
     fn a_selected_tables_shape_is_drawn_above_its_options() {
-        let buffer = draw_state(100, 41, &describing(orders()));
+        let buffer = draw_state(104, 41, &describing(orders()));
 
         assert_eq!(
             ddl_rows(&buffer),
@@ -2459,7 +2472,7 @@ mod tests {
     /// The text a Ddl body row drew, at the same coordinates [`ddl_rows`]
     /// reads.
     fn row_text(buffer: &Buffer, row: u16) -> String {
-        (1..24)
+        (2..25)
             .filter_map(|x| buffer.cell((x, row)))
             .map(Cell::symbol)
             .collect::<String>()
@@ -2477,7 +2490,7 @@ mod tests {
         // columns, then `gc_grace_seconds`.
         state.ddl.cursor.go_to(6, lc_domain::view::ddl_rows(&state));
 
-        let buffer = draw_state(100, 41, &state);
+        let buffer = draw_state(104, 41, &state);
 
         assert_eq!(
             highlighted_rows(&buffer),
@@ -2493,12 +2506,39 @@ mod tests {
         state.focus = Panel::Ddl;
         state.ddl.cursor.go_to(5, lc_domain::view::ddl_rows(&state));
 
-        let buffer = draw_state(100, 41, &state);
+        let buffer = draw_state(104, 41, &state);
 
         assert_eq!(
             highlighted_rows(&buffer),
             [36],
             "gc_grace_seconds fits one line, so exactly it is the selection"
+        );
+    }
+
+    /// The Tables tree's mark and the Contents grid's, in the third panel that
+    /// carries a cursor: a wrapped row wears it on every line it wrapped to,
+    /// since the highlight covers every one.
+    #[test]
+    fn the_ddl_body_reserves_a_column_for_the_selection_bar() {
+        let mut state = describing(orders());
+        state.focus = Panel::Ddl;
+        // `bloom_filter_fp_chance` and its value need more than the body's 23
+        // columns, so this row is one cursor stop drawn across two lines.
+        state.ddl.cursor.go_to(6, lc_domain::view::ddl_rows(&state));
+
+        let buffer = draw_state(104, 41, &state);
+        let bar = |y: u16| buffer.cell((1, y)).expect("inside the panel").symbol();
+
+        assert_eq!(
+            highlighted_rows(&buffer),
+            [37, 38],
+            "the fixture's two lines"
+        );
+        assert_eq!(bar(37), "▌");
+        assert_eq!(bar(38), "▌");
+        assert!(
+            (25..37).all(|y| bar(y) == " "),
+            "every other line pays the column and marks nothing"
         );
     }
 
@@ -2508,7 +2548,7 @@ mod tests {
         state.focus = Panel::Ddl;
         state.ddl.cursor.to_start();
 
-        let buffer = draw_state(100, 41, &state);
+        let buffer = draw_state(104, 41, &state);
         let highlighted = highlighted_rows(&buffer);
 
         assert!(
@@ -2617,8 +2657,8 @@ mod tests {
         // sequence moves the assertions below instead of the cursor.
         state.ddl.cursor.go_to(3, rows);
 
-        let span = geometry_of(100, 41, &state).ddl_selection();
-        let buffer = draw_state(100, 41, &state);
+        let span = geometry_of(104, 41, &state).ddl_selection();
+        let buffer = draw_state(104, 41, &state);
 
         // The body's first line is drawn at row 25 (see `ddl_rows`), and the
         // panel is not scrolled, so a span index is a row offset from there.
@@ -2653,8 +2693,10 @@ mod tests {
             .cursor
             .go_to(details.row_count() - 1, details.row_count());
 
-        let buffer = draw_state(100, 40, &state);
-        let colour = |y: u16| buffer.cell((1, y)).expect("inside the panel").fg;
+        let buffer = draw_state(104, 40, &state);
+        // Past the bar's column: a property line carries its colour on its
+        // spans rather than on the line, and the bar's own span is a blank.
+        let colour = |y: u16| buffer.cell((2, y)).expect("inside the panel").fg;
         let theme = Theme::default();
         let partition = theme
             .style(Token::PartitionKey)
@@ -2694,7 +2736,7 @@ mod tests {
         let schema = state.schema().cloned().expect("loaded");
         state.tables.close(&schema);
 
-        let buffer = draw_state(100, 40, &state);
+        let buffer = draw_state(104, 40, &state);
 
         let rows: Vec<String> = ddl_rows(&buffer)[..4]
             .iter()
@@ -2715,7 +2757,7 @@ mod tests {
 
     #[test]
     fn the_ddl_panel_is_empty_until_something_is_selected() {
-        let buffer = draw_state(100, 41, &State::default());
+        let buffer = draw_state(104, 41, &State::default());
 
         assert!(
             ddl_rows(&buffer).iter().all(String::is_empty),
@@ -3164,13 +3206,13 @@ mod tests {
         );
     }
 
-    /// The Ddl panel's top border at 100x41 — the body beneath it starts at 25
+    /// The Ddl panel's top border at 104x41 — the body beneath it starts at 25
     /// (see [`ddl_rows`]).
     const DDL_BORDER: u16 = 24;
 
     #[test]
     fn the_map_resolves_every_drawn_tab_to_the_key_that_reaches_it() {
-        let (buffer, map) = draw_mapped(100, 41, &listing(orders()));
+        let (buffer, map) = draw_mapped(104, 41, &listing(orders()));
         let strip = row(&buffer, DDL_BORDER);
 
         assert!(
@@ -3210,7 +3252,7 @@ mod tests {
         // for 23 columns and wraps onto a second line, and the two rows before
         // the first column are a blank and a heading (see
         // `the_columns_tab_draws_every_column_with_its_kind_and_type`).
-        let (buffer, map) = draw_mapped(100, 41, &listing(orders()));
+        let (buffer, map) = draw_mapped(104, 41, &listing(orders()));
 
         assert_eq!(
             ddl_rows(&buffer)[..6],

@@ -49,7 +49,7 @@ const SELECTION_BAR: char = '▌';
 
 /// The cursor row's mark, reserved as a column of its own on every row so
 /// unselected rows never shift sideways as the cursor moves (design §4.2).
-fn selection_bar(is_selected: bool, theme: Theme) -> TextSpan<'static> {
+pub(crate) fn selection_bar(is_selected: bool, theme: Theme) -> TextSpan<'static> {
     if is_selected {
         TextSpan::styled(SELECTION_BAR.to_string(), theme.style(Token::SelectionBar))
     } else {
