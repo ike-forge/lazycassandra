@@ -260,7 +260,8 @@ fn selected(state: &State) -> bool {
 /// first frame the user sees. Matched by press rather than by action, for the
 /// same reason `?` is above.
 ///
-/// `ctrl-e` over Contents is refused the same way, on an empty grid
+/// `ctrl-e` over Contents is refused the same way, on an empty grid, and on a
+/// frame with no room to draw the form — the same promise `?` keeps above
 /// (export design §1).
 fn liveness(state: &State, binding: &Binding) -> Liveness {
     let runs = binding.keys == [KeyPress::ctrl(Key::Char('r'))];
@@ -269,7 +270,7 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
     }
 
     let exports = binding.action == "export";
-    if exports && state.contents.row_count() == 0 {
+    if exports && (state.contents.row_count() == 0 || !state.geometry.export_fits()) {
         return Liveness::Inert;
     }
 

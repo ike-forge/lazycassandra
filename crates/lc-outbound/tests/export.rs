@@ -4,7 +4,7 @@
 use lc_domain::export::{Confirm, Format, Stop};
 use lc_domain::model::{ConnId, CqlValue, DbError, Key, KeyPress, Page, PagingState, Row};
 use lc_domain::posture::Posture;
-use lc_domain::state::{Message, Overlay};
+use lc_domain::state::{Geometry, Message, Overlay};
 use lc_domain::style::Severity;
 use lc_domain::update::ROW_LIMIT;
 use lc_domain::{Effect, Msg, Source, State, init, update};
@@ -79,6 +79,13 @@ async fn on_a_read_table(cluster: &FakeCluster) -> State {
     run_with_writer(cluster, None, &mut state, effects).await;
     let effects = press(&mut state, Key::Enter);
     run_with_writer(cluster, None, &mut state, effects).await;
+
+    // A frame with room for the form: `ctrl-e` is refused where nothing would
+    // draw one (design §2).
+    update(
+        &mut state,
+        Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 14).with_export_fits(true)),
+    );
 
     state
 }

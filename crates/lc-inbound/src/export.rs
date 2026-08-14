@@ -20,6 +20,16 @@ const CONFIRM_HEIGHT: u16 = 7;
 /// two radios, a blank line, the format row, a blank line.
 const PATH_ROW: u16 = 5;
 
+/// Whether `area` can hold the form at all.
+///
+/// The domain's gate on `ctrl-e` and on closing a form the frame shrank past
+/// reads this rather than a size of its own: [`WIDTH`] and [`HEIGHT`] are
+/// named once, here, beside the block they measure, so the check and the draw
+/// cannot disagree about what fits (export design §2).
+pub(crate) fn fits(area: Rect) -> bool {
+    centred(area, WIDTH, HEIGHT).is_some()
+}
+
 fn centred(area: Rect, width: u16, height: u16) -> Option<Rect> {
     if area.width < width || area.height < height {
         return None;
@@ -284,5 +294,22 @@ mod tests {
         let drawn = text(&drawn(20, 6, form(Fetched::Some(200))));
 
         assert!(!drawn.contains("Export the whole table"));
+    }
+
+    /// What the domain gates `ctrl-e` on is this function, so it has to agree
+    /// with the draw at every size — a frame `fits` calls big enough and the
+    /// form declines to draw in is an invisible modal capturing every key
+    /// (final review I1).
+    #[test]
+    fn fits_agrees_with_what_the_form_actually_draws() {
+        for (width, height) in [(20, 6), (55, 24), (80, 10), (56, 11), (80, 24)] {
+            let drawn = text(&drawn(width, height, form(Fetched::Some(200))));
+
+            assert_eq!(
+                super::fits(ratatui::layout::Rect::new(0, 0, width, height)),
+                drawn.contains("Export the whole table"),
+                "at {width}×{height}"
+            );
+        }
     }
 }

@@ -727,6 +727,11 @@ pub struct Geometry {
     ddl_lines: usize,
     ddl_selection: Span,
     command_rows: usize,
+    /// Whether the frame is big enough for the renderer to draw the export
+    /// form. A function of the terminal size alone — the form is a fixed
+    /// block — so it satisfies §3's rule that geometry never depends on the
+    /// offsets it bounds (export design §2).
+    export_fits: bool,
     /// Character columns the Contents grid's body has, gutter included. A
     /// function of the terminal size alone, which is what keeps §3's
     /// measurement loop open (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
@@ -744,6 +749,7 @@ impl Geometry {
             ddl_lines,
             ddl_selection: Span { first: 0, lines: 0 },
             command_rows,
+            export_fits: false,
             grid_width: 0,
         }
     }
@@ -785,6 +791,30 @@ impl Geometry {
     #[must_use]
     pub const fn command_rows(self) -> usize {
         self.command_rows
+    }
+
+    /// Whether the export form fits the frame, whether or not one is open.
+    ///
+    /// False means nothing would draw it, which is what makes `ctrl-e` inert
+    /// and closes a form the frame shrank past — the rule the palette follows
+    /// through [`Self::command_rows`], applied to a block with its own size.
+    /// The threshold is the renderer's own (`lc-inbound::export::fits`), so
+    /// the domain never spells the form's dimensions and the two cannot
+    /// diverge (export design §2).
+    #[must_use]
+    pub const fn export_fits(self) -> bool {
+        self.export_fits
+    }
+
+    /// Whether the frame could draw the export form.
+    ///
+    /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason.
+    #[must_use]
+    pub const fn with_export_fits(self, export_fits: bool) -> Self {
+        Self {
+            export_fits,
+            ..self
+        }
     }
 
     /// The span the frame drew the Ddl selection at.

@@ -47,6 +47,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 
     let command_rows = crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count());
+    let export_fits = crate::export::fits(frame.area());
     let rects = match layout(frame.area()) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
@@ -134,6 +135,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
             .with_ddl_selection(ddl_selection)
+            .with_export_fits(export_fits)
             .with_grid_width(grid_width),
         map: FrameMap::new(hits),
     }

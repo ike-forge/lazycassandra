@@ -168,7 +168,11 @@ focus letters moved to `a`/`b`/`c`/`d`.
 ### The export form
 
 `ctrl-e` opens `Overlay::Export` when Table contents is focused on a loaded
-page with at least one row, and no export is already running — it is the
+page with at least one row, no export is already running, and the frame is
+big enough to draw the form — a form nothing draws would claim every key
+with nothing on screen saying so, which is the rule `?` already follows for
+the palette. A frame that shrinks past it closes it, for the same reason.
+It is the
 Contents half of a chord that means something else in Queries; see that
 subsection below and §2's ctrl paragraph for the other half. Like the
 picker and the palette it outranks focus and claims every key before the
@@ -357,7 +361,7 @@ below.
 | Key | Action |
 |---|---|
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
-| `ctrl-e` | Open the export form. Inert on an empty grid and while an export is running. |
+| `ctrl-e` | Open the export form. Inert on an empty grid, while an export is running, and on a frame with no room to draw the form. |
 
 The panel opens in row mode, which lights the whole row: reading a table is
 reading rows. Cell mode draws the selected cell over a faint wash across its
@@ -869,6 +873,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `ctrl-e` opens the export form over a loaded grid, and does nothing over an empty one | `ctrl_e_over_a_loaded_contents_panel_opens_the_export_form`, `ctrl_e_does_nothing_over_an_empty_contents_panel` |
 | `ctrl-e` keeps its Queries meaning; the two are gated on focus | `ctrl_e_in_queries_still_opens_the_external_editor` |
 | `ctrl-e` is inert while an export is already running | `ctrl_e_is_inert_while_an_export_is_already_running` |
+| `ctrl-e` is inert where the frame cannot draw the form, and a frame that shrinks past it closes it | `ctrl_e_is_inert_where_the_frame_cannot_draw_the_form`, `a_frame_that_shrank_past_the_form_closes_it`, `fits_agrees_with_what_the_form_actually_draws` |
 | A second `ctrl-e`, and the picker's own opener, leave an open form alone | `a_second_ctrl_e_leaves_the_open_form_as_it_was`, `the_theme_picker_cannot_replace_an_open_export_form` |
 | `Tab`/`Shift-Tab` walk the form's own stops, not the panels | `tab_moves_between_the_forms_stops_rather_than_between_panels` |
 | `Space` toggles the focused radio, and types a space only on the path stop | `space_toggles_the_focused_radio`, `space_on_the_path_stop_types_a_space` |

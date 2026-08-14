@@ -1074,8 +1074,15 @@ fn open_editor(state: &State) -> Vec<Effect> {
 
 /// Refused over a grid with no rows, and while an export is already running:
 /// one at a time (design §5).
+///
+/// Refused too where the frame cannot draw the form, for the reason
+/// [`open_palette`] gives: the form claims every key while it is open, so one
+/// nothing draws is a mode with nothing on screen saying so and only `Esc` out
+/// of it. Gated on the form's own measurement rather than on the palette's,
+/// which is the weaker condition — a frame that draws the palette need not
+/// draw a 56×11 block.
 fn open_export(state: &mut State) {
-    if state.export.is_some() {
+    if state.export.is_some() || !state.geometry.export_fits() {
         return;
     }
 
@@ -1503,6 +1510,14 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
             state.overlay = None;
             state.mark_dirty();
         }
+    }
+
+    // The form is a larger block than the palette, so it has a shrink of its
+    // own to answer for — between the two thresholds the panels draw, the form
+    // does not, and it would still be capturing every key.
+    if !geometry.export_fits() && matches!(state.overlay, Some(Overlay::Export(_))) {
+        state.overlay = None;
+        state.mark_dirty();
     }
 
     Vec::new()
@@ -5116,6 +5131,9 @@ mod tests {
         }
 
         sized(&mut state, [3, 3, 3, 3], 40);
+        // Room for the export form, or Contents' `ctrl-e export` hint is drawn
+        // inert and promises nothing to test.
+        state.geometry = state.geometry.with_export_fits(true);
         let ddl_len = crate::view::ddl_rows(&state);
         state.ddl.cursor.page_down(ddl_len, 3);
         state.ddl.scroll.down(40, 3);
@@ -6039,6 +6057,9 @@ mod tests {
                 page: Box::new(page_of(3)),
             },
         );
+        // The one fixture `ctrl-e` opens the form from: a loaded grid on a
+        // frame with room for it.
+        yankable.geometry = yankable.geometry.with_export_fits(true);
 
         // Measured, so the columns `m` cycles the highlight over are drawn.
         let grid = grid_of_rows(4, 5, 80);
@@ -7065,6 +7086,7 @@ mod tests {
     fn contents_showing(rows: usize) -> State {
         let mut state = State {
             focus: Panel::Contents,
+            geometry: Geometry::default().with_export_fits(true),
             ..connected(Posture::ReadOnly)
         };
         let query = QueryId::next();
@@ -7078,6 +7100,7 @@ mod tests {
     fn contents_showing_typed(cql: &str) -> State {
         let mut state = State {
             focus: Panel::Contents,
+            geometry: Geometry::default().with_export_fits(true),
             ..connected(Posture::ReadOnly)
         };
         let query = QueryId::next();
@@ -7115,6 +7138,39 @@ mod tests {
         open_form(&mut state);
 
         assert!(state.overlay.is_none());
+    }
+
+    /// A form nothing draws would still claim every key: `q` would not quit,
+    /// `Tab` would not switch panel, and the path stop would swallow letters
+    /// into an invisible field.
+    #[test]
+    fn ctrl_e_is_inert_where_the_frame_cannot_draw_the_form() {
+        let mut state = contents_showing(5);
+        state.geometry = Geometry::default().with_export_fits(false);
+
+        open_form(&mut state);
+
+        assert!(state.overlay.is_none());
+    }
+
+    /// The band between the program's too-small threshold and the form's own
+    /// size is where the panels draw and the form does not — a palette-sized
+    /// gate would leave it open there, so the form is measured on its own.
+    #[test]
+    fn a_frame_that_shrank_past_the_form_closes_it() {
+        let mut state = contents_showing(5);
+        open_form(&mut state);
+        assert!(matches!(state.overlay, Some(Overlay::Export(_))));
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 14).with_export_fits(false)),
+        );
+
+        assert!(
+            state.overlay.is_none(),
+            "the palette still fits, and the form does not"
+        );
     }
 
     /// The chord keeps its Queries meaning; the two are gated on focus, the
