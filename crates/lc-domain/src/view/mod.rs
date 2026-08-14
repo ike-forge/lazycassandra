@@ -97,8 +97,8 @@ fn overlay(state: &State) -> Option<OverlayView> {
             selected: panel.selected(),
         }),
         // `Some`, not drawn through the modal path the other two overlays
-        // use — Task 9 draws it on the hint bar row instead. Still `Some`
-        // rather than `None`: `view.overlay.is_none()` is what
+        // use — the renderer draws it on the hint bar row instead. Still
+        // `Some` rather than `None`: `view.overlay.is_none()` is what
         // `lc-inbound::render` reads to decide whether a panel may show its
         // own cursor, and a prompt outranks focus exactly as a message or
         // the palette does (design §1).
@@ -196,11 +196,13 @@ pub enum PanelBody {
         /// with no rows.
         gutter: u16,
         /// The rows `v` has selected while extending the row axis. `None`
-        /// means that axis was never extended — which Task 9 reads as "every
-        /// row" when painting a rectangle and as "no gutter bar" when marking
-        /// rows.
+        /// means that axis was never extended, which `body.rs`'s `ranged`
+        /// reads as "every row" when painting a rectangle and as "no gutter
+        /// bar" when marking rows.
         rows_range: Option<Range>,
-        /// [`PanelBody::Grid`]'s row range's counterpart for the column axis.
+        /// The columns `v` has selected while extending the column axis.
+        /// `None` means that axis was never extended, which `body.rs`'s
+        /// `ranged` reads as "every column" when painting a rectangle.
         columns_range: Option<Range>,
     },
 }

@@ -337,11 +337,12 @@ fn quit(state: &mut State) -> Vec<Effect> {
 /// Nothing under the cursor yanks nothing: there is nothing there to say
 /// anything about (yank design §1).
 ///
-/// An empty line raises no effect either. `Effect::Yank` becomes an OSC 52
-/// sequence, and an empty payload asks the terminal to clear its clipboard, so
-/// a projection with nothing to say must say nothing rather than wipe what the
-/// user had copied (selection-modes design §4). Every projection converges
-/// here, so no shape can reach the clipboard empty.
+/// A payload holding nothing but `,` and `\n` raises no effect either.
+/// `Effect::Yank` becomes an OSC 52 sequence, and an empty payload asks the
+/// terminal to clear its clipboard, so a projection with nothing but
+/// delimiters to say must say nothing rather than wipe what the user had
+/// copied (selection-modes design §4). Every projection converges here, so no
+/// shape can reach the clipboard empty.
 fn yank(state: &State) -> Vec<Effect> {
     let line = match state.focus {
         Panel::Contents => contents(state),
@@ -774,10 +775,11 @@ fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `Esc` resolves in one order, first hit wins: the overlay, then the focused
-/// panel's filter, then leaving a panel that takes text. One press does one of
-/// the three, never two — the thing most recently put on screen comes off
-/// first (panel search design §6).
+/// `Esc` resolves in one order, first hit wins: the overlay; then freezing an
+/// extending range; then clearing a frozen range; then the focused panel's
+/// filter; then leaving a panel that takes text (Queries hands focus back to
+/// Tables). One press does one of the five, never two — the thing most
+/// recently put on screen comes off first (panel search design §6).
 fn escape(state: &mut State) {
     match state.overlay.take() {
         Some(Overlay::Search(prompt)) => {

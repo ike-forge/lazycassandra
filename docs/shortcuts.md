@@ -241,11 +241,14 @@ exactly one row is Tables as it always was: `Enter` still reads it.
 
 A range does not outlive what it was drawn against. The DDL range clears
 when the panel's subject or its tab changes, since a range describes rows on
-a tab about a table and neither survives a change to either. Every panel's
-range clears when its filter changes, for the same reason a cursor already
-does: a range is a set of positions in a list, and a filter changes what a
-position addresses. A click clears the range in whichever panel it lands
-in, alongside everything else a click already resets.
+a tab about a table and neither survives a change to either. Tables' and
+DDL's ranges also clear when their filter changes, for the same reason a
+cursor already does: a range is a set of positions in a list, and a filter
+that renumbers rows changes what a position addresses. Table contents is the
+exception — its filter only flags matching cells and never renumbers a row,
+so a range there survives its filter changing. A click clears the range in
+whichever panel it lands in, alongside everything else a click already
+resets.
 
 `y` over a range yanks every row it holds — every column, in column mode —
 as one line each, joined with `\n` and no trailing newline; a single cell in

@@ -863,6 +863,9 @@ impl State {
                 self.ddl.set_filter(filter);
                 self.ddl.selection.clear();
             }
+            // No range repair here either: this filter only flags matching
+            // cells and never renumbers a row, so a range still addresses
+            // exactly what it did before the filter changed.
             Filtered::Contents => self.contents.set_filter(filter),
         }
     }
