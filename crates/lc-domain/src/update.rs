@@ -465,6 +465,12 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('y') => return yank(state),
         Key::Char('m') => {
             if state.focus == Panel::Contents {
+                // A range's axis is the mode's axis, so carrying one across
+                // would address rows or columns the user never chose — the
+                // argument `DdlPanel::show` already makes for the cursor
+                // (design §3).
+                state.contents.rows.clear();
+                state.contents.columns.clear();
                 state.contents.mode = state.contents.mode.next();
             }
         }
@@ -1025,17 +1031,27 @@ fn selections(state: &mut State, panel: Panel) -> [Option<&mut Selection>; 2] {
     match panel {
         Panel::Tables => [Some(&mut state.tables.selection), None],
         Panel::Ddl => [Some(&mut state.ddl.selection), None],
-        // The grid's two axes are Task 4's; Queries is an editor and never
-        // has one.
-        Panel::Contents | Panel::Queries => [None, None],
+        Panel::Contents => match state.contents.mode {
+            SelectionMode::Row => [Some(&mut state.contents.rows), None],
+            SelectionMode::Column => [Some(&mut state.contents.columns), None],
+            SelectionMode::Cell => [
+                Some(&mut state.contents.rows),
+                Some(&mut state.contents.columns),
+            ],
+        },
+        Panel::Queries => [None, None],
     }
 }
 
 /// `v`: start extending from the cursor, or freeze what is being extended.
 fn toggle_visual(state: &mut State) {
-    let cursor = cursor_index(state, state.focus);
+    let cursors = axis_cursors(state, state.focus);
 
-    for selection in selections(state, state.focus).into_iter().flatten() {
+    for (selection, cursor) in selections(state, state.focus)
+        .into_iter()
+        .zip(cursors)
+        .filter_map(|(selection, cursor)| Some((selection?, cursor)))
+    {
         if selection.is_extending() {
             selection.stop(cursor);
         } else {
@@ -1044,13 +1060,31 @@ fn toggle_visual(state: &mut State) {
     }
 }
 
+/// Where each of `panel`'s selections has its far end, in the order
+/// [`selections`] returns them.
+fn axis_cursors(state: &State, panel: Panel) -> [usize; 2] {
+    match panel {
+        Panel::Contents => match state.contents.mode {
+            SelectionMode::Column => [state.contents.column.index(), 0],
+            SelectionMode::Row | SelectionMode::Cell => {
+                [state.contents.cursor.index(), state.contents.column.index()]
+            }
+        },
+        Panel::Tables | Panel::Ddl | Panel::Queries => [cursor_index(state, panel), 0],
+    }
+}
+
 /// `esc`'s second rung: leave visual mode, keeping the range. Reports whether
 /// there was one to leave.
 fn stop_extending(state: &mut State) -> bool {
-    let cursor = cursor_index(state, state.focus);
+    let cursors = axis_cursors(state, state.focus);
     let mut stopped = false;
 
-    for selection in selections(state, state.focus).into_iter().flatten() {
+    for (selection, cursor) in selections(state, state.focus)
+        .into_iter()
+        .zip(cursors)
+        .filter_map(|(selection, cursor)| Some((selection?, cursor)))
+    {
         if selection.is_extending() {
             selection.stop(cursor);
             stopped = true;
@@ -1225,6 +1259,12 @@ fn clamp_lists(state: &mut State) {
     // to clamp against (design §2).
     state.tables.selection.clamp_to(tree_rows(state));
     state.ddl.selection.clamp_to(crate::view::ddl_rows(state));
+
+    state.contents.rows.clamp_to(state.contents.row_count());
+    state
+        .contents
+        .columns
+        .clamp_to(state.contents.column_count());
 }
 
 /// Pulls the offset of each list whose selection moved, so the selection is
@@ -6388,5 +6428,86 @@ mod tests {
 
         assert_eq!(state.queries.text(), format!("{before}m"));
         assert_eq!(state.contents.mode, SelectionMode::Cell);
+    }
+
+    #[test]
+    fn v_in_row_mode_extends_rows_and_leaves_the_columns_alone() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.mode = SelectionMode::Row;
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.contents.rows.range(state.contents.cursor.index()),
+            Some(Range::new(0, 1))
+        );
+        assert_eq!(state.contents.columns.range(0), None);
+    }
+
+    #[test]
+    fn v_in_column_mode_extends_columns_and_leaves_the_rows_alone() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.mode = SelectionMode::Column;
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(
+            state.contents.columns.range(state.contents.column.index()),
+            Some(Range::new(0, 1))
+        );
+        assert_eq!(state.contents.rows.range(0), None);
+    }
+
+    #[test]
+    fn v_in_cell_mode_extends_a_rectangle() {
+        let mut state = grid_of_named_cells(3, 4);
+
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(
+            state.contents.rows.range(state.contents.cursor.index()),
+            Some(Range::new(0, 1))
+        );
+        assert_eq!(
+            state.contents.columns.range(state.contents.column.index()),
+            Some(Range::new(0, 1))
+        );
+    }
+
+    #[test]
+    fn m_clears_the_range_it_would_reinterpret() {
+        let mut state = grid_of_named_cells(3, 4);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+
+        press(&mut state, Key::Char('m'));
+
+        assert_eq!(state.contents.rows.range(0), None);
+        assert_eq!(state.contents.columns.range(0), None);
+        assert_eq!(
+            state.contents.mode,
+            SelectionMode::Row,
+            "the mode still cycles"
+        );
+    }
+
+    #[test]
+    fn escape_unwinds_both_axes_together() {
+        let mut state = grid_of_named_cells(3, 4);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Escape);
+        assert!(!state.contents.rows.is_extending());
+        assert!(state.contents.rows.range(0).is_some());
+
+        press(&mut state, Key::Escape);
+        assert_eq!(state.contents.rows.range(0), None);
+        assert_eq!(state.contents.columns.range(0), None);
     }
 }
