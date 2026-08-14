@@ -1,7 +1,7 @@
 //! The Tables panel's projection: the keyspace/table tree as drawable rows.
 
 use crate::model::{KeyspaceKind, Schema};
-use crate::state::{ConnectionState, SchemaState, State};
+use crate::state::{ConnectionState, Flash, Panel, SchemaState, State};
 use crate::style::Token;
 use crate::tree::{Node, TablesPanel};
 
@@ -49,12 +49,16 @@ pub(super) fn body(state: &State) -> PanelBody {
         ConnectionState::Connected(connection) => match &connection.schema {
             SchemaState::Loading => waiting("Loading schema…"),
             SchemaState::Failed(error) => failure(error),
-            SchemaState::Loaded(schema) => tree(&state.tables, schema),
+            SchemaState::Loaded(schema) => tree(
+                &state.tables,
+                schema,
+                super::flash_over(state, Panel::Tables),
+            ),
         },
     }
 }
 
-fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
+fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<Flash>) -> PanelBody {
     let nodes = tables.rows(schema);
     let rows: Vec<TreeRow> = nodes
         .iter()
@@ -81,7 +85,11 @@ fn tree(tables: &TablesPanel, schema: &Schema) -> PanelBody {
         rows,
         selected: tables.cursor.index(),
         offset: tables.scroll.offset(),
-        range: tables.selection.range(tables.cursor.index()),
+        range: flash.map_or_else(
+            || tables.selection.range(tables.cursor.index()),
+            Flash::rows,
+        ),
+        flash: flash.is_some(),
     }
 }
 

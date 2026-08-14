@@ -13,7 +13,7 @@ use crate::pointer::{Click, Pointer, Wheel};
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, Geometry, Message, Overlay, Panel, Range, SchemaState, Scroll,
+    ConnectionState, Cursor, Flash, Geometry, Message, Overlay, Panel, Range, SchemaState, Scroll,
     Selection, State,
 };
 use crate::style::Severity;
@@ -189,17 +189,20 @@ fn described(state: &State) -> Option<Described> {
 
 fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
-        Msg::Tick => {
-            let working = state.is_working();
-            if state.loader.advance(working) {
-                state.mark_dirty();
-            }
-            Vec::new()
+        Msg::Tick => tick(state),
+
+        // The flash is a moment rather than a state, and the next input is the
+        // end of it: left standing, it would contend with a fresh `v` for the
+        // same band (visual mode design §6.1).
+        Msg::Input(press) => {
+            state.flash = None;
+            handle_key(state, press)
         }
 
-        Msg::Input(press) => handle_key(state, press),
-
-        Msg::Pointer(pointer) => handle_pointer(state, pointer),
+        Msg::Pointer(pointer) => {
+            state.flash = None;
+            handle_pointer(state, pointer)
+        }
 
         Msg::Resized => {
             state.mark_dirty();
@@ -306,6 +309,26 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
     }
 }
 
+/// The two things elapsed time does to the frame: turn the loader, and burn
+/// down a yank's afterglow.
+///
+/// Each repaints only when it changed something. A tick arrives 25 times a
+/// second, and one that changes nothing must not cost a frame (visual polish
+/// design §4.2).
+fn tick(state: &mut State) -> Vec<Effect> {
+    let working = state.is_working();
+    if state.loader.advance(working) {
+        state.mark_dirty();
+    }
+
+    if state.flash.as_mut().is_some_and(Flash::spend) {
+        state.flash = None;
+        state.mark_dirty();
+    }
+
+    Vec::new()
+}
+
 fn editor_closed(state: &mut State, buffer: &str) -> Vec<Effect> {
     state.queries.replace(buffer);
     state.mark_dirty();
@@ -343,7 +366,7 @@ fn quit(state: &mut State) -> Vec<Effect> {
 /// delimiters to say must say nothing rather than wipe what the user had
 /// copied (selection-modes design §4). Every projection converges here, so no
 /// shape can reach the clipboard empty.
-fn yank(state: &State) -> Vec<Effect> {
+fn yank(state: &mut State) -> Vec<Effect> {
     let line = match state.focus {
         Panel::Contents => contents(state),
         Panel::Tables => tree_nodes(state),
@@ -354,10 +377,38 @@ fn yank(state: &State) -> Vec<Effect> {
     // A payload of nothing but delimiters says nothing, and `Effect::Yank`
     // becomes an OSC 52 sequence: an empty one asks the terminal to clear the
     // clipboard (design §5).
-    line.filter(|line| line.chars().any(|c| c != ',' && c != '\n'))
-        .map(Effect::Yank)
-        .into_iter()
-        .collect()
+    let Some(line) = line.filter(|line| line.chars().any(|c| c != ',' && c != '\n')) else {
+        // A `y` that said nothing has nothing to show and nothing to reset:
+        // spending the selection here would punish the user for pressing `y`
+        // on a null (visual mode design §5.1).
+        return Vec::new();
+    };
+
+    state.flash = Some(lit(state));
+    collapse_selection(state);
+
+    vec![Effect::Yank(line)]
+}
+
+/// What `y` just took, ready to be lit once the selection that named it is
+/// gone (visual mode design §6.1).
+fn lit(state: &State) -> Flash {
+    let (rows, columns) = match state.focus {
+        Panel::Contents => grid_extent(state),
+        Panel::Tables => (
+            Some(spanned(state.tables.selection, state.tables.cursor.index())),
+            None,
+        ),
+        Panel::Ddl => (
+            Some(spanned(state.ddl.selection, state.ddl.cursor.index())),
+            None,
+        ),
+        // Unreachable: the editor yanks nothing, so `yank` has already
+        // returned by the time this is asked.
+        Panel::Queries => (None, None),
+    };
+
+    Flash::lit(state.focus, rows, columns)
 }
 
 /// The range, or the one row the cursor is on when nothing is selected.
@@ -367,6 +418,23 @@ fn spanned(selection: Selection, cursor: usize) -> Range {
         .unwrap_or_else(|| Range::new(cursor, cursor))
 }
 
+/// The rectangle `y` reads out of the grid, on each of its two axes.
+///
+/// `None` on an axis is the whole of it — the convention the view model's
+/// `rows_range` and `columns_range` already carry, and what row mode and
+/// column mode take. The one place the mode decides which axes it bounds, so
+/// what is copied and what is lit afterwards cannot answer differently.
+fn grid_extent(state: &State) -> (Option<Range>, Option<Range>) {
+    let rows = spanned(state.contents.rows, state.contents.cursor.index());
+    let columns = spanned(state.contents.columns, state.contents.column.index());
+
+    match state.contents.mode {
+        SelectionMode::Row => (Some(rows), None),
+        SelectionMode::Column => (None, Some(columns)),
+        SelectionMode::Cell => (Some(rows), Some(columns)),
+    }
+}
+
 /// Which of the grid's two cursors `y` means is what the selection mode
 /// answers (docs/superpowers/specs/2026-08-13-yank-selection-modes-design.md §1).
 fn contents(state: &State) -> Option<String> {
@@ -374,23 +442,19 @@ fn contents(state: &State) -> Option<String> {
         return None;
     };
     let page = page.page();
-    let rows = spanned(state.contents.rows, state.contents.cursor.index());
-    let columns = spanned(state.contents.columns, state.contents.column.index());
+    let (rows, columns) = grid_extent(state);
+    let whole = |len: usize| Range::new(0, len.saturating_sub(1));
+    let rows = rows.unwrap_or_else(|| whole(page.rows.len()));
+    let columns = columns.unwrap_or_else(|| whole(page.columns.len()));
 
     match state.contents.mode {
-        SelectionMode::Row => Some(crate::yank::grid_block(
-            &page.rows,
-            rows,
-            Range::new(0, page.columns.len().saturating_sub(1)),
-        )),
-        SelectionMode::Cell => {
-            if rows.rows() == 1 && columns.rows() == 1 {
-                let row = page.rows.get(rows.first())?;
-                let value = row.values.get(columns.first())?;
+        SelectionMode::Cell if rows.rows() == 1 && columns.rows() == 1 => {
+            let row = page.rows.get(rows.first())?;
+            let value = row.values.get(columns.first())?;
 
-                return crate::yank::grid_cell(value);
-            }
-
+            crate::yank::grid_cell(value)
+        }
+        SelectionMode::Row | SelectionMode::Cell => {
             Some(crate::yank::grid_block(&page.rows, rows, columns))
         }
         SelectionMode::Column => Some(crate::yank::grid_columns(&page.rows, columns)),
@@ -577,8 +641,8 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
 
     // A press names one row, so it spends the range rather than standing
     // beside it and making the next `y` lie (design §4).
-    for selection in selections(state, click.panel()).into_iter().flatten() {
-        selection.clear();
+    for axis in axes(state, click.panel()).into_iter().flatten() {
+        axis.selection.clear();
     }
 
     let (panel, row, column) = match click {
@@ -1063,18 +1127,76 @@ fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
     }
 }
 
-/// The selections `panel` holds. Two for the grid, which selects on both axes
-/// (design §3); none for Queries, which is an editor.
-fn selections(state: &mut State, panel: Panel) -> [Option<&mut Selection>; 2] {
+/// One axis a panel selects on: the run selected, and the cursor that is its
+/// far end while it is being extended.
+///
+/// The two travel together because reading one without the other is always a
+/// mistake — a `Selection` only means a range in company with its cursor, and
+/// which cursor that is depends on the grid's mode.
+struct Axis<'a> {
+    selection: &'a mut Selection,
+    cursor: &'a mut Cursor,
+    /// How many rows the axis has, so a cursor sent along it cannot leave it.
+    len: usize,
+}
+
+/// The axes `panel` selects on. Two for the grid in cell mode, which selects a
+/// rectangle (design §3); none for Queries, which is an editor.
+///
+/// The one place a selection is matched up with its cursor. Column mode puts
+/// the *column* cursor on the first axis, and a second match written out
+/// elsewhere would be one edit away from disagreeing about that — silently,
+/// since both are `usize`.
+fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
+    let rows = row_count(state, panel);
+    let columns = state.contents.column_count();
+    let contents = &mut state.contents;
+
     match panel {
-        Panel::Tables => [Some(&mut state.tables.selection), None],
-        Panel::Ddl => [Some(&mut state.ddl.selection), None],
-        Panel::Contents => match state.contents.mode {
-            SelectionMode::Row => [Some(&mut state.contents.rows), None],
-            SelectionMode::Column => [Some(&mut state.contents.columns), None],
+        Panel::Tables => [
+            Some(Axis {
+                selection: &mut state.tables.selection,
+                cursor: &mut state.tables.cursor,
+                len: rows,
+            }),
+            None,
+        ],
+        Panel::Ddl => [
+            Some(Axis {
+                selection: &mut state.ddl.selection,
+                cursor: &mut state.ddl.cursor,
+                len: rows,
+            }),
+            None,
+        ],
+        Panel::Contents => match contents.mode {
+            SelectionMode::Row => [
+                Some(Axis {
+                    selection: &mut contents.rows,
+                    cursor: &mut contents.cursor,
+                    len: rows,
+                }),
+                None,
+            ],
+            SelectionMode::Column => [
+                Some(Axis {
+                    selection: &mut contents.columns,
+                    cursor: &mut contents.column,
+                    len: columns,
+                }),
+                None,
+            ],
             SelectionMode::Cell => [
-                Some(&mut state.contents.rows),
-                Some(&mut state.contents.columns),
+                Some(Axis {
+                    selection: &mut contents.rows,
+                    cursor: &mut contents.cursor,
+                    len: rows,
+                }),
+                Some(Axis {
+                    selection: &mut contents.columns,
+                    cursor: &mut contents.column,
+                    len: columns,
+                }),
             ],
         },
         Panel::Queries => [None, None],
@@ -1083,48 +1205,23 @@ fn selections(state: &mut State, panel: Panel) -> [Option<&mut Selection>; 2] {
 
 /// `v`: start extending from the cursor, or freeze what is being extended.
 fn toggle_visual(state: &mut State) {
-    let cursors = axis_cursors(state, state.focus);
-
-    for (selection, cursor) in selections(state, state.focus)
-        .into_iter()
-        .zip(cursors)
-        .filter_map(|(selection, cursor)| Some((selection?, cursor)))
-    {
-        if selection.is_extending() {
-            selection.stop(cursor);
+    for axis in axes(state, state.focus).into_iter().flatten() {
+        if axis.selection.is_extending() {
+            axis.selection.stop(axis.cursor.index());
         } else {
-            selection.start(cursor);
+            axis.selection.start(axis.cursor.index());
         }
-    }
-}
-
-/// Where each of `panel`'s selections has its far end, in the order
-/// [`selections`] returns them.
-fn axis_cursors(state: &State, panel: Panel) -> [usize; 2] {
-    match panel {
-        Panel::Contents => match state.contents.mode {
-            SelectionMode::Column => [state.contents.column.index(), 0],
-            SelectionMode::Row | SelectionMode::Cell => {
-                [state.contents.cursor.index(), state.contents.column.index()]
-            }
-        },
-        Panel::Tables | Panel::Ddl | Panel::Queries => [cursor_index(state, panel), 0],
     }
 }
 
 /// `esc`'s second rung: leave visual mode, keeping the range. Reports whether
 /// there was one to leave.
 fn stop_extending(state: &mut State) -> bool {
-    let cursors = axis_cursors(state, state.focus);
     let mut stopped = false;
 
-    for (selection, cursor) in selections(state, state.focus)
-        .into_iter()
-        .zip(cursors)
-        .filter_map(|(selection, cursor)| Some((selection?, cursor)))
-    {
-        if selection.is_extending() {
-            selection.stop(cursor);
+    for axis in axes(state, state.focus).into_iter().flatten() {
+        if axis.selection.is_extending() {
+            axis.selection.stop(axis.cursor.index());
             stopped = true;
         }
     }
@@ -1136,14 +1233,31 @@ fn stop_extending(state: &mut State) -> bool {
 fn clear_selection(state: &mut State) -> bool {
     let mut cleared = false;
 
-    for selection in selections(state, state.focus).into_iter().flatten() {
-        if selection.range(0).is_some() {
-            selection.clear();
+    for axis in axes(state, state.focus).into_iter().flatten() {
+        if axis.selection.range(0).is_some() {
+            axis.selection.clear();
             cleared = true;
         }
     }
 
     cleared
+}
+
+/// `y`'s second half: spend the selection and send each cursor back to the end
+/// it grew from (visual mode design §5.1).
+///
+/// A yank is one gesture rather than a mode the user is left standing in — the
+/// range has been said, so it stops being drawn, and the cursor goes back to
+/// where `v` was pressed rather than sitting wherever the range happened to
+/// end. The anchor and not the range's first row: a selection grown upwards
+/// started at its last one.
+fn collapse_selection(state: &mut State) {
+    for axis in axes(state, state.focus).into_iter().flatten() {
+        if let Some(anchor) = axis.selection.anchor() {
+            axis.cursor.go_to(anchor, axis.len);
+            axis.selection.clear();
+        }
+    }
 }
 
 /// Records what the last frame turned out to be, and repairs whatever that
@@ -1567,7 +1681,7 @@ mod tests {
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::search::{Filter, Filtered, Prompt};
-    use crate::state::{Connection, Range, Span};
+    use crate::state::{Connection, FLASH_TICKS, Range, Span};
     use crate::theme::Ported;
     use crate::tree::tests_support::schema_of as tabled_schema;
     use crate::view::tests_support::tabled;
@@ -3480,7 +3594,7 @@ mod tests {
     fn tab_walks_the_panels_in_reading_order_and_wraps() {
         let mut state = browsing(&["a"]);
 
-        for expected in Panel::ALL.into_iter().skip(1).chain([Panel::ALL[0]]) {
+        for expected in Panel::CYCLE.into_iter().skip(1).chain([Panel::CYCLE[0]]) {
             press(&mut state, Key::Tab);
             assert_eq!(state.focus, expected);
         }
@@ -3500,7 +3614,7 @@ mod tests {
 
         press(&mut state, Key::BackTab);
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus, Panel::Ddl);
     }
 
     #[test]
@@ -3983,6 +4097,210 @@ mod tests {
             vec![Effect::Yank("r0c2,r1c2".to_owned())],
             "column mode yanks every row of the column the column cursor names"
         );
+    }
+
+    /// `y` is one gesture: it copies, and then it puts the panel back where
+    /// the user started it from (visual mode design §5.1).
+    #[test]
+    fn y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.cursor.go_to(1, 4);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('y'));
+
+        assert_eq!(state.contents.rows, Selection::None);
+        assert_eq!(
+            state.contents.cursor.index(),
+            1,
+            "the cursor comes home to where `v` was pressed"
+        );
+    }
+
+    /// The anchor, not the top of the range: a selection extended upwards
+    /// started at its *last* row, and that is where the cursor came from.
+    #[test]
+    fn a_selection_grown_upwards_sends_the_cursor_back_down() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.cursor.go_to(3, 4);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('k'));
+        press(&mut state, Key::Char('k'));
+
+        press(&mut state, Key::Char('y'));
+
+        assert_eq!(state.contents.cursor.index(), 3);
+    }
+
+    /// Frozen by a second `v`, so the range is `Held` and the cursor has
+    /// already left the anchor by the time `y` asks for it.
+    #[test]
+    fn a_frozen_range_still_knows_where_to_send_the_cursor() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.cursor.go_to(1, 4);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('y'));
+
+        assert_eq!(state.contents.rows, Selection::None);
+        assert_eq!(state.contents.cursor.index(), 1);
+    }
+
+    #[test]
+    fn cell_mode_sends_both_cursors_home() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.mode = SelectionMode::Cell;
+        state.contents.cursor.go_to(1, 4);
+        state.contents.column.go_to(1, 3);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('l'));
+
+        press(&mut state, Key::Char('y'));
+
+        assert_eq!(state.contents.rows, Selection::None);
+        assert_eq!(state.contents.columns, Selection::None);
+        assert_eq!(
+            (state.contents.cursor.index(), state.contents.column.index()),
+            (1, 1),
+            "a rectangle has an anchor on each axis and both are homes"
+        );
+    }
+
+    #[test]
+    fn the_tree_collapses_its_selection_on_y_too() {
+        let mut state = browsing(&["a", "b", "c"]);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('y'));
+
+        assert_eq!(state.tables.selection, Selection::None);
+        assert_eq!(state.tables.cursor.index(), 0);
+    }
+
+    /// Nothing yanked is nothing said, and a `y` that said nothing must not
+    /// move the cursor or throw the selection away either (visual mode design §5.1).
+    #[test]
+    fn a_y_that_yanks_nothing_leaves_the_selection_alone() {
+        let mut state = measured(&["a"]);
+        state.focus = Panel::Queries;
+        state.contents.cursor.go_to(0, 1);
+        state.tables.selection.start(0);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.tables.selection,
+            Selection::Extending { anchor: 0 },
+            "a panel that yanks nothing has nothing to reset"
+        );
+    }
+
+    /// The selection stops being drawn on `y`, so without this the copy would
+    /// leave no mark at all and the user would have nothing but the absence of
+    /// a range to tell them it happened (visual mode design §6.1).
+    #[test]
+    fn y_lights_up_what_it_yanked() {
+        let mut state = grid_of_named_cells(3, 4);
+        state.contents.mode = SelectionMode::Cell;
+        state.contents.cursor.go_to(1, 4);
+        state.contents.column.go_to(0, 3);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('l'));
+
+        press(&mut state, Key::Char('y'));
+
+        let flash = state.flash.expect("the yank lit what it copied");
+        assert_eq!(flash.panel(), Panel::Contents);
+        assert_eq!(flash.rows(), Some(Range::new(1, 2)));
+        assert_eq!(flash.columns(), Some(Range::new(0, 1)));
+    }
+
+    /// `None` on an axis is every row or every column of it — the convention
+    /// the view model's ranges already carry, and what row mode yanks.
+    #[test]
+    fn row_mode_lights_the_whole_row_and_column_mode_the_whole_column() {
+        let mut rows = grid_of_named_cells(3, 4);
+        press(&mut rows, Key::Char('y'));
+
+        let flash = rows.flash.expect("lit");
+        assert_eq!(flash.rows(), Some(Range::new(0, 0)));
+        assert_eq!(flash.columns(), None, "row mode yanks every column");
+
+        let mut columns = grid_of_named_cells(3, 4);
+        columns.contents.mode = SelectionMode::Column;
+        press(&mut columns, Key::Char('y'));
+
+        let flash = columns.flash.expect("lit");
+        assert_eq!(flash.rows(), None, "column mode yanks every row");
+        assert_eq!(flash.columns(), Some(Range::new(0, 0)));
+    }
+
+    /// Nothing was selected, so what the flash marks is the one row `y` took —
+    /// a bare `y` earns the same feedback as a ranged one.
+    #[test]
+    fn a_bare_y_lights_the_row_it_took() {
+        let mut state = browsing(&["a", "b"]);
+
+        press(&mut state, Key::Char('y'));
+
+        let flash = state.flash.expect("lit");
+        assert_eq!(flash.panel(), Panel::Tables);
+        assert_eq!(flash.rows(), Some(Range::new(0, 0)));
+    }
+
+    #[test]
+    fn a_y_that_yanks_nothing_lights_nothing() {
+        let mut state = measured(&["a"]);
+        state.focus = Panel::Queries;
+
+        press(&mut state, Key::Char('y'));
+
+        assert_eq!(state.flash, None);
+    }
+
+    #[test]
+    fn the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint() {
+        let mut state = browsing(&["a", "b"]);
+        press(&mut state, Key::Char('y'));
+
+        for tick in 1..FLASH_TICKS {
+            state.dirty = false;
+            update(&mut state, Msg::Tick);
+            assert!(
+                state.flash.is_some() && !state.dirty,
+                "tick {tick} neither ends the flash nor changes the frame"
+            );
+        }
+
+        state.dirty = false;
+        update(&mut state, Msg::Tick);
+
+        assert_eq!(state.flash, None);
+        assert!(
+            state.dirty,
+            "the frame that loses the flash has to be drawn"
+        );
+    }
+
+    /// The flash is a moment, and the next key is the end of it — otherwise a
+    /// fresh `v` would contend with a fading one for the same band.
+    #[test]
+    fn the_next_key_ends_the_flash() {
+        let mut state = browsing(&["a", "b"]);
+        press(&mut state, Key::Char('y'));
+
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(state.flash, None);
     }
 
     /// An empty OSC 52 payload asks the terminal to clear its clipboard, so a

@@ -41,6 +41,9 @@ pub struct State {
     /// only as [`crate::Msg::Tick`], so this is the whole of what the renderer
     /// is told about it.
     pub loader: Loader,
+    /// What the last `y` copied, lit for as long as [`Flash`] lasts. `None`
+    /// once it has faded or the next key has ended it.
+    pub flash: Option<Flash>,
     /// Set when something changed that the next frame must show. Avoids
     /// repainting on every keypress of a held-down `j` (architecture.md §3).
     pub dirty: bool,
@@ -169,8 +172,9 @@ impl ConnectionState {
 /// Panels are places: fixed positions, navigated with predictable motions
 /// (vision.md §4, principle 4).
 ///
-/// Declaration order is reading order — top-left, bottom-left, top-right,
-/// bottom-right — and [`Panel::ALL`] preserves it.
+/// Declaration order is column order — top-left, bottom-left, top-right,
+/// bottom-right — and [`Panel::ALL`] preserves it. Focus moves in
+/// [`Panel::CYCLE`] instead, which is a different walk over the same frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Panel {
     /// Keyspace → table tree.
@@ -262,28 +266,34 @@ const QUERIES_HINTS: &[Binding] = &[
 ];
 
 impl Panel {
-    /// Every panel, in reading order.
+    /// Every panel, in column order.
     pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
 
-    /// The next panel in reading order, wrapping.
+    /// Every panel, in the order focus walks them: reading order across the
+    /// frame — top-left, top-right, bottom-left, bottom-right. The tree and
+    /// the rows it opens are adjacent under `Tab`, which is the pair a user
+    /// moves between most.
+    pub const CYCLE: [Self; 4] = [Self::Tables, Self::Contents, Self::Ddl, Self::Queries];
+
+    /// The next panel in [`Panel::CYCLE`], wrapping.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
-            Self::Tables => Self::Ddl,
-            Self::Ddl => Self::Contents,
-            Self::Contents => Self::Queries,
+            Self::Tables => Self::Contents,
+            Self::Contents => Self::Ddl,
+            Self::Ddl => Self::Queries,
             Self::Queries => Self::Tables,
         }
     }
 
-    /// The previous panel in reading order, wrapping.
+    /// The previous panel in [`Panel::CYCLE`], wrapping.
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
             Self::Tables => Self::Queries,
-            Self::Ddl => Self::Tables,
-            Self::Contents => Self::Ddl,
-            Self::Queries => Self::Contents,
+            Self::Contents => Self::Tables,
+            Self::Ddl => Self::Contents,
+            Self::Queries => Self::Ddl,
         }
     }
 
@@ -461,6 +471,12 @@ impl Range {
 /// of step with it. Freezing is the one moment the derived range is written
 /// down, and it is written down exactly because the cursor is about to stop
 /// meaning it.
+///
+/// A frozen range keeps its anchor beside it rather than only its ends. The
+/// two are not the same question — the ends say which rows are selected, the
+/// anchor says which of them the user started from — and `y` sends the cursor
+/// home to the anchor, so a range that only knew its ends could not answer it
+/// once the cursor had left (visual mode design §5.1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Selection {
     #[default]
@@ -468,10 +484,22 @@ pub enum Selection {
     Extending {
         anchor: usize,
     },
-    Held(Range),
+    Held {
+        anchor: usize,
+        range: Range,
+    },
 }
 
 impl Selection {
+    /// A frozen range between the two ends, in either order.
+    #[must_use]
+    pub const fn held(anchor: usize, cursor: usize) -> Self {
+        Self::Held {
+            anchor,
+            range: Range::new(anchor, cursor),
+        }
+    }
+
     /// Starts extending from `cursor`, discarding whatever was held.
     pub const fn start(&mut self, cursor: usize) {
         *self = Self::Extending { anchor: cursor };
@@ -481,7 +509,7 @@ impl Selection {
     /// it. Does nothing to a range already frozen.
     pub const fn stop(&mut self, cursor: usize) {
         if let Self::Extending { anchor } = *self {
-            *self = Self::Held(Range::new(anchor, cursor));
+            *self = Self::held(anchor, cursor);
         }
     }
 
@@ -501,7 +529,16 @@ impl Selection {
         match self {
             Self::None => None,
             Self::Extending { anchor } => Some(Range::new(anchor, cursor)),
-            Self::Held(range) => Some(range),
+            Self::Held { range, .. } => Some(range),
+        }
+    }
+
+    /// The end the user started from, which `y` sends the cursor back to.
+    #[must_use]
+    pub const fn anchor(self) -> Option<usize> {
+        match self {
+            Self::None => None,
+            Self::Extending { anchor } | Self::Held { anchor, .. } => Some(anchor),
         }
     }
 
@@ -526,17 +563,82 @@ impl Selection {
                     *self = Self::Extending { anchor: last };
                 }
             }
-            Self::Held(range) => {
+            Self::Held { anchor, range } => {
                 if range.first > last {
                     *self = Self::None;
                 } else if range.last > last {
-                    *self = Self::Held(Range {
-                        first: range.first,
-                        last,
-                    });
+                    *self = Self::Held {
+                        anchor: if anchor > last { last } else { anchor },
+                        range: Range {
+                            first: range.first,
+                            last,
+                        },
+                    };
                 }
             }
         }
+    }
+}
+
+/// The afterglow a `y` leaves on what it copied
+/// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §6.1).
+///
+/// A yank spends the selection, so without this the only sign it happened
+/// would be a band disappearing. The flash holds what was taken, brightly,
+/// for long enough to read and no longer.
+///
+/// It carries the rectangle rather than reading the selection back, because by
+/// the time it is drawn there is no selection left to read. `rows` and
+/// `columns` follow the view model's convention: `None` on an axis is the
+/// whole of it, which is what row mode and column mode take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Flash {
+    panel: Panel,
+    rows: Option<Range>,
+    columns: Option<Range>,
+    remaining: usize,
+}
+
+/// How long the afterglow lasts, counted in [`crate::Msg::Tick`]s.
+///
+/// Elapsed time reaches the domain only as ticks, so a duration is a count
+/// here: twelve of `lc-app`'s forty-millisecond ticks, a little under half a
+/// second. Long enough to catch the eye, short enough that it is over before
+/// the next key.
+pub const FLASH_TICKS: usize = 12;
+
+impl Flash {
+    #[must_use]
+    pub const fn lit(panel: Panel, rows: Option<Range>, columns: Option<Range>) -> Self {
+        Self {
+            panel,
+            rows,
+            columns,
+            remaining: FLASH_TICKS,
+        }
+    }
+
+    /// Burns one tick. Reports whether the frame changed — which only the tick
+    /// that puts the flash out does, so a flash costs two repaints rather than
+    /// one per tick ([`Loader::advance`]'s rule).
+    pub const fn spend(&mut self) -> bool {
+        self.remaining = self.remaining.saturating_sub(1);
+        self.remaining == 0
+    }
+
+    #[must_use]
+    pub const fn panel(self) -> Panel {
+        self.panel
+    }
+
+    #[must_use]
+    pub const fn rows(self) -> Option<Range> {
+        self.rows
+    }
+
+    #[must_use]
+    pub const fn columns(self) -> Option<Range> {
+        self.columns
     }
 }
 
@@ -879,7 +981,7 @@ mod tests {
     use crate::search::{Filter, Filtered};
 
     #[test]
-    fn all_panels_are_listed_in_reading_order_and_none_is_missing() {
+    fn all_panels_are_listed_in_column_order_and_none_is_missing() {
         for panel in Panel::ALL {
             // A new variant fails to compile here until it is added to ALL.
             let expected_position = match panel {
@@ -891,7 +993,7 @@ mod tests {
             assert_eq!(
                 Panel::ALL[expected_position],
                 panel,
-                "{panel:?} is not at its reading-order position"
+                "{panel:?} is not at its column-order position"
             );
         }
         assert_eq!(
@@ -908,15 +1010,26 @@ mod tests {
 
     #[test]
     fn the_cycle_walks_reading_order_and_wraps() {
-        // Pinned against ALL rather than restated, so the two orderings cannot
-        // drift apart when a panel is added.
+        // Pinned against CYCLE rather than restated, so the two orderings
+        // cannot drift apart when a panel is added.
         let walked: Vec<Panel> =
-            std::iter::successors(Some(Panel::ALL[0]), |panel| Some(panel.next()))
-                .take(Panel::ALL.len())
+            std::iter::successors(Some(Panel::CYCLE[0]), |panel| Some(panel.next()))
+                .take(Panel::CYCLE.len())
                 .collect();
 
-        assert_eq!(walked, Panel::ALL);
-        assert_eq!(Panel::ALL[Panel::ALL.len() - 1].next(), Panel::ALL[0]);
+        assert_eq!(walked, Panel::CYCLE);
+        assert_eq!(Panel::CYCLE[Panel::CYCLE.len() - 1].next(), Panel::CYCLE[0]);
+    }
+
+    #[test]
+    fn the_cycle_holds_every_panel_exactly_once() {
+        for panel in Panel::ALL {
+            assert_eq!(
+                Panel::CYCLE.iter().filter(|other| **other == panel).count(),
+                1,
+                "{panel:?} is missing from CYCLE or listed twice"
+            );
+        }
     }
 
     #[test]
@@ -1506,6 +1619,44 @@ mod tests {
 
         assert_eq!(selection.range(0), Some(Range::new(0, 4)));
         assert!(selection.is_extending());
+    }
+
+    #[test]
+    fn a_selection_remembers_which_end_it_grew_from() {
+        let mut upwards = Selection::default();
+        upwards.start(9);
+
+        assert_eq!(upwards.anchor(), Some(9));
+
+        upwards.stop(2);
+
+        assert_eq!(
+            upwards.anchor(),
+            Some(9),
+            "freezing the range must not lose which end the cursor came from"
+        );
+        assert_eq!(upwards.range(0), Some(Range::new(2, 9)));
+    }
+
+    #[test]
+    fn nothing_selected_anchors_nowhere() {
+        assert_eq!(Selection::None.anchor(), None);
+    }
+
+    #[test]
+    fn a_truncated_range_pulls_its_anchor_back_too() {
+        let mut selection = Selection::default();
+        selection.start(9);
+        selection.stop(2);
+
+        selection.clamp_to(5);
+
+        assert_eq!(selection.range(0), Some(Range::new(2, 4)));
+        assert_eq!(
+            selection.anchor(),
+            Some(4),
+            "an anchor left past the end would send a cursor off the list"
+        );
     }
 
     #[test]

@@ -563,6 +563,7 @@ fn bar(
 
 #[cfg(test)]
 mod tests {
+    use crate::body::Marked;
     use lc_domain::commands::CommandsPanel;
     use lc_domain::contents::{SelectionMode, Subject, TableRef};
     use lc_domain::ddl::DdlTab;
@@ -574,7 +575,7 @@ mod tests {
     use lc_domain::posture::Posture;
     use lc_domain::search::{Filter, Filtered, Prompt};
     use lc_domain::state::{
-        Connection, ConnectionState, Geometry, Message, Overlay, Panel, Range, SchemaState,
+        Connection, ConnectionState, Flash, Geometry, Message, Overlay, Panel, Range, SchemaState,
         Selection,
     };
     use lc_domain::style::Severity;
@@ -1268,7 +1269,7 @@ mod tests {
     #[test]
     fn a_ranged_tree_row_carries_the_bar_and_the_band() {
         let mut state = browsing(&["shop", "typezoo", "system"], 0);
-        state.tables.selection = Selection::Held(Range::new(0, 1));
+        state.tables.selection = Selection::held(0, 1);
 
         let buffer = draw_state(40, 12, &state);
 
@@ -1803,12 +1804,82 @@ mod tests {
         );
     }
 
+    /// A yank spends the selection that named the rows, so the flash is the
+    /// only thing left saying what was copied — and it has to be louder than
+    /// the band that was standing there a frame ago, or the copy reads as the
+    /// selection simply vanishing (visual mode design §6.1).
+    #[test]
+    fn a_yanks_afterglow_is_louder_than_the_range_it_replaces() {
+        let mut ranged = showing(sized_page(2, 4));
+        ranged.contents.mode = SelectionMode::Row;
+        ranged.contents.cursor.go_to(3, 4);
+        ranged.contents.rows = Selection::held(0, 1);
+
+        let mut flashed = showing(sized_page(2, 4));
+        flashed.contents.mode = SelectionMode::Row;
+        flashed.contents.cursor.go_to(3, 4);
+        flashed.flash = Some(Flash::lit(Panel::Contents, Some(Range::new(0, 1)), None));
+
+        let bg = |state: &State, row: u16| {
+            let buffer = draw_state(60, 12, state);
+            let area = block_area(&buffer, "Table contents");
+            buffer
+                .cell((area.x + 4, area.y + 2 + row))
+                .expect("inside the panel")
+                .bg
+        };
+        let palette = Theme::default().palette();
+
+        assert_eq!(bg(&ranged, 0), palette.ranged);
+        assert_eq!(
+            bg(&flashed, 0),
+            palette.selection_bg,
+            "the afterglow takes the loudest band, which is the cursor row's"
+        );
+        assert_eq!(
+            bg(&flashed, 2),
+            bg(&ranged, 2),
+            "and it lights only the rows the yank took"
+        );
+    }
+
+    /// The flash reaches the panel whose `y` lit it and no other.
+    #[test]
+    fn a_yank_in_the_tree_lights_the_tree_alone() {
+        let mut state = showing(sized_page(2, 4));
+        state.flash = Some(Flash::lit(Panel::Tables, Some(Range::new(0, 0)), None));
+
+        let buffer = draw_state(60, 12, &state);
+        let palette = Theme::default().palette();
+        let tree = block_area(&buffer, "Tables");
+        let grid = block_area(&buffer, "Table contents");
+
+        assert_eq!(
+            buffer
+                .cell((tree.x + 2, tree.y + 1))
+                .expect("inside the panel")
+                .bg,
+            palette.selection_bg
+        );
+        // Row 2, not the grid's own row 0: that one carries the cursor band in
+        // this palette's loudest colour whether or not anything flashed, and
+        // would pass this assertion for the wrong reason.
+        assert_ne!(
+            buffer
+                .cell((grid.x + 4, grid.y + 4))
+                .expect("inside the panel")
+                .bg,
+            palette.selection_bg,
+            "a flash lit over the tree reaches no other panel"
+        );
+    }
+
     #[test]
     fn every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them() {
         let mut state = showing(sized_page(2, 4));
         state.contents.mode = SelectionMode::Row;
         state.contents.cursor.down(4);
-        state.contents.rows = Selection::Held(Range::new(0, 2));
+        state.contents.rows = Selection::held(0, 2);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -1844,8 +1915,8 @@ mod tests {
         // The grid opens in row mode, and only cell mode has a rectangle: the
         // projection gives a column range on no other (visual mode design §3).
         state.contents.mode = SelectionMode::Cell;
-        state.contents.rows = Selection::Held(Range::new(0, 1));
-        state.contents.columns = Selection::Held(Range::new(0, 1));
+        state.contents.rows = Selection::held(0, 1);
+        state.contents.columns = Selection::held(0, 1);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -1875,7 +1946,7 @@ mod tests {
     fn a_column_range_bands_its_columns_and_lights_no_gutter_bar() {
         let mut state = showing(sized_page(3, 3));
         state.contents.mode = SelectionMode::Column;
-        state.contents.columns = Selection::Held(Range::new(0, 1));
+        state.contents.columns = Selection::held(0, 1);
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -2161,6 +2232,42 @@ mod tests {
         );
     }
 
+    /// The crosshair is a locator and the range is a selection, so where the
+    /// two cross the range is what the cell has to say (design §6).
+    #[test]
+    fn a_ranged_cell_keeps_its_band_where_the_crosshair_crosses_it() {
+        let mut state = showing(sized_page(4, 3));
+        state.contents.mode = SelectionMode::Cell;
+        state.contents.rows = Selection::held(0, 1);
+        state.contents.columns = Selection::held(0, 1);
+
+        let buffer = draw_state(40, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let bg = |column: u16, row: u16| {
+            buffer
+                .cell((drawn_column(area, column), area.y + 2 + row))
+                .expect("inside the panel")
+                .bg
+        };
+        let theme = Theme::default();
+
+        assert_eq!(
+            bg(1, 0),
+            theme.palette().ranged,
+            "the cursor's own row crosses the range, and the range wins"
+        );
+        assert_eq!(
+            bg(0, 1),
+            theme.palette().ranged,
+            "so does the cursor's own column"
+        );
+        assert_eq!(
+            bg(2, 0),
+            theme.palette().crosshair,
+            "the crosshair still runs past the range it crosses"
+        );
+    }
+
     #[test]
     fn the_row_and_the_cell_are_marked_in_an_unfocused_panel_too() {
         // `body::grid` ignores the `focused` flag, which is design §3's
@@ -2312,12 +2419,13 @@ mod tests {
         // check keyed on the drawn position rather than the page column would
         // either band the wrong cell or, since no drawn position is 6, band
         // nothing at all in a window this size.
-        state.contents.columns = Selection::Held(Range::new(6, 6));
+        state.contents.columns = Selection::held(6, 6);
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        // Row 1, not the cursor's row 0: the cursor's own row would be washed
-        // by the crosshair regardless of the range, and prove nothing here.
+        // Row 1, not the cursor's row 0: the cursor's own row carries the
+        // crosshair under the band, and a row that is washed either way proves
+        // nothing about the range here.
         let bg = |index: u16| {
             buffer
                 .cell((drawn_column(area, index), area.y + 3))
@@ -2760,7 +2868,7 @@ mod tests {
         // Row 1 is the table identity row, which wraps to two lines
         // (`a_selected_tables_shape_is_drawn_above_its_options`); row 2 is
         // `customer_id`, outside the range.
-        state.ddl.selection = Selection::Held(Range::new(0, 1));
+        state.ddl.selection = Selection::held(0, 1);
 
         let buffer = draw_state(100, 41, &state);
         let rows = ddl_rows(&buffer);
@@ -2793,7 +2901,7 @@ mod tests {
 
         // 40x20: a fourteen-column, nine-row Ddl body — narrow enough that
         // `orders()` wraps well past it.
-        let total = crate::details::lay_out(&details, 0, None, 14, Theme::default())
+        let total = crate::details::lay_out(&details, 0, Marked::none(), 14, Theme::default())
             .lines
             .len();
         assert!(
@@ -2827,7 +2935,7 @@ mod tests {
         // `comment` is the last row and wraps to three lines at this width.
         // Scrolled until its first line is the eighth of the nine visible, two
         // of them are in view and the third is below the fold.
-        let laid = crate::details::lay_out(&details, last, None, 14, Theme::default());
+        let laid = crate::details::lay_out(&details, last, Marked::none(), 14, Theme::default());
         let total = laid.lines.len();
         assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
         for _ in 0..laid.selection.first - 7 {
@@ -3016,7 +3124,7 @@ mod tests {
             crate::details::lay_out(
                 &ddl_details(&describing(orders())),
                 0,
-                None,
+                Marked::none(),
                 14,
                 Theme::default()
             )
@@ -3071,8 +3179,14 @@ mod tests {
         const HEIGHT: usize = 5;
 
         let state = describing(orders());
-        let all =
-            crate::details::lay_out(&ddl_details(&state), 0, None, WIDTH, Theme::default()).lines;
+        let all = crate::details::lay_out(
+            &ddl_details(&state),
+            0,
+            Marked::none(),
+            WIDTH,
+            Theme::default(),
+        )
+        .lines;
         assert!(
             all.len() > HEIGHT,
             "the fixture must overflow the panel or this test proves nothing"

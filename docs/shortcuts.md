@@ -27,10 +27,10 @@ panel that takes text (§2).
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
-| `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. |
+| `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. |
 | `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
-| `Tab` | Focus the next panel, in reading order, wrapping. |
+| `Tab` | Focus the next panel — Tables, Table contents, DDL, Queries — wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
 | `a`¹ | Focus T**a**bles. |
 | `b`¹ | Focus Ta**b**le contents. |
@@ -845,6 +845,12 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `y` in cell mode yanks the block and nothing outside it | `y_in_cell_mode_yanks_the_block_and_nothing_outside_it` |
 | `y` on a single cell still yanks it bare | `y_on_a_single_cell_still_yanks_it_bare` |
 | Every row of a range is banded, and the cursor row reads apart from them | `every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them` (`inbound/render.rs`) |
+| `y` drops the range and sends each cursor back to its anchor | `y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor`, `a_selection_grown_upwards_sends_the_cursor_back_down`, `a_frozen_range_still_knows_where_to_send_the_cursor`, `cell_mode_sends_both_cursors_home`, `the_tree_collapses_its_selection_on_y_too` |
+| A frozen range keeps the end it grew from | `a_selection_remembers_which_end_it_grew_from`, `a_truncated_range_pulls_its_anchor_back_too` (`state.rs`) |
+| A `y` that yanks nothing resets nothing and lights nothing | `a_y_that_yanks_nothing_leaves_the_selection_alone`, `a_y_that_yanks_nothing_lights_nothing` |
+| `y` lights what it took, on the axes its mode bounds | `y_lights_up_what_it_yanked`, `row_mode_lights_the_whole_row_and_column_mode_the_whole_column`, `a_bare_y_lights_the_row_it_took` |
+| The flash fades, costs one repaint doing it, and the next key ends it | `the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint`, `the_next_key_ends_the_flash` |
+| The flash is louder than the range it replaces, and reaches one panel | `a_yanks_afterglow_is_louder_than_the_range_it_replaces`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render.rs`) |
 | The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a filter | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter` (`view/hints.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what

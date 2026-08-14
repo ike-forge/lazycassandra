@@ -23,7 +23,7 @@
 
 use lc_domain::grid::BAR;
 use lc_domain::model::{ClusteringOrder, Setting};
-use lc_domain::state::{Range, Span};
+use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{ColumnKind, DetailRow, Details, Group, IdentityKind};
 use ratatui::Frame;
@@ -32,6 +32,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span as TextSpan};
 use ratatui::widgets::Paragraph;
 
+use crate::body::Marked;
 use crate::theme::Theme;
 
 const ASCENDING: &str = " ↑";
@@ -64,10 +65,10 @@ pub(crate) fn render(
     details: &Details,
     selected: usize,
     offset: usize,
-    range: Option<Range>,
+    marked: Marked,
     theme: Theme,
 ) -> (crate::body::Extent, Span, Vec<Option<usize>>) {
-    let laid = lay_out(details, selected, range, usize::from(area.width), theme);
+    let laid = lay_out(details, selected, marked, usize::from(area.width), theme);
     let total = laid.lines.len();
     // `Paragraph::scroll` is u16, and a body past 65535 lines is unreachable;
     // the extent keeps the offset itself, so the thumb stays right regardless.
@@ -99,7 +100,7 @@ pub(crate) fn render(
 pub(crate) fn lay_out(
     details: &Details,
     selected: usize,
-    range: Option<Range>,
+    marked: Marked,
     width: usize,
     theme: Theme,
 ) -> Laid {
@@ -151,8 +152,8 @@ pub(crate) fn lay_out(
                     first: lines.len(),
                     lines: drawn.len(),
                 };
-            } else if range.is_some_and(|range| range.contains(row)) {
-                let band = theme.style(Token::Ranged);
+            } else if marked.holds(row) {
+                let band = theme.style(marked.band);
                 drawn = drawn.into_iter().map(|line| patched(line, band)).collect();
             }
 
@@ -166,11 +167,7 @@ pub(crate) fn lay_out(
         .into_iter()
         .zip(&rows)
         .map(|(line, row)| match row {
-            Some(row) => barred(
-                line,
-                *row == selected || range.is_some_and(|range| range.contains(*row)),
-                theme,
-            ),
+            Some(row) => barred(line, *row == selected || marked.holds(*row), theme),
             None => line,
         })
         .collect();
@@ -876,12 +873,12 @@ mod tests {
         };
 
         assert_eq!(
-            lay_out(&details, 0, None, 28, Theme::default()).selection,
+            lay_out(&details, 0, Marked::none(), 28, Theme::default()).selection,
             Span { first: 0, lines: 1 },
             "the identity row opens the body, so nothing precedes it"
         );
 
-        let laid = lay_out(&details, 1, None, 28, Theme::default());
+        let laid = lay_out(&details, 1, Marked::none(), 28, Theme::default());
 
         assert_eq!(
             laid.selection,
@@ -892,7 +889,7 @@ mod tests {
         let laid = lay_out(
             &details,
             details.row_count() - 1,
-            None,
+            Marked::none(),
             28,
             Theme::default(),
         );
@@ -925,7 +922,7 @@ mod tests {
             }],
         };
 
-        let laid = lay_out(&details, usize::MAX, None, 28, theme);
+        let laid = lay_out(&details, usize::MAX, Marked::none(), 28, theme);
         let section = theme.style(Token::Section);
 
         assert_eq!(laid.lines[0].style, section);
