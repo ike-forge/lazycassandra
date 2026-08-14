@@ -455,6 +455,36 @@ async fn every_table_in_the_fixture_describes_itself() {
 }
 
 #[tokio::test]
+async fn paging_walks_a_table_larger_than_one_driver_page() {
+    let conn = ConnId::next();
+    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
+    cluster.connect(conn).await.expect("the fixture is up");
+
+    // shop.audit_log_by_day's single seeded partition is 10 000 rows
+    // (docker/seed.sh), which outruns the driver's 5 000-row default page.
+    let stmt = Statement::select_everything("shop", "audit_log_by_day");
+
+    let mut cursor = None;
+    let mut seen = 0;
+    let mut pages = 0;
+    loop {
+        let page = cluster
+            .execute_paged(conn, &stmt, cursor.as_ref())
+            .await
+            .expect("a page");
+        seen += page.rows.len();
+        pages += 1;
+        match page.next {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+
+    assert!(pages > 1, "a single page proves nothing about paging");
+    assert_eq!(seen, 10_000, "every row of the wide partition came back");
+}
+
+#[tokio::test]
 async fn the_option_set_covers_what_the_layout_rule_expects_of_cassandra_5() {
     let schema = fixture_schema().await;
 
