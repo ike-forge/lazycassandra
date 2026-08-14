@@ -28,7 +28,8 @@ panel that takes text (§2).
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. |
-| `Esc` | Dismiss the overlay, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
+| `v`¹ | Start or freeze a selection of whole rows in the focused list panel. |
+| `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
 | `Tab` | Focus the next panel, in reading order, wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
 | `a`¹ | Focus T**a**bles. |
@@ -53,6 +54,7 @@ on the mode rather than fixed to the panel:
 | DDL, DDL tab | The row's fields for its kind, as one CSV line |
 | DDL, Columns tab | `name,type,kind`, as one CSV line |
 | Tables | The node's bare name — `shop`, `shop.orders` — not a CSV line |
+| Any panel, a range selected | Every row in the range — every column in column mode, every row of the rectangle in cell mode — as one line each, joined with `\n`, no trailing newline. A single cell in cell mode still yanks bare. |
 
 See [yank design](specs/2026-08-13-yank-design.md) §2 and
 [yank selection modes](specs/2026-08-13-yank-selection-modes-design.md) §1.
@@ -207,6 +209,49 @@ everywhere else; the column cursor moves one column at a time or not at all, and
 The column offset follows the cell the way the row offset follows the row, and
 the panel's bottom border grows a scrollbar exactly when a column is off screen.
 
+### Visual mode
+
+`v` starts a selection from the cursor: press it in Tables, DDL or Table
+contents and every row from there to wherever the cursor moves next is in
+range, drawn as a band rather than picked one at a time. A second `v`
+freezes what is extending — the range stops following the cursor, which is
+then free to walk off it without losing what was marked
+([visual mode design](specs/2026-08-14-visual-mode-design.md) §2).
+
+`Esc` is a chain of five rungs now rather than three, first hit wins: an
+overlay dismisses; failing that, an extending range freezes exactly the way
+a second `v` would, so a reflex `esc` never discards a range still growing;
+failing that, a frozen range clears; failing that, the focused panel's
+filter clears; failing that, Queries hands focus back to Tables. §2 restates
+this as the rule it now is.
+
+In Table contents, which axis `v` extends is `m`'s to say: cell mode grows
+a rectangle on both cursors at once, row mode a run of rows, column mode a
+run of columns — the same three shapes the panel already draws
+([selection modes design](specs/2026-08-13-selection-modes-design.md) §2).
+Pressing `m` while a range stands clears it rather than reinterpreting it on
+the mode's new axis: a rectangle read as a column range would name cells
+nobody selected, and a key that quietly repaints what is marked is worse
+than one that asks you to mark it again.
+
+A Tables range of more than one row makes `Enter` inert and leaves the DDL
+panel describing nothing — reading a table needs one table, and a range of
+several says which rows are of interest, not which one to open. A range of
+exactly one row is Tables as it always was: `Enter` still reads it.
+
+A range does not outlive what it was drawn against. The DDL range clears
+when the panel's subject or its tab changes, since a range describes rows on
+a tab about a table and neither survives a change to either. Every panel's
+range clears when its filter changes, for the same reason a cursor already
+does: a range is a set of positions in a list, and a filter changes what a
+position addresses. A click clears the range in whichever panel it lands
+in, alongside everything else a click already resets.
+
+`y` over a range yanks every row it holds — every column, in column mode —
+as one line each, joined with `\n` and no trailing newline; a single cell in
+cell mode still yanks bare, unescaped, exactly as it always did. §1's `y`
+footnote table carries the row-by-row shape.
+
 ### Tables panel
 
 Accepted anywhere, but a no-op unless Tables has focus — except in Queries,
@@ -358,8 +403,10 @@ and are gone.
 distinct `Key::Char`s and stay unbound; a shifted letter is a binding of its
 own, not a synonym for the plain one. `T` was the one exception and has been
 given back — the theme picker moved to `ctrl-t` (§1's picker subsection). A
-shifted arrow is left as a synonym for the plain one so `Shift-↓` stays free
-for a future "extend selection".
+shifted arrow is left as a synonym for the plain one, and stays that way:
+`v` is how a selection extends, so no arrow needs a shifted meaning of its
+own. Binding one now would be a fourth kind of duplicate — the same key,
+twice — and §2's own rule above names only three that survive.
 
 **Ctrl is one designed layer; alt is refused wholesale.** `handle_key` routes a
 ctrl-modified key into `ctrl_key`, which is the layer's whole key table, and
@@ -514,12 +561,15 @@ looking, so an overlay that changes that meaning has to say so.
 
 **`Esc` resolves in one order, first hit wins.** An overlay up is dismissed
 first — a search prompt cancels, restoring the filter it found applied; the
-palette just closes. Failing that, the focused panel's filter, if it has one,
-clears. Failing that, Queries hands focus back to Tables. Failing all three,
-`Esc` does nothing. The first rung preserves
+palette just closes. Failing that, an extending range in the focused panel
+freezes, the way a second `v` would, so `Esc` never discards a range that is
+still growing. Failing that, a frozen range clears. Failing that, the focused
+panel's filter, if it has one, clears. Failing that, Queries hands focus back
+to Tables. Failing all five, `Esc` does nothing. The first rung preserves
 `escape_dismisses_the_overlay_before_it_leaves_the_editor`; extending it down
 the chain is what "the thing most recently put on screen comes off first"
-means once a panel can carry state of its own (panel search design §6).
+means once a panel can carry state of its own (panel search design §6, visual
+mode design §4).
 
 **No key without a test.** Every binding above is pinned by name in §5.
 
@@ -527,10 +577,10 @@ means once a panel can carry state of its own (panel search design §6).
 
 ## 3. The key budget
 
-Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `m` `q` `u` `y`, plus `?` and `/`.
+Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `m` `q` `u` `v` `y`, plus `?` and `/`.
 Taken, uppercase: none — no shifted letter is bound (§2).
 
-Free, lowercase: `e` `f` `g` `i` `n` `o` `p` `r` `s` `t` `v` `w` `x`
+Free, lowercase: `e` `f` `g` `i` `n` `o` `p` `r` `s` `t` `w` `x`
 `z`, every digit, every uppercase letter, and `Space`.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
@@ -571,6 +621,8 @@ which is a spec-level change.
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
 | Horizontal wheel | Dropped at the edge, and this slice did not pick it up. A notch moves the row viewport; columns are reached with the keys §1 names. |
 | An expand-cell key | Horizontal scrolling reaches columns, not the tails of values, so a 36-character uuid is still ellipsised. Showing one in full is a view with a design of its own, and a cell cursor is what it was waiting for (TODO.md). |
+| Drag-to-select | Weighed and refused: `lc-inbound` drops drag and move events at the edge today (§7), so honouring one would need a new gesture, press-origin state, and an autoscroll rule at the panel edges — for a selection two keystrokes already make. |
+| `Shift-↓` extend selection | `v` is the way to extend a selection; a shifted arrow would be a second name for a key that already does it, the fourth kind of duplicate §2's "one key, one action" refuses. |
 | User-defined bindings | vision.md §7 Phase 5. |
 
 ---
@@ -606,7 +658,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A fresh panel opens in cell mode, cycling wraps, and a new request keeps the mode | `a_fresh_panel_selects_a_cell`, `the_mode_cycles_cell_row_column_and_wraps`, `a_new_request_keeps_the_mode_and_clears_the_cursors` (`contents.rs`) |
 | Row mode lights the row and column mode lights the column and its heading | `row_mode_lights_the_whole_row_and_no_column`, `column_mode_lights_the_column_and_its_heading`, `a_heading_is_unwashed_once_the_crosshair_scrolls_out_of_view`, `column_mode_lights_nothing_when_its_cursor_is_off_the_columns_drawn` (`inbound/render.rs`) |
 | The wash leaves a flavour's column colours, and a key column's heading colour, alone | `the_crosshair_leaves_a_flavours_column_colours_alone`, `a_key_columns_heading_keeps_its_colour_under_the_wash` (`inbound/render.rs`) |
-| The crosshair is fainter than the cursor row and flattens no colour the row keeps | `the_crosshair_is_fainter_than_the_cursor_row`, `the_two_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
+| The crosshair is fainter than the cursor row and flattens no colour the row keeps | `the_crosshair_is_fainter_than_the_cursor_row`, `the_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
 | The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render.rs`) |
 | A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
 | The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something`, `the_catalogue_lists_the_selection_mode_key`, `the_catalogue_lists_every_key_a_panel_hints_at` (`commands.rs`) |
@@ -637,7 +689,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A click dismisses the picker and restores the theme | `a_click_dismisses_the_picker_and_restores_the_theme` |
 | The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
 | The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
-| The cursor row and its crosshair are the only tokens that paint a background, and neither spends a foreground | `the_two_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
+| The cursor row, its crosshair and a range are the only tokens that paint a background, and none spends a foreground | `the_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
+| A range reads louder than the crosshair and quieter than the cursor row | `the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row` (`inbound/theme/mod.rs`) |
 | Every palette of ours reads on every ground it declares, the crosshair included | `every_palette_of_ours_reads_on_every_ground_it_declares`, `the_neutral_ramp_of_ours_is_a_staircase`, `every_border_of_ours_is_perceptible` (`inbound/theme/mod.rs`) |
 | Every flavour reads against its own base, and a highlight bar is distinct from its field | `every_flavour_reads_against_its_own_base`, `a_highlight_bar_is_distinct_from_its_field` (`inbound/theme/ported/catppuccin.rs`) |
 | Every palette sets every surface | `Palette` holds plain `Color`s and no `Option<Color>`, so nothing can decline one and there is nothing left to test (`inbound/theme/mod.rs`) |
@@ -773,6 +826,23 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Nothing under the cursor yanks nothing | `y_on_an_empty_panel_yanks_nothing`, `y_on_a_filter_that_matched_nothing_yanks_nothing` |
 | `y` types itself in Queries, and yanks nothing | `y_is_text_in_the_editor` |
 | The encoder quotes exactly what it must | `a_field_is_quoted_only_when_it_has_to_be`, `an_embedded_quote_is_doubled`, `a_line_ends_without_a_newline` (`yank.rs`) |
+| `v` starts a range at the cursor, and motion extends it | `v_starts_a_range_at_the_cursor_and_motion_extends_it` |
+| A second `v` freezes the range and the cursor walks out of it | `a_second_v_freezes_the_range_and_the_cursor_walks_out_of_it` |
+| `Esc` freezes a live range before it clears one | `escape_freezes_a_live_range_before_it_clears_one` |
+| `Esc` prefers the selection to the filter | `escape_prefers_the_selection_to_the_filter` |
+| `v` in cell mode extends a rectangle | `v_in_cell_mode_extends_a_rectangle` |
+| `m` clears the range it would otherwise reinterpret | `m_clears_the_range_it_would_reinterpret` |
+| `Enter` is inert while more than one row is selected | `enter_is_inert_while_more_than_one_row_is_selected` |
+| A multi-row selection leaves the DDL panel describing nothing | `a_multi_row_selection_leaves_the_panel_describing_nothing` (`view/details.rs`) |
+| A click clears the range it lands beside | `a_click_clears_the_range_it_lands_beside` |
+| A new subject clears the DDL range | `a_new_subject_clears_the_ddl_range` |
+| A tab change clears the range | `a_tab_change_clears_the_range` (`ddl.rs`) |
+| A filter clears the range it would renumber | `a_filter_clears_the_range_it_would_renumber` |
+| `y` yanks every row of a range, one per line | `y_yanks_every_row_of_a_range_one_per_line` |
+| `y` in cell mode yanks the block and nothing outside it | `y_in_cell_mode_yanks_the_block_and_nothing_outside_it` |
+| `y` on a single cell still yanks it bare | `y_on_a_single_cell_still_yanks_it_bare` |
+| Every row of a range is banded, and the cursor row reads apart from them | `every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them` (`inbound/render.rs`) |
+| The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a filter | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter` (`view/hints.rs`) |
 
 `a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text` is what
 makes the match-order rule in §2 enforceable: a panel claiming a letter an
