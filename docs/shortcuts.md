@@ -171,6 +171,45 @@ The picker is behind ctrl because no shifted letter is bound in the program:
 and `U` are now unbound alike (§2, §4). `t` itself is free again since the
 focus letters moved to `a`/`b`/`c`/`d`.
 
+### The export form
+
+`ctrl-e` opens `Overlay::Export` when Table contents is focused on a loaded
+page with at least one row, no export is already running, and the frame is
+big enough to draw the form — a form nothing draws would claim every key
+with nothing on screen saying so, which is the rule `?` already follows for
+the palette. A frame that shrinks past it closes it, for the same reason.
+It is the
+Contents half of a chord that means something else in Queries; see that
+subsection below and §2's ctrl paragraph for the other half. Like the
+picker and the palette it outranks focus and claims every key before the
+panel underneath sees one, `q` included, which quits everywhere else and
+does nothing here.
+
+| Key | Effect |
+|---|---|
+| `Tab` / `Shift-Tab` | Move to the next / previous of the form's four stops, wrapping. |
+| `Space` | Activates the focused stop: on a radio group, advances to the next enabled option, wrapping; on the Export stop, runs the export. |
+| `Enter` | Runs the export, and only from the Export stop. On the Scope or Format radio it does nothing — a radio group is not a button, and a keystroke landing there must not write a file. |
+| `j` / `k`, `Down` / `Up` | Move within a radio group — the second way to reach what `Space` also reaches there. |
+| any printable key, `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Text, and only on the path stop — the panel-that-takes-text rule, applied inside an overlay (§2). `Space` types a space there rather than activating anything, and `Enter` does nothing there either. |
+| `Esc` | Closes the form and writes nothing. |
+
+`ctrl-d`/`ctrl-u` are the only ctrl chords answered while the form is up —
+dispatched above the overlay guard the way they are everywhere (§1's motion
+table) — and they page nothing here: the form has no list long enough to
+page. Every other ctrl chord is refused while the form is up, the same
+refusal the palette and the picker already get.
+
+Failing to open the destination with `ExportError::Exists` raises a
+confirmation over the form rather than a sixth overlay variant:
+
+| Key | Effect |
+|---|---|
+| `Space` / `Enter` | Confirms, and re-emits the export with `overwrite: true`. |
+| `Esc` | Returns to the form, every field exactly as it was. |
+
+See [export design](specs/2026-08-14-export-design.md) §2, §7.
+
 ### Motion
 
 Applies to the focused panel and nothing else. What moves depends on the panel:
@@ -323,10 +362,13 @@ cursor. `ctrl-e`/`ctrl-y` went because a viewport the cursor keeps yanking back
 is not a way to read a panel from its heading down; what replaces them is a
 slice of its own (§4).
 
-`ctrl-e` now means one thing rather than two: it opens the external editor
-from Queries and is inert everywhere else (§1's Queries subsection). Losing
-the DDL half is what "one key, one action" costs and buys here — a chord
-whose meaning depended on focus was the last of its kind (§2).
+`ctrl-e` lost this meaning, and did not gain a single one in its place: it
+opens the external editor from Queries and the export form from Table
+contents (§1's export-form subsection), each gated on its own panel exactly
+as `ctrl-r`'s one meaning already is (§2). Losing the DDL half is what "one
+key, one action" costs and buys here — a chord that moved the viewport
+without the cursor was the last of its kind, not a chord whose meaning
+depends on focus; that shape survives elsewhere in the layer.
 
 ### Table contents panel
 
@@ -337,6 +379,7 @@ below.
 | Key | Action |
 |---|---|
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
+| `ctrl-e` | Open the export form. Inert on an empty grid, while an export is running, and on a frame with no room to draw the form. |
 
 The panel opens in row mode, which lights the whole row: reading a table is
 reading rows. Cell mode draws the selected cell over a faint wash across its
@@ -435,17 +478,21 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has five members. `ctrl-r` runs the Queries
+for whatever is focused. The layer has six members now. `ctrl-r` runs the Queries
 buffer, and `ctrl-e` opens that buffer in an external editor: the panel takes
 text, so every printable key there is a character and neither action has an
 unmodified key available
 ([query execution design](specs/2026-08-10-query-execution-design.md) §1,
 [external editor design](specs/2026-08-12-external-editor-design.md) §1).
-`ctrl-t` opens the theme picker, for the reason §1's picker subsection gives.
+`ctrl-e` carries a second meaning too, over Table contents: it opens the
+export form, gated on focus exactly as `ctrl-r`'s one meaning already is —
+a chord is never a synonym for the plain key, and nothing in the rule says
+it may carry only one meaning of its own (export design §1). `ctrl-t` opens
+the theme picker, for the reason §1's picker subsection gives.
 `ctrl-d` and `ctrl-u` are the exception the rule can afford, and are described
 under §1's motion table: they delegate to the paging arm rather than carry a
 meaning of their own, so the layer still holds nothing that shadows a plain
-key. The first three gate on their own panel and their own overlay;
+key. The first four gate on their own panel and their own overlay;
 `ctrl-d`/`ctrl-u` are dispatched above the guard `ctrl_key` applies to the
 others, since an overlay pages exactly as it does under `PageDown`.
 
@@ -603,13 +650,19 @@ Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `m` `q` `u` `v` `y`, plus `?` 
 Taken, uppercase: none — no shifted letter is bound (§2).
 
 Free, lowercase: `e` `f` `g` `i` `n` `o` `p` `r` `s` `t` `w` `x`
-`z`, every digit, every uppercase letter, and `Space`.
+`z`, every digit, and every uppercase letter.
+
+`Space` is claimed for the first time, inside the export form only: it
+activates the focused stop there (§1's export-form subsection) and is free
+everywhere else, unlike a plain letter — a panel's own claim on a letter
+stops at that panel's border, and so does the form's.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
-editor binds, inside Queries.
+editor and the export form's path stop bind.
 
-Ctrl taken: `ctrl-r` and `ctrl-e` in Queries, `ctrl-t` everywhere, and
+Ctrl taken: `ctrl-r` in Queries, `ctrl-e` in two panels — Queries and Table
+contents (§1's export-form subsection) — `ctrl-t` everywhere, and
 `ctrl-d`/`ctrl-u` everywhere `PageDown`/`PageUp` do anything. The rest of
 the layer is free — including `r`, `e` and `t` as plain keys, which nothing
 binds, and `d` and `u`, which mean what §1 says. Alt is not a layer and nothing may claim
@@ -637,7 +690,7 @@ which is a spec-level change.
 | `1`–`4` focus | Superseded by `a`/`b`/`c`/`d`/`u`, which the panel can show in its own title; a digit cannot. |
 | `A` `B` `C` `D` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. `T` opened the theme picker until the picker moved to `ctrl-t`, and is free again. |
 | `t` focus | Was Tables until the focus letters moved to four adjacent keys (§1). Free, and deliberately left so for a while — a finger that learnt it should find nothing rather than something else. |
-| `Space` | Was `Enter`'s synonym on a tree row. One key, one action (§2). |
+| `Space` on a tree row | Was `Enter`'s synonym there. One key, one action (§2) — true still, even though `Space` is no longer unbound everywhere: it activates a stop inside the export form (§1), and a tree row is not one. |
 | `ctrl-e` / `ctrl-y` | Moved the DDL viewport a line without its cursor. Reading a panel from its heading down needs a design, not two chords. The yank slice did not claim `ctrl-y`: `y` was free as a plain key, and a yank in Queries needs a selection first (yank design §1). |
 | `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
@@ -836,6 +889,21 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The palette lists it | `the_catalogue_lists_the_external_editor` (`commands.rs`) |
 | The bar names it after `ctrl-r run` | `the_queries_bar_names_the_editor_binding_after_run` (`view/hints.rs`) |
 | No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
+| `ctrl-e` opens the export form over a loaded grid, and does nothing over an empty one | `ctrl_e_over_a_loaded_contents_panel_opens_the_export_form`, `ctrl_e_does_nothing_over_an_empty_contents_panel` |
+| `ctrl-e` keeps its Queries meaning; the two are gated on focus | `ctrl_e_in_queries_still_opens_the_external_editor` |
+| `ctrl-e` is inert while an export is already running | `ctrl_e_is_inert_while_an_export_is_already_running` |
+| `ctrl-e` is inert where the frame cannot draw the form, and a frame that shrinks past it closes it | `ctrl_e_is_inert_where_the_frame_cannot_draw_the_form`, `a_frame_that_shrank_past_the_form_closes_it`, `fits_agrees_with_what_the_form_actually_draws` |
+| A second `ctrl-e`, and the picker's own opener, leave an open form alone | `a_second_ctrl_e_leaves_the_open_form_as_it_was`, `the_theme_picker_cannot_replace_an_open_export_form` |
+| `Tab`/`Shift-Tab` walk the form's own stops, not the panels | `tab_moves_between_the_forms_stops_rather_than_between_panels` |
+| `Space` toggles the focused radio, and types a space only on the path stop | `space_toggles_the_focused_radio`, `space_on_the_path_stop_types_a_space` |
+| `Enter` runs the export only from the Export stop, and is inert on a radio group | `enter_on_the_export_stop_runs_it`, `enter_on_a_radio_group_does_not_run_the_export` |
+| A printable key is text only on the path stop | `a_printable_key_types_itself_only_on_the_path_stop` |
+| A path too long for the field is drawn around its cursor | `a_path_too_long_for_the_field_is_drawn_around_its_cursor`, `a_window_holds_the_end_of_a_line_the_cursor_is_at_the_end_of`, `a_window_follows_the_cursor_back_into_the_middle_of_a_line` |
+| `q` does not quit while the form is up | `q_does_not_quit_while_the_form_is_up` |
+| `Esc` closes the form and writes nothing | `esc_closes_the_form_and_writes_nothing` |
+| An existing destination reopens the form asking to overwrite, putting back whatever it replaces | `an_existing_file_reopens_the_form_asking_to_overwrite`, `an_existing_file_landing_on_an_open_picker_puts_the_theme_back` |
+| Confirming re-emits the export with `overwrite: true`, and re-emits what was attempted rather than what the panel now holds | `confirming_re_emits_the_export_with_overwrite_set`, `confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds`, `confirming_still_exports_when_the_panel_has_moved_on_entirely` |
+| `Esc` from the confirmation goes back to the form intact | `esc_from_the_confirmation_goes_back_to_the_form_intact` |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
 | `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
 | A cell yanks its value, unescaped and untruncated | `a_cell_yanks_without_quoting`, `a_cell_yank_is_not_ellipsised` (`yank.rs`) |

@@ -25,6 +25,7 @@ pub use crate::editor::Position;
 use crate::commands::{self, CommandRow};
 use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
+use crate::export::{Confirm, Format, Scope, Stop};
 use crate::model::DbError;
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
@@ -87,6 +88,26 @@ pub enum OverlayView {
         labels: Vec<&'static str>,
         selected: usize,
     },
+    /// Boxed: `OverlayView`'s other variants are small, and clippy's
+    /// `large_enum_variant` is denied.
+    Export(Box<ExportView>),
+}
+
+/// The export form, flattened for a renderer that never sees an
+/// [`ExportForm`](crate::export::ExportForm).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportView {
+    pub title: String,
+    /// Whole first, fetched second — the order they are drawn in.
+    pub scope_labels: [String; 2],
+    pub scope: Scope,
+    pub fetched_enabled: bool,
+    pub format: Format,
+    pub path: String,
+    /// A character offset into `path`, for the drawn caret.
+    pub cursor: usize,
+    pub stop: Stop,
+    pub confirm: Option<Confirm>,
 }
 
 fn overlay(state: &State) -> Option<OverlayView> {
@@ -112,6 +133,17 @@ fn overlay(state: &State) -> Option<OverlayView> {
                 .collect(),
             selected: cursor.index(),
         }),
+        Overlay::Export(form) => Some(OverlayView::Export(Box::new(ExportView {
+            title: form.title(),
+            scope_labels: form.scope_labels(),
+            scope: form.scope(),
+            fetched_enabled: form.fetched_enabled(),
+            format: form.format(),
+            path: form.path().text().to_owned(),
+            cursor: form.path().cursor(),
+            stop: form.stop(),
+            confirm: form.confirm(),
+        }))),
     }
 }
 
@@ -368,12 +400,15 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use super::tests_support::{loaded, tabled};
     use super::*;
     use crate::commands::CommandsPanel;
     use crate::contents::{Subject, TableRef};
-    use crate::model::{DbError, Page, QueryId};
-    use crate::state::{Message, Overlay};
+    use crate::export::{ExportForm, Fetched, Format, Scope, Stop};
+    use crate::model::{DbError, JobId, Page, QueryId};
+    use crate::state::{ExportJob, Message, Overlay};
     use crate::theme::Ported;
 
     #[test]
@@ -523,6 +558,62 @@ mod tests {
         failed.contents.failed(query, DbError::Timeout);
 
         vec![State::default(), loading, loaded, failed]
+    }
+
+    #[test]
+    fn the_export_form_projects_everything_the_renderer_draws() {
+        let form = ExportForm::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Fetched::Some(200),
+            Path::new("/home/ike"),
+        );
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Export(form));
+
+        let Some(OverlayView::Export(view)) = view_model(&state).overlay else {
+            panic!("the form is projected");
+        };
+        assert_eq!(view.title, "Export table shop.orders");
+        assert_eq!(view.scope, Scope::Whole);
+        assert!(view.fetched_enabled);
+        assert_eq!(view.format, Format::Csv);
+        assert_eq!(view.path, "/home/ike/shop.orders.csv");
+        assert_eq!(view.cursor, 25);
+        assert_eq!(view.stop, Stop::Scope);
+        assert_eq!(view.confirm, None);
+    }
+
+    #[test]
+    fn a_running_export_puts_its_count_on_the_bar() {
+        let mut state = State::default();
+        state.focus_on(Panel::Contents);
+        state.export = Some(ExportJob::started(
+            JobId::next(),
+            PathBuf::from("/home/ike/shop.orders.csv"),
+            ExportForm::opened(
+                Subject::Table(TableRef::new("shop", "orders")),
+                Fetched::Some(200),
+                Path::new(""),
+            ),
+            crate::Source::Fetched {
+                columns: Vec::new(),
+                rows: Vec::new(),
+            },
+        ));
+        if let Some(job) = &mut state.export {
+            let id = job.id();
+            job.progressed(id, 41_203);
+        }
+
+        assert_eq!(
+            view_model(&state).hints.export,
+            Some("exporting 41203 rows…".to_owned())
+        );
+    }
+
+    #[test]
+    fn no_export_leaves_the_bar_alone() {
+        assert_eq!(view_model(&State::default()).hints.export, None);
     }
 
     #[test]

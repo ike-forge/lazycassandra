@@ -14,7 +14,7 @@ pub mod value;
 
 pub use class_option::{ClassKind, ClassOption, Setting};
 pub use error::DbError;
-pub use ids::{ConnId, QueryId};
+pub use ids::{ConnId, JobId, QueryId};
 pub use input::{Key, KeyPress, Modifiers};
 pub use page::{Page, PagingState, Row};
 pub use schema::{

@@ -5,17 +5,20 @@
 //! panels; deferring until that shape is known rather than guessing at it.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use crate::commands::CommandsPanel;
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::editor::Editor;
-use crate::model::{ConnId, DbError, Key, KeyPress, QueryId, Schema, Statement};
+use crate::export::ExportForm;
+use crate::model::{ConnId, DbError, JobId, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::search::{Filter, Filtered, Prompt};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
 use crate::tree::TablesPanel;
+use crate::update::Source;
 use crate::view::hints::Binding;
 
 #[derive(Debug, Clone, Default)]
@@ -50,6 +53,76 @@ pub struct State {
     pub should_quit: bool,
     /// The theme in force. A name; `lc-inbound` owns what it looks like.
     pub theme: ThemeChoice,
+    /// The process's working directory, for the export form's prefilled path.
+    /// Passed in by `lc-app` at startup: the domain cannot read it and must
+    /// not learn how (export design §2.1).
+    pub cwd: PathBuf,
+    /// The one export in flight, if any. One at a time (export design §5).
+    pub export: Option<ExportJob>,
+}
+
+/// A running export.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportJob {
+    id: JobId,
+    rows: usize,
+    destination: PathBuf,
+    /// Kept so `ExportError::Exists` can put the form back exactly as it was
+    /// (export design §7). Dropped on any other outcome.
+    form: ExportForm,
+    /// Kept for the same round trip, and for the same reason the form is: what
+    /// the confirmation re-emits has to be what was attempted, not what the
+    /// panel happens to hold by the time the answer arrives — the panel stays
+    /// live for the whole of an export (final review I3).
+    source: Source,
+}
+
+impl ExportJob {
+    #[must_use]
+    pub const fn started(
+        id: JobId,
+        destination: PathBuf,
+        form: ExportForm,
+        source: Source,
+    ) -> Self {
+        Self {
+            id,
+            rows: 0,
+            destination,
+            form,
+            source,
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> JobId {
+        self.id
+    }
+
+    /// Rows written so far, as the hint bar reports it.
+    #[must_use]
+    pub const fn rows(&self) -> usize {
+        self.rows
+    }
+
+    #[must_use]
+    pub fn destination(&self) -> &Path {
+        &self.destination
+    }
+
+    /// Applies a progress report, if it belongs to this job.
+    pub fn progressed(&mut self, job: JobId, rows: usize) {
+        if self.id == job {
+            self.rows = rows;
+        }
+    }
+
+    /// The form the job was started from and the source it was started with,
+    /// consumed so a caller cannot hold both the job and its parts at once.
+    #[must_use]
+    pub fn into_parts(self) -> (ExportForm, Source) {
+        (self.form, self.source)
+    }
 }
 
 /// The loader's phase.
@@ -137,7 +210,10 @@ pub struct Message {
 /// the hint bar row instead — but every other consequence of being an overlay
 /// still holds: it claims keys before focus is consulted, `esc` dismisses it,
 /// and a click spends itself on it rather than on whatever is underneath.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `PartialEq` and not `Eq`: the export form holds the rows a confirmation
+/// would write, and a `CqlValue` can be a float.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
     Message(Message),
     Commands(CommandsPanel),
@@ -152,6 +228,10 @@ pub enum Overlay {
         cursor: Cursor,
         restored: ThemeChoice,
     },
+    /// The export form. Its overwrite confirmation is a field on the form
+    /// rather than a sixth variant here, so "a confirmation with nothing
+    /// behind it" cannot be written down (export design §7).
+    Export(ExportForm),
 }
 
 impl ConnectionState {
@@ -225,6 +305,10 @@ const DDL_HINTS: &[Binding] = &[
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::ctrl(Key::Char('e'))],
+        action: "export",
+    },
     Binding {
         keys: &[KeyPress::new(Key::Char('m'))],
         action: "mode",
@@ -875,6 +959,11 @@ pub struct Geometry {
     ddl_lines: usize,
     ddl_selection: Span,
     command_rows: usize,
+    /// Whether the frame is big enough for the renderer to draw the export
+    /// form. A function of the terminal size alone — the form is a fixed
+    /// block — so it satisfies §3's rule that geometry never depends on the
+    /// offsets it bounds (export design §2).
+    export_fits: bool,
     /// Character columns the Contents grid's body has, gutter included. A
     /// function of the terminal size alone, which is what keeps §3's
     /// measurement loop open (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
@@ -892,6 +981,7 @@ impl Geometry {
             ddl_lines,
             ddl_selection: Span { first: 0, lines: 0 },
             command_rows,
+            export_fits: false,
             grid_width: 0,
         }
     }
@@ -933,6 +1023,30 @@ impl Geometry {
     #[must_use]
     pub const fn command_rows(self) -> usize {
         self.command_rows
+    }
+
+    /// Whether the export form fits the frame, whether or not one is open.
+    ///
+    /// False means nothing would draw it, which is what makes `ctrl-e` inert
+    /// and closes a form the frame shrank past — the rule the palette follows
+    /// through [`Self::command_rows`], applied to a block with its own size.
+    /// The threshold is the renderer's own (`lc-inbound::export::fits`), so
+    /// the domain never spells the form's dimensions and the two cannot
+    /// diverge (export design §2).
+    #[must_use]
+    pub const fn export_fits(self) -> bool {
+        self.export_fits
+    }
+
+    /// Whether the frame could draw the export form.
+    ///
+    /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason.
+    #[must_use]
+    pub const fn with_export_fits(self, export_fits: bool) -> Self {
+        Self {
+            export_fits,
+            ..self
+        }
     }
 
     /// The span the frame drew the Ddl selection at.

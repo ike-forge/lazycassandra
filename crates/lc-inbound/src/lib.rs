@@ -9,6 +9,7 @@
 
 mod body;
 mod details;
+mod export;
 mod hints;
 pub mod hit;
 mod icons;

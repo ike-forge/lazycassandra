@@ -39,6 +39,8 @@ pub struct Hint {
 pub struct HintBar {
     pub panel: Vec<Hint>,
     pub global: Vec<Hint>,
+    /// A running export's count, drawn on the bar's right (export design §5).
+    pub export: Option<String>,
 }
 
 /// Bindings every panel answers to. Repeated in each panel's bar rather than
@@ -140,6 +142,11 @@ const CLEAR: Binding = Binding {
 };
 
 pub(crate) fn bar(state: &State) -> HintBar {
+    let export = state
+        .export
+        .as_ref()
+        .map(|job| format!("exporting {} rows…", job.rows()));
+
     // No panel group: `⏎` is inert until the palette can run a command
     // (design §10), and moving — by a row, by a screen, or to an end — is
     // assumed rather than taught, in here as in every panel bar
@@ -149,6 +156,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: Vec::new(),
             global: PALETTE_GLOBAL.iter().map(rendered).collect(),
+            export,
         };
     }
 
@@ -156,6 +164,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: THEMES.iter().map(rendered).collect(),
             global: THEMES_GLOBAL.iter().map(rendered).collect(),
+            export,
         };
     }
 
@@ -163,6 +172,18 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return HintBar {
             panel: Vec::new(),
             global: SEARCH_GLOBAL.iter().map(rendered).collect(),
+            export,
+        };
+    }
+
+    // The form claims every key, so the panel underneath answers to nothing —
+    // the same rule `Search` follows above. The form's own bar is a later
+    // task's, once it has one.
+    if matches!(state.overlay, Some(Overlay::Export(_))) {
+        return HintBar {
+            panel: Vec::new(),
+            global: Vec::new(),
+            export,
         };
     }
 
@@ -194,7 +215,11 @@ pub(crate) fn bar(state: &State) -> HintBar {
         panel.push(rendered(&CLEAR));
     }
 
-    HintBar { panel, global }
+    HintBar {
+        panel,
+        global,
+        export,
+    }
 }
 
 /// Whether the focused panel is carrying a live range. A hint must be true in
@@ -216,15 +241,21 @@ fn selected(state: &State) -> bool {
 /// first frame the user sees. Matched by press rather than by action, for the
 /// same reason `?` is above.
 ///
-/// Nothing else in the bar is conditional today; the mechanism is general and
-/// this is its one use.
+/// `ctrl-e` over Contents is refused the same way, on an empty grid, and on a
+/// frame with no room to draw the form — the same promise `?` keeps above
+/// (export design §1).
 fn liveness(state: &State, binding: &Binding) -> Liveness {
     let runs = binding.keys == [KeyPress::ctrl(Key::Char('r'))];
     if runs && state.queries.text().trim().is_empty() {
-        Liveness::Inert
-    } else {
-        Liveness::Live
+        return Liveness::Inert;
     }
+
+    let exports = binding.action == "export";
+    if exports && (state.contents.row_count() == 0 || !state.geometry.export_fits()) {
+        return Liveness::Inert;
+    }
+
+    Liveness::Live
 }
 
 fn rendered(binding: &Binding) -> Hint {
@@ -615,7 +646,9 @@ mod tests {
 
             for hint in bar.panel.iter().chain(&bar.global) {
                 assert!(
-                    hint.liveness == Liveness::Live || hint.action == "run",
+                    hint.liveness == Liveness::Live
+                        || hint.action == "run"
+                        || hint.action == "export",
                     "{panel:?}'s '{} {}' is inert and nothing says why",
                     hint.keys,
                     hint.action
