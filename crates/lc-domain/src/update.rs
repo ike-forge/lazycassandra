@@ -129,7 +129,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     let subject = described(state);
     let cursors = cursor_indices(state);
     let scrolls = (state.tables.scroll, state.contents.scroll);
-    let columns = state.contents.columns;
+    let column_scroll = state.contents.column_scroll;
 
     let effects = apply(state, msg);
 
@@ -153,7 +153,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
 
     // `Msg::Measured` marks nothing dirty by itself, so a clamp it provoked
     // would otherwise not be drawn until the next unrelated keypress.
-    if (state.tables.scroll, state.contents.scroll) != scrolls || state.contents.columns != columns
+    if (state.tables.scroll, state.contents.scroll) != scrolls
+        || state.contents.column_scroll != column_scroll
     {
         state.mark_dirty();
     }
@@ -1325,13 +1326,13 @@ fn follow_grid_columns(state: &mut State) {
     let column = state.contents.column.index();
 
     let Some((widths, available)) = grid_columns(state) else {
-        state.contents.columns = ColumnScroll::default();
+        state.contents.column_scroll = ColumnScroll::default();
         return;
     };
 
     // Moved out and back so the widths can stay borrowed from the page they
     // were measured with rather than be copied per tick.
-    let mut columns = state.contents.columns;
+    let mut columns = state.contents.column_scroll;
     // Clamp first, follow second, mirroring `clamp_lists` before
     // `follow_moved_cursors` on the row axis: the clamp answers "is the
     // offset too far right for this page and this width", which can leave the
@@ -1340,7 +1341,7 @@ fn follow_grid_columns(state: &mut State) {
     columns.clamp_to(widths, available);
     columns.follow(column, widths, available);
 
-    state.contents.columns = columns;
+    state.contents.column_scroll = columns;
 }
 
 fn transition(state: &mut State, transition: Transition) {
@@ -2960,7 +2961,7 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(state.contents.column.index(), 0);
-        assert_eq!(state.contents.columns.first(), 0);
+        assert_eq!(state.contents.column_scroll.first(), 0);
     }
 
     #[test]
@@ -2983,14 +2984,14 @@ mod tests {
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             0,
             "column 1 is already drawn"
         );
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             1,
             "the shortest move that draws column 2"
         );
@@ -3002,7 +3003,11 @@ mod tests {
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
-        assert_eq!(state.contents.columns.first(), 0, "all four fit at 80");
+        assert_eq!(
+            state.contents.column_scroll.first(),
+            0,
+            "all four fit at 80"
+        );
 
         update(
             &mut state,
@@ -3010,7 +3015,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             2,
             "the selected column must stay drawn after a resize"
         );
@@ -3022,7 +3027,11 @@ mod tests {
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
-        assert_eq!(state.contents.columns.first(), 2, "two of four fit at 8");
+        assert_eq!(
+            state.contents.column_scroll.first(),
+            2,
+            "two of four fit at 8"
+        );
 
         update(
             &mut state,
@@ -3030,7 +3039,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             0,
             "all four fit again, so none may be left hidden behind the offset"
         );
@@ -3047,7 +3056,7 @@ mod tests {
         // nothing was drawn, so the grid has no width at all.
         update(&mut state, Msg::Measured(Geometry::default()));
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             3,
             "with no room, the cursor's column is the only one worth drawing"
         );
@@ -3058,7 +3067,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             0,
             "restoring the size undoes it, without the user pressing h"
         );

@@ -1793,7 +1793,7 @@ mod tests {
             .expect("the cursor column spends a background");
 
         assert_eq!(
-            state.contents.columns.first(),
+            state.contents.column_scroll.first(),
             0,
             "the viewport has not followed the cursor, which is the state under test"
         );
@@ -2093,7 +2093,10 @@ mod tests {
 
         for column in path {
             state.contents.column.go_to(*column, widths.len());
-            state.contents.columns.follow(*column, &widths, available);
+            state
+                .contents
+                .column_scroll
+                .follow(*column, &widths, available);
         }
 
         state
@@ -2115,7 +2118,7 @@ mod tests {
         // the same cell and be indistinguishable.
         let state = showing_column_path(&[8, 5]);
         assert!(
-            state.contents.columns.first() > 0,
+            state.contents.column_scroll.first() > 0,
             "the fixture must have scrolled sideways or this test proves nothing"
         );
 

@@ -111,7 +111,7 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
             .collect(),
         selected: state.contents.cursor.index(),
         offset: state.contents.scroll.offset(),
-        first_column: state.contents.columns.first(),
+        first_column: state.contents.column_scroll.first(),
         column: state.contents.column.index(),
         mode: state.contents.mode,
         gutter: crate::grid::gutter(page.rows.len()),
