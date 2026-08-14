@@ -12,7 +12,9 @@ chrono.workspace = true
 lc-domain.workspace = true
 num-bigint.workspace = true
 scylla.workspace = true
+serde.workspace = true
 tokio.workspace = true
+toml.workspace = true
 
 [features]
 # The integration tier (architecture.md §10). Needs a real cluster, so it is

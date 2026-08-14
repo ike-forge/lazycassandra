@@ -11,8 +11,12 @@ mod ported;
 #[cfg(test)]
 mod contrast;
 
+use std::collections::BTreeMap;
+
+use lc_domain::config::{Background, CustomTheme};
 use lc_domain::posture::Posture;
 use lc_domain::style::{Severity, Token};
+use lc_domain::theme::{Role, ThemeName};
 use lc_domain::{Ours, Ported, ThemeChoice};
 use ratatui::style::{Color, Modifier, Style};
 
@@ -88,41 +92,96 @@ pub(crate) struct Palette {
     pub(crate) comment: Color,
 }
 
+impl Palette {
+    /// Overwrites one role, for a palette a config file supplied.
+    ///
+    /// Exhaustive, so a [`Role`] this does not handle fails to compile. The
+    /// reverse — a field here that `Role` does not name — is not caught, the
+    /// same limit `Ours::ALL` carries (design §8).
+    pub(crate) const fn set(&mut self, role: Role, color: Color) {
+        match role {
+            Role::Base => self.base = color,
+            Role::Surface => self.surface = color,
+            Role::Text => self.text = color,
+            Role::Dim => self.dim = color,
+            Role::Faint => self.faint = color,
+            Role::Border => self.border = color,
+            Role::Focus => self.focus = color,
+            Role::SelectionBg => self.selection_bg = color,
+            Role::Crosshair => self.crosshair = color,
+            Role::Ranged => self.ranged = color,
+            Role::SelectionFg => self.selection_fg = color,
+            Role::SelectionBar => self.selection_bar = color,
+            Role::Shortcut => self.shortcut = color,
+            Role::Keyspace => self.keyspace = color,
+            Role::Table => self.table = color,
+            Role::Partition => self.partition = color,
+            Role::Clustering => self.clustering = color,
+            Role::Column => self.column = color,
+            Role::Label => self.label = color,
+            Role::Section => self.section = color,
+            Role::Accent => self.accent = color,
+            Role::Match => self.match_ = color,
+            Role::Success => self.success = color,
+            Role::Warning => self.warning = color,
+            Role::Danger => self.danger = color,
+            Role::Info => self.info = color,
+            Role::Keyword => self.keyword = color,
+            Role::Reference => self.reference = color,
+            Role::Literal => self.literal = color,
+            Role::Comment => self.comment = color,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
-    palette: &'static Palette,
+    palette: Palette,
 }
 
 impl Default for Theme {
     fn default() -> Self {
-        Self::of(ThemeChoice::default())
+        Self::of(&ThemeChoice::default())
     }
 }
 
 impl Theme {
     /// The palette `choice` names. The one place a theme name becomes a
     /// colour (architecture.md §6).
+    ///
+    /// `Custom` falls back to the default palette: this lookup has no config
+    /// to resolve a custom theme's declared roles against. [`Themes::get`] is
+    /// where a `Custom` name actually resolves; this arm exists so `Theme::of`
+    /// stays total for callers — tests among them — that have no `Themes`
+    /// table.
     #[must_use]
-    pub const fn of(choice: ThemeChoice) -> Self {
+    // `DefaultDark` and `Custom` share a body: the latter never resolves here
+    // in practice (`Themes::get` is where a `Custom` name is actually
+    // resolved, and `validate` refuses a dangling one before it can reach
+    // `State`), so there is no real palette to give it and it borrows the
+    // default's rather than invent one.
+    #[allow(clippy::match_same_arms)]
+    pub fn of(choice: &ThemeChoice) -> Self {
         Self {
             palette: match choice {
-                ThemeChoice::Ours(Ours::DefaultDark) => &ours::default::DARK,
-                ThemeChoice::Ours(Ours::DefaultLight) => &ours::default::LIGHT,
-                ThemeChoice::Ours(Ours::AshDark) => &ours::ash::DARK,
-                ThemeChoice::Ours(Ours::AshLight) => &ours::ash::LIGHT,
-                ThemeChoice::Ours(Ours::BeaconDark) => &ours::beacon::DARK,
-                ThemeChoice::Ours(Ours::BeaconLight) => &ours::beacon::LIGHT,
-                ThemeChoice::Ours(Ours::QuillDark) => &ours::quill::DARK,
-                ThemeChoice::Ours(Ours::QuillLight) => &ours::quill::LIGHT,
-                ThemeChoice::Ported(Ported::CatppuccinLatte) => &ported::catppuccin::LATTE,
-                ThemeChoice::Ported(Ported::CatppuccinFrappe) => &ported::catppuccin::FRAPPE,
-                ThemeChoice::Ported(Ported::CatppuccinMacchiato) => &ported::catppuccin::MACCHIATO,
-                ThemeChoice::Ported(Ported::CatppuccinMocha) => &ported::catppuccin::MOCHA,
+                ThemeChoice::Ours(Ours::DefaultDark) => ours::default::DARK,
+                ThemeChoice::Ours(Ours::DefaultLight) => ours::default::LIGHT,
+                ThemeChoice::Ours(Ours::AshDark) => ours::ash::DARK,
+                ThemeChoice::Ours(Ours::AshLight) => ours::ash::LIGHT,
+                ThemeChoice::Ours(Ours::BeaconDark) => ours::beacon::DARK,
+                ThemeChoice::Ours(Ours::BeaconLight) => ours::beacon::LIGHT,
+                ThemeChoice::Ours(Ours::QuillDark) => ours::quill::DARK,
+                ThemeChoice::Ours(Ours::QuillLight) => ours::quill::LIGHT,
+                ThemeChoice::Ported(Ported::CatppuccinLatte) => ported::catppuccin::LATTE,
+                ThemeChoice::Ported(Ported::CatppuccinFrappe) => ported::catppuccin::FRAPPE,
+                ThemeChoice::Ported(Ported::CatppuccinMacchiato) => ported::catppuccin::MACCHIATO,
+                ThemeChoice::Ported(Ported::CatppuccinMocha) => ported::catppuccin::MOCHA,
+                ThemeChoice::Custom(_) => ours::default::DARK,
             },
         }
     }
 
-    pub(crate) const fn palette(self) -> &'static Palette {
+    pub(crate) const fn palette(self) -> Palette {
         self.palette
     }
 
@@ -187,9 +246,9 @@ impl Theme {
             Token::Shortcut | Token::HintKey => fg(palette.shortcut)
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(Modifier::UNDERLINED),
-            Token::Selected => selected(palette),
-            Token::Crosshair => crosshair(palette),
-            Token::Ranged => ranged(palette),
+            Token::Selected => selected(&palette),
+            Token::Crosshair => crosshair(&palette),
+            Token::Ranged => ranged(&palette),
             Token::Match => fg(palette.match_).add_modifier(Modifier::BOLD),
             // A modifier rather than a colour, because it has to read
             // *against* the highlighted row whatever colour that row is.
@@ -204,6 +263,74 @@ impl Theme {
             Token::Reference => fg(palette.reference),
             Token::Literal => fg(palette.literal),
         }
+    }
+}
+
+/// Every palette a name can resolve to, built once at startup.
+///
+/// Resolution happens here rather than per frame: a custom palette is
+/// `extends`' palette with the stated roles overwritten, and that is a fixed
+/// computation over data that does not change while the tool runs (design §8).
+#[derive(Debug, Clone, Default)]
+pub struct Themes {
+    custom: BTreeMap<ThemeName, Palette>,
+    background: Background,
+}
+
+impl Themes {
+    #[must_use]
+    pub fn new(themes: &[CustomTheme], background: Background) -> Self {
+        let custom = themes
+            .iter()
+            .map(|theme| {
+                let mut palette = Theme::of(&ThemeChoice::from(theme.extends)).palette();
+
+                for (role, colour) in &theme.colors {
+                    palette.set(*role, Color::Rgb(colour.red, colour.green, colour.blue));
+                }
+
+                (theme.name.clone(), palette)
+            })
+            .collect();
+
+        Self { custom, background }
+    }
+
+    /// The palette `choice` names.
+    ///
+    /// A name no theme claims falls back to the default. `validate` resolves
+    /// dangling names before one can reach `State`, so this is defence rather
+    /// than a path anything takes.
+    #[must_use]
+    pub fn get(&self, choice: &ThemeChoice) -> Theme {
+        let palette = match choice {
+            ThemeChoice::Custom(name) => self.custom.get(name).map_or_else(
+                || Theme::of(&ThemeChoice::default()).palette(),
+                |palette| *palette,
+            ),
+            built_in => Theme::of(built_in).palette(),
+        };
+
+        Theme {
+            palette: self.grounded(palette),
+        }
+    }
+
+    /// Overrides `base` and nothing else.
+    ///
+    /// `surface`, `selection_bg` and `crosshair` stay the palette's, so an
+    /// overlay and the cursor row keep the contrast they were measured for
+    /// even when the field behind them is the user's (design §4).
+    fn grounded(&self, mut palette: Palette) -> Palette {
+        match self.background {
+            Background::Theme => {}
+            // Not a colour: paint nothing, which is the only mechanism that
+            // lets a translucent or blurred terminal show through.
+            Background::Terminal => palette.base = Color::Reset,
+            Background::Fixed(rgb) => palette.base = Color::Rgb(rgb.red, rgb.green, rgb.blue),
+        }
+
+        palette
     }
 }
 
@@ -241,6 +368,11 @@ fn fg(color: Color) -> Style {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::collections::BTreeMap;
+
+    use lc_domain::BuiltIn;
+    use lc_domain::config::Rgb;
+
     use super::*;
     use crate::theme::contrast::{luminance, ratio};
 
@@ -324,9 +456,9 @@ pub(crate) mod tests {
     #[test]
     fn every_palette_of_ours_reads_on_every_ground_it_declares() {
         for choice in Ours::ALL {
-            let palette = Theme::of(ThemeChoice::Ours(choice)).palette();
+            let palette = Theme::of(&ThemeChoice::Ours(choice)).palette();
 
-            for (role, colour) in foregrounds(palette) {
+            for (role, colour) in foregrounds(&palette) {
                 for (ground, name) in [
                     (palette.base, "base"),
                     (palette.surface, "surface"),
@@ -350,7 +482,7 @@ pub(crate) mod tests {
     #[test]
     fn the_neutral_ramp_of_ours_is_a_staircase() {
         for choice in Ours::ALL {
-            let palette = Theme::of(ThemeChoice::Ours(choice)).palette();
+            let palette = Theme::of(&ThemeChoice::Ours(choice)).palette();
 
             assert!(
                 ratio(palette.text, palette.dim) >= 1.35,
@@ -371,7 +503,7 @@ pub(crate) mod tests {
     #[test]
     fn every_border_of_ours_is_perceptible() {
         for choice in Ours::ALL {
-            let palette = Theme::of(ThemeChoice::Ours(choice)).palette();
+            let palette = Theme::of(&ThemeChoice::Ours(choice)).palette();
 
             for (role, colour) in [("border", palette.border), ("focus", palette.focus)] {
                 let ratio = ratio(colour, palette.base);
@@ -386,8 +518,8 @@ pub(crate) mod tests {
     /// (visual mode design §6).
     #[test]
     fn the_bands_paint_a_background_and_spend_no_foreground() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
+        for choice in BuiltIn::ALL {
+            let theme = Theme::of(&choice.into());
 
             for token in EVERY_TOKEN {
                 let style = theme.style(token);
@@ -412,8 +544,8 @@ pub(crate) mod tests {
     /// either it would make one of the three unreadable as a rank.
     #[test]
     fn the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row() {
-        for choice in ThemeChoice::ALL {
-            let palette = Theme::of(choice).palette();
+        for choice in BuiltIn::ALL {
+            let palette = Theme::of(&choice.into()).palette();
 
             let base = luminance(palette.base);
             let wash = luminance(palette.crosshair);
@@ -450,8 +582,8 @@ pub(crate) mod tests {
     fn the_crosshair_is_fainter_than_the_cursor_row() {
         const FLOOR: f64 = 1.04;
 
-        for choice in ThemeChoice::ALL {
-            let palette = Theme::of(choice).palette();
+        for choice in BuiltIn::ALL {
+            let palette = Theme::of(&choice.into()).palette();
 
             for (role, colour) in [
                 ("the cursor row", palette.selection_bg),
@@ -480,9 +612,9 @@ pub(crate) mod tests {
 
     #[test]
     fn every_choice_maps_to_a_palette_of_its_own() {
-        let palettes: Vec<Palette> = ThemeChoice::ALL
+        let palettes: Vec<Palette> = BuiltIn::ALL
             .iter()
-            .map(|choice| *Theme::of(*choice).palette())
+            .map(|built_in| Theme::of(&(*built_in).into()).palette())
             .collect();
 
         for (index, palette) in palettes.iter().enumerate() {
@@ -492,7 +624,7 @@ pub(crate) mod tests {
                     .skip(index + 1)
                     .all(|other| other != palette),
                 "{:?} shares a palette with a later theme",
-                ThemeChoice::ALL[index]
+                BuiltIn::ALL[index]
             );
         }
     }
@@ -537,8 +669,8 @@ pub(crate) mod tests {
     /// both, and nothing else in the UI spends it (design §3.1).
     #[test]
     fn a_hot_key_is_underlined_and_nothing_else_is() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
+        for choice in BuiltIn::ALL {
+            let theme = Theme::of(&choice.into());
 
             for token in EVERY_TOKEN {
                 let underlined = theme
@@ -600,8 +732,8 @@ pub(crate) mod tests {
     /// measures (design §4.1).
     #[test]
     fn no_token_recedes_with_a_modifier() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
+        for choice in BuiltIn::ALL {
+            let theme = Theme::of(&choice.into());
 
             for token in EVERY_TOKEN {
                 assert!(
@@ -617,13 +749,176 @@ pub(crate) mod tests {
     /// same.
     #[test]
     fn the_two_de_emphasis_tokens_are_different_colours() {
-        for choice in ThemeChoice::ALL {
-            let theme = Theme::of(choice);
+        for choice in BuiltIn::ALL {
+            let theme = Theme::of(&choice.into());
 
             assert_ne!(
                 theme.style(Token::Muted).fg,
                 theme.style(Token::Faint).fg,
                 "{choice:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_custom_palette_inherits_every_role_it_does_not_state() {
+        let custom = CustomTheme {
+            name: ThemeName::try_new("midnight").expect("valid"),
+            extends: BuiltIn::Ours(Ours::AshDark),
+            colors: BTreeMap::from([(
+                Role::Base,
+                Rgb {
+                    red: 0x0b,
+                    green: 0x0d,
+                    blue: 0x12,
+                },
+            )]),
+        };
+        let themes = Themes::new(std::slice::from_ref(&custom), Background::Theme);
+        let resolved = themes
+            .get(&ThemeChoice::Custom(custom.name.clone()))
+            .palette();
+        let inherited = Theme::of(&ThemeChoice::Ours(Ours::AshDark)).palette();
+
+        assert_eq!(resolved.base, rgb(0x000b_0d12));
+        assert_eq!(
+            resolved.focus, inherited.focus,
+            "an unstated role comes from `extends`"
+        );
+        assert_eq!(resolved.danger, inherited.danger);
+    }
+
+    #[test]
+    fn an_explicit_background_overrides_a_custom_themes_own_stated_base() {
+        let stated_danger = Rgb {
+            red: 0xaa,
+            green: 0x11,
+            blue: 0x22,
+        };
+        let custom = CustomTheme {
+            name: ThemeName::try_new("midnight").expect("valid"),
+            extends: BuiltIn::Ours(Ours::AshDark),
+            colors: BTreeMap::from([
+                (
+                    Role::Base,
+                    Rgb {
+                        red: 0x0b,
+                        green: 0x0d,
+                        blue: 0x12,
+                    },
+                ),
+                (Role::Danger, stated_danger),
+            ]),
+        };
+        let background = Rgb {
+            red: 0x22,
+            green: 0x33,
+            blue: 0x44,
+        };
+        let themes = Themes::new(std::slice::from_ref(&custom), Background::Fixed(background));
+        let resolved = themes
+            .get(&ThemeChoice::Custom(custom.name.clone()))
+            .palette();
+
+        assert_eq!(
+            resolved.base,
+            Color::Rgb(background.red, background.green, background.blue),
+            "`background` is the narrower instruction and wins over the theme's own `base`"
+        );
+        assert_eq!(
+            resolved.danger,
+            Color::Rgb(stated_danger.red, stated_danger.green, stated_danger.blue),
+            "the override is narrow: a role the theme itself stated is untouched"
+        );
+    }
+
+    #[test]
+    fn a_built_in_resolves_the_same_through_the_table_as_it_does_directly() {
+        let themes = Themes::new(&[], Background::Theme);
+
+        for built_in in BuiltIn::ALL {
+            let choice = ThemeChoice::from(built_in);
+
+            assert_eq!(themes.get(&choice).palette(), Theme::of(&choice).palette());
+        }
+    }
+
+    #[test]
+    fn a_fixed_background_replaces_base_and_leaves_the_measured_grounds_alone() {
+        let themes = Themes::new(
+            &[],
+            Background::Fixed(Rgb {
+                red: 0x0b,
+                green: 0x0d,
+                blue: 0x12,
+            }),
+        );
+        let resolved = themes.get(&ThemeChoice::Ours(Ours::AshDark)).palette();
+        let original = Theme::of(&ThemeChoice::Ours(Ours::AshDark)).palette();
+
+        assert_eq!(resolved.base, Color::Rgb(0x0b, 0x0d, 0x12));
+        assert_eq!(
+            resolved.surface, original.surface,
+            "an overlay keeps the contrast it was measured for"
+        );
+        assert_eq!(resolved.selection_bg, original.selection_bg);
+        assert_eq!(resolved.crosshair, original.crosshair);
+    }
+
+    #[test]
+    fn a_terminal_background_paints_nothing_so_a_translucent_terminal_shows_through() {
+        let themes = Themes::new(&[], Background::Terminal);
+        let resolved = themes.get(&ThemeChoice::Ours(Ours::AshDark)).palette();
+
+        assert_eq!(
+            resolved.base,
+            Color::Reset,
+            "a colour would paint over exactly what this option exists to reveal"
+        );
+    }
+
+    #[test]
+    fn a_name_no_theme_claims_falls_back_to_the_default_rather_than_panicking() {
+        let themes = Themes::new(&[], Background::Theme);
+        let missing = ThemeChoice::Custom(ThemeName::try_new("nowhere").expect("valid"));
+
+        assert_eq!(
+            themes.get(&missing).palette(),
+            Theme::of(&ThemeChoice::default()).palette(),
+            "validation resolves dangling names, so this is defence rather than a path"
+        );
+    }
+
+    /// Totality alone would pass if two arms aliased the same field — both
+    /// roles would still differ from the default. Pairwise distinctness is
+    /// what catches that, the same shape
+    /// `every_choice_maps_to_a_palette_of_its_own` checks palettes with.
+    #[test]
+    fn every_role_reaches_a_distinct_field_of_the_palette() {
+        let marker = Color::Rgb(1, 2, 3);
+        let palettes: Vec<Palette> = Role::ALL
+            .iter()
+            .map(|role| {
+                let mut palette = ours::default::DARK;
+                palette.set(*role, marker);
+                palette
+            })
+            .collect();
+
+        for (index, palette) in palettes.iter().enumerate() {
+            assert_ne!(
+                *palette,
+                ours::default::DARK,
+                "`{}` set nothing — Role and Palette have drifted",
+                Role::ALL[index].key()
+            );
+            assert!(
+                palettes
+                    .iter()
+                    .skip(index + 1)
+                    .all(|other| other != palette),
+                "`{}` sets the same field as a later role — Role and Palette have aliased",
+                Role::ALL[index].key()
             );
         }
     }

@@ -5,6 +5,7 @@
 //! open one with (architecture.md §3).
 
 use crate::commands::CommandsPanel;
+use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::ddl::DdlTab;
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
@@ -15,11 +16,11 @@ use crate::ports::ExportError;
 use crate::posture::Posture;
 use crate::search::{Filtered, Prompt};
 use crate::state::{
-    ConnectionState, Cursor, ExportJob, Flash, Geometry, Message, Overlay, Panel, Range, Ranges,
-    SchemaState, Scroll, Selection, State,
+    ConnectionState, Cursor, DiagnosticsPanel, ExportJob, Flash, Geometry, Message, Overlay, Panel,
+    Range, Ranges, SchemaState, Scroll, Selection, State,
 };
 use crate::style::Severity;
-use crate::theme::ThemeChoice;
+use crate::theme::{BuiltIn, ThemeChoice};
 use crate::tree::Node;
 use std::path::PathBuf;
 
@@ -147,8 +148,12 @@ pub enum Source {
 /// performed behind the domain's back, so the first frame can already say
 /// "Connecting…" (architecture.md §3).
 #[must_use]
-pub fn init(conn: ConnId) -> (State, Vec<Effect>) {
+pub fn init(conn: ConnId, config: Config, diagnostics: Vec<Diagnostic>) -> (State, Vec<Effect>) {
     let mut state = State::default();
+    state.theme = config.theme.clone();
+    state.overlay =
+        (!diagnostics.is_empty()).then(|| Overlay::Diagnostics(DiagnosticsPanel::new(diagnostics)));
+    state.config = config;
     state.connection = ConnectionState::Connecting(conn);
     state.dirty = true;
 
@@ -568,6 +573,12 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return palette_key(state, press.key);
     }
 
+    // The diagnostics overlay takes motion, not text, the same as the palette
+    // (design §9).
+    if matches!(state.overlay, Some(Overlay::Diagnostics(_))) {
+        return diagnostics_key(state, press.key);
+    }
+
     // The theme picker takes motion, not text, the same as the palette
     // (design §6).
     if matches!(state.overlay, Some(Overlay::Themes { .. })) {
@@ -847,8 +858,8 @@ fn unwind_overlay(state: &mut State) {
 /// message shares, so no such site can copy the check and diverge from the
 /// rest.
 fn restore_theme(state: &mut State) {
-    if let Some(Overlay::Themes { restored, .. }) = state.overlay {
-        state.theme = restored;
+    if let Some(Overlay::Themes { restored, .. }) = &state.overlay {
+        state.theme = restored.clone();
     }
 }
 
@@ -921,7 +932,12 @@ fn escape(state: &mut State) {
             state.theme = restored;
             return;
         }
-        Some(Overlay::Message(_) | Overlay::Commands(_) | Overlay::Export(_)) => return,
+        Some(
+            Overlay::Message(_)
+            | Overlay::Commands(_)
+            | Overlay::Diagnostics(_)
+            | Overlay::Export(_),
+        ) => return,
         None => {}
     }
 
@@ -991,28 +1007,94 @@ fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
+/// What an open diagnostics overlay responds to.
+///
+/// `Esc` dismisses it and motion moves the cursor, bounded by the row count —
+/// the same treatment [`palette_key`] gives `Overlay::Commands`, minus the
+/// paging arithmetic a palette needs to skip a heading, which this list has
+/// none of.
+fn diagnostics_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(key, Key::Escape) {
+        state.overlay = None;
+        return Vec::new();
+    }
+
+    // `command_rows` counts one-line palette rows; a diagnostic renders as
+    // two, so a page is half as many rows as it is lines.
+    let height = state.geometry.command_rows() / 2;
+    let Some(Overlay::Diagnostics(panel)) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char('j') | Key::Down => panel.down(),
+        Key::Char('k') | Key::Up => panel.up(),
+        Key::PageDown => panel.page_down(height),
+        Key::PageUp => panel.page_up(height),
+        Key::Home => panel.to_start(),
+        Key::End => panel.to_end(),
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+/// Where `choice` sits in the picker's list: the built-ins, then the
+/// config's own, in config order — the same order [`crate::view`] labels it.
+fn theme_picker_index(config: &Config, choice: &ThemeChoice) -> Option<usize> {
+    BuiltIn::ALL
+        .iter()
+        .position(|built_in| ThemeChoice::from(*built_in) == *choice)
+        .or_else(|| {
+            config
+                .themes
+                .iter()
+                .position(
+                    |theme| matches!(choice, ThemeChoice::Custom(name) if *name == theme.name),
+                )
+                .map(|index| index + BuiltIn::ALL.len())
+        })
+}
+
+/// The choice the picker's `index`th row names, or `None` past the end of
+/// the built-ins and the config's own.
+fn theme_at_picker_index(config: &Config, index: usize) -> Option<ThemeChoice> {
+    BuiltIn::ALL
+        .get(index)
+        .map(|built_in| ThemeChoice::from(*built_in))
+        .or_else(|| {
+            config
+                .themes
+                .get(index - BuiltIn::ALL.len())
+                .map(|theme| ThemeChoice::Custom(theme.name.clone()))
+        })
+}
+
 /// `ctrl-t` opens the theme picker, seated on the theme in force.
 ///
-/// Refused where the frame cannot draw a list, for the reason [`open_palette`]
-/// gives. Gated on the palette's own room rather than on a measurement of its
-/// own: the picker is the smaller block, so a frame that holds a palette holds
-/// a picker.
+/// Refused where the frame cannot draw the list, for the reason
+/// [`open_palette`] gives. Gated on the picker's own room, [`Geometry::theme_rows`],
+/// rather than the palette's: the picker used to be the smaller block always,
+/// but the list is every built-in plus every theme a config defines, and a
+/// long enough custom list no longer fits where a palette would (design §9).
 ///
 /// Refused over a live prompt too, which no unmodified key needs to say: the
 /// ctrl layer is dispatched above every overlay, so this is the one opener a
 /// prompt cannot swallow, and replacing one would strand the panel under a
 /// half-typed query with nothing left holding the filter it had.
 fn open_themes(state: &mut State) {
-    if state.geometry.command_rows() == 0 || matches!(state.overlay, Some(Overlay::Search(_))) {
+    let last = BuiltIn::ALL.len() + state.config.themes.len();
+    if last > state.geometry.theme_rows() || matches!(state.overlay, Some(Overlay::Search(_))) {
         return;
     }
 
     let mut cursor = Cursor::default();
-    cursor.go_to(state.theme.index(), ThemeChoice::ALL.len());
+    let index = theme_picker_index(&state.config, &state.theme).unwrap_or(0);
+    cursor.go_to(index, last);
 
     state.overlay = Some(Overlay::Themes {
         cursor,
-        restored: state.theme,
+        restored: state.theme.clone(),
     });
 }
 
@@ -1041,7 +1123,7 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
         _ => {}
     }
 
-    let last = ThemeChoice::ALL.len();
+    let last = BuiltIn::ALL.len() + state.config.themes.len();
     let height = state.geometry.command_rows();
     let Some(Overlay::Themes { cursor, .. }) = &mut state.overlay else {
         return Vec::new();
@@ -1056,9 +1138,9 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 
     if let Some(Overlay::Themes { cursor, .. }) = &state.overlay
-        && let Some(choice) = ThemeChoice::ALL.get(cursor.index())
+        && let Some(choice) = theme_at_picker_index(&state.config, cursor.index())
     {
-        state.theme = *choice;
+        state.theme = choice;
     }
 
     Vec::new()
@@ -1117,7 +1199,12 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     if matches!(
         state.overlay,
-        Some(Overlay::Commands(_) | Overlay::Themes { .. } | Overlay::Export(_))
+        Some(
+            Overlay::Commands(_)
+                | Overlay::Themes { .. }
+                | Overlay::Diagnostics(_)
+                | Overlay::Export(_)
+        )
     ) {
         return Vec::new();
     }
@@ -1418,6 +1505,7 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
     match &state.overlay {
         Some(Overlay::Commands(_)) => palette_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
+        Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does;
         // the form has nothing paged either, whichever stop it is on.
         Some(Overlay::Search(_) | Overlay::Export(_)) => Vec::new(),
@@ -1651,20 +1739,27 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         state.mark_dirty();
     }
 
-    // A palette the frame shrank past cannot stay open: nothing would
-    // draw it, and it would still be capturing every key
-    // (design §5.1). The picker shares the gate it opened under, so it
-    // shares this closing too — and restores the theme it opened on, the
-    // same as `Esc`, rather than stranding the preview.
-    if geometry.command_rows() == 0 {
-        restore_theme(state);
-        if matches!(
+    // A palette or a diagnostics list the frame shrank past cannot stay
+    // open: nothing would draw it, and it would still be capturing every key
+    // (design §5.1).
+    if geometry.command_rows() == 0
+        && matches!(
             state.overlay,
-            Some(Overlay::Commands(_) | Overlay::Themes { .. })
-        ) {
-            state.overlay = None;
-            state.mark_dirty();
-        }
+            Some(Overlay::Commands(_) | Overlay::Diagnostics(_))
+        )
+    {
+        state.overlay = None;
+        state.mark_dirty();
+    }
+
+    // The picker closes on its own gate, not the palette's, since config
+    // themes can make its list not fit where a palette would (design §9) —
+    // and restores the theme it opened on, the same as `Esc`, rather than
+    // stranding the preview.
+    if geometry.theme_rows() == 0 && matches!(state.overlay, Some(Overlay::Themes { .. })) {
+        restore_theme(state);
+        state.overlay = None;
+        state.mark_dirty();
     }
 
     // The form is a larger block than the palette, so it has a shrink of its
@@ -2016,13 +2111,14 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 mod tests {
     use super::*;
     use crate::commands::{CATALOGUE, CommandsPanel};
+    use crate::config::{Config, Diagnostic, Icons, Origin, Span as ConfigSpan};
     use crate::contents::{ContentsState, SelectionMode};
     use crate::ddl::DdlTab;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
     use crate::search::{Filter, Filtered, Prompt};
     use crate::state::{Connection, FLASH_TICKS, Range, Span};
-    use crate::theme::Ported;
+    use crate::theme::{Ours, Ported};
     use crate::tree::tests_support::schema_of as tabled_schema;
     use crate::view::tests_support::tabled;
 
@@ -2267,7 +2363,7 @@ mod tests {
     fn the_application_starts_by_connecting() {
         let conn = ConnId::next();
 
-        let (state, effects) = init(conn);
+        let (state, effects) = init(conn, Config::default(), Vec::new());
 
         assert_eq!(effects, vec![Effect::Connect(conn)]);
         assert!(state.connection.is_current(conn));
@@ -2275,9 +2371,108 @@ mod tests {
     }
 
     #[test]
+    fn a_config_with_nothing_wrong_opens_no_overlay() {
+        let (state, _) = init(ConnId::next(), Config::default(), Vec::new());
+
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn diagnostics_open_over_the_panels_and_esc_dismisses_them() {
+        let diagnostic = Diagnostic {
+            origin: Origin::new("./.lazycassandra.toml"),
+            span: Some(ConfigSpan {
+                line: 14,
+                column: 11,
+            }),
+            severity: Severity::Danger,
+            message: "connection `dev`: `posture` unknown value \"read\"".to_owned(),
+        };
+        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic]);
+
+        assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
+
+        let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Escape)));
+
+        assert!(
+            state.overlay.is_none(),
+            "esc dismisses this overlay like every other"
+        );
+    }
+
+    fn diagnostic(message: &str) -> Diagnostic {
+        Diagnostic {
+            origin: Origin::new("./.lazycassandra.toml"),
+            span: None,
+            severity: Severity::Danger,
+            message: message.to_owned(),
+        }
+    }
+
+    fn diagnostics_cursor(state: &State) -> usize {
+        let Some(Overlay::Diagnostics(panel)) = &state.overlay else {
+            panic!("the diagnostics overlay is open");
+        };
+        panel.selected()
+    }
+
+    #[test]
+    fn a_single_diagnostic_leaves_the_cursor_nowhere_to_go() {
+        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic("one")]);
+
+        let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
+        let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
+
+        assert_eq!(diagnostics_cursor(&state), 0);
+    }
+
+    #[test]
+    fn motion_walks_the_diagnostics_and_stops_on_the_last_row() {
+        let diagnostics = vec![diagnostic("one"), diagnostic("two"), diagnostic("three")];
+        let (mut state, _) = init(ConnId::next(), Config::default(), diagnostics);
+
+        for _ in 0..5 {
+            let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
+        }
+        assert_eq!(
+            diagnostics_cursor(&state),
+            2,
+            "the cursor stops on the last row rather than running off the list"
+        );
+
+        let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('k'))));
+        assert_eq!(diagnostics_cursor(&state), 1);
+    }
+
+    #[test]
+    fn the_config_the_tool_started_on_is_kept_rather_than_consumed() {
+        let config = Config {
+            icons: Icons::Off,
+            ..Config::default()
+        };
+        let (state, _) = init(ConnId::next(), config.clone(), Vec::new());
+
+        assert_eq!(
+            state.config, config,
+            "the follow-ups in design §11 read this"
+        );
+    }
+
+    #[test]
+    fn the_theme_a_config_names_is_the_theme_the_tool_opens_on() {
+        let config = Config {
+            theme: ThemeChoice::Ours(Ours::QuillLight),
+            ..Config::default()
+        };
+        let (state, _) = init(ConnId::next(), config, Vec::new());
+
+        assert_eq!(state.theme, ThemeChoice::Ours(Ours::QuillLight));
+    }
+
+    #[test]
     fn connecting_successfully_asks_for_the_schema() {
         let conn = ConnId::next();
-        let (mut state, _) = init(conn);
+        let (mut state, _) = init(conn, Config::default(), Vec::new());
 
         let effects = update(
             &mut state,
@@ -2293,7 +2488,7 @@ mod tests {
 
     #[test]
     fn a_connected_message_for_a_stale_attempt_is_ignored() {
-        let (mut state, _) = init(ConnId::next());
+        let (mut state, _) = init(ConnId::next(), Config::default(), Vec::new());
 
         let effects = update(
             &mut state,
@@ -2313,7 +2508,7 @@ mod tests {
     #[test]
     fn a_failed_connection_is_recorded_and_raised() {
         let conn = ConnId::next();
-        let (mut state, _) = init(conn);
+        let (mut state, _) = init(conn, Config::default(), Vec::new());
 
         let effects = update(
             &mut state,
@@ -2334,7 +2529,7 @@ mod tests {
 
     #[test]
     fn a_failed_connection_for_a_stale_attempt_is_dropped() {
-        let (mut state, _) = init(ConnId::next());
+        let (mut state, _) = init(ConnId::next(), Config::default(), Vec::new());
 
         update(
             &mut state,
@@ -2452,12 +2647,13 @@ mod tests {
         update(state, Msg::Input(binding))
     }
 
-    /// A frame big enough for a palette. `browsing` leaves geometry at its
-    /// default, whose `command_rows` is zero — which is itself a binding
+    /// A frame big enough for a palette and a picker. `browsing` leaves
+    /// geometry at its default, whose `command_rows` and `theme_rows` are
+    /// zero — which is itself a binding
     /// (`the_palette_does_not_open_where_it_cannot_be_drawn`).
     fn measured(keyspaces: &[&str]) -> State {
         let mut state = browsing(keyspaces);
-        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_theme_rows(20);
         state
     }
 
@@ -2467,6 +2663,7 @@ mod tests {
             Overlay::Message(_)
             | Overlay::Search(_)
             | Overlay::Themes { .. }
+            | Overlay::Diagnostics(_)
             | Overlay::Export(_) => None,
         }
     }
@@ -2627,6 +2824,35 @@ mod tests {
         );
     }
 
+    /// The modal's own `MIN_W`/`MIN_H` gate is narrower than the shell's, so a
+    /// frame between the two draws the panels but not the diagnostics —
+    /// `command_rows() == 0` is the one signal `measured` has for "too small
+    /// to draw a modal", and it must close this overlay too, not only the
+    /// palette's.
+    #[test]
+    fn a_frame_that_shrinks_below_the_diagnostics_modal_closes_it() {
+        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic("one")]);
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+        assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 0)),
+        );
+
+        assert!(
+            state.overlay.is_none(),
+            "a diagnostics modal nothing can draw must not still capture every key"
+        );
+    }
+
+    fn index_of(built_in: BuiltIn) -> usize {
+        BuiltIn::ALL
+            .iter()
+            .position(|b| *b == built_in)
+            .expect("listed")
+    }
+
     #[test]
     fn the_picker_opens_on_the_theme_in_force() {
         let mut state = measured(&["a"]);
@@ -2636,7 +2862,55 @@ mod tests {
 
         assert_eq!(
             theme_picker(&state),
-            Some(ThemeChoice::Ported(Ported::CatppuccinFrappe).index())
+            Some(index_of(BuiltIn::Ported(Ported::CatppuccinFrappe)))
+        );
+    }
+
+    fn custom_theme(name: &str) -> crate::config::CustomTheme {
+        crate::config::CustomTheme {
+            name: crate::theme::ThemeName::try_new(name).expect("a plain slug is a valid name"),
+            extends: BuiltIn::Ours(Ours::DefaultDark),
+            colors: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Every picker test above runs on `Config::default()`, so the index is
+    /// always `< BuiltIn::ALL.len()` and the custom branch of
+    /// `theme_picker_index` — the `index - BuiltIn::ALL.len()` arithmetic and
+    /// the round trip through `ThemeName` equality — never executes. This is
+    /// the behaviour custom themes exist for.
+    #[test]
+    fn the_picker_seats_on_a_custom_theme_already_in_force() {
+        let mut state = measured(&["a"]);
+        let theme = custom_theme("midnight");
+        state.config.themes = vec![theme.clone()];
+        state.theme = ThemeChoice::Custom(theme.name.clone());
+
+        ctrl(&mut state, Key::Char('t'));
+
+        assert_eq!(
+            theme_picker(&state),
+            Some(BuiltIn::ALL.len()),
+            "a custom theme sits right after the built-ins, in config order"
+        );
+    }
+
+    #[test]
+    fn moving_past_the_built_ins_previews_a_custom_theme() {
+        let mut state = measured(&["a"]);
+        let theme = custom_theme("midnight");
+        state.config.themes = vec![theme.clone()];
+
+        ctrl(&mut state, Key::Char('t'));
+        for _ in 0..BuiltIn::ALL.len() {
+            press(&mut state, Key::Char('j'));
+        }
+
+        assert_eq!(theme_picker(&state), Some(BuiltIn::ALL.len()));
+        assert_eq!(
+            state.theme,
+            ThemeChoice::Custom(theme.name.clone()),
+            "the row past the last built-in previews the config's own theme"
         );
     }
 
@@ -2649,7 +2923,7 @@ mod tests {
 
         assert_eq!(
             state.theme,
-            ThemeChoice::ALL[1],
+            ThemeChoice::from(BuiltIn::ALL[1]),
             "the frame repaints as you browse"
         );
     }
@@ -2662,7 +2936,7 @@ mod tests {
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Enter);
 
-        assert_eq!(state.theme, ThemeChoice::ALL[1]);
+        assert_eq!(state.theme, ThemeChoice::from(BuiltIn::ALL[1]));
         assert!(state.overlay.is_none());
     }
 
@@ -2684,20 +2958,23 @@ mod tests {
         let mut state = measured(&["a"]);
 
         ctrl(&mut state, Key::Char('t'));
-        for _ in 0..ThemeChoice::ALL.len() * 2 {
+        for _ in 0..BuiltIn::ALL.len() * 2 {
             press(&mut state, Key::Char('j'));
         }
-        assert_eq!(state.theme, ThemeChoice::ALL[ThemeChoice::ALL.len() - 1]);
+        assert_eq!(
+            state.theme,
+            ThemeChoice::from(BuiltIn::ALL[BuiltIn::ALL.len() - 1])
+        );
         assert_eq!(
             theme_picker(&state),
-            Some(ThemeChoice::ALL.len() - 1),
+            Some(BuiltIn::ALL.len() - 1),
             "the cursor itself must stop at the last row, not merely the theme it read out"
         );
 
-        for _ in 0..ThemeChoice::ALL.len() * 2 {
+        for _ in 0..BuiltIn::ALL.len() * 2 {
             press(&mut state, Key::Char('k'));
         }
-        assert_eq!(state.theme, ThemeChoice::ALL[0]);
+        assert_eq!(state.theme, ThemeChoice::from(BuiltIn::ALL[0]));
         assert_eq!(theme_picker(&state), Some(0));
     }
 
@@ -2710,19 +2987,19 @@ mod tests {
 
         assert_eq!(
             theme_picker(&state),
-            Some(ThemeChoice::ALL.len() - 1),
+            Some(BuiltIn::ALL.len() - 1),
             "the list is shorter than the block drawing it, so one page is all of it"
         );
         assert_eq!(
             state.theme,
-            ThemeChoice::ALL[ThemeChoice::ALL.len() - 1],
+            ThemeChoice::from(BuiltIn::ALL[BuiltIn::ALL.len() - 1]),
             "a page is a move, and every move previews"
         );
 
         press(&mut state, Key::PageUp);
 
         assert_eq!(theme_picker(&state), Some(0));
-        assert_eq!(state.theme, ThemeChoice::ALL[0]);
+        assert_eq!(state.theme, ThemeChoice::from(BuiltIn::ALL[0]));
     }
 
     #[test]
@@ -2732,7 +3009,7 @@ mod tests {
         ctrl(&mut state, Key::Char('t'));
         ctrl(&mut state, Key::Char('d'));
 
-        assert_eq!(theme_picker(&state), Some(ThemeChoice::ALL.len() - 1));
+        assert_eq!(theme_picker(&state), Some(BuiltIn::ALL.len() - 1));
 
         ctrl(&mut state, Key::Char('u'));
 
@@ -7169,6 +7446,21 @@ mod tests {
         assert_eq!(searching(&state).map(Prompt::query), Some("t"));
     }
 
+    /// The diagnostics overlay is the only place the list it shows lives —
+    /// `State.config` does not keep it — so `ctrl-t` opening the theme picker
+    /// from under it would destroy those diagnostics for good.
+    #[test]
+    fn ctrl_t_is_refused_over_diagnostics() {
+        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic("one")]);
+
+        ctrl(&mut state, Key::Char('t'));
+
+        assert!(
+            matches!(state.overlay, Some(Overlay::Diagnostics(_))),
+            "the diagnostics overlay must survive an unrelated ctrl chord"
+        );
+    }
+
     /// A ctrl chord the layer has no member for is refused as it is anywhere
     /// else, rather than typed into the query.
     #[test]
@@ -7936,6 +8228,9 @@ mod tests {
     #[test]
     fn the_theme_picker_cannot_replace_an_open_export_form() {
         let mut state = contents_showing(5);
+        // Room for the picker, so what refuses the chord is the open form and
+        // not the picker's own size gate.
+        state.geometry = state.geometry.with_theme_rows(20);
         open_form(&mut state);
 
         handle_key(&mut state, KeyPress::ctrl(Key::Char('t')));
@@ -8169,13 +8464,15 @@ mod tests {
     fn an_existing_file_landing_on_an_open_picker_puts_the_theme_back() {
         let mut state = contents_showing(ROW_LIMIT);
         // Room for the picker as well as the form.
-        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_export_fits(true);
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14)
+            .with_export_fits(true)
+            .with_theme_rows(20);
         let effects = started(&mut state);
         let [Effect::Export { job, .. }] = effects.as_slice() else {
             panic!("one export effect");
         };
         let job = *job;
-        let chosen = state.theme;
+        let chosen = state.theme.clone();
 
         handle_key(&mut state, KeyPress::ctrl(Key::Char('t')));
         handle_key(&mut state, KeyPress::new(Key::Char('j')));

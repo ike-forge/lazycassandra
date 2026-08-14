@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::commands::CommandsPanel;
+use crate::config::{Config, Diagnostic};
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::editor::Editor;
@@ -53,6 +54,10 @@ pub struct State {
     pub should_quit: bool,
     /// The theme in force. A name; `lc-inbound` owns what it looks like.
     pub theme: ThemeChoice,
+    /// The configuration the tool started on. Most of it has no consumer yet
+    /// (design §11); it is held rather than dropped so those follow-ups have
+    /// somewhere to read from.
+    pub config: Config,
     /// The process's working directory, for the export form's prefilled path.
     /// Passed in by `lc-app` at startup: the domain cannot read it and must
     /// not learn how (export design §2.1).
@@ -228,10 +233,80 @@ pub enum Overlay {
         cursor: Cursor,
         restored: ThemeChoice,
     },
+    /// What the config files got wrong, drawn over the panels at startup.
+    Diagnostics(DiagnosticsPanel),
     /// The export form. Its overwrite confirmation is a field on the form
     /// rather than a sixth variant here, so "a confirmation with nothing
     /// behind it" cannot be written down (export design §7).
     Export(ExportForm),
+}
+
+/// The config diagnostics, and where the cursor is among them.
+///
+/// A list rather than a [`Message`]: a config load yields many entries, and
+/// `overlay.rs`'s sizing under-counts an embedded newline by its own
+/// admission, so a multi-line message truncates (design §9). The cursor is
+/// private for [`CommandsPanel`]'s reason: every motion goes through a named
+/// method here, so nothing outside this module can seat it past the last row
+/// (conventions.md §1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsPanel {
+    rows: Vec<Diagnostic>,
+    cursor: Cursor,
+}
+
+impl DiagnosticsPanel {
+    /// Opens on the first diagnostic.
+    #[must_use]
+    pub fn new(rows: Vec<Diagnostic>) -> Self {
+        Self {
+            rows,
+            cursor: Cursor::default(),
+        }
+    }
+
+    /// Every diagnostic the config load produced, in the order it produced
+    /// them.
+    #[must_use]
+    pub fn rows(&self) -> &[Diagnostic] {
+        &self.rows
+    }
+
+    /// The selected row, as an index into [`Self::rows`].
+    #[must_use]
+    pub const fn selected(&self) -> usize {
+        self.cursor.index()
+    }
+
+    /// Moves to the next diagnostic, stopping on the last one.
+    pub fn down(&mut self) {
+        self.cursor.down(self.rows.len());
+    }
+
+    /// Moves to the previous diagnostic, stopping on the first one.
+    pub fn up(&mut self) {
+        self.cursor.up();
+    }
+
+    /// Moves a screen of diagnostics down, stopping on the last one.
+    pub fn page_down(&mut self, height: usize) {
+        self.cursor.page_down(self.rows.len(), height);
+    }
+
+    /// Moves a screen of diagnostics up, stopping on the first one.
+    pub fn page_up(&mut self, height: usize) {
+        self.cursor.page_up(height);
+    }
+
+    /// Moves to the first diagnostic.
+    pub fn to_start(&mut self) {
+        self.cursor.to_start();
+    }
+
+    /// Moves to the last diagnostic.
+    pub fn to_end(&mut self) {
+        self.cursor.to_end(self.rows.len());
+    }
 }
 
 impl ConnectionState {
@@ -968,6 +1043,10 @@ pub struct Geometry {
     /// function of the terminal size alone, which is what keeps §3's
     /// measurement loop open (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
     grid_width: usize,
+    /// Rows the theme picker's own block could show in this frame, measured
+    /// the same way `command_rows` measures the palette's — its own room,
+    /// not a borrowed one (configuration design §9).
+    theme_rows: usize,
 }
 
 impl Geometry {
@@ -983,6 +1062,7 @@ impl Geometry {
             command_rows,
             export_fits: false,
             grid_width: 0,
+            theme_rows: 0,
         }
     }
 
@@ -1070,6 +1150,23 @@ impl Geometry {
     #[must_use]
     pub const fn with_grid_width(self, grid_width: usize) -> Self {
         Self { grid_width, ..self }
+    }
+
+    /// Rows the theme picker's own block would show at this frame size,
+    /// whether or not one is open.
+    ///
+    /// Zero means it does not fit, which is what makes `ctrl-t` refuse to
+    /// open a picker nothing draws (design §9).
+    #[must_use]
+    pub const fn theme_rows(self) -> usize {
+        self.theme_rows
+    }
+
+    /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason: a
+    /// test that opens no picker has nothing to say here.
+    #[must_use]
+    pub const fn with_theme_rows(self, theme_rows: usize) -> Self {
+        Self { theme_rows, ..self }
     }
 
     /// Where the Ddl panel drew its selected row.

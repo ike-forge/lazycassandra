@@ -21,9 +21,13 @@ architecture.md already works this way, and those are the pattern to follow:
 the domain crate cannot import `tokio` because the dependency is absent, not
 because a guideline says so (architecture.md §2). `PrimaryKey` distinguishes
 partition from clustering columns structurally rather than by convention
-(architecture.md §4). `CredentialRef` has no `Password(String)` variant, so a
-literal secret in a committed file is a parse error instead of a leak
-(architecture.md §7).
+(architecture.md §4). `Config` is total: `Option` survives only where
+absence is itself meaningful — a password, a `default_connection` — and
+everywhere else lives in `lc-outbound`'s wire structs, resolved to a value
+before it reaches the domain, so most of `Config` never makes the caller ask
+whether a setting was stated (specs/2026-08-14-configuration-design.md §7).
+`PanelRatios` is one type rather than three newtypes, because the three
+shares are only valid together.
 
 The general move: prefer a newtype to a validated `String`, an enum to a
 `bool` plus a comment, an unrepresentable state to a runtime check, and a

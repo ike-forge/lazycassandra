@@ -23,13 +23,14 @@ pub use title::{PanelTitle, TAB_SEPARATOR, Tab};
 pub use crate::editor::Position;
 
 use crate::commands::{self, CommandRow};
+use crate::config::Diagnostic;
 use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
 use crate::export::{Confirm, Format, Scope, Stop};
 use crate::model::DbError;
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
-use crate::theme::ThemeChoice;
+use crate::theme::{BuiltIn, ThemeChoice};
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,12 +86,46 @@ pub enum OverlayView {
     },
     /// The theme picker's rows and where its cursor is.
     Themes {
-        labels: Vec<&'static str>,
+        labels: Vec<String>,
+        selected: usize,
+    },
+    /// The config diagnostics' rows and where its cursor is.
+    Diagnostics {
+        rows: Vec<DiagnosticRow>,
         selected: usize,
     },
     /// Boxed: `OverlayView`'s other variants are small, and clippy's
     /// `large_enum_variant` is denied.
     Export(Box<ExportView>),
+}
+
+/// One diagnostic as a renderer needs it: the location already formatted, so
+/// the renderer never has to know how a span is spelled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticRow {
+    pub location: String,
+    pub severity: Severity,
+    pub message: String,
+}
+
+fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
+    let location = diagnostic.span.map_or_else(
+        || diagnostic.origin.as_str().to_owned(),
+        |span| {
+            format!(
+                "{}:{}:{}",
+                diagnostic.origin.as_str(),
+                span.line,
+                span.column
+            )
+        },
+    );
+
+    DiagnosticRow {
+        location,
+        severity: diagnostic.severity,
+        message: diagnostic.message.clone(),
+    }
 }
 
 /// The export form, flattened for a renderer that never sees an
@@ -117,6 +152,10 @@ fn overlay(state: &State) -> Option<OverlayView> {
             rows: commands::rows(),
             selected: panel.selected(),
         }),
+        Overlay::Diagnostics(panel) => Some(OverlayView::Diagnostics {
+            rows: panel.rows().iter().map(row).collect(),
+            selected: panel.selected(),
+        }),
         // `Some`, not drawn through the modal path the other two overlays
         // use — the renderer draws it on the hint bar row instead. Still
         // `Some` rather than `None`: `view.overlay.is_none()` is what
@@ -127,9 +166,16 @@ fn overlay(state: &State) -> Option<OverlayView> {
             query: prompt.query().to_owned(),
         }),
         Overlay::Themes { cursor, .. } => Some(OverlayView::Themes {
-            labels: ThemeChoice::ALL
+            labels: BuiltIn::ALL
                 .iter()
-                .map(|choice| choice.label())
+                .map(|built_in| built_in.label().to_owned())
+                .chain(
+                    state
+                        .config
+                        .themes
+                        .iter()
+                        .map(|theme| theme.name.as_str().to_owned()),
+                )
                 .collect(),
             selected: cursor.index(),
         }),
@@ -278,7 +324,7 @@ pub fn view_model(state: &State) -> ViewModel {
         } else {
             Activity::Resting
         },
-        theme: state.theme,
+        theme: state.theme.clone(),
     }
 }
 
@@ -400,16 +446,19 @@ pub(crate) mod tests_support {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
     use super::tests_support::{loaded, tabled};
     use super::*;
     use crate::commands::CommandsPanel;
+    use crate::config::{Config, CustomTheme};
     use crate::contents::{Subject, TableRef};
     use crate::export::{ExportForm, Fetched, Format, Scope, Stop};
-    use crate::model::{DbError, JobId, Page, QueryId};
-    use crate::state::{ExportJob, Message, Overlay};
-    use crate::theme::Ported;
+    use crate::model::{ConnId, DbError, JobId, Page, QueryId};
+    use crate::state::{Cursor, ExportJob, Message, Overlay};
+    use crate::theme::{Ours, Ported, ThemeName};
+    use crate::update::init;
 
     #[test]
     fn every_panel_is_projected_in_reading_order() {
@@ -521,9 +570,13 @@ mod tests {
 
     #[test]
     fn an_open_picker_is_projected_as_every_theme_and_the_cursors_position() {
-        let choice = ThemeChoice::Ported(Ported::CatppuccinMocha);
+        let built_in = BuiltIn::Ported(Ported::CatppuccinMocha);
+        let index = BuiltIn::ALL
+            .iter()
+            .position(|b| *b == built_in)
+            .expect("listed");
         let mut cursor = crate::state::Cursor::default();
-        cursor.go_to(choice.index(), ThemeChoice::ALL.len());
+        cursor.go_to(index, BuiltIn::ALL.len());
         let mut state = State::default();
         state.overlay = Some(Overlay::Themes {
             cursor,
@@ -533,13 +586,38 @@ mod tests {
         assert_eq!(
             view_model(&state).overlay,
             Some(OverlayView::Themes {
-                labels: ThemeChoice::ALL
+                labels: BuiltIn::ALL
                     .iter()
-                    .map(|choice| choice.label())
+                    .map(|built_in| built_in.label().to_owned())
                     .collect(),
-                selected: choice.index(),
+                selected: index,
             })
         );
+    }
+
+    #[test]
+    fn the_picker_lists_the_built_ins_and_then_the_config_s_own() {
+        let midnight = ThemeName::try_new("midnight").expect("valid");
+        let config = Config {
+            themes: vec![CustomTheme {
+                name: midnight.clone(),
+                extends: BuiltIn::Ours(Ours::AshDark),
+                colors: BTreeMap::new(),
+            }],
+            ..Config::default()
+        };
+        let (mut state, _) = init(ConnId::next(), config, Vec::new());
+        state.overlay = Some(Overlay::Themes {
+            cursor: Cursor::default(),
+            restored: ThemeChoice::default(),
+        });
+
+        let Some(OverlayView::Themes { labels, .. }) = view_model(&state).overlay else {
+            panic!("the picker is up");
+        };
+
+        assert_eq!(labels.len(), BuiltIn::ALL.len() + 1);
+        assert_eq!(labels.last().map(String::as_str), Some("midnight"));
     }
 
     /// Every `ContentsState`, because that panel's title is built per frame

@@ -47,6 +47,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 
     let command_rows = crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count());
+    let theme_rows = crate::themes::visible_rows(frame.area());
     let export_fits = crate::export::fits(frame.area());
     let rects = match layout(frame.area()) {
         Shell::Panels(rects) => rects,
@@ -128,6 +129,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         Some(OverlayView::Themes { labels, selected }) => {
             crate::themes::render(frame, labels, *selected, theme);
         }
+        Some(OverlayView::Diagnostics { rows, selected }) => {
+            crate::diagnostics::render(frame, rows, *selected, theme);
+        }
         Some(OverlayView::Export(view)) => crate::export::render(frame, view, theme),
         None => {}
     }
@@ -136,7 +140,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
             .with_ddl_selection(ddl_selection)
             .with_export_fits(export_fits)
-            .with_grid_width(grid_width),
+            .with_grid_width(grid_width)
+            .with_theme_rows(theme_rows),
         map: FrameMap::new(hits),
     }
 }
@@ -638,7 +643,7 @@ mod tests {
                 render(
                     frame,
                     &view_model(&state),
-                    Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha)),
+                    Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha)),
                 );
             })
             .expect("TestBackend always draws");
@@ -655,7 +660,7 @@ mod tests {
 
     #[test]
     fn focus_wins_over_a_flavours_own_panel_border() {
-        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
+        let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut terminal =
             Terminal::new(TestBackend::new(40, 12)).expect("TestBackend always initialises");
         let mut state = State::default();
@@ -693,7 +698,7 @@ mod tests {
                 render(
                     frame,
                     &view_model(&state),
-                    Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha)),
+                    Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha)),
                 );
             })
             .expect("TestBackend always draws");
@@ -2181,7 +2186,7 @@ mod tests {
     /// wherever the theme keeps its colours (design §4).
     #[test]
     fn a_key_columns_heading_keeps_its_colour_under_the_wash() {
-        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
+        let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut state = showing(page_of(&["id", "email"], &[&[CqlValue::Int(1), text("a")]]));
         state.contents.mode = SelectionMode::Cell;
 
@@ -2214,7 +2219,7 @@ mod tests {
     /// entirely would go unnoticed.
     #[test]
     fn the_crosshair_leaves_a_flavours_column_colours_alone() {
-        let theme = Theme::of(ThemeChoice::Ported(Ported::CatppuccinMocha));
+        let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
         let mut state = showing(page_of(
             &["id", "value"],
             &[

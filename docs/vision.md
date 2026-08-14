@@ -4,7 +4,7 @@
 > Fast for experts. Legible for everyone else.
 
 **Status:** pre-implementation. This document is the north star, not a spec.
-**Last updated:** 2026-08-09
+**Last updated:** 2026-08-15
 
 ---
 
@@ -157,10 +157,13 @@ today, are their authors' work: we take them as given and impose nothing on
 them beyond deciding whether to ship them, which is stated in the type system
 rather than in a comment. `T` moves between all twelve with a live preview.
 
-Users who run a translucent, blurred or image background have a real
-preference that a declared ground cannot serve. That lands as an explicit
-`background = "terminal"` opt-in with the config file (§6), documented as
-unsupported for contrast and never the default — see architecture.md §6 and
+Users who run a translucent, blurred or image background can declare it:
+`background = "terminal"` paints no ground at all, and `background =
+"#rrggbb"` names one. Both are supported. What lapses under either is the
+contrast guarantee of *our* palettes, whose ratios are measured against the
+theme's own declared `base` — override the ground and the measurement no
+longer describes what is on screen. That is the user's call to make and
+theirs to tune around, not a degraded mode. See architecture.md §6 and
 specs/2026-08-13-colour-palettes-design.md.
 
 **6. Destructive things are obvious, reversible, or confirmed — pick two.**
@@ -227,15 +230,16 @@ catches most of this before a warning ever fires.
 
 ## 6. Configuration
 
-Config is a `.lazycassandra.yml` in the project root, layered under a user-level
-config in `$XDG_CONFIG_HOME/lazycassandra/`. The LazySQL model: **the project
-file is meant to be committed to git.**
+Config is a `.lazycassandra.toml` in the project root, layered under a
+user-level config at `$XDG_CONFIG_HOME/lazycassandra/config.toml`. The
+LazySQL model: **the project file is meant to be committed to git.**
 
-That makes one rule non-negotiable: **the config file holds references to
-secrets, never secrets.** Credentials resolve from environment variables, files
-on disk, or an external command — the committed file names where a password
-comes from, and never contains one. A config that would leak if pushed to a
-public repo is a design bug.
+The committed file should hold references to secrets rather than secrets —
+credentials resolve from environment variables or files on disk — but a
+literal password is permitted, because a tool that refuses one at v1 is a
+tool people work around. What is not permitted is a config file naming a
+command: nothing in the configuration path executes anything, so cloning a
+repository and running `lazycassandra` cannot run a stranger's shell.
 
 The project file describes shared environments — the dev cluster everyone on the
 team uses — so a new engineer clones the repo, runs `lazycassandra`, and is
@@ -269,9 +273,8 @@ Write-posture enforcement and confirmation flows.
 **Phase 4 — Operate.** Node and ring view, compaction and repair state, metrics.
 The k9s-adjacent surface.
 
-**Phase 5 — Extend.** User-supplied themes and the `background = "terminal"`
-opt-in, user-defined keybindings, saved queries, plugin or scripting surface.
-Possibly ScyllaDB support, if the driver story is clean.
+**Phase 5 — Extend.** User-defined keybindings, saved queries, plugin or
+scripting surface. Possibly ScyllaDB support, if the driver story is clean.
 
 ## 8. Open research questions
 
