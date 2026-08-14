@@ -746,18 +746,31 @@ fn edit(state: &mut State, key: Key) -> bool {
 /// what puts it back, and — unlike the prompt above — a message *can* arrive
 /// over an open picker today, since the picker outlives no focus condition.
 fn raise(state: &mut State, message: Message) {
+    unwind_overlay(state);
+    state.overlay = Some(Overlay::Message(message));
+}
+
+/// Puts back whatever the overlay on screen was previewing, so a replacement
+/// can be installed over it without stranding the frame in it.
+///
+/// Every message-driven overlay replacement goes through here: [`raise`], and
+/// the `Exists` arm of [`finish_export`], which puts the export form back over
+/// whatever the user opened while the export was in flight — a picker among
+/// them, since the overlay is `None` for the whole of a running export and
+/// `ctrl-t` is not refused (final review I2).
+fn unwind_overlay(state: &mut State) {
     if let Some(Overlay::Search(prompt)) = &state.overlay {
         state.apply_filter(prompt.target(), prompt.previous().cloned());
     }
     restore_theme(state);
-    state.overlay = Some(Overlay::Message(message));
 }
 
 /// Puts back the theme a live picker opened on, if the overlay is that
 /// picker. Otherwise a no-op. Three sites unwind a preview: [`escape`], which
-/// does it while taking the overlay apart, and [`raise`] and the
-/// resize-shrink close in [`measured`], which share this one — so the second
-/// of those two cannot copy the check and diverge from the first.
+/// does it while taking the overlay apart, the resize-shrink close in
+/// [`measured`], and [`unwind_overlay`] — which every replacement from a
+/// message shares, so no such site can copy the check and diverge from the
+/// rest.
 fn restore_theme(state: &mut State) {
     if let Some(Overlay::Themes { restored, .. }) = state.overlay {
         state.theme = restored;
@@ -1290,6 +1303,7 @@ fn finish_export(state: &mut State, job: JobId, result: Result<usize, ExportErro
         Err(ExportError::Exists) => {
             let mut form = finished.form();
             form.set_confirm(Some(Confirm::Overwrite));
+            unwind_overlay(state);
             state.overlay = Some(Overlay::Export(form));
         }
         Err(error) => raise(
@@ -7535,6 +7549,39 @@ mod tests {
         );
 
         assert!(state.export.is_none(), "nothing is running");
+        assert_eq!(form_of(&state).confirm(), Some(Confirm::Overwrite));
+    }
+
+    /// The overlay is `None` for the whole of a running export, so `ctrl-t` is
+    /// not refused and the picker can be up and previewing when the answer
+    /// lands. Replacing it outright would leave the previewed theme in force
+    /// with `restored` — the only copy of the user's own — dropped with the
+    /// picker (final review I2).
+    #[test]
+    fn an_existing_file_landing_on_an_open_picker_puts_the_theme_back() {
+        let mut state = contents_showing(ROW_LIMIT);
+        // Room for the picker as well as the form.
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_export_fits(true);
+        let effects = started(&mut state);
+        let [Effect::Export { job, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        let job = *job;
+        let chosen = state.theme;
+
+        handle_key(&mut state, KeyPress::ctrl(Key::Char('t')));
+        handle_key(&mut state, KeyPress::new(Key::Char('j')));
+        assert_ne!(state.theme, chosen, "the picker is previewing another");
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+            },
+        );
+
+        assert_eq!(state.theme, chosen);
         assert_eq!(form_of(&state).confirm(), Some(Confirm::Overwrite));
     }
 
