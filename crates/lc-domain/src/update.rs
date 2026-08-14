@@ -3480,7 +3480,7 @@ mod tests {
     fn tab_walks_the_panels_in_reading_order_and_wraps() {
         let mut state = browsing(&["a"]);
 
-        for expected in Panel::ALL.into_iter().skip(1).chain([Panel::ALL[0]]) {
+        for expected in Panel::CYCLE.into_iter().skip(1).chain([Panel::CYCLE[0]]) {
             press(&mut state, Key::Tab);
             assert_eq!(state.focus, expected);
         }
@@ -3500,7 +3500,7 @@ mod tests {
 
         press(&mut state, Key::BackTab);
 
-        assert_eq!(state.focus, Panel::Contents);
+        assert_eq!(state.focus, Panel::Ddl);
     }
 
     #[test]

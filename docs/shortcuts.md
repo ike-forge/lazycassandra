@@ -30,7 +30,7 @@ panel that takes text (§2).
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. |
 | `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
-| `Tab` | Focus the next panel, in reading order, wrapping. |
+| `Tab` | Focus the next panel — Tables, Table contents, DDL, Queries — wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
 | `a`¹ | Focus T**a**bles. |
 | `b`¹ | Focus Ta**b**le contents. |

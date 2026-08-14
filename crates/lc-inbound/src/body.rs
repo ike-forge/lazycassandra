@@ -333,12 +333,14 @@ fn grid(
     let constraints = std::iter::once(Constraint::Length(BAR + gutter))
         .chain(drawn_widths.iter().copied().map(Constraint::Length));
 
+    let columns_at = bands(area, &drawn_widths, first_column, gutter);
+
     let row = visible(selected, offset, height);
     // The heading's wash belongs to the crosshair, and the crosshair goes with
-    // the selection: a row cursor scrolled out of view leaves the widget
-    // painting neither band, so a heading lit on its own would be the only mark
-    // on an unlit grid (design §4). A column selection does not depend on where
-    // the row viewport sits.
+    // the selection: a row cursor scrolled out of view leaves the grid painting
+    // neither band, so a heading lit on its own would be the only mark on an
+    // unlit grid (design §4). A column selection does not depend on where the
+    // row viewport sits.
     let wash = match mode {
         SelectionMode::Cell => row.is_some().then(|| theme.style(Token::Crosshair)),
         SelectionMode::Column => Some(theme.style(Token::Selected)),
@@ -379,15 +381,13 @@ fn grid(
     // full-height band over a column the heading gate — which asks the same
     // question of the page's own indices — does not match. `follow_grid_columns`
     // runs against the geometry of the frame before this one, so a resize that
-    // narrows the panel reaches this state for a frame.
+    // narrows the panel reaches this state for a frame. The cell mode's own
+    // vertical band is gated on the same answer.
     let selected_column = drawn.contains(&column).then_some(drawn_column);
 
     let (table, selection) = match mode {
         SelectionMode::Cell => (
-            table
-                .row_highlight_style(theme.style(Token::Crosshair))
-                .column_highlight_style(theme.style(Token::Crosshair))
-                .cell_highlight_style(theme.style(Token::SelectedCell)),
+            table.cell_highlight_style(theme.style(Token::SelectedCell)),
             Selection::Cell(row.map(|row| (row, drawn_column))),
         ),
         SelectionMode::Row => (
@@ -407,6 +407,17 @@ fn grid(
         Selection::Column(column) => state.with_selected_column(column),
     };
 
+    if matches!(mode, SelectionMode::Cell) {
+        let at = selected_column.map(|_| column - first_column);
+        crosshair(
+            frame,
+            area,
+            row.map(|row| row - offset),
+            at.map(|at| (columns_at[at].start, drawn_widths[at])),
+            theme,
+        );
+    }
+
     frame.render_stateful_widget(table, area, &mut state);
 
     (
@@ -420,8 +431,52 @@ fn grid(
             total: columns.len(),
             visible: shown,
         },
-        bands(area, &drawn_widths, first_column, gutter),
+        columns_at,
     )
+}
+
+/// The cell mode's two bands, washed onto the buffer *under* the table rather
+/// than handed to it as `row_highlight_style` / `column_highlight_style`.
+///
+/// ratatui paints those over the whole band after the rows are drawn, so they
+/// bury whatever background a cell spends of its own — and the band a held
+/// range paints is exactly that. Washed underneath, the crosshair survives on
+/// every cell that spends no background and yields on the cells the range
+/// holds: the crosshair says where the cursor is, the range says what a command
+/// would act on, and where both are true the second is what a cell has to say
+/// (design §6). The cursor's own cell reads over either, `Token::SelectedCell`
+/// being a modifier rather than a colour.
+///
+/// `row` counts from the first row drawn rather than from the page; `column` is
+/// where the cursor's column landed, in absolute frame columns. Either is
+/// `None` where that axis' cursor is not one of the cells drawn.
+fn crosshair(
+    frame: &mut Frame,
+    area: Rect,
+    row: Option<usize>,
+    column: Option<(u16, u16)>,
+    theme: Theme,
+) {
+    let body = Rect {
+        y: area.y.saturating_add(HEADER_ROWS),
+        height: area.height.saturating_sub(HEADER_ROWS),
+        ..area
+    };
+    let wash = theme.style(Token::Crosshair);
+    let bands = [
+        row.map(|row| Rect {
+            y: body
+                .y
+                .saturating_add(u16::try_from(row).unwrap_or(u16::MAX)),
+            height: 1,
+            ..body
+        }),
+        column.map(|(x, width)| Rect { x, width, ..body }),
+    ];
+
+    for band in bands.into_iter().flatten() {
+        frame.buffer_mut().set_style(band.intersection(body), wash);
+    }
 }
 
 /// Whether the cell at `row, column` — both counted in the page's own

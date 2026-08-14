@@ -169,8 +169,9 @@ impl ConnectionState {
 /// Panels are places: fixed positions, navigated with predictable motions
 /// (vision.md §4, principle 4).
 ///
-/// Declaration order is reading order — top-left, bottom-left, top-right,
-/// bottom-right — and [`Panel::ALL`] preserves it.
+/// Declaration order is column order — top-left, bottom-left, top-right,
+/// bottom-right — and [`Panel::ALL`] preserves it. Focus moves in
+/// [`Panel::CYCLE`] instead, which is a different walk over the same frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Panel {
     /// Keyspace → table tree.
@@ -262,28 +263,34 @@ const QUERIES_HINTS: &[Binding] = &[
 ];
 
 impl Panel {
-    /// Every panel, in reading order.
+    /// Every panel, in column order.
     pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
 
-    /// The next panel in reading order, wrapping.
+    /// Every panel, in the order focus walks them: reading order across the
+    /// frame — top-left, top-right, bottom-left, bottom-right. The tree and
+    /// the rows it opens are adjacent under `Tab`, which is the pair a user
+    /// moves between most.
+    pub const CYCLE: [Self; 4] = [Self::Tables, Self::Contents, Self::Ddl, Self::Queries];
+
+    /// The next panel in [`Panel::CYCLE`], wrapping.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
-            Self::Tables => Self::Ddl,
-            Self::Ddl => Self::Contents,
-            Self::Contents => Self::Queries,
+            Self::Tables => Self::Contents,
+            Self::Contents => Self::Ddl,
+            Self::Ddl => Self::Queries,
             Self::Queries => Self::Tables,
         }
     }
 
-    /// The previous panel in reading order, wrapping.
+    /// The previous panel in [`Panel::CYCLE`], wrapping.
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
             Self::Tables => Self::Queries,
-            Self::Ddl => Self::Tables,
-            Self::Contents => Self::Ddl,
-            Self::Queries => Self::Contents,
+            Self::Contents => Self::Tables,
+            Self::Ddl => Self::Contents,
+            Self::Queries => Self::Ddl,
         }
     }
 
@@ -879,7 +886,7 @@ mod tests {
     use crate::search::{Filter, Filtered};
 
     #[test]
-    fn all_panels_are_listed_in_reading_order_and_none_is_missing() {
+    fn all_panels_are_listed_in_column_order_and_none_is_missing() {
         for panel in Panel::ALL {
             // A new variant fails to compile here until it is added to ALL.
             let expected_position = match panel {
@@ -891,7 +898,7 @@ mod tests {
             assert_eq!(
                 Panel::ALL[expected_position],
                 panel,
-                "{panel:?} is not at its reading-order position"
+                "{panel:?} is not at its column-order position"
             );
         }
         assert_eq!(
@@ -908,15 +915,26 @@ mod tests {
 
     #[test]
     fn the_cycle_walks_reading_order_and_wraps() {
-        // Pinned against ALL rather than restated, so the two orderings cannot
-        // drift apart when a panel is added.
+        // Pinned against CYCLE rather than restated, so the two orderings
+        // cannot drift apart when a panel is added.
         let walked: Vec<Panel> =
-            std::iter::successors(Some(Panel::ALL[0]), |panel| Some(panel.next()))
-                .take(Panel::ALL.len())
+            std::iter::successors(Some(Panel::CYCLE[0]), |panel| Some(panel.next()))
+                .take(Panel::CYCLE.len())
                 .collect();
 
-        assert_eq!(walked, Panel::ALL);
-        assert_eq!(Panel::ALL[Panel::ALL.len() - 1].next(), Panel::ALL[0]);
+        assert_eq!(walked, Panel::CYCLE);
+        assert_eq!(Panel::CYCLE[Panel::CYCLE.len() - 1].next(), Panel::CYCLE[0]);
+    }
+
+    #[test]
+    fn the_cycle_holds_every_panel_exactly_once() {
+        for panel in Panel::ALL {
+            assert_eq!(
+                Panel::CYCLE.iter().filter(|other| **other == panel).count(),
+                1,
+                "{panel:?} is missing from CYCLE or listed twice"
+            );
+        }
     }
 
     #[test]

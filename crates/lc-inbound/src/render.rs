@@ -2161,6 +2161,42 @@ mod tests {
         );
     }
 
+    /// The crosshair is a locator and the range is a selection, so where the
+    /// two cross the range is what the cell has to say (design §6).
+    #[test]
+    fn a_ranged_cell_keeps_its_band_where_the_crosshair_crosses_it() {
+        let mut state = showing(sized_page(4, 3));
+        state.contents.mode = SelectionMode::Cell;
+        state.contents.rows = Selection::Held(Range::new(0, 1));
+        state.contents.columns = Selection::Held(Range::new(0, 1));
+
+        let buffer = draw_state(40, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let bg = |column: u16, row: u16| {
+            buffer
+                .cell((drawn_column(area, column), area.y + 2 + row))
+                .expect("inside the panel")
+                .bg
+        };
+        let theme = Theme::default();
+
+        assert_eq!(
+            bg(1, 0),
+            theme.palette().ranged,
+            "the cursor's own row crosses the range, and the range wins"
+        );
+        assert_eq!(
+            bg(0, 1),
+            theme.palette().ranged,
+            "so does the cursor's own column"
+        );
+        assert_eq!(
+            bg(2, 0),
+            theme.palette().crosshair,
+            "the crosshair still runs past the range it crosses"
+        );
+    }
+
     #[test]
     fn the_row_and_the_cell_are_marked_in_an_unfocused_panel_too() {
         // `body::grid` ignores the `focused` flag, which is design §3's
@@ -2316,8 +2352,9 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        // Row 1, not the cursor's row 0: the cursor's own row would be washed
-        // by the crosshair regardless of the range, and prove nothing here.
+        // Row 1, not the cursor's row 0: the cursor's own row carries the
+        // crosshair under the band, and a row that is washed either way proves
+        // nothing about the range here.
         let bg = |index: u16| {
             buffer
                 .cell((drawn_column(area, index), area.y + 3))
