@@ -297,10 +297,14 @@ Layered, lowest to highest: built-in defaults → user config
 and not yet built.
 
 Discovery, parsing, merging and validation are `lc-outbound`; the merged,
-validated result is `lc_domain::config::Config`, which is total — `Option`
-lives in the wire structs and stops there. A file that is wrong does not
-stop the tool: the smallest addressable unit is dropped, the rest applies,
-and every drop is reported in a modal at startup.
+validated result is `lc_domain::config::Config`, which is total: no
+`Option` except where absence is itself meaningful — whether a password or
+a `default_connection` was stated, say. Everywhere else, `Option` lives in
+`lc-outbound`'s wire structs and is resolved to a value — stated or
+defaulted — before it crosses into `Config`. A file that is wrong does not
+stop the tool: the
+smallest addressable unit is dropped, the rest applies, and every drop is
+reported in a modal at startup.
 
 Credentials are `Literal`, `Env` or `File`. There is no `Command` variant,
 so nothing in the configuration path executes anything.
