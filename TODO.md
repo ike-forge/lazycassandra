@@ -137,9 +137,6 @@ From the command palette slice (docs/superpowers/specs/2026-08-09-command-palett
 
 - Search. The palette is named Commands and carries a selection precisely so
   this can land; it needs text input, which needs the mode design §7 defers.
-- Execution. `⏎` selects a row that cannot be run, because a `Binding` is keys
-  and a label. Making it runnable means feeding a synthesised `KeyPress` back
-  through `handle_key` rather than growing a second dispatch point.
 - Contextual ordering. The palette shows the same groups whatever has focus;
   vision.md §4 principle 1 promises a *contextual* map. It now lists `l`/`h`
   twice, once under each panel that resolves them, which is the honest shape for

@@ -204,11 +204,12 @@ const QUERIES: &[Command] = &[
         "line end",
         Run::In(Panel::Queries),
     ),
-    Command::new(
-        &[KeyPress::new(Key::Escape)],
-        "leave the editor",
-        Run::In(Panel::Queries),
-    ),
+    // `Run::Here`, not `In(Panel::Queries)`: escape's whole point in the
+    // editor is to leave it, so focusing Queries first would only be undone
+    // by the key itself. It is `Navigate`'s reasoning applied to one more
+    // key that every panel resolves in its own vocabulary — Global's own
+    // `esc` row already says as much (design §5).
+    Command::new(&[KeyPress::new(Key::Escape)], "leave the editor", Run::Here),
 ];
 
 /// Every binding, grouped as the palette lists them.
@@ -787,7 +788,18 @@ mod tests {
             group("Queries")
                 .commands
                 .iter()
+                .filter(|command| command.binding.action != "leave the editor")
                 .all(|command| command.run == Run::In(Panel::Queries))
+        );
+        assert_eq!(
+            group("Queries")
+                .commands
+                .iter()
+                .find(|command| command.binding.action == "leave the editor")
+                .map(|command| command.run),
+            Some(Run::Here),
+            "escape's whole point in the editor is to leave it, so \
+             focusing Queries first would only be undone by the key itself"
         );
     }
 
