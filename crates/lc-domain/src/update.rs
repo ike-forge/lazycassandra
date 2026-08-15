@@ -6919,8 +6919,8 @@ mod tests {
     fn catalogued() -> Vec<KeyPress> {
         CATALOGUE
             .iter()
-            .flat_map(|group| group.bindings)
-            .flat_map(|binding| binding.keys)
+            .flat_map(|group| group.commands)
+            .flat_map(|command| command.binding.keys)
             .copied()
             .collect()
     }
@@ -7098,8 +7098,8 @@ mod tests {
                 &plain
             };
 
-            for binding in group.bindings {
-                for &press in binding.keys {
+            for command in group.commands {
+                for &press in command.binding.keys {
                     assert!(
                         fixtures.iter().any(|state| does_something(state, press)),
                         "{} lists {press:?} and no state responds to it",

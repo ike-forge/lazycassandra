@@ -7,121 +7,135 @@
 //! arm of `handle_key` claims.
 
 use crate::model::{Key, KeyPress};
-use crate::state::Cursor;
+use crate::state::{Cursor, Panel};
 use crate::view::Binding;
 use crate::view::hints::label;
 
-/// One labelled group of bindings.
+/// One labelled group of commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Group {
     pub heading: &'static str,
-    pub bindings: &'static [Binding],
+    pub commands: &'static [Command],
 }
 
-const GLOBAL: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::new(Key::Char('q'))],
-        action: "quit",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('?'))],
-        action: "commands",
-    },
-    Binding {
-        keys: &[KeyPress::ctrl(Key::Char('t'))],
-        action: "choose a theme",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Escape)],
-        action: "dismiss the overlay",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Tab)],
-        action: "next panel",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::BackTab)],
-        action: "previous panel",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('1'))],
-        action: "focus Tables",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('2'))],
-        action: "focus Table DDL",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('3'))],
-        action: "focus Table contents",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('4'))],
-        action: "focus Queries",
-    },
+/// A binding, and what the palette does when `⏎` lands on it.
+///
+/// Executability is the palette's concern and not the hint bar's, so it is
+/// held here rather than on [`Binding`], which both are built from
+/// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Command {
+    pub binding: Binding,
+    pub run: Run,
+}
+
+impl Command {
+    const fn new(keys: &'static [KeyPress], action: &'static str, run: Run) -> Self {
+        Self {
+            binding: Binding { keys, action },
+            run,
+        }
+    }
+}
+
+/// Where a row's key is pressed when the palette runs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Run {
+    /// Against whatever has focus.
+    Here,
+    /// Focus this panel, then press it.
+    In(Panel),
+    /// Not pressed at all: the row means something only inside a mode that is
+    /// not up, and its key means something else outside that mode (design §5).
+    Inert,
+}
+
+const GLOBAL: &[Command] = &[
+    Command::new(&[KeyPress::new(Key::Char('q'))], "quit", Run::Here),
+    Command::new(&[KeyPress::new(Key::Char('?'))], "commands", Run::Here),
+    Command::new(
+        &[KeyPress::ctrl(Key::Char('t'))],
+        "choose a theme",
+        Run::Here,
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Escape)],
+        "dismiss the overlay",
+        Run::Here,
+    ),
+    Command::new(&[KeyPress::new(Key::Tab)], "next panel", Run::Here),
+    Command::new(&[KeyPress::new(Key::BackTab)], "previous panel", Run::Here),
+    Command::new(&[KeyPress::new(Key::Char('1'))], "focus Tables", Run::Here),
+    Command::new(
+        &[KeyPress::new(Key::Char('2'))],
+        "focus Table DDL",
+        Run::Here,
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Char('3'))],
+        "focus Table contents",
+        Run::Here,
+    ),
+    Command::new(&[KeyPress::new(Key::Char('4'))], "focus Queries", Run::Here),
     // The number pressed again is the same key doing the same thing one step
     // further in, so it is listed beside `[`/`]` rather than five times over.
-    Binding {
-        keys: &[KeyPress::new(Key::Char(']')), KeyPress::new(Key::Char('['))],
-        action: "next / prev tab",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('y'))],
-        action: "yank",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('v'))],
-        action: "select rows",
-    },
+    Command::new(
+        &[KeyPress::new(Key::Char(']')), KeyPress::new(Key::Char('['))],
+        "next / prev tab",
+        Run::Here,
+    ),
+    Command::new(&[KeyPress::new(Key::Char('y'))], "yank", Run::Here),
+    Command::new(&[KeyPress::new(Key::Char('v'))], "select rows", Run::Here),
 ];
 
 /// `/` joins the focused panel's own group, not `GLOBAL`: it does nothing in
 /// Queries, where the editor claims it as text before this binding is ever
 /// consulted (panel search design §5.3, §8). `GLOBAL` would assert it works
 /// everywhere, which is false there.
-const SEARCH: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Char('/'))],
-    action: "search this panel",
-}];
+const SEARCH: &[Command] = &[Command::new(
+    &[KeyPress::new(Key::Char('/'))],
+    "search this panel",
+    Run::Here,
+)];
 
-const MOTION: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Down)],
-        action: "down one row",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('k')), KeyPress::new(Key::Up)],
-        action: "up one row",
-    },
+const MOTION: &[Command] = &[
+    Command::new(
+        &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Down)],
+        "down one row",
+        Run::Here,
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Char('k')), KeyPress::new(Key::Up)],
+        "up one row",
+        Run::Here,
+    ),
     // Worded for the movement rather than for what a panel makes of it: the
     // four horizontal keys mean move left / move right, and each panel
     // resolves them in its own vocabulary (docs/shortcuts.md §2). A row per
     // panel repeated the pair under every heading that answers it, which is
     // three rows saying "these keys go sideways" in three wordings.
-    Binding {
-        keys: &[KeyPress::new(Key::Char('h')), KeyPress::new(Key::Left)],
-        action: "left, or fold",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Right)],
-        action: "right, or unfold",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::PageDown), KeyPress::ctrl(Key::Char('d'))],
-        action: "down one screen",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::PageUp), KeyPress::ctrl(Key::Char('u'))],
-        action: "up one screen",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Home)],
-        action: "to the start",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::End)],
-        action: "to the end",
-    },
+    Command::new(
+        &[KeyPress::new(Key::Char('h')), KeyPress::new(Key::Left)],
+        "left, or fold",
+        Run::Here,
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Right)],
+        "right, or unfold",
+        Run::Here,
+    ),
+    Command::new(
+        &[KeyPress::new(Key::PageDown), KeyPress::ctrl(Key::Char('d'))],
+        "down one screen",
+        Run::Here,
+    ),
+    Command::new(
+        &[KeyPress::new(Key::PageUp), KeyPress::ctrl(Key::Char('u'))],
+        "up one screen",
+        Run::Here,
+    ),
+    Command::new(&[KeyPress::new(Key::Home)], "to the start", Run::Here),
+    Command::new(&[KeyPress::new(Key::End)], "to the end", Run::Here),
 ];
 
 // The actions are cut to twenty characters because MIN_W is derived from the
@@ -130,98 +144,106 @@ const MOTION: &[Binding] = &[
 //
 // The horizontal keys are not here: they are `Navigate`'s, and a panel group
 // lists only what that panel alone answers.
-const TABLES: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Enter)],
-    action: "fold/unfold, or read",
-}];
+const TABLES: &[Command] = &[Command::new(
+    &[KeyPress::new(Key::Enter)],
+    "fold/unfold, or read",
+    Run::In(Panel::Tables),
+)];
 
-const CONTENTS: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Char('m'))],
-    action: "cycle selection mode",
-}];
+const CONTENTS: &[Command] = &[Command::new(
+    &[KeyPress::new(Key::Char('m'))],
+    "cycle selection mode",
+    Run::In(Panel::Contents),
+)];
 
 /// The form's own keys. `Tab` and `Esc` also appear under `Global` meaning
 /// something else, exactly as `l`/`h` appear under two panels: the palette may
 /// not omit what a key does somewhere
 /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §2).
-const EXPORT: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::ctrl(Key::Char('e'))],
-        action: "export these rows",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Tab), KeyPress::new(Key::BackTab)],
-        action: "next/previous field",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char(' '))],
-        action: "select, or export",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Escape)],
-        action: "close the form",
-    },
+const EXPORT: &[Command] = &[
+    Command::new(
+        &[KeyPress::ctrl(Key::Char('e'))],
+        "export these rows",
+        Run::In(Panel::Contents),
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Tab), KeyPress::new(Key::BackTab)],
+        "next/previous field",
+        Run::Inert,
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Char(' '))],
+        "select, or export",
+        Run::Inert,
+    ),
+    Command::new(&[KeyPress::new(Key::Escape)], "close the form", Run::Inert),
 ];
 
 // The editor's printable keys are not rows: every one of them types itself,
 // which is the panel's whole rule rather than a list of bindings
 // (docs/shortcuts.md §2). What is listed is what a key does *not* do elsewhere.
-const QUERIES: &[Binding] = &[
-    Binding {
-        keys: &[KeyPress::ctrl(Key::Char('r'))],
-        action: "run the buffer",
-    },
-    Binding {
-        keys: &[KeyPress::ctrl(Key::Char('e'))],
-        action: "open in $EDITOR",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Enter)],
-        action: "split the line",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Backspace), KeyPress::new(Key::Delete)],
-        action: "delete a character",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
-        action: "line start/end",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Escape)],
-        action: "leave the editor",
-    },
+const QUERIES: &[Command] = &[
+    Command::new(
+        &[KeyPress::ctrl(Key::Char('r'))],
+        "run the buffer",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[KeyPress::ctrl(Key::Char('e'))],
+        "open in $EDITOR",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Enter)],
+        "split the line",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Backspace), KeyPress::new(Key::Delete)],
+        "delete a character",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
+        "line start/end",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[KeyPress::new(Key::Escape)],
+        "leave the editor",
+        Run::In(Panel::Queries),
+    ),
 ];
 
 /// Every binding, grouped as the palette lists them.
 pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Global",
-        bindings: GLOBAL,
+        commands: GLOBAL,
     },
     Group {
         heading: "Navigate",
-        bindings: MOTION,
+        commands: MOTION,
     },
     Group {
         heading: "Tables",
-        bindings: TABLES,
+        commands: TABLES,
     },
     Group {
         heading: "Search",
-        bindings: SEARCH,
+        commands: SEARCH,
     },
     Group {
         heading: "Table contents",
-        bindings: CONTENTS,
+        commands: CONTENTS,
     },
     Group {
         heading: "Export",
-        bindings: EXPORT,
+        commands: EXPORT,
     },
     Group {
         heading: "Queries",
-        bindings: QUERIES,
+        commands: QUERIES,
     },
 ];
 
@@ -254,9 +276,9 @@ pub fn rows() -> Vec<CommandRow> {
 
             rule.into_iter()
                 .chain(std::iter::once(CommandRow::Heading(group.heading)))
-                .chain(group.bindings.iter().map(|binding| CommandRow::Command {
-                    keys: label(binding.keys),
-                    action: binding.action,
+                .chain(group.commands.iter().map(|command| CommandRow::Command {
+                    keys: label(command.binding.keys),
+                    action: command.binding.action,
                 }))
         })
         .collect()
@@ -268,11 +290,13 @@ pub fn row_count() -> usize {
     CATALOGUE
         .iter()
         .enumerate()
-        .map(|(index, group)| usize::from(index > 0) + 1 + group.bindings.len())
+        .map(|(index, group)| usize::from(index > 0) + 1 + group.commands.len())
         .sum()
 }
 
-fn is_command(index: usize) -> bool {
+/// The command drawn on row `index`, or `None` for a heading or a rule.
+#[must_use]
+pub fn command_at(index: usize) -> Option<&'static Command> {
     let mut at = 0;
 
     for (group_index, group) in CATALOGUE.iter().enumerate() {
@@ -280,15 +304,20 @@ fn is_command(index: usize) -> bool {
         // sit below this group's first command.
         at += usize::from(group_index > 0);
         if index <= at {
-            return false;
+            return None;
         }
-        at += 1 + group.bindings.len();
+        let first = at + 1;
+        at += 1 + group.commands.len();
         if index < at {
-            return true;
+            return group.commands.get(index - first);
         }
     }
 
-    false
+    None
+}
+
+fn is_command(index: usize) -> bool {
+    command_at(index).is_some()
 }
 
 #[derive(Clone, Copy)]
@@ -411,23 +440,23 @@ mod tests {
     const WIDEST_KEYS: usize = 13;
     const WIDEST_ACTION: usize = 20;
 
-    fn commands() -> Vec<&'static Binding> {
-        CATALOGUE.iter().flat_map(|group| group.bindings).collect()
+    fn commands() -> Vec<&'static Command> {
+        CATALOGUE.iter().flat_map(|group| group.commands).collect()
     }
 
     #[test]
     fn no_command_row_is_wider_than_the_narrowest_palette() {
-        for binding in commands() {
-            let keys = label(binding.keys);
+        for command in commands() {
+            let keys = label(command.binding.keys);
 
             assert!(
                 keys.chars().count() <= WIDEST_KEYS,
                 "{keys:?} is wider than the gutter MIN_W is derived from"
             );
             assert!(
-                binding.action.chars().count() <= WIDEST_ACTION,
+                command.binding.action.chars().count() <= WIDEST_ACTION,
                 "{:?} is longer than the action column MIN_W is derived from",
-                binding.action
+                command.binding.action
             );
         }
     }
@@ -488,7 +517,7 @@ mod tests {
     fn every_group_has_at_least_one_command() {
         for group in CATALOGUE {
             assert!(
-                !group.bindings.is_empty(),
+                !group.commands.is_empty(),
                 "{} is a heading with nothing under it, and `opened` would seat the cursor on it",
                 group.heading
             );
@@ -521,9 +550,10 @@ mod tests {
     #[test]
     fn the_catalogue_lists_search() {
         assert!(
-            commands()
-                .iter()
-                .any(|binding| binding.keys.contains(&KeyPress::new(Key::Char('/')))),
+            commands().iter().any(|command| command
+                .binding
+                .keys
+                .contains(&KeyPress::new(Key::Char('/')))),
             "no row binds /"
         );
     }
@@ -531,9 +561,10 @@ mod tests {
     #[test]
     fn the_catalogue_lists_the_selection_mode_key() {
         assert!(
-            commands()
-                .iter()
-                .any(|binding| binding.keys.contains(&KeyPress::new(Key::Char('m')))),
+            commands().iter().any(|command| command
+                .binding
+                .keys
+                .contains(&KeyPress::new(Key::Char('m')))),
             "no row binds m"
         );
     }
@@ -553,7 +584,7 @@ mod tests {
                     assert!(
                         catalogued
                             .iter()
-                            .any(|binding| binding.keys.contains(press)),
+                            .any(|command| command.binding.keys.contains(press)),
                         "{panel:?} hints at {press:?} and no group lists it"
                     );
                 }
@@ -602,9 +633,15 @@ mod tests {
     #[test]
     fn only_the_shared_group_lists_the_horizontal_keys() {
         for group in CATALOGUE {
-            for binding in group.bindings {
-                let horizontal = binding.keys.contains(&KeyPress::new(Key::Char('h')))
-                    || binding.keys.contains(&KeyPress::new(Key::Char('l')));
+            for command in group.commands {
+                let horizontal = command
+                    .binding
+                    .keys
+                    .contains(&KeyPress::new(Key::Char('h')))
+                    || command
+                        .binding
+                        .keys
+                        .contains(&KeyPress::new(Key::Char('l')));
 
                 assert!(
                     !horizontal || group.heading == "Navigate",
@@ -703,6 +740,94 @@ mod tests {
                 !matches!(rows()[panel.selected()], CommandRow::Heading(_)),
                 "paging up by {height} landed on a heading"
             );
+        }
+    }
+
+    #[test]
+    fn a_row_that_belongs_to_a_panel_says_which() {
+        let group = |heading: &str| {
+            CATALOGUE
+                .iter()
+                .find(|group| group.heading == heading)
+                .unwrap_or_else(|| panic!("no {heading} group"))
+        };
+
+        assert!(
+            group("Global")
+                .commands
+                .iter()
+                .all(|command| command.run == Run::Here),
+            "a global binding acts wherever focus is"
+        );
+        assert!(
+            group("Navigate")
+                .commands
+                .iter()
+                .all(|command| command.run == Run::Here),
+            "each panel resolves a motion in its own vocabulary"
+        );
+        assert!(
+            group("Tables")
+                .commands
+                .iter()
+                .all(|command| command.run == Run::In(Panel::Tables))
+        );
+        assert!(
+            group("Table contents")
+                .commands
+                .iter()
+                .all(|command| command.run == Run::In(Panel::Contents))
+        );
+        assert!(
+            group("Queries")
+                .commands
+                .iter()
+                .all(|command| command.run == Run::In(Panel::Queries))
+        );
+    }
+
+    /// The form's `tab`, `space` and `esc` mean what they say only while the
+    /// form is up, and mean something else outside it. `ctrl-e` is what opens
+    /// it, and is the one row in the group that can be run from a palette.
+    #[test]
+    fn the_export_form_rows_are_documentation_rather_than_commands() {
+        let export = CATALOGUE
+            .iter()
+            .find(|group| group.heading == "Export")
+            .expect("no Export group");
+
+        for command in export.commands {
+            let expected = if command.binding.keys == [KeyPress::ctrl(Key::Char('e'))] {
+                Run::In(Panel::Contents)
+            } else {
+                Run::Inert
+            };
+
+            assert_eq!(command.run, expected, "{}", command.binding.action);
+        }
+    }
+
+    #[test]
+    fn a_row_index_resolves_to_the_command_drawn_on_it() {
+        let rows = rows();
+
+        for (index, row) in rows.iter().enumerate() {
+            match row {
+                CommandRow::Command { keys, action, .. } => {
+                    let command = command_at(index).unwrap_or_else(|| {
+                        panic!("row {index} draws a command and resolves to none")
+                    });
+
+                    assert_eq!(&label(command.binding.keys), keys);
+                    assert_eq!(command.binding.action, *action);
+                }
+                CommandRow::Heading(_) | CommandRow::Separator => {
+                    assert!(
+                        command_at(index).is_none(),
+                        "row {index} is not a command and resolves to one"
+                    );
+                }
+            }
         }
     }
 }
