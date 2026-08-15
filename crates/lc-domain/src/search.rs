@@ -28,7 +28,7 @@ impl Search {
 
         Some(Self {
             term: raw.to_owned(),
-            folded: raw.to_lowercase(),
+            folded: raw.chars().flat_map(char::to_lowercase).collect(),
         })
     }
 
@@ -286,6 +286,15 @@ mod tests {
         // Cell values are whatever the cluster stored, so `to_lowercase`
         // rather than `to_ascii_lowercase` (design §2).
         assert!(Search::new("é").expect("non-empty").matches("CAFÉ"));
+    }
+
+    #[test]
+    fn the_term_and_the_haystack_fold_the_same_way() {
+        // `str::to_lowercase` is context-sensitive: a trailing Greek sigma
+        // folds to the final form `ς` rather than `σ`. Folding the term
+        // per char, like the haystack already is, keeps the two in the one
+        // mechanism so a term ending in `Σ` still finds it mid-word.
+        assert!(Search::new("ΟΣ").expect("non-empty").matches("ΟΔΟΣ"));
     }
 
     #[test]
