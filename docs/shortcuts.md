@@ -34,6 +34,7 @@ panel that takes text (§2).
 | `Shift-Tab` | Focus the previous panel. |
 | `1`¹ | Focus Tables. |
 | `2`¹ | Focus DDL. Pressed again, its next tab. |
+| `2`¹ | Focus Table columns — the same key, one tab further in. |
 | `3`¹ | Focus Table contents. |
 | `4`¹ | Focus Queries. |
 | `]`¹ | The focused panel's next tab. |
@@ -83,7 +84,11 @@ reading `[2]-` has been told the whole binding.
 A number focuses its panel. Pressed again — that is, pressed while its panel
 already has focus — it steps to the panel's next tab, wrapping. The DDL panel
 is the only one with tabs today, so `2` `2` reaches the Columns tab and a third
-`2` comes back; `1` `1` stays on Tables. `]` and `[` do the same walk forwards
+`2` comes back; `1` `1` stays on Tables. The palette says so directly: `2`
+takes two rows, one per tab, one under the other. The general rule stays with
+`]`/`[`, but a reader who has not met those keys yet learns from the repetition
+that the number pressed again goes somewhere — which is how the tabs are found
+without reading this file (vision.md §4, principle 1). `]` and `[` do the same walk forwards
 and backwards from the focused panel, for a hand that learnt them in lazygit;
 on a panel with one tab they do nothing.
 

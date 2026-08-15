@@ -51,6 +51,13 @@ const GLOBAL: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('2'))],
         action: "focus Table DDL",
     },
+    // The one panel with a second tab names it, because the pairing is what
+    // teaches the rule: two rows over the same key, and a reader who never
+    // presses `]` still learns that `2` again reaches the Columns tab.
+    Binding {
+        keys: &[KeyPress::new(Key::Char('2'))],
+        action: "focus Table columns",
+    },
     Binding {
         keys: &[KeyPress::new(Key::Char('3'))],
         action: "focus Table contents",
@@ -59,8 +66,9 @@ const GLOBAL: &[Binding] = &[
         keys: &[KeyPress::new(Key::Char('4'))],
         action: "focus Queries",
     },
-    // The number pressed again is the same key doing the same thing one step
-    // further in, so it is listed beside `[`/`]` rather than five times over.
+    // The rule itself — a number pressed again steps one tab further in —
+    // lives here rather than under all five numbers: only the DDL panel has a
+    // tab to reach today, and only that press is spelled out above.
     Binding {
         keys: &[KeyPress::new(Key::Char(']')), KeyPress::new(Key::Char('['))],
         action: "next / prev tab",
@@ -440,6 +448,32 @@ mod tests {
                 action: "run the buffer",
             }),
             "the palette claims to be complete, and ctrl-r is the one binding no key types"
+        );
+    }
+
+    /// The second press is a row of its own, directly under the first: a
+    /// reader who never presses `]` still learns that `2` reaches the Columns
+    /// tab, and the pairing only teaches it while the two rows stay adjacent
+    /// (docs/shortcuts.md §1).
+    #[test]
+    fn the_panel_number_names_the_tab_its_second_press_reaches() {
+        let rows = rows();
+        let ddl = rows
+            .iter()
+            .position(|row| {
+                *row == CommandRow::Command {
+                    keys: "2".to_owned(),
+                    action: "focus Table DDL",
+                }
+            })
+            .expect("no row focuses the DDL panel");
+
+        assert_eq!(
+            rows[ddl + 1],
+            CommandRow::Command {
+                keys: "2".to_owned(),
+                action: "focus Table columns",
+            }
         );
     }
 
