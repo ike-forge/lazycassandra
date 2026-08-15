@@ -236,11 +236,12 @@ fn prefixed(icon: &str, text: &str, width: usize) -> String {
 
 /// `style` patched onto both the line's own style and each of its spans'.
 ///
-/// A column line carries its colour on the [`Line`] itself (`Line::styled`
-/// with an unstyled span), while a property line with a name and a value puts
-/// it on the spans instead, so the name and value can differ
-/// (`property_lines`). Patching only one of the two would lose the token
-/// colour for whichever row shape uses the other.
+/// Every row shape builds its spans through [`crate::highlight::spans`] now,
+/// so a matched fragment can carry [`Token::Match`] distinct from the rest of
+/// the line — the colour lives on the spans, not on the line as a whole.
+/// Patching the line's own style too still matters: ratatui falls back to it
+/// past the end of the widths a line's spans account for, which `patched`
+/// itself has no way to know.
 fn patched(mut line: Line<'static>, style: Style) -> Line<'static> {
     line.style = line.style.patch(style);
     for span in &mut line.spans {
