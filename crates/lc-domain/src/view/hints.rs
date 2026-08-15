@@ -1,7 +1,7 @@
 //! What the focused panel responds to, as the bar will say it.
 
 use crate::model::{Key, KeyPress};
-use crate::search::Filtered;
+use crate::search::Searched;
 use crate::state::{Overlay, Panel, State};
 
 /// A binding, keyed by the presses `handle_key` actually matches on.
@@ -143,7 +143,7 @@ const SEARCH_GLOBAL: &[Binding] = &[
 ];
 
 /// `esc` is named only where pressing it unconditionally does something
-/// (hint bar design §3). With a filter applied, it clears one — which is
+/// (hint bar design §3). With a search applied, it clears one — which is
 /// what keeps clearing discoverable (panel search design §5.3).
 const CLEAR: Binding = Binding {
     keys: &[KeyPress::new(Key::Escape)],
@@ -227,8 +227,8 @@ pub(crate) fn bar(state: &State) -> HintBar {
             ..rendered(binding)
         })
         .collect();
-    let filtered = Filtered::of(state.focus()).is_some_and(|target| state.filter(target).is_some());
-    if filtered || selected(state) {
+    let searched = Searched::of(state.focus()).is_some_and(|target| state.search(target).is_some());
+    if searched || selected(state) {
         panel.push(rendered(&CLEAR));
     }
 
@@ -242,7 +242,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
 /// Whether the focused panel is carrying a live range. A hint must be true in
 /// the frame it is drawn in, and under a live range `esc` unconditionally
 /// clears it (docs/shortcuts.md §2) — the same rule that already puts `esc`
-/// on the bar for a panel carrying a filter.
+/// on the bar for a panel carrying a search.
 fn selected(state: &State) -> bool {
     match state.focus() {
         Panel::Tables => state.tables.selection.is_active(),
@@ -327,7 +327,7 @@ fn key_name(key: Key) -> String {
 mod tests {
     use super::*;
     use crate::commands::CommandsPanel;
-    use crate::search::{Filter, Filtered, Prompt};
+    use crate::search::{Prompt, Search, Searched};
     use crate::state::{Cursor, Geometry, Overlay, Panel, State};
     use crate::theme::ThemeChoice;
 
@@ -520,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bar_names_search_in_every_panel_that_can_hold_a_filter() {
+    fn the_bar_names_search_in_every_panel_that_can_hold_a_search() {
         for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
             let mut state = fits();
             state.focus_on(panel);
@@ -541,12 +541,12 @@ mod tests {
     }
 
     #[test]
-    fn the_bar_names_esc_clear_only_where_a_filter_is_applied() {
+    fn the_bar_names_esc_clear_only_where_a_search_is_applied() {
         let mut state = fits();
         state.focus_on(Panel::Tables);
         assert!(bar(&state).panel.iter().all(|hint| hint.action != "clear"));
 
-        state.apply_filter(Filtered::Tables, Filter::new("o"));
+        state.apply_search(Searched::Tables, Search::new("o"));
 
         assert!(
             bar(&state)
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn the_bar_names_what_the_prompt_responds_to() {
         let mut state = fits();
-        state.overlay = Some(Overlay::Search(Prompt::opened(Filtered::Tables, None)));
+        state.overlay = Some(Overlay::Search(Prompt::opened(Searched::Tables, None)));
 
         let bar = bar(&state);
 
@@ -679,7 +679,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter() {
+    fn the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_search() {
         let mut state = fits();
         state.focus_on(Panel::Tables);
 

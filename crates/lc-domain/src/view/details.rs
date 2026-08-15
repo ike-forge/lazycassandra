@@ -10,7 +10,7 @@ use crate::ddl::DdlTab;
 use crate::model::{
     ClassKind, ClassOption, ClusteringOrder, Column, Keyspace, Replication, Setting, Table,
 };
-use crate::search::Filter;
+use crate::search::Search;
 use crate::state::{Panel, State};
 use crate::style::Token;
 use crate::tree::Node;
@@ -125,7 +125,7 @@ pub enum DetailRow {
     /// the cluster reported.
     ///
     /// The map is kept alongside as `raw`: it is what a yank owes the
-    /// clipboard and what a filter has to match, neither of which may be
+    /// clipboard and what a search has to match, neither of which may be
     /// narrowed to the abbreviation the panel happens to draw.
     ClassProperty {
         name: String,
@@ -204,10 +204,10 @@ pub(super) fn body(state: &State) -> PanelBody {
     }
 }
 
-/// What the Tables cursor is on, described and narrowed by the panel's filter
+/// What the Tables cursor is on, described and narrowed by the panel's search
 /// — or nothing, when the cursor is on nothing.
 ///
-/// The filter is applied here rather than in [`body`] so that
+/// The search is applied here rather than in [`body`] so that
 /// [`ddl_rows`](super::ddl_rows) counts the rows the panel actually draws: the
 /// cursor is clamped against that count, and a count of rows nobody can see
 /// would let it walk off the end of a filtered panel (design §3.3).
@@ -227,8 +227,8 @@ pub(super) fn of(state: &State) -> Option<Details> {
         (Node::Keyspace { keyspace, .. }, _) => of_keyspace(keyspace),
     };
 
-    if let Some(filter) = state.ddl.filter() {
-        details.retain(filter);
+    if let Some(search) = state.ddl.search() {
+        details.retain(search);
     }
 
     Some(details)
@@ -275,9 +275,9 @@ fn describes_a_table(state: &State) -> bool {
 fn scrolled(state: &State, details: Details) -> PanelBody {
     if details.sections.is_empty() {
         // Every subject the panel describes has identity rows of its own, so a
-        // filter is the only thing that can empty it.
-        return state.ddl.filter().map_or(PanelBody::Blank, |filter| {
-            waiting(&format!("No property matches \"{}\"", filter.as_str()))
+        // search is the only thing that can empty it.
+        return state.ddl.search().map_or(PanelBody::Blank, |search| {
+            waiting(&format!("No property matches \"{}\"", search.as_str()))
         });
     }
 
@@ -301,9 +301,9 @@ impl Details {
     /// Headings are not matched: the search is over properties and values, and
     /// a heading match would resurrect a whole group whose rows all missed
     /// (design §4.2).
-    fn retain(&mut self, filter: &Filter) {
+    fn retain(&mut self, search: &Search) {
         for section in &mut self.sections {
-            section.rows.retain(|row| row.matches(filter));
+            section.rows.retain(|row| row.matches(search));
         }
 
         self.sections.retain(|section| !section.rows.is_empty());
@@ -311,19 +311,19 @@ impl Details {
 }
 
 impl DetailRow {
-    fn matches(&self, filter: &Filter) -> bool {
+    fn matches(&self, search: &Search) -> bool {
         match self {
             Self::KeyColumn { name, cql_type, .. } | Self::Column { name, cql_type, .. } => {
-                filter.matches(name) || filter.matches(cql_type)
+                search.matches(name) || search.matches(cql_type)
             }
-            Self::Property { name, value } => filter.matches(name) || filter.matches(value),
+            Self::Property { name, value } => search.matches(name) || search.matches(value),
             // Against the map as reported, not against the abbreviation: a
             // term the panel no longer draws is still a term the option holds.
-            Self::ClassProperty { name, raw, .. } => filter.matches(name) || filter.matches(raw),
+            Self::ClassProperty { name, raw, .. } => search.matches(name) || search.matches(raw),
             // The label is not matched, for the reason a section heading is
             // not: `Keyspace` and `Table` are the same two words on every
-            // table, so a filter over them narrows nothing.
-            Self::Identity { name, .. } => filter.matches(name),
+            // table, so a search over them narrows nothing.
+            Self::Identity { name, .. } => search.matches(name),
         }
     }
 }
@@ -522,7 +522,7 @@ mod tests {
     use crate::model::{
         ClusteringColumn, Column, ConnId, DbError, PrimaryKey, Replication, Schema, TableOptions,
     };
-    use crate::search::{Filter, Filtered};
+    use crate::search::{Search, Searched};
     use crate::state::{Connection, ConnectionState, SchemaState, State};
     use crate::tree::tests_support::{options, schema_of};
 
@@ -745,9 +745,9 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_narrows_the_columns_tab_too() {
+    fn a_search_narrows_the_columns_tab_too() {
         let mut state = columns_tab(&browsing(every_kind()));
-        state.apply_filter(Filtered::Ddl, Filter::new("timeuuid"));
+        state.apply_search(Searched::Ddl, Search::new("timeuuid"));
 
         assert_eq!(
             details(&state).rows().cloned().collect::<Vec<_>>(),
@@ -987,7 +987,7 @@ mod tests {
             "compression",
             "{chunk_length_in_kb: 16, class: org.apache.cassandra.io.compress.LZ4Compressor}",
         )]));
-        state.apply_filter(Filtered::Ddl, Filter::new("io.compress"));
+        state.apply_search(Searched::Ddl, Search::new("io.compress"));
 
         assert_eq!(
             section(&details(&state), "Options").rows.len(),
@@ -1119,15 +1119,15 @@ mod tests {
         assert_eq!(offset, 6);
     }
 
-    fn filtered_ddl(term: &str) -> State {
+    fn searched_ddl(term: &str) -> State {
         let mut state = browsing(orders());
-        state.apply_filter(Filtered::Ddl, Filter::new(term));
+        state.apply_search(Searched::Ddl, Search::new(term));
         state
     }
 
     #[test]
     fn a_property_matches_on_its_name() {
-        let details = details(&filtered_ddl("gc_grace"));
+        let details = details(&searched_ddl("gc_grace"));
 
         assert_eq!(
             section(&details, "Options").rows,
@@ -1143,7 +1143,7 @@ mod tests {
     fn a_property_matches_on_its_value() {
         // "Order history" is the comment's value; the property's name does not
         // contain the term.
-        let details = details(&filtered_ddl("Order history"));
+        let details = details(&searched_ddl("Order history"));
 
         assert_eq!(
             section(&details, "Options").rows,
@@ -1157,7 +1157,7 @@ mod tests {
 
     #[test]
     fn a_column_matches_on_its_name() {
-        let details = details(&filtered_ddl("customer_id"));
+        let details = details(&searched_ddl("customer_id"));
 
         assert_eq!(
             headings(&details),
@@ -1177,7 +1177,7 @@ mod tests {
 
     #[test]
     fn a_column_matches_on_its_cql_type() {
-        let details = details(&filtered_ddl("timeuuid"));
+        let details = details(&searched_ddl("timeuuid"));
 
         assert_eq!(
             headings(&details),
@@ -1196,8 +1196,8 @@ mod tests {
     }
 
     #[test]
-    fn a_section_emptied_by_the_filter_disappears() {
-        let details = details(&filtered_ddl("customer_id"));
+    fn a_section_emptied_by_the_search_disappears() {
+        let details = details(&searched_ddl("customer_id"));
 
         assert_eq!(
             headings(&details),
@@ -1210,7 +1210,7 @@ mod tests {
     fn a_heading_is_not_matched() {
         // "Partition Key" is a heading; no row in that section carries the word.
         assert_eq!(
-            ddl_body(&filtered_ddl("Partition")),
+            ddl_body(&searched_ddl("Partition")),
             PanelBody::Notice {
                 text: "No property matches \"Partition\"".to_owned(),
                 token: Some(Token::Muted),
@@ -1222,7 +1222,7 @@ mod tests {
     #[test]
     fn nothing_matching_says_which_term_found_nothing() {
         assert_eq!(
-            ddl_body(&filtered_ddl("zzz")),
+            ddl_body(&searched_ddl("zzz")),
             PanelBody::Notice {
                 text: "No property matches \"zzz\"".to_owned(),
                 token: Some(Token::Muted),
@@ -1231,11 +1231,11 @@ mod tests {
     }
 
     #[test]
-    fn an_unfiltered_table_keeps_its_existing_behaviour() {
+    fn an_unsearched_table_keeps_its_existing_behaviour() {
         assert_eq!(
             headings(&details(&browsing(orders()))),
             ["Partition Key", "Clustering Key", "Options"],
-            "no filter applied means nothing is retained away"
+            "no search applied means nothing is retained away"
         );
     }
 

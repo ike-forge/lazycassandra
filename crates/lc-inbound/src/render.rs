@@ -207,10 +207,10 @@ fn panel_block(
     // Right-aligned on the top border, and dropped whole when the border
     // cannot hold both: a truncated term is a lie about what is applied
     // (design §5.1). Drawn on every panel that has one, focused or not — the
-    // marker is the only place a filter that survives a focus change still
+    // marker is the only place a search that survives a focus change still
     // says so.
     let marker = panel
-        .filter
+        .search
         .as_ref()
         .map(|term| format!("/{term}"))
         .filter(|marker| marker_fits(area.width, &strip, marker));
@@ -582,7 +582,7 @@ mod tests {
     };
     use lc_domain::pointer::Click;
     use lc_domain::posture::Posture;
-    use lc_domain::search::{Filter, Filtered, Prompt};
+    use lc_domain::search::{Prompt, Search, Searched};
     use lc_domain::state::{
         Connection, ConnectionState, Flash, Geometry, Message, Overlay, Panel, Range, Ranges,
         SchemaState, Selection,
@@ -807,10 +807,10 @@ mod tests {
             .collect();
 
         assert!(bars[0].contains("⏎ open"), "Tables opens: {:?}", bars[0]);
-        assert!(bars[1].contains("/ search"), "Ddl filters: {:?}", bars[1]);
+        assert!(bars[1].contains("/ search"), "Ddl searches: {:?}", bars[1]);
         assert!(
             bars[2].contains("/ search"),
-            "Contents filters: {:?}",
+            "Contents searches: {:?}",
             bars[2]
         );
         assert!(
@@ -1641,7 +1641,7 @@ mod tests {
     #[test]
     fn a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row() {
         // Row 0 (not selected) and row 1 (the cursor's row) each hold one
-        // cell the filter matches and one it does not — the composed case
+        // cell the search matches and one it does not — the composed case
         // is row 1, where `Token::Match` is drawn under `Token::Selected`'s
         // background bar and still has to be tellable apart from the id
         // beside it.
@@ -1654,7 +1654,7 @@ mod tests {
         ));
         state.contents.cursor.go_to(1, 2);
         state.contents.scroll.follow(1, 5);
-        state.apply_filter(Filtered::Contents, Filter::new("ali"));
+        state.apply_search(Searched::Contents, Search::new("ali"));
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
@@ -1742,7 +1742,7 @@ mod tests {
             &["id", "value", "note"],
             &[&[CqlValue::Int(1), CqlValue::Null, text("null")]],
         ));
-        state.apply_filter(Filtered::Contents, Filter::new("null"));
+        state.apply_search(Searched::Contents, Search::new("null"));
 
         let buffer = draw_state(70, 12, &state);
         // Shifted right by the bar, the row-number gutter and their spacing:
@@ -2802,7 +2802,7 @@ mod tests {
         // one. The title takes it, so the border does not read as two
         // alignments at once.
         let mut state = browsing(&["shop"], 0);
-        state.apply_filter(Filtered::Tables, Filter::new("or"));
+        state.apply_search(Searched::Tables, Search::new("or"));
 
         let buffer = draw_state(40, 12, &state);
         let border = row(&buffer, 0);
@@ -3106,19 +3106,19 @@ mod tests {
         );
     }
 
-    /// The cursor counts the rows the filter *left*, and the span the frame
+    /// The cursor counts the rows the search *left*, and the span the frame
     /// reports has to index the same sequence — `details::of` retains before
     /// it returns, so one projection feeds both the body drawn here and the
     /// clamp in the domain. Pulling the retain back out would move the two
     /// apart with nothing else complaining.
     #[test]
-    fn the_reported_span_indexes_the_rows_a_filter_left() {
+    fn the_reported_span_indexes_the_rows_a_search_left() {
         let mut state = describing(orders());
         state.focus_on(Panel::Ddl);
         // The table's own name, `order_date` and `order_id` by name, and
         // `comment` by its value; the keyspace and the partition key's column
         // miss, so the partition section goes with it.
-        state.apply_filter(Filtered::Ddl, Filter::new("or"));
+        state.apply_search(Searched::Ddl, Search::new("or"));
         let rows = lc_domain::view::ddl_rows(&state);
         // Index 3 is `comment`, the last of the four — spelt out rather than
         // taken from `rows`, so a `rows` that stopped counting the filtered
@@ -3953,7 +3953,7 @@ mod tests {
         // a cursor of its own, on the bar row — still not the editor's, for
         // the same reason as before (design §5.2).
         let mut state = with_query("SELECT", Panel::Queries);
-        state.overlay = Some(Overlay::Search(Prompt::opened(Filtered::Tables, None)));
+        state.overlay = Some(Overlay::Search(Prompt::opened(Searched::Tables, None)));
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
@@ -3991,9 +3991,9 @@ mod tests {
     }
 
     #[test]
-    fn a_panel_wears_the_filter_applied_to_it() {
+    fn a_panel_wears_the_search_applied_to_it() {
         let mut state = browsing(&["shop"], 0);
-        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+        state.apply_search(Searched::Tables, Search::new("ord"));
 
         let buffer = draw_state(80, 24, &state);
 
@@ -4011,7 +4011,7 @@ mod tests {
         // default focus on Tables, isolates the marker's own style from that
         // ambient one.
         let mut state = browsing(&["shop"], 0);
-        state.apply_filter(Filtered::Ddl, Filter::new("ord"));
+        state.apply_search(Searched::Ddl, Search::new("ord"));
 
         let buffer = draw_state(80, 24, &state);
         let (fg, _bg, modifier) = style_of_first(&buffer, "/ord");
@@ -4029,9 +4029,9 @@ mod tests {
     #[test]
     fn the_marker_is_dropped_rather_than_truncated() {
         let mut state = browsing(&["shop"], 0);
-        state.apply_filter(
-            Filtered::Tables,
-            Filter::new("a_very_long_search_term_indeed"),
+        state.apply_search(
+            Searched::Tables,
+            Search::new("a_very_long_search_term_indeed"),
         );
 
         let buffer = draw_state(40, 24, &state);
@@ -4052,7 +4052,7 @@ mod tests {
         // with a gap and no dash between them, nothing is left over for an
         // inset, and one column narrower drops the marker.
         let mut state = browsing(&["shop"], 0);
-        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+        state.apply_search(Searched::Tables, Search::new("ord"));
 
         let buffer = draw_state(40, 24, &state);
         let border = row(&buffer, top_border(&buffer, "Tables").1);
@@ -4065,12 +4065,12 @@ mod tests {
 
     #[test]
     fn an_unfocused_panel_still_wears_its_marker() {
-        // The marker's whole point: a filter that survives a focus change
+        // The marker's whole point: a search that survives a focus change
         // has to say so from the panel it is applied to, not from the bar,
         // which only ever describes the focused panel (design §5.1).
         let mut state = browsing(&["shop"], 0);
         state.focus_on(Panel::Contents);
-        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+        state.apply_search(Searched::Tables, Search::new("ord"));
 
         let buffer = draw_state(80, 24, &state);
 
@@ -4082,7 +4082,7 @@ mod tests {
 
     #[test]
     fn an_open_prompt_owns_the_bar_row() {
-        let mut prompt = Prompt::opened(Filtered::Tables, None);
+        let mut prompt = Prompt::opened(Searched::Tables, None);
         prompt.push('o');
         prompt.push('r');
         let mut state = State::default();
@@ -4104,7 +4104,7 @@ mod tests {
 
     #[test]
     fn the_prompts_cursor_sits_after_the_query() {
-        let mut prompt = Prompt::opened(Filtered::Tables, None);
+        let mut prompt = Prompt::opened(Searched::Tables, None);
         prompt.push('o');
         prompt.push('r');
         let mut state = State::default();
@@ -4125,7 +4125,7 @@ mod tests {
 
     #[test]
     fn the_prompts_cursor_stays_inside_the_frame_when_the_query_fills_the_bar() {
-        let mut prompt = Prompt::opened(Filtered::Tables, None);
+        let mut prompt = Prompt::opened(Searched::Tables, None);
         for c in "a query long enough to overrun a narrow terminal's hint bar".chars() {
             prompt.push(c);
         }
@@ -4144,7 +4144,7 @@ mod tests {
 
     #[test]
     fn the_prompts_query_carries_a_theme_token() {
-        let mut prompt = Prompt::opened(Filtered::Tables, None);
+        let mut prompt = Prompt::opened(Searched::Tables, None);
         prompt.push('o');
         let mut state = State::default();
         state.overlay = Some(Overlay::Search(prompt));

@@ -15,7 +15,7 @@ use crate::editor::Editor;
 use crate::export::ExportForm;
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::search::{Filter, Filtered, Prompt};
+use crate::search::{Prompt, Search, Searched};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
 use crate::tree::TablesPanel;
@@ -1280,27 +1280,27 @@ impl State {
             }
     }
 
-    /// The filter applied to `target`, if any.
+    /// The search applied to `target`, if any.
     #[must_use]
-    pub fn filter(&self, target: Filtered) -> Option<&Filter> {
+    pub fn search(&self, target: Searched) -> Option<&Search> {
         match target {
-            Filtered::Tables => self.tables.filter(),
-            Filtered::Ddl => self.ddl.filter(),
-            Filtered::Contents => self.contents.filter(),
+            Searched::Tables => self.tables.search(),
+            Searched::Ddl => self.ddl.search(),
+            Searched::Contents => self.contents.search(),
         }
     }
 
-    /// Applies `filter` to `target`, and repairs what it invalidates.
+    /// Applies `search` to `target`, and repairs what it invalidates.
     ///
-    /// Not a `&mut Option<Filter>` handed out: repairing what a filter
+    /// Not a `&mut Option<Search>` handed out: repairing what a search
     /// invalidates — a cursor left pointing past the rows the panel now has —
     /// belongs here rather than to every caller that sets one. The Tables
-    /// cursor clamp lands with the filtered tree it needs. A filter renumbers
+    /// cursor clamp lands with the narrowed tree it needs. A search renumbers
     /// the rows under a range, so the repair it owes includes dropping one.
-    pub fn apply_filter(&mut self, target: Filtered, filter: Option<Filter>) {
+    pub fn apply_search(&mut self, target: Searched, search: Option<Search>) {
         match target {
-            Filtered::Tables => {
-                self.tables.set_filter(filter);
+            Searched::Tables => {
+                self.tables.set_search(search);
                 let rows = self.schema().map(|schema| self.tables.rows(schema).len());
                 if let Some(rows) = rows {
                     self.tables.cursor.clamp_to(rows);
@@ -1312,19 +1312,19 @@ impl State {
             // counted in wrapped lines, a width-dependent count only the
             // renderer can produce, so `Msg::Measured` clamps it against a real
             // count; clamping here would clamp against the previous frame's,
-            // which is wrong exactly when the filter just shrank the body. Its
+            // which is wrong exactly when the search just shrank the body. Its
             // cursor counts rows, and `update`'s epilogue clamps it on every
-            // message against `view::ddl_rows`, which counts the *filtered*
+            // message against `view::ddl_rows`, which counts the *narrowed*
             // rows — so the clamp lands on the same keystroke that applied the
-            // filter, with no line count involved.
-            Filtered::Ddl => {
-                self.ddl.set_filter(filter);
+            // search, with no line count involved.
+            Searched::Ddl => {
+                self.ddl.set_search(search);
                 self.ddl.selection.clear();
             }
-            // No range repair here either: this filter only flags matching
+            // No range repair here either: this search only flags matching
             // cells and never renumbers a row, so a range still addresses
-            // exactly what it did before the filter changed.
-            Filtered::Contents => self.contents.set_filter(filter),
+            // exactly what it did before the search changed.
+            Searched::Contents => self.contents.set_search(search),
         }
     }
 }
@@ -1334,7 +1334,7 @@ mod tests {
     use super::*;
     use crate::model::{ConnId, DbError, Schema};
     use crate::posture::Posture;
-    use crate::search::{Filter, Filtered};
+    use crate::search::{Search, Searched};
 
     #[test]
     fn all_panels_are_listed_in_column_order_and_none_is_missing() {
@@ -1771,29 +1771,29 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_is_read_back_from_the_panel_it_was_applied_to() {
+    fn a_search_is_read_back_from_the_panel_it_was_applied_to() {
         let mut state = State::default();
 
-        state.apply_filter(Filtered::Ddl, Filter::new("ttl"));
+        state.apply_search(Searched::Ddl, Search::new("ttl"));
 
-        assert_eq!(state.filter(Filtered::Ddl).map(Filter::as_str), Some("ttl"));
-        assert_eq!(state.filter(Filtered::Tables), None);
-        assert_eq!(state.filter(Filtered::Contents), None);
+        assert_eq!(state.search(Searched::Ddl).map(Search::as_str), Some("ttl"));
+        assert_eq!(state.search(Searched::Tables), None);
+        assert_eq!(state.search(Searched::Contents), None);
     }
 
     #[test]
-    fn the_three_filters_are_independent() {
+    fn the_three_searches_are_independent() {
         let mut state = State::default();
 
-        state.apply_filter(Filtered::Tables, Filter::new("ord"));
-        state.apply_filter(Filtered::Contents, Filter::new("null"));
+        state.apply_search(Searched::Tables, Search::new("ord"));
+        state.apply_search(Searched::Contents, Search::new("null"));
 
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("ord")
         );
         assert_eq!(
-            state.filter(Filtered::Contents).map(Filter::as_str),
+            state.search(Searched::Contents).map(Search::as_str),
             Some("null")
         );
     }
@@ -1801,11 +1801,11 @@ mod tests {
     #[test]
     fn applying_none_clears_the_one_that_was_there() {
         let mut state = State::default();
-        state.apply_filter(Filtered::Tables, Filter::new("ord"));
+        state.apply_search(Searched::Tables, Search::new("ord"));
 
-        state.apply_filter(Filtered::Tables, None);
+        state.apply_search(Searched::Tables, None);
 
-        assert_eq!(state.filter(Filtered::Tables), None);
+        assert_eq!(state.search(Searched::Tables), None);
     }
 
     #[test]

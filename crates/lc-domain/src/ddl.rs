@@ -1,11 +1,11 @@
 //! The DDL panel's state: a cursor over the rows it describes, a
-//! viewport over the lines they wrapped to, and the filter narrowing them.
+//! viewport over the lines they wrapped to, and the search narrowing them.
 //!
 //! A module of its own for the reason [`crate::tree`] and [`crate::contents`]
 //! are ones — per-panel state with its own vocabulary rather than another
 //! field on `State` (architecture.md §11).
 
-use crate::search::Filter;
+use crate::search::Search;
 use crate::state::{Cursor, Scroll, Selection};
 
 /// Which of the panel's two tabs is drawn.
@@ -76,14 +76,14 @@ pub struct DdlPanel {
     /// The rows `v` has selected, if any
     /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
     pub selection: Selection,
-    /// Private for the reason the filter is: a tab change owes a cursor and a
+    /// Private for the reason the search is: a tab change owes a cursor and a
     /// viewport that address the rows of the tab now drawn, and a public field
     /// would let a caller skip that repair.
     tab: DdlTab,
-    /// Private for the reason [`crate::tree::TablesPanel`]'s filter is:
+    /// Private for the reason [`crate::tree::TablesPanel`]'s search is:
     /// setting it is going to owe a repair, and a public field would let a
     /// caller skip it (design §2.1, §2.2).
-    filter: Option<Filter>,
+    search: Option<Search>,
 }
 
 impl DdlPanel {
@@ -114,16 +114,16 @@ impl DdlPanel {
         self.selection.clear();
     }
 
-    /// The filter narrowing the panel's body, if any.
+    /// The search narrowing the panel's body, if any.
     #[must_use]
-    pub fn filter(&self) -> Option<&Filter> {
-        self.filter.as_ref()
+    pub fn search(&self) -> Option<&Search> {
+        self.search.as_ref()
     }
 
-    /// Sets the filter. Not public: [`State::apply_filter`](crate::state::State::apply_filter)
+    /// Sets the search. Not public: [`State::apply_search`](crate::state::State::apply_search)
     /// is the one caller, and the repair a change here owes is its job.
-    pub(crate) fn set_filter(&mut self, filter: Option<Filter>) {
-        self.filter = filter;
+    pub(crate) fn set_search(&mut self, search: Option<Search>) {
+        self.search = search;
     }
 }
 
@@ -213,14 +213,14 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_change_leaves_the_filter_where_it_was() {
-        // The filter is applied to the panel, not to a tab: it narrows
+    fn a_tab_change_leaves_the_search_where_it_was() {
+        // The search is applied to the panel, not to a tab: it narrows
         // whichever rows the panel is drawing, and clearing it is `Esc`'s job.
         let mut panel = DdlPanel::default();
-        panel.set_filter(Filter::new("id"));
+        panel.set_search(Search::new("id"));
 
         panel.show(DdlTab::Columns);
 
-        assert_eq!(panel.filter().map(Filter::as_str), Some("id"));
+        assert_eq!(panel.search().map(Search::as_str), Some("id"));
     }
 }

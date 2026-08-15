@@ -7,7 +7,7 @@
 
 use crate::grid::ColumnScroll;
 use crate::model::{DbError, Page, QueryId};
-use crate::search::Filter;
+use crate::search::Search;
 use crate::state::{Cursor, Scroll, Selection};
 
 /// The Contents panel's own state.
@@ -33,11 +33,11 @@ pub struct ContentsPanel {
     /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
     /// the only ways in are the transitions below.
     state: ContentsState,
-    /// Flags the cells the applied filter matches; the grid keeps every row
+    /// Flags the cells the applied search matches; the grid keeps every row
     /// (design §4.3). Private for uniformity with the other two panels'
-    /// filters, not because setting it here owes a repair — Contents filters
+    /// searches, not because setting it here owes a repair — Contents narrows
     /// nothing, so there is no clamp to skip.
-    filter: Option<Filter>,
+    search: Option<Search>,
 }
 
 /// Which of the grid's two cursors is painted, and how.
@@ -197,19 +197,19 @@ impl ContentsPanel {
         &self.state
     }
 
-    /// The filter flagging matching cells, if any. Narrows nothing: every row
+    /// The search flagging matching cells, if any. Narrows nothing: every row
     /// the cluster returned is still drawn (design §4.3).
     #[must_use]
-    pub fn filter(&self) -> Option<&Filter> {
-        self.filter.as_ref()
+    pub fn search(&self) -> Option<&Search> {
+        self.search.as_ref()
     }
 
-    /// Sets the filter. Not public, for uniformity with
-    /// [`crate::tree::TablesPanel::set_filter`]: [`State::apply_filter`](crate::state::State::apply_filter)
+    /// Sets the search. Not public, for uniformity with
+    /// [`crate::tree::TablesPanel::set_search`]: [`State::apply_search`](crate::state::State::apply_search)
     /// is the one caller, and there is no repair this owes — Contents has no
-    /// clamp to keep in step with the filter the way Tables' cursor does.
-    pub(crate) fn set_filter(&mut self, filter: Option<Filter>) {
-        self.filter = filter;
+    /// clamp to keep in step with the search the way Tables' cursor does.
+    pub(crate) fn set_search(&mut self, search: Option<Search>) {
+        self.search = search;
     }
 
     /// The query this panel is waiting on, if any.

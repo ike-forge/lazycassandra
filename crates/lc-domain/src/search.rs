@@ -7,17 +7,17 @@ use crate::state::Panel;
 
 /// A search term that is applied to a panel.
 ///
-/// The invariant is non-emptiness, which is what makes `Option<Filter>` mean
-/// "no filter" — an empty query clears rather than matching everything, and
-/// that follows from [`Filter::new`] rather than from a check anyone has to
+/// The invariant is non-emptiness, which is what makes `Option<Search>` mean
+/// "no search" — an empty query clears rather than matching everything, and
+/// that follows from [`Search::new`] rather than from a check anyone has to
 /// remember (design §2).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Filter {
+pub struct Search {
     term: String,
     folded: String,
 }
 
-impl Filter {
+impl Search {
     #[must_use]
     pub fn new(raw: &str) -> Option<Self> {
         if raw.is_empty() {
@@ -45,20 +45,20 @@ impl Filter {
     }
 }
 
-/// A panel that can hold a filter.
+/// A panel that can hold a search.
 ///
 /// Queries cannot, until it has a normal mode to reach a prompt from (design
-/// §8). Keying a filter off [`Panel`] instead would leave an unreachable
+/// §8). Keying a search off [`Panel`] instead would leave an unreachable
 /// `Panel::Queries` arm in every accessor; this makes them total, and makes
 /// the compiler list them when that slice lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Filtered {
+pub enum Searched {
     Tables,
     Ddl,
     Contents,
 }
 
-impl Filtered {
+impl Searched {
     #[must_use]
     pub const fn of(panel: Panel) -> Option<Self> {
         match panel {
@@ -86,18 +86,18 @@ impl Filtered {
 /// comment already makes about a message and a palette (design §1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prompt {
-    target: Filtered,
+    target: Searched,
     query: String,
     /// What was applied before this prompt opened, and what `esc` restores.
-    /// Live filtering overwrites the target's filter on every keystroke, so
+    /// Live search overwrites the target's search on every keystroke, so
     /// cancelling needs something to put back (design §3).
-    previous: Option<Filter>,
+    previous: Option<Search>,
 }
 
 impl Prompt {
-    /// Opens over `target`, remembering the filter it is about to overwrite.
+    /// Opens over `target`, remembering the search it is about to overwrite.
     #[must_use]
-    pub fn opened(target: Filtered, previous: Option<Filter>) -> Self {
+    pub fn opened(target: Searched, previous: Option<Search>) -> Self {
         Self {
             target,
             query: String::new(),
@@ -106,10 +106,10 @@ impl Prompt {
     }
 
     /// Captured at open, not re-read per keystroke: `tab` is inert while a
-    /// prompt is up, so the panel being filtered cannot change under a live
+    /// prompt is up, so the panel being searched cannot change under a live
     /// query (design §3.2).
     #[must_use]
-    pub const fn target(&self) -> Filtered {
+    pub const fn target(&self) -> Searched {
         self.target
     }
 
@@ -119,14 +119,14 @@ impl Prompt {
     }
 
     #[must_use]
-    pub const fn previous(&self) -> Option<&Filter> {
+    pub const fn previous(&self) -> Option<&Search> {
         self.previous.as_ref()
     }
 
     /// What the query now means, for a caller that must apply it.
     #[must_use]
-    pub fn filter(&self) -> Option<Filter> {
-        Filter::new(&self.query)
+    pub fn search(&self) -> Option<Search> {
+        Search::new(&self.query)
     }
 
     pub fn push(&mut self, character: char) {
@@ -143,57 +143,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_empty_query_is_not_a_filter() {
-        assert_eq!(Filter::new(""), None, "an empty filter is what None means");
+    fn an_empty_query_is_not_a_search() {
+        assert_eq!(Search::new(""), None, "an empty search is what None means");
     }
 
     #[test]
     fn matching_ignores_case_in_both_directions() {
-        let filter = Filter::new("ORD").expect("non-empty");
+        let search = Search::new("ORD").expect("non-empty");
 
-        assert!(filter.matches("orders"));
-        assert!(filter.matches("ORDERS"));
-        assert!(Filter::new("ord").expect("non-empty").matches("ORDERS"));
+        assert!(search.matches("orders"));
+        assert!(search.matches("ORDERS"));
+        assert!(Search::new("ord").expect("non-empty").matches("ORDERS"));
     }
 
     #[test]
     fn matching_is_a_substring_anywhere_and_not_a_prefix() {
-        let filter = Filter::new("by").expect("non-empty");
+        let search = Search::new("by").expect("non-empty");
 
-        assert!(filter.matches("orders_by_customer"));
-        assert!(!filter.matches("orders"));
+        assert!(search.matches("orders_by_customer"));
+        assert!(!search.matches("orders"));
     }
 
     #[test]
     fn a_metacharacter_is_matched_literally() {
-        assert!(Filter::new(".*").expect("non-empty").matches("a.*b"));
-        assert!(!Filter::new(".*").expect("non-empty").matches("anything"));
+        assert!(Search::new(".*").expect("non-empty").matches("a.*b"));
+        assert!(!Search::new(".*").expect("non-empty").matches("anything"));
     }
 
     #[test]
     fn folding_reaches_past_ascii() {
         // Cell values are whatever the cluster stored, so `to_lowercase`
         // rather than `to_ascii_lowercase` (design §2).
-        assert!(Filter::new("é").expect("non-empty").matches("CAFÉ"));
+        assert!(Search::new("é").expect("non-empty").matches("CAFÉ"));
     }
 
     #[test]
     fn the_term_is_kept_as_typed_for_the_marker() {
-        assert_eq!(Filter::new("ORD").expect("non-empty").as_str(), "ORD");
+        assert_eq!(Search::new("ORD").expect("non-empty").as_str(), "ORD");
     }
 
     #[test]
-    fn every_panel_but_queries_can_hold_a_filter() {
-        assert_eq!(Filtered::of(Panel::Tables), Some(Filtered::Tables));
-        assert_eq!(Filtered::of(Panel::Ddl), Some(Filtered::Ddl));
-        assert_eq!(Filtered::of(Panel::Contents), Some(Filtered::Contents));
-        assert_eq!(Filtered::of(Panel::Queries), None);
+    fn every_panel_but_queries_can_hold_a_search() {
+        assert_eq!(Searched::of(Panel::Tables), Some(Searched::Tables));
+        assert_eq!(Searched::of(Panel::Ddl), Some(Searched::Ddl));
+        assert_eq!(Searched::of(Panel::Contents), Some(Searched::Contents));
+        assert_eq!(Searched::of(Panel::Queries), None);
     }
 
     #[test]
     fn a_target_names_the_panel_it_came_from() {
         for panel in Panel::ALL {
-            if let Some(target) = Filtered::of(panel) {
+            if let Some(target) = Searched::of(panel) {
                 assert_eq!(target.panel(), panel);
             }
         }

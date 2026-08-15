@@ -14,7 +14,7 @@ use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Sc
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::ports::ExportError;
 use crate::posture::Posture;
-use crate::search::{Filtered, Prompt};
+use crate::search::{Prompt, Searched};
 use crate::state::{
     ConnectionState, Cursor, DiagnosticsPanel, ExportJob, Flash, Geometry, Message, Overlay, Panel,
     Range, Ranges, SchemaState, Scroll, Selection, State,
@@ -823,7 +823,7 @@ fn edit(state: &mut State, key: Key) -> bool {
 /// That no current site can *observe* the difference is incidental: a message
 /// arrives on connect, before a prompt can be open, and `run` gates on Queries
 /// having focus, which no prompt can coexist with. Design §8 anticipates
-/// Queries gaining a filter, at which point a prompt over it is constructible.
+/// Queries gaining a search, at which point a prompt over it is constructible.
 ///
 /// A live theme picker is unwound for the same reason and by the same rule:
 /// its cursor writes `State.theme` as it moves, so replacing it outright
@@ -846,7 +846,7 @@ fn raise(state: &mut State, message: Message) {
 /// `ctrl-t` is not refused (final review I2).
 fn unwind_overlay(state: &mut State) {
     if let Some(Overlay::Search(prompt)) = &state.overlay {
-        state.apply_filter(prompt.target(), prompt.previous().cloned());
+        state.apply_search(prompt.target(), prompt.previous().cloned());
     }
     restore_theme(state);
 }
@@ -864,21 +864,21 @@ fn restore_theme(state: &mut State) {
 }
 
 /// `/` opens a prompt over the focused panel. Refused where the panel holds no
-/// filter, which is Queries — unreachable, since the editor claims `/` as text
+/// search, which is Queries — unreachable, since the editor claims `/` as text
 /// first (panel search design §8), and stated here rather than assumed.
 ///
-/// Clears the target's filter immediately rather than leaving `previous`
+/// Clears the target's search immediately rather than leaving `previous`
 /// showing until the first keystroke: the buffer opens empty, and live
-/// filtering (design §3.3) means the panel underneath is the preview of
+/// search (design §3.3) means the panel underneath is the preview of
 /// whatever the buffer holds, from the first frame the prompt is up.
 fn open_prompt(state: &mut State) {
-    let Some(target) = Filtered::of(state.focus()) else {
+    let Some(target) = Searched::of(state.focus()) else {
         return;
     };
 
-    let previous = state.filter(target).cloned();
+    let previous = state.search(target).cloned();
     state.overlay = Some(Overlay::Search(Prompt::opened(target, previous)));
-    state.apply_filter(target, None);
+    state.apply_search(target, None);
 }
 
 /// What an open prompt responds to.
@@ -911,21 +911,21 @@ fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
         _ => return Vec::new(),
     }
 
-    let (target, filter) = (prompt.target(), prompt.filter());
-    state.apply_filter(target, filter);
+    let (target, search) = (prompt.target(), prompt.search());
+    state.apply_search(target, search);
 
     Vec::new()
 }
 
 /// `Esc` resolves in one order, first hit wins: the overlay; then freezing an
 /// extending range; then clearing a frozen range; then the focused panel's
-/// filter; then leaving a panel that takes text (Queries hands focus back to
+/// search; then leaving a panel that takes text (Queries hands focus back to
 /// Tables). One press does one of the five, never two — the thing most
 /// recently put on screen comes off first (panel search design §6).
 fn escape(state: &mut State) {
     match state.overlay.take() {
         Some(Overlay::Search(prompt)) => {
-            state.apply_filter(prompt.target(), prompt.previous().cloned());
+            state.apply_search(prompt.target(), prompt.previous().cloned());
             return;
         }
         Some(Overlay::Themes { restored, .. }) => {
@@ -941,16 +941,16 @@ fn escape(state: &mut State) {
         None => {}
     }
 
-    // Above the filter for the reason the overlay is above both: the thing
+    // Above the search for the reason the overlay is above both: the thing
     // most recently put on screen comes off first (design §1).
     if stop_extending(state) || clear_selection(state) {
         return;
     }
 
-    if let Some(target) = Filtered::of(state.focus())
-        && state.filter(target).is_some()
+    if let Some(target) = Searched::of(state.focus())
+        && state.search(target).is_some()
     {
-        state.apply_filter(target, None);
+        state.apply_search(target, None);
         return;
     }
 
@@ -1081,7 +1081,7 @@ fn theme_at_picker_index(config: &Config, index: usize) -> Option<ThemeChoice> {
 /// Refused over a live prompt too, which no unmodified key needs to say: the
 /// ctrl layer is dispatched above every overlay, so this is the one opener a
 /// prompt cannot swallow, and replacing one would strand the panel under a
-/// half-typed query with nothing left holding the filter it had.
+/// half-typed query with nothing left holding the search it had.
 fn open_themes(state: &mut State) {
     let last = BuiltIn::ALL.len() + state.config.themes.len();
     if last > state.geometry.theme_rows() || matches!(state.overlay, Some(Overlay::Search(_))) {
@@ -2049,7 +2049,7 @@ fn transition(state: &mut State, transition: Transition) {
         return;
     }
 
-    // The filter guard lives in TablesPanel::open/close themselves (design
+    // The search guard lives in TablesPanel::open/close themselves (design
     // §4.1), so every entry point — this one, and activate's click/Enter/Space
     // path — inherits it from one place rather than two that must agree.
     let Some((tables, schema)) = state.tables_and_schema() else {
@@ -2116,7 +2116,7 @@ mod tests {
     use crate::ddl::DdlTab;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
-    use crate::search::{Filter, Filtered, Prompt};
+    use crate::search::{Prompt, Search, Searched};
     use crate::state::{Connection, FLASH_TICKS, Range, Span};
     use crate::theme::{Ours, Ported};
     use crate::tree::tests_support::schema_of as tabled_schema;
@@ -2586,7 +2586,7 @@ mod tests {
     }
 
     #[test]
-    fn a_message_arriving_over_an_open_prompt_restores_the_previous_filter() {
+    fn a_message_arriving_over_an_open_prompt_restores_the_previous_search() {
         let mut state = connected(Posture::ReadOnly);
         let conn = current_conn(&state);
         update(
@@ -2596,15 +2596,15 @@ mod tests {
                 schema: Box::new(tabled_schema(&[("shop", &["orders"])])),
             },
         );
-        state.apply_filter(Filtered::Tables, Filter::new("shop"));
+        state.apply_search(Searched::Tables, Search::new("shop"));
 
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('o'));
         press(&mut state, Key::Char('r'));
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("or"),
-            "the live prompt is previewing its own buffer, not the previous filter"
+            "the live prompt is previewing its own buffer, not the previous search"
         );
 
         update(
@@ -2620,9 +2620,9 @@ mod tests {
             "the failure must still be shown"
         );
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("shop"),
-            "the half-typed query must not strand itself; the prompt's previous filter is restored"
+            "the half-typed query must not strand itself; the prompt's previous search is restored"
         );
     }
 
@@ -4075,9 +4075,9 @@ mod tests {
     }
 
     #[test]
-    fn l_and_h_are_swallowed_while_a_filter_is_applied() {
+    fn l_and_h_are_swallowed_while_a_search_is_applied() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("shop"));
+        state.apply_search(Searched::Tables, Search::new("shop"));
         let before = row_count(&state);
 
         press(&mut state, Key::Char('h'));
@@ -4086,38 +4086,38 @@ mod tests {
         assert_eq!(
             row_count(&state),
             before,
-            "a filter forces its matches open, so folding could only look broken"
+            "a search forces its matches open, so folding could only look broken"
         );
     }
 
     #[test]
-    fn folding_under_a_filter_does_not_disturb_the_fold_state_it_will_return_to() {
+    fn folding_under_a_search_does_not_disturb_the_fold_state_it_will_return_to() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('l'));
         assert_eq!(row_count(&state), 3, "shop starts unfolded");
 
-        state.apply_filter(Filtered::Tables, Filter::new("shop"));
+        state.apply_search(Searched::Tables, Search::new("shop"));
         press(&mut state, Key::Char('h'));
         press(&mut state, Key::Char('l'));
-        state.apply_filter(Filtered::Tables, None);
+        state.apply_search(Searched::Tables, None);
 
         assert_eq!(
             row_count(&state),
             3,
-            "the fold state from before the filter must survive it untouched"
+            "the fold state from before the search must survive it untouched"
         );
     }
 
     /// Every entry point that can land on a retained keyspace row — not just
-    /// `h`/`l` — must leave the unfold set alone while a filter is applied.
+    /// `h`/`l` — must leave the unfold set alone while a search is applied.
     /// `activate` (`Enter`, `Space`, and a click, which routes through it too)
     /// has no guard of its own; it inherits `TablesPanel::toggle`'s. Remove
-    /// that guard and the `Key::Enter` case here fails: the filter's own
+    /// that guard and the `Key::Enter` case here fails: the search's own
     /// projection reports `shop` as unfolded, `toggle` reads that as "fold
     /// it", and the real unfold set loses "shop" even though nothing moved
     /// on screen.
     #[test]
-    fn no_tables_entry_point_writes_the_fold_state_under_a_filter() {
+    fn no_tables_entry_point_writes_the_fold_state_under_a_search() {
         enum Action {
             Key(Key),
             Click,
@@ -4134,7 +4134,7 @@ mod tests {
             press(&mut state, Key::Char('l'));
             assert_eq!(row_count(&state), 3, "shop starts unfolded");
 
-            state.apply_filter(Filtered::Tables, Filter::new("shop"));
+            state.apply_search(Searched::Tables, Search::new("shop"));
 
             match action {
                 Action::Key(key) => {
@@ -4145,22 +4145,22 @@ mod tests {
                 }
             }
 
-            state.apply_filter(Filtered::Tables, None);
+            state.apply_search(Searched::Tables, None);
 
             assert_eq!(
                 row_count(&state),
                 3,
-                "the fold state from before the filter must survive it untouched"
+                "the fold state from before the search must survive it untouched"
             );
         }
     }
 
-    /// `Enter` still reads a table under a filter — the guard stops keyspace
+    /// `Enter` still reads a table under a search — the guard stops keyspace
     /// folding, not table activation.
     #[test]
-    fn enter_still_reads_a_table_under_a_filter() {
+    fn enter_still_reads_a_table_under_a_search() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("orders"));
+        state.apply_search(Searched::Tables, Search::new("orders"));
         assert_eq!(row_count(&state), 2, "shop and orders both survive");
 
         state.tables.cursor.go_to(1, row_count(&state));
@@ -4168,12 +4168,12 @@ mod tests {
 
         assert!(
             !effects.is_empty(),
-            "Enter on a table row under a filter must still submit a read"
+            "Enter on a table row under a search must still submit a read"
         );
     }
 
     #[test]
-    fn l_and_h_still_fold_once_the_filter_is_gone() {
+    fn l_and_h_still_fold_once_the_search_is_gone() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
 
         press(&mut state, Key::Char('l'));
@@ -4182,14 +4182,14 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_clamps_as_a_filter_shrinks_the_tree() {
+    fn the_cursor_clamps_as_a_search_shrinks_the_tree() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('j'));
         assert_eq!(state.tables.cursor.index(), 2, "on users");
 
-        state.apply_filter(Filtered::Tables, Filter::new("orders"));
+        state.apply_search(Searched::Tables, Search::new("orders"));
 
         assert_eq!(
             state.tables.cursor.index(),
@@ -5201,9 +5201,9 @@ mod tests {
     }
 
     #[test]
-    fn y_on_a_filter_that_matched_nothing_yanks_nothing() {
+    fn y_on_a_search_that_matched_nothing_yanks_nothing() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("zzz"));
+        state.apply_search(Searched::Tables, Search::new("zzz"));
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
     }
@@ -7039,7 +7039,7 @@ mod tests {
     }
 
     #[test]
-    fn slash_opens_the_prompt_in_every_panel_that_can_hold_a_filter() {
+    fn slash_opens_the_prompt_in_every_panel_that_can_hold_a_search() {
         for panel in [Panel::Tables, Panel::Ddl, Panel::Contents] {
             let mut state = browsing_tables(&[("shop", &["orders"])]);
             state.focus_on(panel);
@@ -7048,7 +7048,7 @@ mod tests {
 
             assert_eq!(
                 searching(&state).map(Prompt::target),
-                Filtered::of(panel),
+                Searched::of(panel),
                 "{panel:?} must reach a prompt"
             );
         }
@@ -7078,14 +7078,14 @@ mod tests {
     }
 
     #[test]
-    fn the_prompt_filters_live_per_keystroke() {
+    fn the_prompt_searches_live_per_keystroke() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         press(&mut state, Key::Char('/'));
 
         press(&mut state, Key::Char('u'));
 
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("u"),
             "the panel underneath is the preview"
         );
@@ -7102,7 +7102,7 @@ mod tests {
 
         assert_eq!(searching(&state).map(Prompt::query), Some("o"));
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("o")
         );
     }
@@ -7118,7 +7118,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_commits_and_closes_leaving_the_filter_applied() {
+    fn enter_commits_and_closes_leaving_the_search_applied() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('o'));
@@ -7127,53 +7127,53 @@ mod tests {
 
         assert!(state.overlay.is_none());
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("o")
         );
     }
 
     #[test]
-    fn an_empty_commit_clears_the_filter() {
+    fn an_empty_commit_clears_the_search() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("o"));
+        state.apply_search(Searched::Tables, Search::new("o"));
         press(&mut state, Key::Char('/'));
 
         press(&mut state, Key::Enter);
 
         assert!(state.overlay.is_none());
-        assert_eq!(state.filter(Filtered::Tables), None);
+        assert_eq!(state.search(Searched::Tables), None);
     }
 
-    /// The design's own mechanism for an empty commit: `Filter::new("")` is
+    /// The design's own mechanism for an empty commit: `Search::new("")` is
     /// `None`, so backspacing a live query back to nothing already clears the
-    /// filter before `Enter` is ever pressed — unlike
-    /// `an_empty_commit_clears_the_filter` above, whose buffer is empty
+    /// search before `Enter` is ever pressed — unlike
+    /// `an_empty_commit_clears_the_search` above, whose buffer is empty
     /// because nothing was ever typed into it.
     #[test]
-    fn backspacing_a_query_to_empty_clears_the_filter_live() {
+    fn backspacing_a_query_to_empty_clears_the_search_live() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("o"));
+        state.apply_search(Searched::Tables, Search::new("o"));
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('o'));
 
         press(&mut state, Key::Backspace);
 
         assert_eq!(
-            state.filter(Filtered::Tables),
+            state.search(Searched::Tables),
             None,
-            "the buffer is empty, so the live preview already has no filter"
+            "the buffer is empty, so the live preview already has no search"
         );
 
         press(&mut state, Key::Enter);
 
         assert!(state.overlay.is_none());
-        assert_eq!(state.filter(Filtered::Tables), None);
+        assert_eq!(state.search(Searched::Tables), None);
     }
 
     #[test]
-    fn escape_cancels_the_prompt_restoring_the_filter_that_was_there() {
+    fn escape_cancels_the_prompt_restoring_the_search_that_was_there() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("orders"));
+        state.apply_search(Searched::Tables, Search::new("orders"));
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('u'));
 
@@ -7181,27 +7181,27 @@ mod tests {
 
         assert!(state.overlay.is_none());
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("orders"),
             "an abandoned prompt leaves the panel as it was found"
         );
     }
 
     #[test]
-    fn escape_clears_the_focused_panels_filter_when_no_overlay_is_up() {
+    fn escape_clears_the_focused_panels_search_when_no_overlay_is_up() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         state.focus_on(Panel::Contents);
-        state.apply_filter(Filtered::Contents, Filter::new("o"));
+        state.apply_search(Searched::Contents, Search::new("o"));
 
         press(&mut state, Key::Escape);
 
-        assert_eq!(state.filter(Filtered::Contents), None);
+        assert_eq!(state.search(Searched::Contents), None);
     }
 
     #[test]
-    fn escape_prefers_the_overlay_to_the_filter() {
+    fn escape_prefers_the_overlay_to_the_search() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("o"));
+        state.apply_search(Searched::Tables, Search::new("o"));
         state.overlay = Some(Overlay::Message(Message {
             title: "t".to_owned(),
             message: "m".to_owned(),
@@ -7212,7 +7212,7 @@ mod tests {
 
         assert!(state.overlay.is_none());
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("o"),
             "one press does one thing"
         );
@@ -7268,9 +7268,9 @@ mod tests {
     }
 
     #[test]
-    fn escape_prefers_the_selection_to_the_filter() {
+    fn escape_prefers_the_selection_to_the_search() {
         let mut state = browsing(&["alpha", "beta"]);
-        state.apply_filter(Filtered::Tables, Filter::new("a"));
+        state.apply_search(Searched::Tables, Search::new("a"));
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Escape);
 
@@ -7278,8 +7278,8 @@ mod tests {
 
         assert!(!state.tables.selection.is_active());
         assert!(
-            state.filter(Filtered::Tables).is_some(),
-            "the range came off first; the filter is still applied"
+            state.search(Searched::Tables).is_some(),
+            "the range came off first; the search is still applied"
         );
     }
 
@@ -7354,13 +7354,13 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_clears_the_range_it_would_renumber() {
+    fn a_search_clears_the_range_it_would_renumber() {
         let mut state = browsing(&["alpha", "beta", "gamma"]);
         press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('v'));
 
-        state.apply_filter(Filtered::Tables, Filter::new("a"));
+        state.apply_search(Searched::Tables, Search::new("a"));
 
         assert!(!state.tables.selection.is_active());
     }
@@ -7389,11 +7389,11 @@ mod tests {
 
     #[test]
     fn escape_leaves_queries_when_nothing_else_claims_it() {
-        // Rung 3 alone (§6): no overlay, no filter (Queries cannot hold one
+        // Rung 3 alone (§6): no overlay, no search (Queries cannot hold one
         // yet — design §8), so `esc` falls through to leaving the editor.
         // This does not pin rung 2 before rung 3 — that ordering is
         // unreachable, and stays so, until the vim slice gives Queries a
-        // filter to prefer.
+        // search to prefer.
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         state.focus_on(Panel::Queries);
 
@@ -7417,7 +7417,7 @@ mod tests {
     #[test]
     fn a_click_cancels_the_prompt() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("orders"));
+        state.apply_search(Searched::Tables, Search::new("orders"));
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('u'));
 
@@ -7425,7 +7425,7 @@ mod tests {
 
         assert!(state.overlay.is_none());
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("orders"),
             "a click that lands somewhere unexpected must not leave state behind"
         );
@@ -7433,7 +7433,7 @@ mod tests {
 
     /// The layer is dispatched above every overlay, so a chord that would open
     /// one has to refuse the prompt itself: opening a picker over a live query
-    /// would leave the panel filtered with nothing holding what it filtered
+    /// would leave the panel filtered with nothing holding what it searched
     /// from (docs/shortcuts.md §1).
     #[test]
     fn ctrl_t_is_refused_over_a_live_prompt() {
@@ -7473,11 +7473,11 @@ mod tests {
         assert_eq!(searching(&state).map(Prompt::query), Some(""));
     }
 
-    /// `ddl_rows` counts the rows the panel draws, so a filter that empties a
+    /// `ddl_rows` counts the rows the panel draws, so a search that empties a
     /// section pulls the cursor back with it — the clamp in `clamp_lists`
-    /// needs no special case for the filter (panel search design §3.3).
+    /// needs no special case for the search (panel search design §3.3).
     #[test]
-    fn a_ddl_filter_that_shrinks_the_panel_pulls_its_cursor_back() {
+    fn a_ddl_search_that_shrinks_the_panel_pulls_its_cursor_back() {
         let mut state = read_shop_orders();
         state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
@@ -7496,11 +7496,11 @@ mod tests {
         let filtered = crate::view::ddl_rows(&state);
         assert!(
             filtered > 0 && filtered < unfiltered,
-            "the fixture's filter must narrow the panel without emptying it"
+            "the fixture's search must narrow the panel without emptying it"
         );
         assert!(
             state.ddl.cursor.index() < filtered,
-            "the cursor cannot sit on a row the filter removed"
+            "the cursor cannot sit on a row the search removed"
         );
     }
 
@@ -7508,13 +7508,13 @@ mod tests {
     /// for its cursor to be on, and motion over it is the swallow every other
     /// empty list gets rather than an index that drifts past zero.
     #[test]
-    fn a_filter_that_empties_table_ddl_leaves_its_cursor_at_rest() {
+    fn a_search_that_empties_table_ddl_leaves_its_cursor_at_rest() {
         let mut state = read_shop_orders();
         state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
         press(&mut state, Key::End);
 
-        state.apply_filter(Filtered::Ddl, Filter::new("no such property"));
+        state.apply_search(Searched::Ddl, Search::new("no such property"));
         press(&mut state, Key::Char('j'));
 
         assert_eq!(crate::view::ddl_rows(&state), 0);
@@ -7530,7 +7530,7 @@ mod tests {
     /// are a different sequence — and a clamp is owed only where the list
     /// shrinks under the cursor (panel search design §3.3).
     #[test]
-    fn clearing_a_ddl_filter_leaves_the_cursor_on_the_index_it_held() {
+    fn clearing_a_ddl_search_leaves_the_cursor_on_the_index_it_held() {
         let mut state = read_shop_orders();
         state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
@@ -7542,12 +7542,12 @@ mod tests {
         let deep = state.ddl.cursor.index();
         assert!(
             deep > 0,
-            "the filter must leave more than one row for the cursor to be deep in"
+            "the search must leave more than one row for the cursor to be deep in"
         );
 
         press(&mut state, Key::Escape);
 
-        assert!(state.filter(Filtered::Ddl).is_none());
+        assert!(state.search(Searched::Ddl).is_none());
         assert_eq!(state.ddl.cursor.index(), deep);
         assert!(
             deep + 1 < crate::view::ddl_rows(&state),
@@ -7556,11 +7556,11 @@ mod tests {
     }
 
     /// The blank frame design §3.3 accepts, carried to its repair: the offset
-    /// a wheel produced from pre-filter geometry is out of range for the body
-    /// the filter left, and the next measurement pulls it back. One frame
+    /// a wheel produced from pre-search geometry is out of range for the body
+    /// the search left, and the next measurement pulls it back. One frame
     /// wide, and the loop terminates.
     #[test]
-    fn the_measurement_after_a_filter_pulls_a_stale_ddl_offset_back_inside() {
+    fn the_measurement_after_a_search_pulls_a_stale_ddl_offset_back_inside() {
         let mut state = read_shop_orders();
         state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
@@ -7577,13 +7577,13 @@ mod tests {
         assert_eq!(
             state.ddl.scroll.offset(),
             36,
-            "the wheel bounds itself against the pre-filter line count"
+            "the wheel bounds itself against the pre-search line count"
         );
 
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('t'));
 
-        // The frame the filter produced: nine wrapped lines in a four-line
+        // The frame the search produced: nine wrapped lines in a four-line
         // panel, so no offset past five is drawable.
         sized(&mut state, [8, 4, 8, 1], 9);
 
@@ -7592,10 +7592,10 @@ mod tests {
 
     /// The Ddl half of the `esc` chain's second step. Its viewport is followed
     /// by span rather than by index (design §5.1 of the Ddl selection slice),
-    /// so clearing a filter that moved what the cursor names is repaired on
+    /// so clearing a search that moved what the cursor names is repaired on
     /// the measurement that follows, not in `escape` itself.
     #[test]
-    fn escape_clearing_a_ddl_filter_re_follows_the_selection() {
+    fn escape_clearing_a_ddl_search_re_follows_the_selection() {
         let mut state = read_shop_orders();
         state.focus_on(Panel::Ddl);
         sized(&mut state, [8, 4, 8, 1], 40);
@@ -7606,7 +7606,7 @@ mod tests {
 
         press(&mut state, Key::Escape);
 
-        assert!(state.filter(Filtered::Ddl).is_none());
+        assert!(state.search(Searched::Ddl).is_none());
 
         update(
             &mut state,
@@ -7624,7 +7624,7 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_survives_a_focus_change() {
+    fn a_search_survives_a_focus_change() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('o'));
@@ -7634,7 +7634,7 @@ mod tests {
         press(&mut state, Key::Char('t'));
 
         assert_eq!(
-            state.filter(Filtered::Tables).map(Filter::as_str),
+            state.search(Searched::Tables).map(Search::as_str),
             Some("o")
         );
     }

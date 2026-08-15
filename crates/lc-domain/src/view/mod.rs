@@ -199,11 +199,11 @@ pub struct PanelView {
     pub panel: Panel,
     pub title: PanelTitle,
     pub body: PanelBody,
-    /// The applied filter's term, as typed. Drawn on the panel's own top
-    /// border, focused or not: a filter that survives a focus change has to
+    /// The applied search's term, as typed. Drawn on the panel's own top
+    /// border, focused or not: a search that survives a focus change has to
     /// say so from the panel it is applied to, not from the bar, which only
     /// ever describes the focused panel (panel search design §5.1).
-    pub filter: Option<String>,
+    pub search: Option<String>,
 }
 
 /// What a panel has to show.
@@ -310,9 +310,9 @@ pub fn view_model(state: &State) -> ViewModel {
             panel,
             title: title(state, panel),
             body: body(state, panel),
-            filter: crate::search::Filtered::of(panel)
-                .and_then(|target| state.filter(target))
-                .map(|filter| filter.as_str().to_owned()),
+            search: crate::search::Searched::of(panel)
+                .and_then(|target| state.search(target))
+                .map(|search| search.as_str().to_owned()),
         }),
         focus: state.focus(),
         hints: hints::bar(state),
@@ -524,23 +524,23 @@ mod tests {
     }
 
     #[test]
-    fn a_panel_carries_the_filter_applied_to_it() {
+    fn a_panel_carries_the_search_applied_to_it() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.apply_filter(
-            crate::search::Filtered::Contents,
-            crate::search::Filter::new("ORD"),
+        state.apply_search(
+            crate::search::Searched::Contents,
+            crate::search::Search::new("ORD"),
         );
 
         let view = view_model(&state);
 
-        assert_eq!(view.panels[2].filter.as_deref(), Some("ORD"), "as typed");
-        assert_eq!(view.panels[0].filter, None);
-        assert_eq!(view.panels[3].filter, None, "Queries holds none");
+        assert_eq!(view.panels[2].search.as_deref(), Some("ORD"), "as typed");
+        assert_eq!(view.panels[0].search, None);
+        assert_eq!(view.panels[3].search, None, "Queries holds none");
     }
 
     #[test]
     fn an_open_prompt_is_projected_as_its_query() {
-        let mut prompt = crate::search::Prompt::opened(crate::search::Filtered::Tables, None);
+        let mut prompt = crate::search::Prompt::opened(crate::search::Searched::Tables, None);
         prompt.push('o');
         prompt.push('r');
         let mut state = State::default();

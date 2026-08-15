@@ -25,7 +25,7 @@ pub struct TreeRow {
 ///
 /// A table carries whether it is the last one drawn under its keyspace, which
 /// is what decides the limb the renderer draws it on. Last-ness is over the
-/// rows the panel actually shows, so a filter that hides the tail of a
+/// rows the panel actually shows, so a search that hides the tail of a
 /// keyspace moves the elbow up rather than leaving it on a row nobody sees
 /// (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,10 +72,10 @@ fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<&Flash>) -> PanelBo
         .collect();
 
     if rows.is_empty() {
-        return match tables.filter() {
-            Some(filter) => waiting(&format!(
+        return match tables.search() {
+            Some(search) => waiting(&format!(
                 "No keyspace or table matches \"{}\"",
-                filter.as_str()
+                search.as_str()
             )),
             None => waiting("No keyspaces"),
         };
@@ -123,7 +123,7 @@ mod tests {
     use crate::state::{Connection, ConnectionState, Ranges, SchemaState, State};
     use crate::style::{Severity, Token};
 
-    use crate::search::{Filter, Filtered};
+    use crate::search::{Search, Searched};
 
     use super::super::tests_support::{loaded, panel_body, state_with, tabled};
     use super::*;
@@ -284,9 +284,9 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_that_matches_nothing_says_so() {
+    fn a_search_that_matches_nothing_says_so() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        state.apply_filter(Filtered::Tables, Filter::new("zzz"));
+        state.apply_search(Searched::Tables, Search::new("zzz"));
 
         assert_eq!(
             tables_body(&state),

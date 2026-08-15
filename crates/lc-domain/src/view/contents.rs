@@ -7,7 +7,7 @@
 use crate::cell;
 use crate::contents::{ContentsState, GridPage, SelectionMode, Subject, TableRef};
 use crate::model::{CqlValue, Schema};
-use crate::search::Filter;
+use crate::search::Search;
 use crate::state::{Panel, Ranges, State};
 use crate::style::Token;
 
@@ -36,7 +36,7 @@ pub struct GridCell {
     /// `Some(Token::Faint)` for a null, which is what keeps it apart from a
     /// text column whose value is the word "null".
     pub token: Option<Token>,
-    /// Whether the applied filter matched `text`.
+    /// Whether the applied search matched `text`.
     ///
     /// A field of its own rather than a second meaning for `token`:
     /// overwriting the null marker on a match would lose that distinction
@@ -124,7 +124,7 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
             .map(|row| {
                 row.values
                     .iter()
-                    .map(|value| grid_cell(value, state.contents.filter()))
+                    .map(|value| grid_cell(value, state.contents.search()))
                     .collect()
             })
             .collect(),
@@ -140,11 +140,11 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
     }
 }
 
-fn grid_cell(value: &CqlValue, filter: Option<&Filter>) -> GridCell {
+fn grid_cell(value: &CqlValue, search: Option<&Search>) -> GridCell {
     let text = cell::text(value);
 
     GridCell {
-        matched: filter.is_some_and(|filter| filter.matches(&text)),
+        matched: search.is_some_and(|search| search.matches(&text)),
         token: match value {
             CqlValue::Null => Some(Token::Faint),
             _ => None,
@@ -182,7 +182,7 @@ mod tests {
         ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Page, QueryId, Row, Schema,
     };
     use crate::posture::Posture;
-    use crate::search::{Filter, Filtered};
+    use crate::search::{Search, Searched};
     use crate::state::{Connection, ConnectionState, SchemaState, State};
     use crate::style::Severity;
 
@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn a_filter_flags_the_cells_that_match_and_keeps_every_row() {
+    fn a_search_flags_the_cells_that_match_and_keeps_every_row() {
         let mut state = showing(page_of(
             &["id", "email"],
             &[
@@ -433,10 +433,10 @@ mod tests {
             other => panic!("expected a grid, got {other:?}"),
         };
 
-        state.apply_filter(Filtered::Contents, Filter::new("ali"));
+        state.apply_search(Searched::Contents, Search::new("ali"));
 
         let PanelBody::Grid { rows, .. } = contents_body(&state) else {
-            panic!("a filter must not turn the grid into a notice");
+            panic!("a search must not turn the grid into a notice");
         };
         assert_eq!(
             rows.len(),
@@ -463,7 +463,7 @@ mod tests {
             &[&[CqlValue::Int(1), CqlValue::Null]],
         ));
 
-        state.apply_filter(Filtered::Contents, Filter::new("null"));
+        state.apply_search(Searched::Contents, Search::new("null"));
 
         let PanelBody::Grid { rows, .. } = contents_body(&state) else {
             panic!("expected a grid");
@@ -476,7 +476,7 @@ mod tests {
 
         assert!(
             null.matched,
-            "a null renders as the word null, so it answers this filter"
+            "a null renders as the word null, so it answers this search"
         );
         assert_eq!(
             null.token,
@@ -486,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn no_filter_flags_nothing() {
+    fn no_search_flags_nothing() {
         let state = showing(page_of(
             &["id", "email"],
             &[&[

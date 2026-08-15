@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use crate::model::{Keyspace, Schema, Table};
-use crate::search::Filter;
+use crate::search::Search;
 use crate::state::{Cursor, Scroll, Selection};
 
 /// The Tables panel's own state.
@@ -29,7 +29,7 @@ pub struct TablesPanel {
     /// Narrows [`TablesPanel::rows`]. Private for the reason `unfolded` is:
     /// setting it is going to owe a cursor clamp, and a public field would let
     /// a caller skip it (design §2.1, §2.2).
-    filter: Option<Filter>,
+    search: Option<Search>,
 }
 
 /// One row of the flattened tree.
@@ -46,28 +46,28 @@ pub enum Node<'a> {
 }
 
 impl TablesPanel {
-    /// The filter narrowing [`TablesPanel::rows`], if any.
+    /// The search narrowing [`TablesPanel::rows`], if any.
     #[must_use]
-    pub fn filter(&self) -> Option<&Filter> {
-        self.filter.as_ref()
+    pub fn search(&self) -> Option<&Search> {
+        self.search.as_ref()
     }
 
-    /// Sets the filter. Not public: [`State::apply_filter`](crate::state::State::apply_filter)
+    /// Sets the search. Not public: [`State::apply_search`](crate::state::State::apply_search)
     /// is the one caller, and the cursor clamp a change here owes is its job.
-    pub(crate) fn set_filter(&mut self, filter: Option<Filter>) {
-        self.filter = filter;
+    pub(crate) fn set_search(&mut self, search: Option<Search>) {
+        self.search = search;
     }
 
     /// The tree, flattened in display order: user keyspaces first, then the
     /// cluster's own, each with its tables spliced in when unfolded.
     ///
     /// One flattening, so `update`'s motions and `view_model` cannot disagree
-    /// about what row 5 is — which is why the filter is applied here and not
+    /// about what row 5 is — which is why the search is applied here and not
     /// in the projection (design §4.1).
     #[must_use]
     pub fn rows<'a>(&self, schema: &'a Schema) -> Vec<Node<'a>> {
-        match &self.filter {
-            Some(filter) => Self::filtered(schema, filter),
+        match &self.search {
+            Some(search) => Self::filtered(schema, search),
             None => self.whole(schema),
         }
     }
@@ -96,18 +96,18 @@ impl TablesPanel {
     /// either way: a match inside a folded keyspace would make the panel
     /// report nothing while the row sits one keypress away.
     ///
-    /// The unfold set is not written. Clearing the filter therefore restores
+    /// The unfold set is not written. Clearing the search therefore restores
     /// the fold state exactly, and a live prompt cannot accumulate an unfold
     /// per prefix as the term is typed (design §4.1).
-    fn filtered<'a>(schema: &'a Schema, filter: &Filter) -> Vec<Node<'a>> {
+    fn filtered<'a>(schema: &'a Schema, search: &Search) -> Vec<Node<'a>> {
         let mut rows = Vec::new();
 
         for keyspace in schema.keyspaces_in_display_order() {
-            let named = filter.matches(&keyspace.name);
+            let named = search.matches(&keyspace.name);
             let tables: Vec<_> = keyspace
                 .tables
                 .values()
-                .filter(|table| named || filter.matches(&table.name))
+                .filter(|table| named || search.matches(&table.name))
                 .collect();
 
             if !named && tables.is_empty() {
@@ -136,16 +136,16 @@ impl TablesPanel {
 
     /// Opens a folded keyspace, folds an open one. Does nothing on a table.
     ///
-    /// Swallowed while a filter is applied: [`Self::filtered`] draws every
+    /// Swallowed while a search is applied: [`Self::filtered`] draws every
     /// retained keyspace open regardless of the unfold set, so folding would
     /// change nothing on screen while still writing `unfolded` — the one
-    /// thing design §4.1 promises filtering never does. This is the single
+    /// thing design §4.1 promises searching never does. This is the single
     /// entry point for that guard, so every caller (keys, a click via
     /// `activate`) inherits it rather than needing its own; docs/shortcuts.md
     /// §2's rule that a panel swallows a motion it cannot honour is why the
     /// key is dropped here instead of half-honoured.
     pub fn toggle(&mut self, schema: &Schema) {
-        if self.filter.is_some() {
+        if self.search.is_some() {
             return;
         }
 
@@ -162,13 +162,13 @@ impl TablesPanel {
 
     /// Opens a folded keyspace; on an open one, steps into its first table.
     ///
-    /// Swallowed under a filter for the reason [`Self::toggle`] is (design
+    /// Swallowed under a search for the reason [`Self::toggle`] is (design
     /// §4.1): every retained keyspace is already drawn open, so there is
     /// nothing left for this to do that stepping onto a table row would not
     /// already offer, and unfolding a filtered-out keyspace would write a
     /// fold state the clear has to un-write later.
     pub fn open(&mut self, schema: &Schema) {
-        if self.filter.is_some() {
+        if self.search.is_some() {
             return;
         }
 
@@ -186,10 +186,10 @@ impl TablesPanel {
     /// Folds an open keyspace; on a table, steps out to its keyspace without
     /// folding it, so a second press folds.
     ///
-    /// Swallowed under a filter for the reason [`Self::toggle`] is (design
+    /// Swallowed under a search for the reason [`Self::toggle`] is (design
     /// §4.1).
     pub fn close(&mut self, schema: &Schema) {
-        if self.filter.is_some() {
+        if self.search.is_some() {
             return;
         }
 
@@ -538,7 +538,7 @@ mod tests {
         ])
     }
 
-    fn filter_labels(panel: &TablesPanel, schema: &Schema) -> Vec<String> {
+    fn search_labels(panel: &TablesPanel, schema: &Schema) -> Vec<String> {
         panel
             .rows(schema)
             .iter()
@@ -567,10 +567,10 @@ mod tests {
     fn a_matching_table_brings_its_keyspace_and_no_sibling() {
         let schema = shop_and_logs();
         let mut panel = TablesPanel::default();
-        panel.set_filter(Filter::new("order"));
+        panel.set_search(Search::new("order"));
 
         assert_eq!(
-            filter_labels(&panel, &schema),
+            search_labels(&panel, &schema),
             ["logs", "  order_events", "shop", "  orders"],
             "users and spans miss, and their keyspaces survive on their children"
         );
@@ -580,10 +580,10 @@ mod tests {
     fn a_matching_keyspace_brings_all_of_its_tables() {
         let schema = shop_and_logs();
         let mut panel = TablesPanel::default();
-        panel.set_filter(Filter::new("shop"));
+        panel.set_search(Search::new("shop"));
 
         assert_eq!(
-            filter_labels(&panel, &schema),
+            search_labels(&panel, &schema),
             ["shop", "  orders", "  users"]
         );
     }
@@ -592,7 +592,7 @@ mod tests {
     fn a_keyspace_with_nothing_matching_is_dropped() {
         let schema = shop_and_logs();
         let mut panel = TablesPanel::default();
-        panel.set_filter(Filter::new("zzz"));
+        panel.set_search(Search::new("zzz"));
 
         assert!(panel.rows(&schema).is_empty());
     }
@@ -602,34 +602,34 @@ mod tests {
         let schema = shop_and_logs();
         let mut panel = TablesPanel::default();
 
-        // Folded: the default. Without the filter it shows two keyspaces.
+        // Folded: the default. Without the search it shows two keyspaces.
         assert_eq!(panel.rows(&schema).len(), 2);
 
-        panel.set_filter(Filter::new("order"));
+        panel.set_search(Search::new("order"));
 
         assert!(
             matches!(
                 panel.rows(&schema).first(),
                 Some(Node::Keyspace { unfolded: true, .. })
             ),
-            "a filter that hid its own matches would be no filter at all"
+            "a search that hid its own matches would be no search at all"
         );
     }
 
     #[test]
-    fn clearing_the_filter_restores_the_fold_state_exactly() {
+    fn clearing_the_search_restores_the_fold_state_exactly() {
         let schema = shop_and_logs();
         let mut panel = unfolded_on("logs", &schema);
         let before = panel.rows(&schema);
 
-        panel.set_filter(Filter::new("order"));
+        panel.set_search(Search::new("order"));
         let _ = panel.rows(&schema);
-        panel.set_filter(None);
+        panel.set_search(None);
 
         assert_eq!(
             panel.rows(&schema),
             before,
-            "filtering is a projection; it must not write the unfold set"
+            "searching is a projection; it must not write the unfold set"
         );
     }
 
@@ -637,7 +637,7 @@ mod tests {
     fn a_keyspace_matching_by_name_is_open_only_when_it_has_tables() {
         let schema = schema_of(&[("empty", &[][..])]);
         let mut panel = TablesPanel::default();
-        panel.set_filter(Filter::new("empty"));
+        panel.set_search(Search::new("empty"));
 
         assert!(matches!(
             panel.rows(&schema).as_slice(),
