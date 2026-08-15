@@ -211,7 +211,8 @@ impl Theme {
 
         match token {
             Token::PartitionKey => fg(palette.partition).add_modifier(Modifier::BOLD),
-            Token::ClusteringKey => fg(palette.clustering),
+            Token::PartitionKeyValue => fg(palette.partition),
+            Token::ClusteringKey | Token::ClusteringKeyValue => fg(palette.clustering),
             // `accent`, which the loader also spends: they never share a
             // surface — one is a column in the Table DDL panel, the other the
             // spinner on the bar row — the same argument that lets `warning`
@@ -692,9 +693,11 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 31] = [
+    pub(super) const EVERY_TOKEN: [Token; 33] = [
         Token::PartitionKey,
+        Token::PartitionKeyValue,
         Token::ClusteringKey,
+        Token::ClusteringKeyValue,
         Token::StaticColumn,
         Token::Keyspace,
         Token::Table,

@@ -1473,9 +1473,11 @@ mod tests {
             .expect("the cell mode's crosshair spends a background");
 
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
+        let drawn = grid_row_y(area, 0)..grid_row_y(area, 4);
 
-        for y in 2..7 {
+        for y in drawn.clone() {
             assert!(
                 !selected(y),
                 "row 0 is off screen, so nothing drawn is the selection"
@@ -1488,10 +1490,11 @@ mod tests {
         let mut on_screen = showing(page_of(&["id"], &rows));
         on_screen.contents.mode = SelectionMode::Cell;
         on_screen.contents.cursor.go_to(12, 20);
-        on_screen.contents.scroll.follow(12, 5);
+        on_screen.contents.scroll.follow(12, 4);
         let buffer = draw_state(60, 12, &on_screen);
-        let highlighted =
-            (2..7).any(|y| buffer.cell((17, y)).expect("inside the panel").bg == highlight);
+        let highlighted = drawn
+            .clone()
+            .any(|y| buffer.cell((17, y)).expect("inside the panel").bg == highlight);
 
         assert!(
             highlighted,
@@ -1554,11 +1557,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││▌1  1   ada@example.com                   │"
+            "│              ││                                          │",
+            "a blank line under the headings keeps them from reading as a row"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││ 2  2   bob@example.com                   │"
+            "│              ││▌1  1   ada@example.com                   │"
+        );
+        assert_eq!(
+            row(&buffer, 4),
+            "╰──────────────╯│ 2  2   bob@example.com                   │"
         );
     }
 
@@ -1573,7 +1581,7 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
 
         assert_eq!(
-            row(&buffer, 2),
+            row(&buffer, 3),
             "│              ││▌1  8f14e45f-ceea-467a-9c2b…              │",
             "a silently clipped value looks like a shorter value"
         );
@@ -1599,7 +1607,7 @@ mod tests {
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
-            row(&buffer, 2),
+            row(&buffer, 3),
             "│                    ││▌1  8f14e45f-ceea-467a-9c2b…  8f14e45f-ceea-467a-9c2b…            │",
             "and the two that do keep their full width and their ellipsis"
         );
@@ -1668,18 +1676,18 @@ mod tests {
         let matched_email = drawn_column(area, 1);
 
         assert_ne!(
-            style(matched_email, 2),
-            style(unmatched_id, 2),
+            style(matched_email, grid_row_y(area, 0)),
+            style(unmatched_id, grid_row_y(area, 0)),
             "row 0 is not selected: its matched email must still read apart from its unmatched id"
         );
         assert!(
             buffer
-                .cell((matched_email, 3))
+                .cell((matched_email, grid_row_y(area, 1)))
                 .expect("inside the panel")
                 .modifier
                 .contains(Modifier::BOLD)
                 && !buffer
-                    .cell((unmatched_id, 3))
+                    .cell((unmatched_id, grid_row_y(area, 1)))
                     .expect("inside the panel")
                     .modifier
                     .contains(Modifier::BOLD),
@@ -1705,7 +1713,11 @@ mod tests {
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
+        let cell = |x: u16| {
+            buffer
+                .cell((x, grid_row_y(area, 1)))
+                .expect("inside the panel")
+        };
         let faint = Theme::default()
             .style(Token::Faint)
             .fg
@@ -1748,7 +1760,12 @@ mod tests {
         // Shifted right by the bar, the row-number gutter and their spacing:
         // one digit for a one-row page, plus one column each (table display
         // design §4, design §4.2).
-        let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
+        let area = block_area(&buffer, "Table contents");
+        let cell = |x: u16| {
+            buffer
+                .cell((x, grid_row_y(area, 0)))
+                .expect("inside the panel")
+        };
         let null_cell = cell(25);
         let word_cell = cell(31);
 
@@ -1777,11 +1794,12 @@ mod tests {
             .bg
             .expect("the cell mode's crosshair spends a background");
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
 
         assert!(!selected(1), "the header is never the selection");
-        assert!(!selected(2), "nor is the first row");
-        assert!(selected(3), "the second row is");
+        assert!(!selected(grid_row_y(area, 0)), "nor is the first row");
+        assert!(selected(grid_row_y(area, 1)), "the second row is");
     }
 
     #[test]
@@ -1809,14 +1827,18 @@ mod tests {
         let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
         let name = area.x + 1 + 6;
 
-        assert_eq!(bg(17, 3), selected, "the row the cursor is on is lit");
+        assert_eq!(
+            bg(17, grid_row_y(area, 1)),
+            selected,
+            "the row the cursor is on is lit"
+        );
         assert_ne!(
-            bg(name, 2),
+            bg(name, grid_row_y(area, 0)),
             selected,
             "and the cursor's column off that row is not — row mode lights no column"
         );
         assert_ne!(
-            bg(17, 2),
+            bg(17, grid_row_y(area, 0)),
             selected,
             "and the row above it is not — row mode lights one row"
         );
@@ -1849,15 +1871,23 @@ mod tests {
         let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
         let name = drawn_column(area, 1);
 
-        assert_eq!(bg(name, 2), selected, "every row of the column is lit");
-        assert_eq!(bg(name, 3), selected, "including the last one");
+        assert_eq!(
+            bg(name, grid_row_y(area, 0)),
+            selected,
+            "every row of the column is lit"
+        );
+        assert_eq!(
+            bg(name, grid_row_y(area, 1)),
+            selected,
+            "including the last one"
+        );
         assert_eq!(
             bg(name, 1),
             selected,
             "and its heading, which ratatui leaves to us (design §4)"
         );
         assert_ne!(
-            bg(drawn_column(area, 0), 2),
+            bg(drawn_column(area, 0), grid_row_y(area, 0)),
             selected,
             "the row the cursor is on is not — column mode lights one column"
         );
@@ -1888,7 +1918,7 @@ mod tests {
             let buffer = draw_state(60, 12, state);
             let area = block_area(&buffer, "Table contents");
             buffer
-                .cell((area.x + 4, area.y + 2 + row))
+                .cell((area.x + 4, grid_row_y(area, row)))
                 .expect("inside the panel")
                 .clone()
         };
@@ -1933,7 +1963,7 @@ mod tests {
             let buffer = draw_state(60, 12, state);
             let area = block_area(&buffer, "Table contents");
             buffer
-                .cell((area.x + 4, area.y + 2 + row))
+                .cell((area.x + 4, grid_row_y(area, row)))
                 .expect("inside the panel")
                 .clone()
         };
@@ -1990,7 +2020,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, column: u16| {
             buffer
-                .cell((drawn_column(area, column), area.y + 2 + row))
+                .cell((drawn_column(area, column), grid_row_y(area, row)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2024,7 +2054,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, x: u16| {
             buffer
-                .cell((x, area.y + 2 + row))
+                .cell((x, grid_row_y(area, row)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2054,7 +2084,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, column: u16| {
             buffer
-                .cell((drawn_column(area, column), area.y + 2 + row))
+                .cell((drawn_column(area, column), grid_row_y(area, row)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2083,7 +2113,7 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let bar = buffer
-            .cell((area.x + 1, area.y + 3))
+            .cell((area.x + 1, grid_row_y(area, 1)))
             .expect("inside the panel");
 
         assert_eq!(
@@ -2096,7 +2126,7 @@ mod tests {
         // column 2 is not.
         let bg = |column: u16| {
             buffer
-                .cell((drawn_column(area, column), area.y + 3))
+                .cell((drawn_column(area, column), grid_row_y(area, 1)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2233,11 +2263,14 @@ mod tests {
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
         let null = buffer
-            .cell((drawn_column(area, 1), 3))
+            .cell((drawn_column(area, 1), grid_row_y(area, 1)))
             .expect("inside the panel");
 
         assert_ne!(
-            buffer.cell((area.x + 1, 3)).expect("inside the panel").bg,
+            buffer
+                .cell((area.x + 1, grid_row_y(area, 1)))
+                .expect("inside the panel")
+                .bg,
             theme.palette().crosshair,
             "the second row is not the cursor row, so only the column arm can wash it"
         );
@@ -2255,16 +2288,20 @@ mod tests {
 
     #[test]
     fn the_grid_scrolls_to_keep_the_selection_on_screen() {
-        // The Contents panel holds a header and five rows at this size, so a
-        // twenty-row page forces the scroll a plain `Table` would not perform.
+        // The Contents panel holds a two-row header and four rows at this
+        // size, so a twenty-row page forces the scroll a plain `Table` would
+        // not perform.
         let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
         let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
         let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
         let mut state = showing(page_of(&["id"], &rows));
-        select_contents(&mut state, 19, 5);
+        select_contents(&mut state, 19, 4);
 
         let buffer = draw_state(60, 12, &state);
-        let drawn: Vec<String> = (2..8).map(|y| row(&buffer, y)).collect();
+        let area = block_area(&buffer, "Table contents");
+        let drawn: Vec<String> = (grid_row_y(area, 0)..grid_row_y(area, 4))
+            .map(|y| row(&buffer, y))
+            .collect();
 
         assert!(
             drawn.iter().any(|line| line.contains("row19")),
@@ -2346,10 +2383,9 @@ mod tests {
                 .modifier
                 .contains(Modifier::UNDERLINED)
         };
-        // The top border, then the grid's header row, then the first row —
-        // the one the cursor is on, at its first column.
+        // The first row — the one the cursor is on, at its first column.
         let first = drawn_column(area, 0);
-        let selected = area.y + 2;
+        let selected = grid_row_y(area, 0);
 
         assert!(underlined(first, selected), "the cell the cursor is on");
         assert!(underlined(first + 1, selected), "for its whole width");
@@ -2376,7 +2412,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |column: u16, row: u16| {
             buffer
-                .cell((drawn_column(area, column), area.y + 2 + row))
+                .cell((drawn_column(area, column), grid_row_y(area, row)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2412,7 +2448,11 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
+        let cell = |x: u16| {
+            buffer
+                .cell((x, grid_row_y(area, 0)))
+                .expect("inside the panel")
+        };
         let first = drawn_column(area, 0);
         let highlight = Theme::default()
             .style(Token::Crosshair)
@@ -2436,7 +2476,12 @@ mod tests {
     fn the_gutter_is_muted_and_the_values_beside_it_are_not() {
         let buffer = frame_showing_grid(4, 40, 3);
         let area = block_area(&buffer, "Table contents");
-        let fg = |x: u16| buffer.cell((x, area.y + 3)).expect("inside the panel").fg;
+        let fg = |x: u16| {
+            buffer
+                .cell((x, grid_row_y(area, 1)))
+                .expect("inside the panel")
+                .fg
+        };
         let muted = Theme::default()
             .style(Token::Muted)
             .fg
@@ -2479,6 +2524,12 @@ mod tests {
         state
     }
 
+    /// The y the `row`th row of a grid's body lands on: the panel's own
+    /// border, then the heading and the blank line under it.
+    const fn grid_row_y(area: Rect, row: u16) -> u16 {
+        area.y + 1 + crate::body::HEADER_ROWS + row
+    }
+
     /// The x of the first drawn column's first cell: the panel's own border,
     /// the merged bar+gutter block, and the spacing that follows it.
     /// `gutter` is what `lc_domain::grid::gutter` gives the page — the digits
@@ -2515,10 +2566,10 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let heading = block_row(&buffer, "Table contents", 0);
-        let first = block_row(&buffer, "Table contents", 1);
+        let first = block_row(&buffer, "Table contents", 2);
         let underlined = |x: u16| {
             buffer
-                .cell((x, area.y + 2))
+                .cell((x, grid_row_y(area, 0)))
                 .expect("inside the panel")
                 .modifier
                 .contains(Modifier::UNDERLINED)
@@ -2574,7 +2625,7 @@ mod tests {
         // nothing about the range here.
         let bg = |index: u16| {
             buffer
-                .cell((drawn_column(area, index), area.y + 3))
+                .cell((drawn_column(area, index), grid_row_y(area, 1)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2621,7 +2672,7 @@ mod tests {
     #[test]
     fn rows_are_numbered_from_one() {
         let buffer = frame_showing_grid(2, 200, 20);
-        let text = block_row(&buffer, "Table contents", 1);
+        let text = block_row(&buffer, "Table contents", 2);
 
         assert!(
             text.trim_start_matches(['▌', ' ']).starts_with('1'),
@@ -2633,7 +2684,7 @@ mod tests {
     fn the_row_number_is_the_pages_own_index_after_a_scroll() {
         // A twelve-row page scrolled to put its fourth row at the top.
         let buffer = frame_showing_scrolled_grid(12, 3);
-        let text = block_row(&buffer, "Table contents", 1);
+        let text = block_row(&buffer, "Table contents", 2);
 
         assert!(
             text.trim_start().starts_with('4'),
@@ -2655,7 +2706,7 @@ mod tests {
         ));
 
         let buffer = draw_state(40, 12, &state);
-        let drawn = block_row(&buffer, "Table contents", 1);
+        let drawn = block_row(&buffer, "Table contents", 2);
 
         assert!(
             drawn.starts_with("▌1 "),
@@ -3284,10 +3335,11 @@ mod tests {
         let geometry = geometry_of(60, 12, &state);
 
         // The Contents panel is 8 rows tall at this size: 6 inside its
-        // border, one of which the header takes.
+        // border, two of which the header takes — the names and the blank
+        // line under them.
         assert_eq!(
             geometry.height(Panel::Contents),
-            5,
+            4,
             "a page motion must not count the header as a row it can land on"
         );
     }
@@ -3626,8 +3678,12 @@ mod tests {
             "row 1 must be the header row this test is about"
         );
         assert!(
-            row(&buffer, 2).contains("ada@example.com"),
-            "row 2 must carry the first row's value, or `row: 0` below proves nothing"
+            block_row(&buffer, "Table contents", 1).trim().is_empty(),
+            "row 2 is the blank line under the headings"
+        );
+        assert!(
+            row(&buffer, 3).contains("ada@example.com"),
+            "row 3 must carry the first row's value, or `row: 0` below proves nothing"
         );
 
         assert_eq!(
@@ -3639,7 +3695,7 @@ mod tests {
             "a heading is the column it names"
         );
         assert_eq!(
-            map.hit(column_of(&buffer, 2, "ada@example.com"), 2),
+            map.hit(column_of(&buffer, 3, "ada@example.com"), 3),
             Some(Click::Row {
                 panel: Panel::Contents,
                 row: 0,
@@ -3647,7 +3703,7 @@ mod tests {
             })
         );
         assert_eq!(
-            map.hit(20, 4),
+            map.hit(20, 5),
             Some(Click::Panel(Panel::Contents)),
             "below the last row is blank space, not a row"
         );
@@ -3659,7 +3715,7 @@ mod tests {
 
         for (column, value) in ["id-ada", "ada@example.com"].into_iter().enumerate() {
             assert_eq!(
-                map.hit(column_of(&buffer, 2, value), 2),
+                map.hit(column_of(&buffer, 3, value), 3),
                 Some(Click::Row {
                     panel: Panel::Contents,
                     row: 0,

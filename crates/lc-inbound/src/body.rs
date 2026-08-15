@@ -38,8 +38,10 @@ const LAST_LIMB: &str = "└─ ";
 
 const ELLIPSIS: char = '…';
 
-/// Rows of a grid spent on its header rather than on a row.
-const HEADER_ROWS: u16 = 1;
+/// Rows of a grid spent on its header rather than on a row: the column names
+/// and a blank line under them, so the headings read as chrome above the page
+/// rather than as its first row.
+pub(crate) const HEADER_ROWS: u16 = 2;
 
 /// The mark in the cursor row's gutter.
 ///
@@ -697,6 +699,7 @@ fn heading(
                 }),
         ),
     )
+    .height(HEADER_ROWS)
 }
 
 /// A row's number, right-aligned in the gutter.

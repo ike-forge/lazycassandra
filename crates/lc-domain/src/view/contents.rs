@@ -107,14 +107,21 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         },
     };
 
+    let tokens: Vec<Option<Token>> = page
+        .columns
+        .iter()
+        .map(|name| column_token(state.schema(), subject.table(), name))
+        .collect();
+
     PanelBody::Grid {
         columns: page
             .columns
             .iter()
             .zip(grid_page.widths())
-            .map(|(name, width)| GridColumn {
+            .zip(&tokens)
+            .map(|((name, width), token)| GridColumn {
                 name: name.clone(),
-                token: column_token(state.schema(), subject.table(), name),
+                token: *token,
                 width: *width,
             })
             .collect(),
@@ -124,7 +131,14 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
             .map(|row| {
                 row.values
                     .iter()
-                    .map(|value| grid_cell(value, state.contents.filter()))
+                    .enumerate()
+                    .map(|(index, value)| {
+                        grid_cell(
+                            value,
+                            tokens.get(index).copied().flatten(),
+                            state.contents.filter(),
+                        )
+                    })
                     .collect()
             })
             .collect(),
@@ -140,16 +154,29 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
     }
 }
 
-fn grid_cell(value: &CqlValue, filter: Option<&Filter>) -> GridCell {
+fn grid_cell(value: &CqlValue, column: Option<Token>, filter: Option<&Filter>) -> GridCell {
     let text = cell::text(value);
 
     GridCell {
         matched: filter.is_some_and(|filter| filter.matches(&text)),
         token: match value {
             CqlValue::Null => Some(Token::Faint),
-            _ => None,
+            _ => key_token(column),
         },
         text,
+    }
+}
+
+/// A key column's values carry the colour its heading does, so the primary key
+/// can be read off the rows themselves rather than traced back up the grid
+/// (vision.md §2). A regular column keeps `None`: body text is what every
+/// other value already is, and painting it would leave the keys with nothing
+/// to stand out against.
+const fn key_token(column: Option<Token>) -> Option<Token> {
+    match column {
+        Some(Token::PartitionKey) => Some(Token::PartitionKeyValue),
+        Some(Token::ClusteringKey) => Some(Token::ClusteringKeyValue),
+        _ => None,
     }
 }
 
@@ -328,7 +355,7 @@ mod tests {
         let PanelBody::Grid { rows, .. } = contents_body(&state) else {
             panic!("a loaded page draws a grid");
         };
-        assert_eq!(rows[0][0].token, None);
+        assert_eq!(rows[0][0].token, Some(Token::PartitionKeyValue));
         assert_eq!(rows[0][1].token, Some(Token::Faint));
     }
 
@@ -396,6 +423,69 @@ mod tests {
             columns[0].token, None,
             "a key structure that cannot be checked must not be asserted"
         );
+    }
+
+    #[test]
+    fn a_key_columns_values_carry_the_colour_its_heading_does() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        let mut schema = state.schema().cloned().expect("loaded");
+        let table = schema
+            .keyspaces
+            .get_mut("shop")
+            .and_then(|keyspace| keyspace.tables.get_mut("orders"))
+            .expect("the builder made it");
+        table.primary_key.clustering = vec![ClusteringColumn {
+            column: Column {
+                name: "at".to_owned(),
+                cql_type: "timestamp".to_owned(),
+            },
+            order: ClusteringOrder::Ascending,
+        }];
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(schema),
+        });
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            page_of(
+                &["id", "at", "total"],
+                &[&[CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]],
+            ),
+        );
+
+        let PanelBody::Grid { rows, .. } = contents_body(&state) else {
+            panic!("a loaded page draws a grid");
+        };
+        assert_eq!(
+            rows[0].iter().map(|cell| cell.token).collect::<Vec<_>>(),
+            [
+                Some(Token::PartitionKeyValue),
+                Some(Token::ClusteringKeyValue),
+                None
+            ],
+            "a regular column's values stay body text, which is what the keys \
+             stand out against"
+        );
+    }
+
+    #[test]
+    fn a_page_whose_table_is_gone_paints_no_key_colour_on_its_values() {
+        let mut state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(Schema::default()),
+        });
+
+        let PanelBody::Grid { rows, .. } = contents_body(&state) else {
+            panic!("the page is still showing");
+        };
+        assert_eq!(rows[0][0].token, None);
     }
 
     #[test]

@@ -11,6 +11,16 @@ use crate::posture::Posture;
 pub enum Token {
     PartitionKey,
     ClusteringKey,
+    /// A value in a partition key column, drawn in that column's colour so
+    /// the key can be read off the rows themselves (vision.md §2).
+    ///
+    /// A token of its own rather than [`Token::PartitionKey`] reused: a
+    /// heading is one word and can carry weight, while a column of bold
+    /// values would take the emphasis a matched cell spends on the row the
+    /// cursor is on.
+    PartitionKeyValue,
+    /// [`Token::PartitionKeyValue`]'s counterpart for a clustering column.
+    ClusteringKeyValue,
     /// A column stored once per partition rather than once per row. Worth a
     /// colour because static-ness changes what a write to it means, and the
     /// Table columns tab is the one place every column is listed together
