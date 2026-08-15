@@ -112,7 +112,7 @@ open a manual to find out what you can do to the thing you are looking at. `?`
 gives the full contextual map, not a wall of every binding in the program.
 
 **2. The same key, at every level of skill.**
-The novice reads the hint bar and presses `d`. The expert presses `d` without
+The novice reads the title and presses `2`. The expert presses `2` without
 looking. There is no second, faster path that the novice is missing — the fast
 path *is* the visible path. Depth is reached by composing (counts, ranges,
 filters, chained actions), not by discovering a hidden alternative.

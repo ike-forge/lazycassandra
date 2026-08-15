@@ -9,7 +9,7 @@ use crate::contents::{ContentsState, GridPage, SelectionMode, Subject, TableRef}
 use crate::model::{CqlValue, Schema};
 use crate::search::Search;
 use crate::state::{Panel, Ranges, State};
-use crate::style::Token;
+use crate::style::{Segment, Token};
 
 use super::{PanelBody, failure, waiting};
 
@@ -44,22 +44,40 @@ pub struct GridCell {
     pub matched: bool,
 }
 
-pub(super) fn title(state: &State) -> String {
+pub(super) fn title(state: &State) -> Vec<Segment> {
     const BASE: &str = "Table contents";
 
     match state.contents.state() {
-        ContentsState::Empty => BASE.to_owned(),
+        ContentsState::Empty => vec![Segment::plain(BASE)],
         ContentsState::Loading { subject, .. } | ContentsState::Failed { subject, .. } => {
-            format!("{BASE} — {}", subject.label())
+            named(BASE, subject, None)
         }
         ContentsState::Loaded { subject, page } => {
-            format!(
-                "{BASE} — {} ({})",
-                subject.label(),
-                rows(page.page().rows.len())
-            )
+            named(BASE, subject, Some(rows(page.page().rows.len())))
         }
     }
+}
+
+/// The panel's name, then what it is showing, then how much of it.
+///
+/// The qualified name keeps the schema's own colours ([`TableRef::segments`]):
+/// this panel does not follow the tree cursor, so its title is the only thing
+/// on screen saying which table is up (vision.md §4, principle 8), and it says
+/// it the way the tree does.
+fn named(base: &str, subject: &Subject, count: Option<String>) -> Vec<Segment> {
+    let mut segments = vec![Segment::plain(format!("{base} — "))];
+
+    match subject {
+        Subject::Table(table) => segments.extend(table.segments()),
+        // A typed statement names no one table, so there is nothing to colour.
+        Subject::Typed(_) => segments.push(Segment::plain(subject.label())),
+    }
+
+    if let Some(count) = count {
+        segments.push(Segment::plain(format!(" ({count})")));
+    }
+
+    segments
 }
 
 fn rows(count: usize) -> String {
@@ -107,14 +125,21 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         },
     };
 
+    let tokens: Vec<Option<Token>> = page
+        .columns
+        .iter()
+        .map(|name| column_token(state.schema(), subject.table(), name))
+        .collect();
+
     PanelBody::Grid {
         columns: page
             .columns
             .iter()
             .zip(grid_page.widths())
-            .map(|(name, width)| GridColumn {
+            .zip(&tokens)
+            .map(|((name, width), token)| GridColumn {
                 name: name.clone(),
-                token: column_token(state.schema(), subject.table(), name),
+                token: *token,
                 width: *width,
             })
             .collect(),
@@ -124,7 +149,14 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
             .map(|row| {
                 row.values
                     .iter()
-                    .map(|value| grid_cell(value, state.contents.search()))
+                    .enumerate()
+                    .map(|(index, value)| {
+                        grid_cell(
+                            value,
+                            tokens.get(index).copied().flatten(),
+                            state.contents.search(),
+                        )
+                    })
                     .collect()
             })
             .collect(),
@@ -140,16 +172,29 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
     }
 }
 
-fn grid_cell(value: &CqlValue, search: Option<&Search>) -> GridCell {
+fn grid_cell(value: &CqlValue, column: Option<Token>, search: Option<&Search>) -> GridCell {
     let text = cell::text(value);
 
     GridCell {
         matched: search.is_some_and(|search| search.matches(&text)),
         token: match value {
             CqlValue::Null => Some(Token::Faint),
-            _ => None,
+            _ => key_token(column),
         },
         text,
+    }
+}
+
+/// A key column's values carry the colour its heading does, so the primary key
+/// can be read off the rows themselves rather than traced back up the grid
+/// (vision.md §2). A regular column keeps `None`: body text is what every
+/// other value already is, and painting it would leave the keys with nothing
+/// to stand out against.
+const fn key_token(column: Option<Token>) -> Option<Token> {
+    match column {
+        Some(Token::PartitionKey) => Some(Token::PartitionKeyValue),
+        Some(Token::ClusteringKey) => Some(Token::ClusteringKeyValue),
+        _ => None,
     }
 }
 
@@ -194,8 +239,10 @@ mod tests {
         panel_body(state, 2)
     }
 
+    /// The strip alone: the `[3]-` every title opens with is
+    /// `view::tests`' to pin, not this module's.
     fn contents_title(state: &State) -> String {
-        view_model(state).panels[2].title.text()
+        view_model(state).panels[2].title.strip()
     }
 
     fn page_of(columns: &[&str], rows: &[&[CqlValue]]) -> Page {
@@ -251,6 +298,73 @@ mod tests {
             }
         );
         assert_eq!(contents_title(&state), "Table contents — shop.orders");
+    }
+
+    fn title_segments(state: &State) -> Vec<Segment> {
+        view_model(state).panels[2].title.tabs()[0]
+            .segments()
+            .to_vec()
+    }
+
+    fn showing_table(keyspace: &str, table: &str) -> State {
+        let mut state = tabled(&[(keyspace, &[table])]);
+        state.contents.requested(
+            QueryId::next(),
+            Subject::Table(TableRef::new(keyspace, table)),
+        );
+        state
+    }
+
+    /// The panel that does not follow the tree cursor still names its table
+    /// the way the tree does, colours included (vision.md §2).
+    #[test]
+    fn a_titles_table_name_wears_the_schemas_own_colours() {
+        let state = showing_table("shop", "orders");
+
+        assert_eq!(
+            title_segments(&state),
+            vec![
+                Segment::plain("Table contents — "),
+                Segment::styled("shop", Token::Keyspace),
+                Segment::styled(".", Token::Faint),
+                Segment::styled("orders", Token::Table),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_system_tables_title_is_faint_on_both_halves_as_its_tree_row_is() {
+        let state = showing_table("system_schema", "columns");
+
+        assert_eq!(
+            title_segments(&state)[1..],
+            [
+                Segment::styled("system_schema", Token::Faint),
+                Segment::styled(".", Token::Faint),
+                Segment::styled("columns", Token::Faint),
+            ]
+        );
+    }
+
+    /// A statement names no one table, so the title has nothing to colour —
+    /// and still reads exactly as it did.
+    #[test]
+    fn a_typed_subjects_title_carries_no_colour() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.contents.requested(
+            QueryId::next(),
+            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+        );
+
+        assert!(
+            title_segments(&state)
+                .iter()
+                .all(|segment| segment.token.is_none())
+        );
+        assert_eq!(
+            contents_title(&state),
+            "Table contents — SELECT * FROM shop.orders"
+        );
     }
 
     #[test]
@@ -328,7 +442,7 @@ mod tests {
         let PanelBody::Grid { rows, .. } = contents_body(&state) else {
             panic!("a loaded page draws a grid");
         };
-        assert_eq!(rows[0][0].token, None);
+        assert_eq!(rows[0][0].token, Some(Token::PartitionKeyValue));
         assert_eq!(rows[0][1].token, Some(Token::Faint));
     }
 
@@ -396,6 +510,69 @@ mod tests {
             columns[0].token, None,
             "a key structure that cannot be checked must not be asserted"
         );
+    }
+
+    #[test]
+    fn a_key_columns_values_carry_the_colour_its_heading_does() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        let mut schema = state.schema().cloned().expect("loaded");
+        let table = schema
+            .keyspaces
+            .get_mut("shop")
+            .and_then(|keyspace| keyspace.tables.get_mut("orders"))
+            .expect("the builder made it");
+        table.primary_key.clustering = vec![ClusteringColumn {
+            column: Column {
+                name: "at".to_owned(),
+                cql_type: "timestamp".to_owned(),
+            },
+            order: ClusteringOrder::Ascending,
+        }];
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(schema),
+        });
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            page_of(
+                &["id", "at", "total"],
+                &[&[CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]],
+            ),
+        );
+
+        let PanelBody::Grid { rows, .. } = contents_body(&state) else {
+            panic!("a loaded page draws a grid");
+        };
+        assert_eq!(
+            rows[0].iter().map(|cell| cell.token).collect::<Vec<_>>(),
+            [
+                Some(Token::PartitionKeyValue),
+                Some(Token::ClusteringKeyValue),
+                None
+            ],
+            "a regular column's values stay body text, which is what the keys \
+             stand out against"
+        );
+    }
+
+    #[test]
+    fn a_page_whose_table_is_gone_paints_no_key_colour_on_its_values() {
+        let mut state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(Schema::default()),
+        });
+
+        let PanelBody::Grid { rows, .. } = contents_body(&state) else {
+            panic!("the page is still showing");
+        };
+        assert_eq!(rows[0][0].token, None);
     }
 
     #[test]

@@ -6,11 +6,62 @@
 
 use crate::posture::Posture;
 
+/// A run of text drawn in one token.
+///
+/// `None` is the run whatever style the caller is drawing in covers — a
+/// panel's name is the panel's name, in whatever colour focus gives it. A
+/// `Some` is a run that carries a meaning of its own: a schema name reads as
+/// one wherever it is written, and the tree, the DDL panel and a title all
+/// spend the same two colours on a keyspace and a table (vision.md §2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Segment {
+    pub text: String,
+    pub token: Option<Token>,
+}
+
+impl Segment {
+    #[must_use]
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            token: None,
+        }
+    }
+
+    #[must_use]
+    pub fn styled(text: impl Into<String>, token: Token) -> Self {
+        Self {
+            text: text.into(),
+            token: Some(token),
+        }
+    }
+}
+
+/// Runs read as one string — what a border is measured against, and what a
+/// test asserts a title says.
+#[must_use]
+pub fn text(segments: &[Segment]) -> String {
+    segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect()
+}
+
 /// A thing worth distinguishing visually.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {
     PartitionKey,
     ClusteringKey,
+    /// A value in a partition key column, drawn in that column's colour so
+    /// the key can be read off the rows themselves (vision.md §2).
+    ///
+    /// A token of its own rather than [`Token::PartitionKey`] reused: a
+    /// heading is one word and can carry weight, while a column of bold
+    /// values would take the emphasis a matched cell spends on the row the
+    /// cursor is on.
+    PartitionKeyValue,
+    /// [`Token::PartitionKeyValue`]'s counterpart for a clustering column.
+    ClusteringKeyValue,
     /// A column stored once per partition rather than once per row. Worth a
     /// colour because static-ness changes what a write to it means, and the
     /// Table columns tab is the one place every column is listed together
@@ -37,8 +88,6 @@ pub enum Token {
     Comment,
     /// The panel accepting input.
     Focused,
-    /// The key that focuses a panel, inside that panel's title.
-    Shortcut,
     /// A key the focused panel responds to, in the hint bar.
     HintKey,
     /// The name of a table option or replication setting, in the Table DDL

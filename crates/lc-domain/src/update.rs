@@ -7,7 +7,6 @@
 use crate::commands::CommandsPanel;
 use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
-use crate::ddl::DdlTab;
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
@@ -637,12 +636,14 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('v') => toggle_visual(state),
         Key::Char('n') => next_match_key(state, Direction::Forwards),
         Key::Char('N') => next_match_key(state, Direction::Backwards),
-        // Last, so every binding above keeps precedence over a panel key. A
-        // DDL tab is a place the same way a panel is, so its key both focuses
-        // the panel and draws the tab — one press to arrive, whichever tab was
-        // last up (docs/shortcuts.md §4). Checked first because `d` is both
-        // the panel's letter and its first tab's.
-        Key::Char(key) => show_tab(state, key),
+        // Tabs are walked from the focused panel and nowhere else: `]` on
+        // Tables would otherwise mean "the DDL panel's next tab", which is a
+        // second way to reach a place the number already reaches
+        // (docs/shortcuts.md §4).
+        Key::Char(']') => walk_tab(state, Step::Forward),
+        Key::Char('[') => walk_tab(state, Step::Back),
+        // Last, so every binding above keeps precedence over a panel key.
+        Key::Char(key) => focus_by_number(state, key),
         _ => {}
     }
 
@@ -715,10 +716,10 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
     let (panel, row, column) = match click {
         Click::Row { panel, row, column } => (panel, Some(row), column),
         Click::Column { panel, column } => (panel, None, Some(column)),
-        // A tab is a place, and its key is how one is reached: this is the
-        // `Key::Char` arm of `handle_key`, reached by pointer (design §1).
-        Click::Tab { shortcut, .. } => {
-            show_tab(state, shortcut);
+        // A tab is a place, and pressing it is how one is reached: this is
+        // the `[`/`]` arm of `handle_key`, reached by pointer (design §1).
+        Click::Tab { panel, tab } => {
+            show_tab(state, panel, tab);
             return Vec::new();
         }
         Click::Panel(_) => return Vec::new(),
@@ -768,20 +769,68 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
     }
 }
 
-/// Focuses the panel a tab's key names, and draws that tab.
+/// Which way [`walk_tab`] steps through a panel's strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Forward,
+    Back,
+}
+
+/// Focuses the panel `key` numbers and, where it already had focus, steps to
+/// its next tab.
 ///
-/// Shared with [`handle_key`]'s `Key::Char` arm so a tab reached by pointer and
-/// one reached by key cannot diverge.
-fn show_tab(state: &mut State, shortcut: char) {
-    if let Some(tab) = DdlTab::from_shortcut(shortcut) {
-        state.focus_on(Panel::Ddl);
-        // A tab the strip does not draw is not a place to arrive at: `c` on a
-        // keyspace focuses the panel and no more.
-        if crate::view::ddl_tabs(state).contains(&tab) {
-            state.ddl.show(tab);
-        }
-    } else if let Some(panel) = Panel::from_shortcut(shortcut) {
+/// One key for both: a panel is the place, and its tabs are what that place
+/// can show — so a reader who knows how to arrive already knows how to look at
+/// the rest (docs/shortcuts.md §4). A panel with one tab answers the second
+/// press by staying where it is.
+fn focus_by_number(state: &mut State, key: char) {
+    let Some(panel) = Panel::from_number(key) else {
+        return;
+    };
+
+    if state.focus() == panel {
+        walk_tab(state, Step::Forward);
+    } else {
         state.focus_on(panel);
+    }
+}
+
+/// Steps the focused panel's strip one tab in `step`, wrapping.
+///
+/// A tab the strip does not draw is not a place to arrive at: on a keyspace
+/// the DDL panel offers one tab, and walking stays on it.
+fn walk_tab(state: &mut State, step: Step) {
+    if state.focus() != Panel::Ddl {
+        return;
+    }
+
+    let shown = state.ddl.tab();
+    let candidate = match step {
+        Step::Forward => shown.next(),
+        Step::Back => shown.previous(),
+    };
+
+    if crate::view::ddl_tabs(state).contains(&candidate) {
+        state.ddl.show(candidate);
+    }
+}
+
+/// Draws the `tab`th tab of the strip `panel` last drew. `click_at` has
+/// already focused it.
+///
+/// Reaches the same [`DdlPanel::show`](crate::ddl::DdlPanel::show) that
+/// [`walk_tab`] does, so a tab arrived at by pointer and one arrived at by key
+/// cannot diverge.
+fn show_tab(state: &mut State, panel: Panel, tab: usize) {
+    if panel != Panel::Ddl {
+        return;
+    }
+
+    // The map a press was resolved against describes the previous frame, so a
+    // strip that has since lost a tab drops the press rather than showing
+    // whichever tab took that position (design §6).
+    if let Some(tab) = crate::view::ddl_tabs(state).get(tab).copied() {
+        state.ddl.show(tab);
     }
 }
 
@@ -2864,12 +2913,16 @@ mod tests {
         press(&mut state, Key::PageDown);
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            15,
+            17,
             "paging is routed at the handle_key layer, same as j/k"
         );
 
         press(&mut state, Key::PageUp);
-        assert_eq!(palette(&state).expect("still open").selected(), 1);
+        assert_eq!(
+            palette(&state).expect("still open").selected(),
+            3,
+            "a page up from the second group lands inside the first"
+        );
     }
 
     #[test]
@@ -3419,7 +3472,7 @@ mod tests {
 
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            15,
+            17,
             "ctrl-d is pgdn by another name, and pgdn pages the palette"
         );
         assert_eq!(state.tables.cursor.index(), 0);
@@ -3699,7 +3752,7 @@ mod tests {
     fn typing_outside_queries_still_focuses_a_panel() {
         let mut state = browsing(&["a"]);
 
-        press(&mut state, Key::Char('b'));
+        press(&mut state, Key::Char('3'));
 
         assert_eq!(state.focus(), Panel::Contents);
         assert_eq!(state.queries.text(), "", "nothing leaked into the buffer");
@@ -4296,10 +4349,10 @@ mod tests {
     }
 
     #[test]
-    fn tab_walks_the_panels_in_reading_order_and_wraps() {
+    fn tab_walks_the_panels_in_number_order_and_wraps() {
         let mut state = browsing(&["a"]);
 
-        for expected in Panel::CYCLE.into_iter().skip(1).chain([Panel::CYCLE[0]]) {
+        for expected in Panel::ALL.into_iter().skip(1).chain([Panel::ALL[0]]) {
             press(&mut state, Key::Tab);
             assert_eq!(state.focus(), expected);
         }
@@ -4319,154 +4372,176 @@ mod tests {
 
         press(&mut state, Key::BackTab);
 
-        assert_eq!(state.focus(), Panel::Ddl);
+        assert_eq!(state.focus(), Panel::Contents);
     }
 
     #[test]
-    fn a_shortcut_focuses_its_panel_from_any_panel_that_does_not_take_text() {
+    fn a_number_focuses_its_panel_from_any_panel_that_does_not_take_text() {
         for from in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
-            for to in Panel::ALL {
+            for to in Panel::ALL.into_iter().filter(|panel| *panel != from) {
                 let mut state = State::default();
                 state.focus_on(from);
 
-                press(&mut state, Key::Char(to.shortcut()));
+                press(&mut state, Key::Char(to.number()));
 
                 assert_eq!(
                     state.focus(),
                     to,
                     "'{}' should reach {to:?} from {from:?}",
-                    to.shortcut()
+                    to.number()
                 );
             }
         }
     }
 
     #[test]
-    fn a_repeated_shortcut_leaves_a_panel_alone() {
+    fn a_repeated_number_keeps_focus_and_walks_the_panels_tabs() {
         for panel in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
-            let mut state = State::default();
+            // A table has to be selected, or the DDL strip draws one tab and
+            // there is nothing to walk to.
+            let mut state = browsing_a_table();
+            state.focus_on(Panel::Tables);
 
-            press(&mut state, Key::Char(panel.shortcut()));
-            press(&mut state, Key::Char(panel.shortcut()));
+            press(&mut state, Key::Char(panel.number()));
+            press(&mut state, Key::Char(panel.number()));
 
-            assert_eq!(state.focus(), panel);
+            assert_eq!(state.focus(), panel, "the second press does not move focus");
             assert_eq!(
                 state.ddl.tab(),
-                DdlTab::Ddl,
-                "a focus letter moves focus and does nothing else, however often it is pressed"
+                if panel == Panel::Ddl {
+                    DdlTab::Columns
+                } else {
+                    DdlTab::Ddl
+                },
+                "only the panel that has tabs answers the second press"
             );
         }
     }
 
     #[test]
-    fn c_reaches_the_columns_tab_from_wherever_focus_was() {
-        for from in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
-            // A table has to be selected, or the strip draws no Columns tab
-            // for the key to arrive at.
+    fn pressing_two_three_times_returns_to_the_first_tab() {
+        let mut state = browsing_a_table();
+
+        for _ in 0..3 {
+            press(&mut state, Key::Char('2'));
+        }
+
+        assert_eq!(state.focus(), Panel::Ddl);
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "two tabs, so the walk wraps");
+    }
+
+    #[test]
+    fn brackets_walk_the_focused_panels_tabs_both_ways() {
+        let mut state = browsing_a_table();
+        state.focus_on(Panel::Ddl);
+
+        press(&mut state, Key::Char(']'));
+        assert_eq!(state.ddl.tab(), DdlTab::Columns);
+
+        press(&mut state, Key::Char('['));
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl);
+    }
+
+    #[test]
+    fn brackets_do_nothing_from_a_panel_with_no_tabs() {
+        for panel in [Panel::Tables, Panel::Contents] {
             let mut state = browsing_a_table();
-            state.focus_on(from);
+            state.focus_on(panel);
 
-            press(&mut state, Key::Char('c'));
+            press(&mut state, Key::Char(']'));
 
-            assert_eq!(state.focus(), Panel::Ddl, "from {from:?}");
-            assert_eq!(state.ddl.tab(), DdlTab::Columns, "from {from:?}");
+            assert_eq!(state.focus(), panel, "a bracket moves no focus");
+            assert_eq!(
+                state.ddl.tab(),
+                DdlTab::Ddl,
+                "and reaches no panel it is not in"
+            );
         }
     }
 
     #[test]
-    fn c_on_a_keyspace_focuses_the_panel_and_draws_no_columns_tab() {
+    fn walking_on_a_keyspace_stays_on_the_only_tab_there_is() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         press(&mut state, Key::Char('l'));
 
-        press(&mut state, Key::Char('c'));
+        press(&mut state, Key::Char('2'));
+        press(&mut state, Key::Char('2'));
 
         assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(
             state.ddl.tab(),
             DdlTab::Ddl,
-            "a keyspace has no columns, so there is no tab to store"
+            "a keyspace has no columns, so there is no tab to walk to"
         );
     }
 
     #[test]
-    fn d_returns_the_panel_to_its_ddl_tab() {
-        let mut state = browsing_a_table();
-
-        press(&mut state, Key::Char('c'));
-        press(&mut state, Key::Char('d'));
-
-        assert_eq!(state.focus(), Panel::Ddl);
-        assert_eq!(state.ddl.tab(), DdlTab::Ddl);
-    }
-
-    #[test]
-    fn c_is_text_in_a_panel_that_takes_text() {
-        let mut state = State::default();
-        state.focus_on(Panel::Queries);
-
-        press(&mut state, Key::Char('b'));
-
-        assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
-        assert_eq!(state.queries.text(), "b");
-        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "and no tab changed under it");
-    }
-
-    #[test]
-    fn a_shortcut_is_text_in_a_panel_that_takes_text() {
+    fn a_number_is_text_in_a_panel_that_takes_text() {
         for to in Panel::ALL {
             let mut state = State::default();
             state.focus_on(Panel::Queries);
 
-            press(&mut state, Key::Char(to.shortcut()));
+            press(&mut state, Key::Char(to.number()));
 
             assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
-            assert_eq!(state.queries.text(), to.shortcut().to_string());
+            assert_eq!(state.queries.text(), to.number().to_string());
         }
     }
 
-    /// Also the collision test: a shortcut that an earlier arm already answers
+    #[test]
+    fn a_bracket_is_text_in_a_panel_that_takes_text() {
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
+
+        press(&mut state, Key::Char(']'));
+
+        assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
+        assert_eq!(state.queries.text(), "]");
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "and no tab changed under it");
+    }
+
+    /// Also the collision test: a number that an earlier arm already answers
     /// would never reach the focus arm, and the focus assertion would fail.
     #[test]
-    fn a_shortcut_moves_focus_and_does_nothing_else() {
+    fn a_number_moves_focus_and_does_nothing_else() {
         for panel in Panel::ALL {
             let mut state = browsing(&["a", "b", "c"]);
             press(&mut state, Key::Char('j'));
             let cursor = state.tables.cursor;
 
-            let effects = press(&mut state, Key::Char(panel.shortcut()));
+            let effects = press(&mut state, Key::Char(panel.number()));
 
             assert_eq!(state.focus(), panel);
             assert!(
                 effects.is_empty(),
                 "'{}' issued {effects:?}",
-                panel.shortcut()
+                panel.number()
             );
-            assert!(!state.should_quit, "'{}' quit the app", panel.shortcut());
+            assert!(!state.should_quit, "'{}' quit the app", panel.number());
             assert_eq!(
                 state.tables.cursor,
                 cursor,
                 "'{}' disturbed the tree",
-                panel.shortcut()
+                panel.number()
             );
         }
     }
 
     #[test]
-    fn a_shifted_shortcut_stays_unbound() {
-        for panel in Panel::ALL {
+    fn the_letters_the_numbers_replaced_stay_unbound() {
+        for freed in ['a', 'b', 'c', 'd', 'u'] {
             // Focus starts elsewhere, so an unmoved focus is evidence rather
             // than the state it began in.
-            let elsewhere = panel.next();
+            let elsewhere = Panel::Ddl;
             let mut state = State::default();
             state.focus_on(elsewhere);
-            let shifted = panel.shortcut().to_ascii_uppercase();
 
-            press(&mut state, Key::Char(shifted));
+            press(&mut state, Key::Char(freed));
 
             assert_eq!(
                 state.focus(),
                 elsewhere,
-                "'{shifted}' must stay free for a binding of its own"
+                "'{freed}' must stay free for a binding of its own"
             );
         }
     }
@@ -4500,24 +4575,20 @@ mod tests {
                 Box::new(|state: &mut State| drop(press(state, Key::BackTab))),
             ),
             (
-                "a",
-                Box::new(|state: &mut State| drop(press(state, Key::Char('a')))),
+                "1",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('1')))),
             ),
             (
-                "b",
-                Box::new(|state: &mut State| drop(press(state, Key::Char('b')))),
+                "2",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('2')))),
             ),
             (
-                "c",
-                Box::new(|state: &mut State| drop(press(state, Key::Char('c')))),
+                "3",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('3')))),
             ),
             (
-                "d",
-                Box::new(|state: &mut State| drop(press(state, Key::Char('d')))),
-            ),
-            (
-                "u",
-                Box::new(|state: &mut State| drop(press(state, Key::Char('u')))),
+                "4",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('4')))),
             ),
         ];
 
@@ -4549,12 +4620,12 @@ mod tests {
         state.tables.selection.start(0);
         state.tables.selection.stop(1);
 
-        let _ = press(&mut state, Key::Char('a'));
+        let _ = press(&mut state, Key::Char('1'));
 
         assert_eq!(
             state.tables.selection.ranges(state.tables.cursor.index()),
             Ranges::of(Range::new(0, 1)),
-            "`a` on Tables is not a panel switch"
+            "`1` on Tables is not a panel switch"
         );
     }
 
@@ -5323,7 +5394,8 @@ mod tests {
     #[test]
     fn y_yanks_a_column_row() {
         let mut state = browsing_a_table();
-        press(&mut state, Key::Char('c'));
+        press(&mut state, Key::Char('2'));
+        press(&mut state, Key::Char('2'));
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Char('j'));
 
@@ -6424,7 +6496,7 @@ mod tests {
             &mut state,
             Pointer::Click(Click::Tab {
                 panel: Panel::Ddl,
-                shortcut: 'c',
+                tab: 1,
             }),
         );
 
@@ -6433,9 +6505,9 @@ mod tests {
         assert_eq!(state.ddl.tab(), DdlTab::Columns);
     }
 
-    /// The same reachability rule the key obeys: `c` on a keyspace focuses the
-    /// panel and no more, so a press on a strip drawn a frame ago cannot reach
-    /// a tab this frame has not got.
+    /// The same reachability rule the key obeys: on a keyspace the strip has
+    /// one tab, so a press on a strip drawn a frame ago cannot reach a tab
+    /// this frame has not got.
     #[test]
     fn a_click_on_a_tab_the_strip_no_longer_draws_only_focuses() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
@@ -6445,7 +6517,7 @@ mod tests {
             &mut state,
             Pointer::Click(Click::Tab {
                 panel: Panel::Ddl,
-                shortcut: 'c',
+                tab: 1,
             }),
         );
 
@@ -6462,7 +6534,7 @@ mod tests {
             &mut state,
             Pointer::Click(Click::Tab {
                 panel: Panel::Tables,
-                shortcut: Panel::Tables.shortcut(),
+                tab: 0,
             }),
         );
 
@@ -6956,7 +7028,7 @@ mod tests {
 
     /// States that between them exercise every binding: one with an overlay to
     /// dismiss, an unfolded keyspace to fold, and the tree at its first row;
-    /// one focused somewhere other than Tables so the focus letters differ;
+    /// one focused somewhere other than Tables so the panel numbers differ;
     /// one with the tree folded and moved off its first row, so `k`, `pgup`
     /// and `home` all have somewhere to go; and one with the palette open and
     /// one with the theme picker open, the states that capture keys rather
@@ -7043,6 +7115,12 @@ mod tests {
         searched.geometry = geometry;
         searched.apply_search(Searched::Tables, Search::new("o"));
 
+        // The one state `[`/`]` do anything in: the DDL panel focused with a
+        // table under the tree cursor, so its strip draws two tabs.
+        let mut tabbed = browsing_a_table();
+        tabbed.geometry = geometry;
+        tabbed.focus_on(Panel::Ddl);
+
         vec![
             covered,
             elsewhere,
@@ -7053,6 +7131,7 @@ mod tests {
             grid,
             export_open,
             searched,
+            tabbed,
         ]
     }
 
@@ -8171,7 +8250,7 @@ mod tests {
     }
 
     /// The grid is the only body with two cursors to choose between. `m` is
-    /// not a focus letter, so in the other panels it must fall through to the
+    /// not a panel number, so in the other panels it must fall through to the
     /// arm that answers those and do nothing.
     #[test]
     fn m_does_nothing_outside_the_grid() {
@@ -8327,7 +8406,10 @@ mod tests {
 
         open_form(&mut state);
 
-        assert_eq!(form_of(&state).title(), "Export table shop.orders");
+        assert_eq!(
+            crate::style::text(&form_of(&state).title()),
+            "Export table shop.orders"
+        );
     }
 
     #[test]

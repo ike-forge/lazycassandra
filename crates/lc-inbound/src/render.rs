@@ -56,6 +56,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             return Rendered::default();
         }
     };
+    // The panels are context while a modal is up, not a place a key would
+    // land, so they are drawn without the marks that say otherwise.
+    let dimmed = dims_the_panels(view.overlay.as_ref());
+    let beneath = if dimmed { theme.dimmed() } else { theme };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
     let mut ddl_selection = DdlSpan::default();
@@ -65,8 +69,14 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     for (index, panel) in view.panels.iter().enumerate() {
         let area = rects.get(panel.panel);
 
-        let is_focused_panel = panel.panel == view.focus;
-        let (block, border, tabs) = panel_block(panel, area, is_focused_panel, theme);
+        // Not "the focused panel, drawn quietly": while a modal is up there
+        // is no focused panel at all, and this one reads exactly as the other
+        // three do. A style that merely muted the accent drew the title in
+        // the border's colour, one step *below* the unfocused panels beside
+        // it — the panel the user had just been in became the faintest thing
+        // on screen.
+        let is_focused_panel = panel.panel == view.focus && !dimmed;
+        let (block, border, tabs) = panel_block(panel, area, is_focused_panel, beneath);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -82,13 +92,18 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         // blinks over the modal at a position that means nothing there.
         let focused = panel.panel == view.focus && view.overlay.is_none();
 
+        let chrome = crate::body::Chrome {
+            inner,
+            block: area,
+            border,
+        };
         let body = crate::body::render(
             frame,
-            inner,
+            chrome,
             &panel.body,
             panel.search.as_ref(),
             focused,
-            theme,
+            beneath,
         );
 
         match &body {
@@ -99,12 +114,12 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                     ddl_selection = drawn.selection;
                 }
                 if drawn.extent.overflows() {
-                    scrollbar(frame, area, &drawn.extent, border, theme);
+                    scrollbar(frame, area, &drawn.extent, border, beneath);
                 }
                 if let Some(columns) = &drawn.columns
                     && columns.overflows()
                 {
-                    horizontal_scrollbar(frame, area, columns, border, theme);
+                    horizontal_scrollbar(frame, area, columns, border, beneath);
                 }
             }
             // `Blank` and `Notice` do not scroll, so what such a panel can
@@ -118,8 +133,11 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let bar = rects.bar();
     let (loader, hint_bar) = bar_split(bar);
     frame.render_widget(crate::loader::line(view.activity, theme), loader);
+    // The bar goes quiet with the panels: while a modal is up it is naming
+    // keys the modal has already claimed, and the modal is listing them
+    // itself.
     frame.render_widget(
-        crate::hints::line(&view.hints, hint_bar.width, theme),
+        crate::hints::line(&view.hints, hint_bar.width, beneath),
         hint_bar,
     );
 
@@ -198,19 +216,62 @@ fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
 
 /// The bordered block a panel is drawn in, the border style the scrollbars
 /// that hang off it share, and where each tab of its title landed.
+/// Draws a rule across `block` at `y`, meeting both of its borders.
+///
+/// `block` is the bordered rect, not its inside: a rule that stops short of
+/// the frame it divides reads as a row of content. Painted straight onto the
+/// buffer because that is the only way to reach the border columns a widget
+/// is clipped out of, and before any scrollbar, which owns the right border
+/// where the two meet.
+pub(crate) fn rule(frame: &mut Frame, block: Rect, y: u16, style: Style) {
+    for x in block.x..block.right() {
+        let symbol = if x == block.x {
+            symbols::line::VERTICAL_RIGHT
+        } else if x == block.right() - 1 {
+            symbols::line::VERTICAL_LEFT
+        } else {
+            symbols::line::HORIZONTAL
+        };
+
+        if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+            cell.set_symbol(symbol).set_style(style);
+        }
+    }
+}
+
+/// Whether `overlay` is a modal that owns the frame outright.
+///
+/// The search prompt is not one: it is drawn on the hint bar row and reads
+/// against the panel it filters, which has to keep saying which rows it is
+/// filtering. The export form is not one either — it exports what the grid
+/// beneath it has selected, and a form that dimmed its own subject would be
+/// asking the user to confirm a selection it had stopped drawing.
+fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
+    match overlay {
+        Some(
+            OverlayView::Message(_)
+            | OverlayView::Commands { .. }
+            | OverlayView::Themes { .. }
+            | OverlayView::Diagnostics { .. },
+        ) => true,
+        Some(OverlayView::Search { .. } | OverlayView::Export(_)) | None => false,
+    }
+}
+
 fn panel_block(
     panel: &lc_domain::view::PanelView,
     area: Rect,
     is_focused_panel: bool,
     theme: Theme,
-) -> (Block<'_>, Style, Vec<Band<char>>) {
+) -> (Block<'_>, Style, Vec<Band<usize>>) {
     let border = if is_focused_panel {
-        theme.border_style().patch(theme.style(Token::Focused))
+        theme.focus_border()
     } else {
         theme.border_style()
     };
+    let prefix = panel.title.prefix();
     let (tabs, form) = drawn_tabs(&panel.title, area.width);
-    let strip = strip(&tabs, form);
+    let strip = strip(&prefix, &tabs, form);
     // Right-aligned on the top border, and dropped whole when the border
     // cannot hold both: a truncated term is a lie about what is applied
     // (design §5.1). Drawn on every panel that has one, focused or not — the
@@ -227,6 +288,7 @@ fn panel_block(
         .border_type(BorderType::Rounded)
         .border_style(border)
         .title(panel_title(
+            &prefix,
             &tabs,
             form,
             is_focused_panel,
@@ -248,7 +310,7 @@ fn panel_block(
         );
     }
 
-    (block, border, tab_bands(&tabs, form, lead, area))
+    (block, border, tab_bands(&prefix, &tabs, form, lead, area))
 }
 
 /// Where each tab of a title strip landed on the top border.
@@ -261,12 +323,17 @@ fn panel_block(
 /// Clipped at the right corner: a strip too wide for its border is drawn short
 /// by `ratatui`, and a band running past what was drawn would claim border the
 /// user can see is blank.
-fn tab_bands(tabs: &[&Tab], form: Strip, lead: usize, area: Rect) -> Vec<Band<char>> {
+fn tab_bands(
+    prefix: &str,
+    tabs: &[&Tab],
+    form: Strip,
+    lead: usize,
+    area: Rect,
+) -> Vec<Band<usize>> {
     let limit = area.right().saturating_sub(1);
-    let mut start = area
-        .x
-        .saturating_add(1)
-        .saturating_add(columns(lead + TITLE_PAD.chars().count()));
+    let mut start = area.x.saturating_add(1).saturating_add(columns(
+        lead + TITLE_PAD.chars().count() + prefix.chars().count(),
+    ));
 
     let mut bands = Vec::new();
 
@@ -281,13 +348,11 @@ fn tab_bands(tabs: &[&Tab], form: Strip, lead: usize, area: Rect) -> Vec<Band<ch
         });
         let end = start.saturating_add(width).min(limit);
 
-        if let Some(shortcut) = tab.shortcut()
-            && start < end
-        {
+        if start < end {
             bands.push(Band {
                 start,
                 end,
-                names: shortcut,
+                names: index,
             });
         }
 
@@ -346,14 +411,15 @@ fn inset(columns: usize, border: Style) -> Span<'static> {
     Span::styled(BORDER_LINE.to_string().repeat(columns), border)
 }
 
-/// The shortcut span keeps its own `Token::Shortcut` style regardless of
-/// focus. The active tab takes `Token::Focused`'s colour when its panel is
-/// focused, matching the border, and drops one tier to `Token::Muted` when it
-/// is not — an unfocused panel's active tab still names what it is showing,
-/// but not as loudly as body text. An inactive tab sits a further tier down
-/// at `Token::Faint`, whether or not its panel has focus: it names something
-/// the panel is not showing.
+/// The `[1]-` prefix takes the same style as the active tab: it names the
+/// panel, and the panel is what the active tab names too. The active tab takes
+/// `Token::Focused`'s colour when its panel is focused, matching the border,
+/// and drops one tier to `Token::Muted` when it is not — an unfocused panel's
+/// active tab still names what it is showing, but not as loudly as body text.
+/// An inactive tab sits a further tier down at `Token::Faint`, whether or not
+/// its panel has focus: it names something the panel is not showing.
 fn panel_title<'a>(
+    prefix: &str,
     tabs: &[&'a Tab],
     form: Strip,
     is_focused_panel: bool,
@@ -361,7 +427,6 @@ fn panel_title<'a>(
     border: Style,
     lead: usize,
 ) -> Line<'a> {
-    let shortcut = theme.style(Token::Shortcut);
     let separator = theme.style(Token::Faint);
     let inactive = theme.style(Token::Faint);
     let active = if is_focused_panel {
@@ -370,7 +435,11 @@ fn panel_title<'a>(
         theme.style(Token::Muted)
     };
 
-    let mut spans = vec![inset(lead, border), Span::raw(TITLE_PAD)];
+    let mut spans = vec![
+        inset(lead, border),
+        Span::raw(TITLE_PAD),
+        Span::styled(prefix.to_owned(), active),
+    ];
 
     for (index, tab) in tabs.iter().enumerate() {
         if index > 0 {
@@ -378,18 +447,16 @@ fn panel_title<'a>(
         }
 
         let style = if tab.active { active } else { inactive };
-        let (before, mark, after) = match form {
-            Strip::Short => tab.split_short(),
-            Strip::Full | Strip::Active => tab.split(),
+        let segments = match form {
+            Strip::Short => tab.short_segments(),
+            Strip::Full | Strip::Active => tab.segments(),
         };
 
-        spans.push(Span::styled(before, style));
-        // The active tab's mark spends no colour of its own, so it inherits
-        // whatever the border or the focus style put under it; an inactive
-        // tab's is faint with the rest of that tab, or the strip would mark a
-        // tab the panel is not showing more strongly than the one it is.
-        spans.push(Span::styled(mark, style.patch(shortcut)));
-        spans.push(Span::styled(after, style));
+        for segment in segments {
+            let run = segment.token.map_or(style, |token| theme.style(token));
+
+            spans.push(Span::styled(segment.text.clone(), run));
+        }
     }
 
     spans.push(Span::raw(TITLE_PAD));
@@ -414,14 +481,15 @@ enum Strip {
 /// the panel has a tab named `Table col`, which is a name no key reaches
 /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4). Every tab stays
 /// visible for as long as it can, because a tab nobody can see is one nobody
-/// presses `a` for.
+/// presses `2` for.
 fn drawn_tabs(title: &PanelTitle, width: u16) -> (Vec<&Tab>, Strip) {
     let all: Vec<&Tab> = title.tabs().iter().collect();
+    let prefix = title.prefix();
     let holds =
         |text: &str| text.chars().count() + 2 * TITLE_PAD.chars().count() + 2 <= usize::from(width);
 
     for form in [Strip::Full, Strip::Short] {
-        if holds(&strip(&all, form)) {
+        if holds(&strip(&prefix, &all, form)) {
             return (all, form);
         }
     }
@@ -432,15 +500,19 @@ fn drawn_tabs(title: &PanelTitle, width: u16) -> (Vec<&Tab>, Strip) {
     )
 }
 
-/// What `tabs` reads as on the border, separators included.
-fn strip(tabs: &[&Tab], form: Strip) -> String {
-    tabs.iter()
+/// What the title reads as on the border: the panel's number, then `tabs`
+/// with their separators.
+fn strip(prefix: &str, tabs: &[&Tab], form: Strip) -> String {
+    let joined = tabs
+        .iter()
         .map(|tab| match form {
             Strip::Short => tab.short(),
             Strip::Full | Strip::Active => tab.text(),
         })
         .collect::<Vec<_>>()
-        .join(lc_domain::view::TAB_SEPARATOR)
+        .join(lc_domain::view::TAB_SEPARATOR);
+
+    format!("{prefix}{joined}")
 }
 
 /// Both titles, the two corners, and the padding either side of each. The
@@ -601,6 +673,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
+    use ratatui::layout::Position;
     use ratatui::style::{Color, Modifier};
     use std::collections::BTreeMap;
 
@@ -748,14 +821,14 @@ mod tests {
         // rows to Ddl's 6, and Queries sits on its 3-row floor.
         let buffer = draw(40, 12);
 
-        assert_eq!(row(&buffer, 0), "╭── Tables ────╮╭── Table contents ────╮");
+        assert_eq!(row(&buffer, 0), "╭── [1]-Tables ╮╭── [3]-Table contents ╮");
         assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
         assert_eq!(row(&buffer, 4), "╰──────────────╯│                      │");
         // Nothing is selected, so the panel offers no Columns tab and the
         // strip is the one name.
-        assert_eq!(row(&buffer, 5), "╭── DDL ───────╮│                      │");
+        assert_eq!(row(&buffer, 5), "╭── [2]-DDL ───╮│                      │");
         assert_eq!(row(&buffer, 7), "│              │╰──────────────────────╯");
-        assert_eq!(row(&buffer, 8), "│              │╭── Queries ───────────╮");
+        assert_eq!(row(&buffer, 8), "│              │╭── [4]-Queries ───────╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
@@ -871,11 +944,8 @@ mod tests {
 
     #[test]
     fn the_focused_panels_plain_title_text_wears_the_focus_colour() {
-        // Row 0 is "╭Tables────────╮╭Table contents────────╮": Tables'
-        // shortcut 'T' sits at x=1 (its own colour), so x=2 is
-        // the first cell of its plain "ables" — and Contents is not focused,
-        // so x=18, inside its plain "able " before the 'c' shortcut at
-        // x=23, must stay uncoloured.
+        // Row 0 is "╭── [1]-Tables ╮╭── [3]-Table contents ╮": x=2 is inside
+        // Tables' inset and x=18 inside Contents', which is not focused.
         let buffer = draw(40, 12);
         let fg = |x, y| buffer.cell((x, y)).expect("cell is in bounds").fg;
         let focus = Theme::default().palette().focus;
@@ -907,34 +977,42 @@ mod tests {
     }
 
     #[test]
-    fn each_panel_colours_the_key_that_focuses_it() {
+    fn each_panel_opens_its_title_with_the_key_that_focuses_it() {
         let buffer = draw(40, 12);
-        let marked = |x, y| {
-            buffer.cell((x, y)).expect("cell is in bounds").fg
-                == Theme::default().palette().shortcut
-        };
 
-        // "╭── Tables" and "╭── Table contents" on row 0, "╭── DDL" on row 5,
-        // "╭── Queries" on row 8 — a corner, the inset and `TITLE_PAD` precede
-        // each name.
-        assert!(marked(5, 0), "Tables marks its a");
-        assert!(marked(22, 0), "Table contents marks its b");
-        assert!(marked(4, 5), "DDL marks its D");
-        assert!(marked(21, 8), "Queries marks its u");
+        for (panel, opening) in [
+            (Panel::Tables, "[1]-Tables"),
+            (Panel::Ddl, "[2]-DDL"),
+            (Panel::Contents, "[3]-Table contents"),
+            (Panel::Queries, "[4]-Queries"),
+        ] {
+            assert_eq!(
+                top_border(&buffer, opening).1,
+                match panel {
+                    Panel::Tables | Panel::Contents => 0,
+                    Panel::Ddl => 5,
+                    Panel::Queries => 8,
+                },
+                "{panel:?} is not titled {opening:?} where the draft puts it"
+            );
+        }
     }
 
+    /// The hint bar's keys are the only thing left wearing it: a title that
+    /// coloured one of its own characters is what `[1]-` replaced.
     #[test]
-    fn nothing_but_the_shortcut_wears_the_shortcut_colour_in_a_title() {
+    fn no_title_wears_the_shortcut_colour() {
         let buffer = draw(40, 12);
-        let marked = |x, y| {
-            buffer.cell((x, y)).expect("cell is in bounds").fg
-                == Theme::default().palette().shortcut
-        };
+        let shortcut = Theme::default().palette().shortcut;
 
-        for x in [0, 1, 3, 4, 9] {
-            assert!(!marked(x, 0), "column {x} of row 0 is not the mark");
+        for y in [0, 5, 7, 8] {
+            for x in 0..40 {
+                assert!(
+                    buffer.cell((x, y)).expect("cell is in bounds").fg != shortcut,
+                    "column {x} of border row {y} wears the hint bar's colour"
+                );
+            }
         }
-        assert!(!marked(5, 7), "only the first D of DDL is its mark");
     }
 
     #[test]
@@ -1547,9 +1625,11 @@ mod tests {
             .expect("the cell mode's crosshair spends a background");
 
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
+        let drawn = grid_row_y(area, 0)..grid_row_y(area, 4);
 
-        for y in 2..7 {
+        for y in drawn.clone() {
             assert!(
                 !selected(y),
                 "row 0 is off screen, so nothing drawn is the selection"
@@ -1562,10 +1642,11 @@ mod tests {
         let mut on_screen = showing(page_of(&["id"], &rows));
         on_screen.contents.mode = SelectionMode::Cell;
         on_screen.contents.cursor.go_to(12, 20);
-        on_screen.contents.scroll.follow(12, 5);
+        on_screen.contents.scroll.follow(12, 4);
         let buffer = draw_state(60, 12, &on_screen);
-        let highlighted =
-            (2..7).any(|y| buffer.cell((17, y)).expect("inside the panel").bg == highlight);
+        let highlighted = drawn
+            .clone()
+            .any(|y| buffer.cell((17, y)).expect("inside the panel").bg == highlight);
 
         assert!(
             highlighted,
@@ -1605,6 +1686,29 @@ mod tests {
         }
     }
 
+    /// The title is the only thing on screen naming the table this panel is
+    /// showing, and it names it in the tree's colours.
+    #[test]
+    fn a_contents_title_draws_its_table_in_the_schemas_colours() {
+        let state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
+        let buffer = draw_state(60, 12, &state);
+        let theme = Theme::default();
+        let border = row(&buffer, 0);
+        // Characters, not bytes: the border is drawn out of box-drawing glyphs
+        // and an em dash, and a byte offset into it is not a column.
+        let at = |text: &str| {
+            let byte = border.find(text).expect("the title names the table");
+            let column = border[..byte].chars().count();
+
+            u16::try_from(column).expect("a 60-column frame")
+        };
+        let fg = |x: u16| Some(buffer.cell((x, 0)).expect("inside the border").fg);
+
+        assert_eq!(fg(at("shop")), theme.style(Token::Keyspace).fg);
+        assert_eq!(fg(at("orders")), theme.style(Token::Table).fg);
+        assert_eq!(fg(at("shop") + 4), theme.style(Token::Faint).fg, "the dot");
+    }
+
     #[test]
     fn a_page_is_drawn_as_a_header_over_its_rows() {
         let state = showing(page_of(
@@ -1619,7 +1723,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 0),
-            "╭── Tables ────╮╭── Table contents — shop.orders (2 rows) ─╮"
+            "╭── [1]-Tables ╮╭ [3]-Table contents — shop.orders (2 rows)╮"
         );
         assert_eq!(
             row(&buffer, 1),
@@ -1628,11 +1732,16 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││▌1  1   ada@example.com                   │"
+            "│              │├──────────────────────────────────────────┤",
+            "a rule under the headings keeps them from reading as a row"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│              ││ 2  2   bob@example.com                   │"
+            "│              ││▌1  1   ada@example.com                   │"
+        );
+        assert_eq!(
+            row(&buffer, 4),
+            "╰──────────────╯│ 2  2   bob@example.com                   │"
         );
     }
 
@@ -1647,7 +1756,7 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
 
         assert_eq!(
-            row(&buffer, 2),
+            row(&buffer, 3),
             "│              ││▌1  8f14e45f-ceea-467a-9c2b…              │",
             "a silently clipped value looks like a shorter value"
         );
@@ -1673,7 +1782,7 @@ mod tests {
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
-            row(&buffer, 2),
+            row(&buffer, 3),
             "│                    ││▌1  8f14e45f-ceea-467a-9c2b…  8f14e45f-ceea-467a-9c2b…            │",
             "and the two that do keep their full width and their ellipsis"
         );
@@ -1742,18 +1851,18 @@ mod tests {
         let matched_email = drawn_column(area, 1);
 
         assert_ne!(
-            style(matched_email, 2),
-            style(unmatched_id, 2),
+            style(matched_email, grid_row_y(area, 0)),
+            style(unmatched_id, grid_row_y(area, 0)),
             "row 0 is not selected: its matched email must still read apart from its unmatched id"
         );
         assert!(
             buffer
-                .cell((matched_email, 3))
+                .cell((matched_email, grid_row_y(area, 1)))
                 .expect("inside the panel")
                 .modifier
                 .contains(Modifier::BOLD)
                 && !buffer
-                    .cell((unmatched_id, 3))
+                    .cell((unmatched_id, grid_row_y(area, 1)))
                     .expect("inside the panel")
                     .modifier
                     .contains(Modifier::BOLD),
@@ -1779,7 +1888,11 @@ mod tests {
 
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        let cell = |x: u16| buffer.cell((x, 3)).expect("inside the panel");
+        let cell = |x: u16| {
+            buffer
+                .cell((x, grid_row_y(area, 1)))
+                .expect("inside the panel")
+        };
         let faint = Theme::default()
             .style(Token::Faint)
             .fg
@@ -1822,7 +1935,12 @@ mod tests {
         // Shifted right by the bar, the row-number gutter and their spacing:
         // one digit for a one-row page, plus one column each (table display
         // design §4, design §4.2).
-        let cell = |x: u16| buffer.cell((x, 2)).expect("inside the panel");
+        let area = block_area(&buffer, "Table contents");
+        let cell = |x: u16| {
+            buffer
+                .cell((x, grid_row_y(area, 0)))
+                .expect("inside the panel")
+        };
         let null_cell = cell(25);
         let word_cell = cell(31);
 
@@ -1851,11 +1969,12 @@ mod tests {
             .bg
             .expect("the cell mode's crosshair spends a background");
         let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
         let selected = |y: u16| buffer.cell((17, y)).expect("inside the panel").bg == highlight;
 
         assert!(!selected(1), "the header is never the selection");
-        assert!(!selected(2), "nor is the first row");
-        assert!(selected(3), "the second row is");
+        assert!(!selected(grid_row_y(area, 0)), "nor is the first row");
+        assert!(selected(grid_row_y(area, 1)), "the second row is");
     }
 
     #[test]
@@ -1883,14 +2002,18 @@ mod tests {
         let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
         let name = area.x + 1 + 6;
 
-        assert_eq!(bg(17, 3), selected, "the row the cursor is on is lit");
+        assert_eq!(
+            bg(17, grid_row_y(area, 1)),
+            selected,
+            "the row the cursor is on is lit"
+        );
         assert_ne!(
-            bg(name, 2),
+            bg(name, grid_row_y(area, 0)),
             selected,
             "and the cursor's column off that row is not — row mode lights no column"
         );
         assert_ne!(
-            bg(17, 2),
+            bg(17, grid_row_y(area, 0)),
             selected,
             "and the row above it is not — row mode lights one row"
         );
@@ -1923,15 +2046,23 @@ mod tests {
         let bg = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the panel").bg;
         let name = drawn_column(area, 1);
 
-        assert_eq!(bg(name, 2), selected, "every row of the column is lit");
-        assert_eq!(bg(name, 3), selected, "including the last one");
+        assert_eq!(
+            bg(name, grid_row_y(area, 0)),
+            selected,
+            "every row of the column is lit"
+        );
+        assert_eq!(
+            bg(name, grid_row_y(area, 1)),
+            selected,
+            "including the last one"
+        );
         assert_eq!(
             bg(name, 1),
             selected,
             "and its heading, which ratatui leaves to us (design §4)"
         );
         assert_ne!(
-            bg(drawn_column(area, 0), 2),
+            bg(drawn_column(area, 0), grid_row_y(area, 0)),
             selected,
             "the row the cursor is on is not — column mode lights one column"
         );
@@ -1962,7 +2093,7 @@ mod tests {
             let buffer = draw_state(60, 12, state);
             let area = block_area(&buffer, "Table contents");
             buffer
-                .cell((area.x + 4, area.y + 2 + row))
+                .cell((area.x + 4, grid_row_y(area, row)))
                 .expect("inside the panel")
                 .clone()
         };
@@ -2007,7 +2138,7 @@ mod tests {
             let buffer = draw_state(60, 12, state);
             let area = block_area(&buffer, "Table contents");
             buffer
-                .cell((area.x + 4, area.y + 2 + row))
+                .cell((area.x + 4, grid_row_y(area, row)))
                 .expect("inside the panel")
                 .clone()
         };
@@ -2064,7 +2195,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, column: u16| {
             buffer
-                .cell((drawn_column(area, column), area.y + 2 + row))
+                .cell((drawn_column(area, column), grid_row_y(area, row)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2098,7 +2229,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, x: u16| {
             buffer
-                .cell((x, area.y + 2 + row))
+                .cell((x, grid_row_y(area, row)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2128,7 +2259,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |row: u16, column: u16| {
             buffer
-                .cell((drawn_column(area, column), area.y + 2 + row))
+                .cell((drawn_column(area, column), grid_row_y(area, row)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2157,7 +2288,7 @@ mod tests {
         let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let bar = buffer
-            .cell((area.x + 1, area.y + 3))
+            .cell((area.x + 1, grid_row_y(area, 1)))
             .expect("inside the panel");
 
         assert_eq!(
@@ -2170,7 +2301,7 @@ mod tests {
         // column 2 is not.
         let bg = |column: u16| {
             buffer
-                .cell((drawn_column(area, column), area.y + 3))
+                .cell((drawn_column(area, column), grid_row_y(area, 1)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2307,11 +2438,14 @@ mod tests {
         let buffer = draw_state_with(60, 12, &state, theme);
         let area = block_area(&buffer, "Table contents");
         let null = buffer
-            .cell((drawn_column(area, 1), 3))
+            .cell((drawn_column(area, 1), grid_row_y(area, 1)))
             .expect("inside the panel");
 
         assert_ne!(
-            buffer.cell((area.x + 1, 3)).expect("inside the panel").bg,
+            buffer
+                .cell((area.x + 1, grid_row_y(area, 1)))
+                .expect("inside the panel")
+                .bg,
             theme.palette().crosshair,
             "the second row is not the cursor row, so only the column arm can wash it"
         );
@@ -2329,16 +2463,20 @@ mod tests {
 
     #[test]
     fn the_grid_scrolls_to_keep_the_selection_on_screen() {
-        // The Contents panel holds a header and five rows at this size, so a
-        // twenty-row page forces the scroll a plain `Table` would not perform.
+        // The Contents panel holds a two-row header and four rows at this
+        // size, so a twenty-row page forces the scroll a plain `Table` would
+        // not perform.
         let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
         let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
         let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
         let mut state = showing(page_of(&["id"], &rows));
-        select_contents(&mut state, 19, 5);
+        select_contents(&mut state, 19, 4);
 
         let buffer = draw_state(60, 12, &state);
-        let drawn: Vec<String> = (2..8).map(|y| row(&buffer, y)).collect();
+        let area = block_area(&buffer, "Table contents");
+        let drawn: Vec<String> = (grid_row_y(area, 0)..grid_row_y(area, 4))
+            .map(|y| row(&buffer, y))
+            .collect();
 
         assert!(
             drawn.iter().any(|line| line.contains("row19")),
@@ -2420,10 +2558,9 @@ mod tests {
                 .modifier
                 .contains(Modifier::UNDERLINED)
         };
-        // The top border, then the grid's header row, then the first row —
-        // the one the cursor is on, at its first column.
+        // The first row — the one the cursor is on, at its first column.
         let first = drawn_column(area, 0);
-        let selected = area.y + 2;
+        let selected = grid_row_y(area, 0);
 
         assert!(underlined(first, selected), "the cell the cursor is on");
         assert!(underlined(first + 1, selected), "for its whole width");
@@ -2450,7 +2587,7 @@ mod tests {
         let area = block_area(&buffer, "Table contents");
         let bg = |column: u16, row: u16| {
             buffer
-                .cell((drawn_column(area, column), area.y + 2 + row))
+                .cell((drawn_column(area, column), grid_row_y(area, row)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2486,7 +2623,11 @@ mod tests {
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
-        let cell = |x: u16| buffer.cell((x, area.y + 2)).expect("inside the panel");
+        let cell = |x: u16| {
+            buffer
+                .cell((x, grid_row_y(area, 0)))
+                .expect("inside the panel")
+        };
         let first = drawn_column(area, 0);
         let highlight = Theme::default()
             .style(Token::Crosshair)
@@ -2510,7 +2651,12 @@ mod tests {
     fn the_gutter_is_muted_and_the_values_beside_it_are_not() {
         let buffer = frame_showing_grid(4, 40, 3);
         let area = block_area(&buffer, "Table contents");
-        let fg = |x: u16| buffer.cell((x, area.y + 3)).expect("inside the panel").fg;
+        let fg = |x: u16| {
+            buffer
+                .cell((x, grid_row_y(area, 1)))
+                .expect("inside the panel")
+                .fg
+        };
         let muted = Theme::default()
             .style(Token::Muted)
             .fg
@@ -2553,6 +2699,12 @@ mod tests {
         state
     }
 
+    /// The y the `row`th row of a grid's body lands on: the panel's own
+    /// border, then the heading and the blank line under it.
+    const fn grid_row_y(area: Rect, row: u16) -> u16 {
+        area.y + 1 + crate::body::HEADER_ROWS + row
+    }
+
     /// The x of the first drawn column's first cell: the panel's own border,
     /// the merged bar+gutter block, and the spacing that follows it.
     /// `gutter` is what `lc_domain::grid::gutter` gives the page — the digits
@@ -2589,10 +2741,10 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let heading = block_row(&buffer, "Table contents", 0);
-        let first = block_row(&buffer, "Table contents", 1);
+        let first = block_row(&buffer, "Table contents", 2);
         let underlined = |x: u16| {
             buffer
-                .cell((x, area.y + 2))
+                .cell((x, grid_row_y(area, 0)))
                 .expect("inside the panel")
                 .modifier
                 .contains(Modifier::UNDERLINED)
@@ -2648,7 +2800,7 @@ mod tests {
         // nothing about the range here.
         let bg = |index: u16| {
             buffer
-                .cell((drawn_column(area, index), area.y + 3))
+                .cell((drawn_column(area, index), grid_row_y(area, 1)))
                 .expect("inside the panel")
                 .bg
         };
@@ -2695,7 +2847,7 @@ mod tests {
     #[test]
     fn rows_are_numbered_from_one() {
         let buffer = frame_showing_grid(2, 200, 20);
-        let text = block_row(&buffer, "Table contents", 1);
+        let text = block_row(&buffer, "Table contents", 2);
 
         assert!(
             text.trim_start_matches(['▌', ' ']).starts_with('1'),
@@ -2707,7 +2859,7 @@ mod tests {
     fn the_row_number_is_the_pages_own_index_after_a_scroll() {
         // A twelve-row page scrolled to put its fourth row at the top.
         let buffer = frame_showing_scrolled_grid(12, 3);
-        let text = block_row(&buffer, "Table contents", 1);
+        let text = block_row(&buffer, "Table contents", 2);
 
         assert!(
             text.trim_start().starts_with('4'),
@@ -2729,7 +2881,7 @@ mod tests {
         ));
 
         let buffer = draw_state(40, 12, &state);
-        let drawn = block_row(&buffer, "Table contents", 1);
+        let drawn = block_row(&buffer, "Table contents", 2);
 
         assert!(
             drawn.starts_with("▌1 "),
@@ -2864,24 +3016,41 @@ mod tests {
         let lead: String = BORDER_LINE.to_string().repeat(TITLE_INSET);
 
         assert!(
-            border.starts_with(&format!("╭{lead} Tables ")),
+            border.starts_with(&format!("╭{lead} [1]-Tables ")),
             "the gap reads as the frame running on, got {border:?}"
         );
     }
 
     #[test]
     fn a_border_with_one_column_to_spare_gives_it_to_the_title_and_not_the_marker() {
-        // Tables on the sidebar's 16-column floor wearing `/or`: six columns
-        // of name, three of marker, four of padding and two of corner leave
-        // one. The title takes it, so the border does not read as two
+        // Tables on a 20-column sidebar wearing `/or`: ten columns of title —
+        // `[1]-` included — three of marker, four of padding and two of corner
+        // leave one. The title takes it, so the border does not read as two
         // alignments at once.
+        let mut state = browsing(&["shop"], 0);
+        state.apply_search(Searched::Tables, Search::new("or"));
+
+        let buffer = draw_state(80, 12, &state);
+        let border = row(&buffer, 0);
+
+        assert!(border.starts_with("╭─ [1]-Tables  /or ╮"), "got {border:?}");
+    }
+
+    /// The `[1]-` costs four columns every title used to spend on its name, so
+    /// the sidebar's 16-column floor no longer holds a name *and* a marker.
+    /// The name wins: a panel that cannot say which one it is is worse than
+    /// one that cannot say it is searched, and every row is on screen either
+    /// way (design §5.1).
+    #[test]
+    fn the_narrowest_sidebar_gives_its_border_to_the_title_alone() {
         let mut state = browsing(&["shop"], 0);
         state.apply_search(Searched::Tables, Search::new("or"));
 
         let buffer = draw_state(40, 12, &state);
         let border = row(&buffer, 0);
 
-        assert!(border.starts_with("╭─ Tables  /or ╮"), "got {border:?}");
+        assert!(border.starts_with("╭── [1]-Tables ╮"), "got {border:?}");
+        assert!(!border.contains("/or"), "got {border:?}");
     }
 
     #[test]
@@ -2892,8 +3061,7 @@ mod tests {
 
         assert!(border.contains("DDL - Columns"), "got {border:?}");
 
-        // Past its 'C', which wears the shortcut colour whether or not its tab
-        // is the one drawn.
+        // Past its 'C', which the separator before it also holds.
         let (fg, _, modifier) = style_of_first(&buffer, "olumns");
         let faint = Theme::default().style(Token::Faint);
 
@@ -3318,10 +3486,11 @@ mod tests {
         let geometry = geometry_of(60, 12, &state);
 
         // The Contents panel is 8 rows tall at this size: 6 inside its
-        // border, one of which the header takes.
+        // border, two of which the header takes — the names and the blank
+        // line under them.
         assert_eq!(
             geometry.height(Panel::Contents),
-            5,
+            4,
             "a page motion must not count the header as a row it can land on"
         );
     }
@@ -3652,6 +3821,25 @@ mod tests {
         ))
     }
 
+    /// The same rule the palette draws between its groups, in the panel's own
+    /// border style: it meets both borders rather than floating inside them.
+    #[test]
+    fn the_rule_under_a_grids_headings_meets_the_panel() {
+        let (buffer, _) = draw_mapped(80, 14, &grid_state());
+        let area = block_area(&buffer, "Table contents");
+        let symbol = |x: u16| {
+            buffer
+                .cell((x, area.y + 1 + crate::body::HEADER_ROWS - 1))
+                .expect("inside the block")
+                .symbol()
+                .to_owned()
+        };
+
+        assert_eq!(symbol(area.x), symbols::line::VERTICAL_RIGHT);
+        assert_eq!(symbol(area.right() - 1), symbols::line::VERTICAL_LEFT);
+        assert_eq!(symbol(area.x + 1), symbols::line::HORIZONTAL);
+    }
+
     #[test]
     fn a_grids_heading_names_a_column_rather_than_its_first_row() {
         let (buffer, map) = draw_mapped(60, 12, &grid_state());
@@ -3661,8 +3849,14 @@ mod tests {
             "row 1 must be the header row this test is about"
         );
         assert!(
-            row(&buffer, 2).contains("ada@example.com"),
-            "row 2 must carry the first row's value, or `row: 0` below proves nothing"
+            block_row(&buffer, "Table contents", 1)
+                .chars()
+                .all(|glyph| glyph == '─'),
+            "row 2 is the rule under the headings"
+        );
+        assert!(
+            row(&buffer, 3).contains("ada@example.com"),
+            "row 3 must carry the first row's value, or `row: 0` below proves nothing"
         );
 
         assert_eq!(
@@ -3674,7 +3868,7 @@ mod tests {
             "a heading is the column it names"
         );
         assert_eq!(
-            map.hit(column_of(&buffer, 2, "ada@example.com"), 2),
+            map.hit(column_of(&buffer, 3, "ada@example.com"), 3),
             Some(Click::Row {
                 panel: Panel::Contents,
                 row: 0,
@@ -3682,7 +3876,7 @@ mod tests {
             })
         );
         assert_eq!(
-            map.hit(20, 4),
+            map.hit(20, 5),
             Some(Click::Panel(Panel::Contents)),
             "below the last row is blank space, not a row"
         );
@@ -3694,7 +3888,7 @@ mod tests {
 
         for (column, value) in ["id-ada", "ada@example.com"].into_iter().enumerate() {
             assert_eq!(
-                map.hit(column_of(&buffer, 2, value), 2),
+                map.hit(column_of(&buffer, 3, value), 3),
                 Some(Click::Row {
                     panel: Panel::Contents,
                     row: 0,
@@ -3723,7 +3917,7 @@ mod tests {
     }
 
     #[test]
-    fn the_map_resolves_every_drawn_tab_to_the_key_that_reaches_it() {
+    fn the_map_resolves_every_drawn_tab_to_its_place_in_the_strip() {
         let (buffer, map) = draw_mapped(104, 41, &listing(orders()));
         let strip = row(&buffer, DDL_BORDER);
 
@@ -3732,29 +3926,29 @@ mod tests {
             "row {DDL_BORDER} must be the strip this test is about: {strip:?}"
         );
 
-        for (label, shortcut) in [("DDL", 'd'), ("Columns", 'c')] {
+        for (label, tab) in [("DDL", 0), ("Columns", 1)] {
             assert_eq!(
                 map.hit(column_of(&buffer, DDL_BORDER, label), DDL_BORDER),
                 Some(Click::Tab {
                     panel: Panel::Ddl,
-                    shortcut
+                    tab
                 }),
-                "{label} is reached by {shortcut}, whichever name it is drawn under"
+                "{label} is the {tab}th tab, whichever name it is drawn under"
             );
         }
     }
 
     #[test]
-    fn a_single_tab_panel_resolves_its_title_to_its_own_key() {
+    fn a_single_tab_panel_resolves_its_title_to_its_one_tab() {
         let (buffer, map) = draw_mapped(40, 12, &browsing(&["shop"], 0));
 
         assert_eq!(
             map.hit(column_of(&buffer, 0, "Tables"), 0),
             Some(Click::Tab {
                 panel: Panel::Tables,
-                shortcut: 'a'
+                tab: 0
             }),
-            "a panel with one tab is its own tab, and `a` is how it is reached"
+            "a panel with one tab is its own tab"
         );
     }
 
@@ -4085,19 +4279,20 @@ mod tests {
 
     #[test]
     fn the_marker_fits_flush_against_the_corner_it_is_tuned_for() {
-        // At 40 columns Tables sits on its 16-column floor: 1 (`╭`) + 6
-        // (`Tables`) + 4 (`/ord`) + 1 (`╮`) leaves exactly 4 columns, which is
-        // what `TITLE_PAD` spends either side of each — so the two sit flush
-        // with a gap and no dash between them, nothing is left over for an
-        // inset, and one column narrower drops the marker.
+        // At 80 columns Tables gets 20: 1 (`╭`) + 10 (`[1]-Tables`) + 4
+        // (`/ord`) + 1 (`╮`) leaves exactly 4 columns, which is what
+        // `TITLE_PAD` spends either side of each — so the two sit flush with a
+        // gap and no dash between them, nothing is left over for an inset, and
+        // one column narrower drops the marker.
         let mut state = browsing(&["shop"], 0);
         state.apply_search(Searched::Tables, Search::new("ord"));
 
-        let buffer = draw_state(40, 24, &state);
+        let buffer = draw_state(80, 24, &state);
         let border = row(&buffer, top_border(&buffer, "Tables").1);
 
         assert_eq!(
-            border, "╭ Tables  /ord ╮╭── Table contents ────╮",
+            border,
+            "╭ [1]-Tables  /ord ╮╭── [3]-Table contents ────────────────────────────────────╮",
             "the widest term this width can hold, sitting flush with no gap and no overlap"
         );
     }
@@ -4273,6 +4468,210 @@ mod tests {
             + 1
     }
 
+    /// The palette's first heading, its keys column, and the rule under the
+    /// first group, read as styled cells rather than as text.
+    #[test]
+    fn the_palette_marks_a_group_the_way_a_section_heading_is_marked() {
+        let buffer = with_palette(100, 40);
+        let (x, y) = top_border(&buffer, "Commands");
+        let theme = Theme::default();
+        // One column for the border, one for the palette's own padding.
+        let first = x + 2;
+        let cell = |at: u16| buffer.cell((first, at)).expect("inside the block");
+
+        assert_eq!(
+            cell(y + 1).fg,
+            theme
+                .style(Token::Section)
+                .fg
+                .expect("a section heading spends a colour"),
+            "a heading wears what Options wears"
+        );
+        let area = block_area(&buffer, "Commands");
+        assert!(
+            (area.x + 1..area.right() - 1).all(|x| !buffer
+                .cell((x, y + 2))
+                .expect("inside the block")
+                .modifier
+                .contains(Modifier::UNDERLINED)),
+            "a key in a column carries no underline: the colour is the whole mark"
+        );
+    }
+
+    #[test]
+    fn a_rule_separates_one_group_from_the_next() {
+        let buffer = with_palette(100, 40);
+        let rows: Vec<String> = (0..26)
+            .map(|line| block_row(&buffer, "Commands", line))
+            .collect();
+        let rule = rows
+            .iter()
+            .position(|row| row.trim().chars().all(|glyph| glyph == '─'))
+            .expect("the catalogue has more than one group");
+
+        assert_eq!(
+            rows[rule + 1].trim(),
+            "Navigate",
+            "the rule sits above the heading it separates from the group before"
+        );
+        assert_eq!(
+            rows[0].trim(),
+            "Global",
+            "and the first group is not preceded by one"
+        );
+    }
+
+    /// A rule joins the block it divides: it reaches both borders and turns
+    /// them into junctions, rather than stopping at the pad columns and
+    /// reading as a row of content.
+    #[test]
+    fn a_rule_meets_the_block_it_divides() {
+        // Tall enough that the whole catalogue fits, so no scrollbar owns the
+        // right border where the rule lands.
+        let buffer = with_palette(100, 80);
+        let area = block_area(&buffer, "Commands");
+        let symbol = |x: u16, y: u16| {
+            buffer
+                .cell((x, y))
+                .expect("inside the block")
+                .symbol()
+                .to_owned()
+        };
+        let rule = (area.y + 1..area.bottom() - 1)
+            .find(|y| symbol(area.x, *y) == symbols::line::VERTICAL_RIGHT)
+            .expect("the catalogue has more than one group");
+
+        assert_eq!(symbol(area.right() - 1, rule), symbols::line::VERTICAL_LEFT);
+        assert_eq!(symbol(area.x + 1, rule), symbols::line::HORIZONTAL);
+        assert_eq!(symbol(area.right() - 2, rule), symbols::line::HORIZONTAL);
+    }
+
+    /// The action leads, the keys follow — the shape a search-actions dialogue
+    /// has, and the reason `MIN_W`'s two columns swapped places.
+    #[test]
+    fn a_command_row_names_what_it_does_before_the_key_it_costs() {
+        let buffer = with_palette(100, 40);
+        let row = block_row(&buffer, "Commands", 13);
+
+        assert_eq!(row.trim(), "yank                  y");
+    }
+
+    #[test]
+    fn the_palette_wears_the_focus_the_panels_gave_up() {
+        let lit = draw(100, 40);
+        let covered = with_palette(100, 40);
+        let focus = Theme::default().palette().focus;
+        let modal = block_area(&covered, "Commands");
+        let outside = |buffer: &Buffer, block: Option<Rect>| {
+            cells(buffer)
+                .filter(|(at, cell)| {
+                    cell.fg == focus && !block.is_some_and(|block| block.contains(*at))
+                })
+                .count()
+        };
+
+        assert!(outside(&lit, None) > 0, "a focused panel is drawn in focus");
+        assert_eq!(
+            outside(&covered, Some(modal)),
+            0,
+            "and nothing beneath a modal claims the focus the modal has"
+        );
+        assert!(
+            cells(&covered).any(|(at, cell)| modal.contains(at) && cell.fg == focus),
+            "which the modal itself is now wearing"
+        );
+    }
+
+    /// Every cell of `buffer`, with where it sits.
+    fn cells(buffer: &Buffer) -> impl Iterator<Item = (Position, &Cell)> {
+        buffer.content().iter().enumerate().map(|(index, cell)| {
+            let index = u16::try_from(index).unwrap_or(u16::MAX);
+            (
+                Position::new(
+                    buffer.area.x + index % buffer.area.width,
+                    buffer.area.y + index / buffer.area.width,
+                ),
+                cell,
+            )
+        })
+    }
+
+    /// Not focused, and not fainter than the panels that were never focused
+    /// either: the title reads as any unfocused title does.
+    #[test]
+    fn the_panel_the_palette_covers_reads_as_an_unfocused_one() {
+        let buffer = with_palette(100, 40);
+        let theme = Theme::default();
+        let (x, y) = top_border(&buffer, "Tables");
+        // Past the corner, the two border dashes and the pad, onto the title.
+        let title = buffer.cell((x + 4, y)).expect("the title is drawn");
+
+        assert_eq!(
+            title.fg,
+            theme
+                .style(Token::Muted)
+                .fg
+                .expect("an unfocused title spends a colour"),
+            "the panel focus left reads like the ones it never had"
+        );
+        assert_ne!(
+            title.fg,
+            theme.palette().border,
+            "and not like its own border"
+        );
+    }
+
+    #[test]
+    fn the_row_under_the_palette_is_not_highlighted() {
+        let buffer = with_palette(100, 40);
+        let selection = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
+        let inside = block_area(&buffer, "Commands");
+
+        for (index, cell) in buffer.content().iter().enumerate() {
+            let x = u16::try_from(index).unwrap_or(u16::MAX) % buffer.area.width;
+            let y = u16::try_from(index).unwrap_or(u16::MAX) / buffer.area.width;
+
+            assert!(
+                cell.bg != selection || inside.contains((x, y).into()),
+                "the tree's cursor row is still drawn at {x},{y}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bar_goes_quiet_under_the_palette() {
+        let theme = Theme::default();
+        let lit = draw(100, 40);
+        let covered = with_palette(100, 40);
+        let bar = |buffer: &Buffer| {
+            let y = buffer.area.height - 1;
+            (0..buffer.area.width)
+                .filter_map(|x| buffer.cell((x, y)))
+                .filter(|cell| cell.symbol() != " ")
+                .map(|cell| cell.fg)
+                .collect::<Vec<_>>()
+        };
+
+        let key = theme.style(Token::HintKey).fg.expect("a key is coloured");
+        let faint = theme.style(Token::Faint).fg.expect("faint is a colour");
+
+        assert!(
+            bar(&lit).contains(&key),
+            "the bar names live keys when nothing covers it"
+        );
+        assert!(
+            !bar(&covered).contains(&key),
+            "and none of them stays lit while the palette is up"
+        );
+        assert!(
+            bar(&covered).contains(&faint),
+            "they recede rather than disappear"
+        );
+    }
+
     #[test]
     fn the_palette_lists_the_catalogue() {
         let drawn = buffer_text(&with_palette(100, 40));
@@ -4284,7 +4683,7 @@ mod tests {
         assert!(drawn.contains("Global"));
         assert!(drawn.contains("dismiss the overlay"));
         assert!(drawn.contains("focus Table contents"));
-        assert!(drawn.contains("unfold the keyspace"));
+        assert!(drawn.contains("right, or unfold"));
     }
 
     #[test]
@@ -4335,15 +4734,19 @@ mod tests {
     /// Whether the block titled `title` has a scrollbar drawn over its right
     /// border. The track scan stops above the bottom border row: that row's
     /// corner is `┘`, which is `!= "│"` whether or not a scrollbar was drawn,
-    /// and including it would make the scan true unconditionally.
+    /// and including it would make the scan true unconditionally. The palette's
+    /// group rules meet the same border and are skipped for the same reason.
     fn has_scrollbar(buffer: &Buffer, title: &str) -> bool {
         let area = block_area(buffer, title);
         let x = area.right() - 1;
 
         (area.y + 1..area.bottom() - 1).any(|y| {
-            buffer
-                .cell((x, y))
-                .is_some_and(|cell| cell.symbol() != symbols::line::VERTICAL)
+            buffer.cell((x, y)).is_some_and(|cell| {
+                !matches!(
+                    cell.symbol(),
+                    symbols::line::VERTICAL | symbols::line::VERTICAL_LEFT
+                )
+            })
         })
     }
 

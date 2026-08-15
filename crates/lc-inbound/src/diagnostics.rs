@@ -52,7 +52,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[DiagnosticRow], selected: usize,
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
+        .border_style(theme.focus_border())
         .title("Configuration");
     let inner = block.inner(area).inner(Margin {
         horizontal: PAD,
@@ -79,7 +79,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[DiagnosticRow], selected: usize,
     };
 
     if extent.overflows() {
-        crate::render::scrollbar(frame, area, &extent, theme.border_style(), theme);
+        crate::render::scrollbar(frame, area, &extent, theme.focus_border(), theme);
     }
 }
 

@@ -13,6 +13,7 @@ pub(crate) mod hints;
 mod tables;
 mod title;
 
+pub use crate::style::Segment;
 pub use contents::{GridCell, GridColumn};
 pub use details::{ColumnKind, DetailRow, Details, Group, Heading, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness};
@@ -133,7 +134,7 @@ fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
 /// [`ExportForm`](crate::export::ExportForm).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportView {
-    pub title: String,
+    pub title: Vec<Segment>,
     /// Whole first, fetched second — the order they are drawn in.
     pub scope_labels: [String; 2],
     pub scope: Scope,
@@ -359,8 +360,8 @@ pub fn ddl_next_match(state: &State, from: usize, direction: Direction) -> Optio
 
 /// The tabs the Ddl panel offers for what the Tables cursor is on.
 ///
-/// Public because the key that reaches a tab must not store one the strip
-/// does not draw: `c` on a keyspace focuses the panel and no more.
+/// Public because walking the strip must not land on a tab it does not draw:
+/// on a keyspace there is one tab, and pressing `2` again stays on it.
 #[must_use]
 pub fn ddl_tabs(state: &State) -> &'static [DdlTab] {
     details::tabs_for(state)
@@ -368,10 +369,11 @@ pub fn ddl_tabs(state: &State) -> &'static [DdlTab] {
 
 /// A panel's top border: one name, or the strip of tabs it can show.
 fn title(state: &State, panel: Panel) -> PanelTitle {
-    let marking = |text: String| PanelTitle::marking(text, panel.shortcut());
+    let number = panel.number();
+    let single = |text: String| PanelTitle::single(number, text);
 
     match panel {
-        Panel::Tables => marking("Tables".to_owned()),
+        Panel::Tables => single("Tables".to_owned()),
         Panel::Ddl => {
             let tab = details::shown_tab(state);
             let specs: Vec<TabSpec> = details::tabs_for(state)
@@ -379,15 +381,14 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
                 .map(|candidate| TabSpec {
                     label: candidate.label(),
                     short: candidate.short_label(),
-                    shortcut: candidate.shortcut(),
                     active: *candidate == tab,
                 })
                 .collect();
 
-            PanelTitle::tabbed(&specs)
+            PanelTitle::tabbed(number, &specs)
         }
-        Panel::Contents => marking(contents::title(state)),
-        Panel::Queries => marking("Queries".to_owned()),
+        Panel::Contents => PanelTitle::styled(number, contents::title(state)),
+        Panel::Queries => single("Queries".to_owned()),
     }
 }
 
@@ -489,10 +490,10 @@ mod tests {
             [
                 // Nothing is selected, so the panel offers no Columns tab to
                 // describe a table with.
-                "Tables",
-                "DDL",
-                "Table contents",
-                "Queries"
+                "[1]-Tables",
+                "[2]-DDL",
+                "[3]-Table contents",
+                "[4]-Queries"
             ]
             .map(str::to_owned)
         );
@@ -702,7 +703,7 @@ mod tests {
         let Some(OverlayView::Export(view)) = view_model(&state).overlay else {
             panic!("the form is projected");
         };
-        assert_eq!(view.title, "Export table shop.orders");
+        assert_eq!(crate::style::text(&view.title), "Export table shop.orders");
         assert_eq!(view.scope, Scope::Whole);
         assert!(view.fetched_enabled);
         assert_eq!(view.format, Format::Csv);
@@ -746,17 +747,16 @@ mod tests {
     }
 
     #[test]
-    fn every_panel_title_marks_the_key_that_focuses_it() {
+    fn every_panel_title_opens_with_the_key_that_focuses_it() {
         for state in every_contents_state() {
             for panel in view_model(&state).panels {
-                let (_, mark, _) = panel.title.tabs()[0].split();
+                let expected = format!("[{}]-", panel.panel.number());
 
                 assert!(
-                    mark.eq_ignore_ascii_case(&panel.panel.shortcut().to_string()),
-                    "{:?} titled {:?} does not mark '{}'",
+                    panel.title.text().starts_with(&expected),
+                    "{:?} titled {:?} does not open with {expected:?}",
                     panel.panel,
                     panel.title.text(),
-                    panel.panel.shortcut()
                 );
             }
         }

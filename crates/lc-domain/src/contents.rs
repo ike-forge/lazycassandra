@@ -6,9 +6,10 @@
 //! (architecture.md §11).
 
 use crate::grid::ColumnScroll;
-use crate::model::{DbError, Page, QueryId};
+use crate::model::{DbError, KeyspaceKind, Page, QueryId};
 use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
+use crate::style::{Segment, Token};
 
 /// The Contents panel's own state.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -152,6 +153,25 @@ impl TableRef {
     #[must_use]
     pub fn qualified(&self) -> String {
         format!("{}.{}", self.keyspace, self.table)
+    }
+
+    /// [`TableRef::qualified`] in the colours the tree spends on the two
+    /// names, with the dot faint between them. A system keyspace is faint on
+    /// both halves, exactly as its rows are (`view::tables`) — a title is one
+    /// more place a schema name is written, and it reads as one there too
+    /// (vision.md §2).
+    #[must_use]
+    pub fn segments(&self) -> Vec<Segment> {
+        let (keyspace, table) = match KeyspaceKind::of(&self.keyspace) {
+            KeyspaceKind::System => (Token::Faint, Token::Faint),
+            KeyspaceKind::User => (Token::Keyspace, Token::Table),
+        };
+
+        vec![
+            Segment::styled(self.keyspace.clone(), keyspace),
+            Segment::styled(".", Token::Faint),
+            Segment::styled(self.table.clone(), table),
+        ]
     }
 }
 

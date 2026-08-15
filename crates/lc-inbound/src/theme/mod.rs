@@ -134,9 +134,24 @@ impl Palette {
     }
 }
 
+/// Whether a theme still draws the marks that say where the cursor and the
+/// focus are.
+///
+/// A modal overlay owns the frame, and the panels beneath it are context
+/// rather than a place a key would land. Drawn `Dimmed`, they keep their
+/// colours and lose their focus border, their cursor row, their cell and the
+/// washes around it — the emphasis reads as the overlay's, which is where the
+/// next press goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Emphasis {
+    Lit,
+    Dimmed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     palette: Palette,
+    emphasis: Emphasis,
 }
 
 impl Default for Theme {
@@ -178,11 +193,20 @@ impl Theme {
                 ThemeChoice::Ported(Ported::CatppuccinMocha) => ported::catppuccin::MOCHA,
                 ThemeChoice::Custom(_) => ours::default::DARK,
             },
+            emphasis: Emphasis::Lit,
         }
     }
 
     pub(crate) const fn palette(self) -> Palette {
         self.palette
+    }
+
+    /// The same palette, drawing no focus or selection marks.
+    pub(crate) const fn dimmed(self) -> Self {
+        Self {
+            emphasis: Emphasis::Dimmed,
+            ..self
+        }
     }
 
     /// The whole frame's ground. Painted before anything else, so a widget
@@ -198,6 +222,13 @@ impl Theme {
         Style::new().bg(self.palette.surface).fg(self.palette.text)
     }
 
+    /// A frame around the thing taking keys: the focused panel, or the modal
+    /// that has taken focus from every panel at once
+    /// (`render::dims_the_panels`).
+    pub(crate) fn focus_border(self) -> Style {
+        self.border_style().patch(self.style(Token::Focused))
+    }
+
     /// A panel's border. `Token::Focused` is patched on top of this rather
     /// than replacing it, so a focused panel's border becomes the theme's
     /// `focus` colour on top of `border`.
@@ -209,9 +240,24 @@ impl Theme {
     pub fn style(self, token: Token) -> Style {
         let palette = self.palette;
 
+        if matches!(self.emphasis, Emphasis::Dimmed) {
+            if is_emphasis(token) {
+                return Style::new();
+            }
+            // A hint the modal has taken over is inert, and `Faint` is what an
+            // inert hint already wears (`hints::Segment::spans`) — the bar
+            // recedes in the vocabulary it already has rather than in a new
+            // one. The overlays draw their own keys through a lit theme, so
+            // this reaches the bar alone.
+            if matches!(token, Token::HintKey | Token::HintAction) {
+                return fg(self.palette.faint);
+            }
+        }
+
         match token {
             Token::PartitionKey => fg(palette.partition).add_modifier(Modifier::BOLD),
-            Token::ClusteringKey => fg(palette.clustering),
+            Token::PartitionKeyValue => fg(palette.partition),
+            Token::ClusteringKey | Token::ClusteringKeyValue => fg(palette.clustering),
             // `accent`, which the loader also spends: they never share a
             // surface — one is a column in the Table DDL panel, the other the
             // spinner on the bar row — the same argument that lets `warning`
@@ -237,13 +283,13 @@ impl Theme {
             // a panel border the theme may have coloured already, because
             // `Style::patch` lets this `fg` overwrite `border`'s.
             Token::Focused => fg(palette.focus).add_modifier(Modifier::BOLD),
-            // Underlined as well as coloured, in every state: the letter sits
-            // inside a title whose colour changes with focus, `focus` and
-            // `shortcut` are one hex in Beacon, and colour is the channel a
-            // user may have remapped or be unable to see. This withdraws
+            // Underlined as well as coloured, in every state: the key sits in
+            // a bar whose colour changes with focus, `focus` and `shortcut`
+            // are one hex in Beacon, and colour is the channel a user may have
+            // remapped or be unable to see. This withdraws
             // 2026-08-11-panel-focus-contrast-design.md §2's "a colour rather
             // than an underline" (design §3.1, rule 5).
-            Token::Shortcut | Token::HintKey => fg(palette.shortcut)
+            Token::HintKey => fg(palette.shortcut)
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(Modifier::UNDERLINED),
             Token::Selected => selected(&palette),
@@ -264,6 +310,27 @@ impl Theme {
             Token::Literal => fg(palette.literal),
         }
     }
+}
+
+/// Whether `token` is a mark saying where the cursor or the focus is, rather
+/// than a colour that means something about the content under it.
+///
+/// A dimmed theme draws these as nothing at all. `Token::Match` is not one of
+/// them: a filter is applied whether or not an overlay is up, and a panel that
+/// stopped marking its hits while the palette was open would be answering a
+/// different question than the one on screen. Neither is `Token::Focused`:
+/// under a modal no panel *is* focused, and `render` stops asking for the
+/// token rather than asking for a hollowed-out version of it.
+const fn is_emphasis(token: Token) -> bool {
+    matches!(
+        token,
+        Token::Selected
+            | Token::SelectedCell
+            | Token::SelectionBar
+            | Token::Crosshair
+            | Token::Ranged
+            | Token::Flash
+    )
 }
 
 /// Every palette a name can resolve to, built once at startup.
@@ -313,6 +380,7 @@ impl Themes {
 
         Theme {
             palette: self.grounded(palette),
+            emphasis: Emphasis::Lit,
         }
     }
 
@@ -663,10 +731,44 @@ pub(crate) mod tests {
         );
     }
 
-    /// Rule 5: colour alone cannot carry the hot key. The letter sits inside a
-    /// title whose colour changes with focus, and in Beacon `focus` and
-    /// `shortcut` are the same amber — underline is the channel that survives
-    /// both, and nothing else in the UI spends it (design §3.1).
+    /// Rule 5: colour alone cannot carry the hot key. The key sits in a bar
+    /// whose colour changes with focus, and in Beacon `focus` and `shortcut`
+    /// are the same amber — underline is the channel that survives both, and
+    /// nothing else in the UI spends it (design §3.1).
+    /// A dimmed theme is the palettes' colours without the marks that say
+    /// where the cursor is. Content colours stay: a keyspace under an
+    /// open palette is still a keyspace.
+    #[test]
+    fn a_dimmed_theme_draws_no_focus_and_no_cursor() {
+        let theme = Theme::default().dimmed();
+
+        for token in [
+            Token::Selected,
+            Token::SelectedCell,
+            Token::SelectionBar,
+            Token::Crosshair,
+            Token::Ranged,
+            Token::Flash,
+        ] {
+            assert_eq!(
+                theme.style(token),
+                Style::new(),
+                "{token:?} still marks the panels a modal covers"
+            );
+        }
+
+        assert_eq!(
+            theme.style(Token::Keyspace),
+            Theme::default().style(Token::Keyspace),
+            "dimming is not a second palette"
+        );
+        assert_eq!(
+            theme.style(Token::HintKey),
+            Theme::default().style(Token::Faint),
+            "a hint the modal has taken over recedes the way an inert one does"
+        );
+    }
+
     #[test]
     fn a_hot_key_is_underlined_and_nothing_else_is() {
         for choice in BuiltIn::ALL {
@@ -678,7 +780,7 @@ pub(crate) mod tests {
                     .add_modifier
                     .contains(Modifier::UNDERLINED);
 
-                if matches!(token, Token::Shortcut | Token::HintKey) {
+                if matches!(token, Token::HintKey) {
                     assert!(underlined, "{choice:?}: {token:?} is not underlined");
                 } else {
                     assert!(
@@ -692,9 +794,11 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 31] = [
+    pub(super) const EVERY_TOKEN: [Token; 32] = [
         Token::PartitionKey,
+        Token::PartitionKeyValue,
         Token::ClusteringKey,
+        Token::ClusteringKeyValue,
         Token::StaticColumn,
         Token::Keyspace,
         Token::Table,
@@ -716,7 +820,6 @@ pub(crate) mod tests {
         Token::Crosshair,
         Token::Ranged,
         Token::Flash,
-        Token::Shortcut,
         Token::HintKey,
         Token::HintAction,
         Token::PropertyName,
