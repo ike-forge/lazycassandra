@@ -9,6 +9,7 @@
 use crate::model::{Key, KeyPress};
 use crate::state::{Cursor, Panel};
 use crate::view::Binding;
+use crate::view::Liveness;
 use crate::view::hints::label;
 
 /// One labelled group of commands.
@@ -48,6 +49,15 @@ pub enum Run {
     /// Not pressed at all: the row means something only inside a mode that is
     /// not up, and its key means something else outside that mode (design §5).
     Inert,
+}
+
+impl Run {
+    const fn liveness(self) -> Liveness {
+        match self {
+            Self::Inert => Liveness::Inert,
+            Self::Here | Self::In(_) => Liveness::Live,
+        }
+    }
 }
 
 const GLOBAL: &[Command] = &[
@@ -251,6 +261,11 @@ pub enum CommandRow {
     Command {
         keys: String,
         action: &'static str,
+        /// Faint when the row is documentation rather than a command: `⏎` on
+        /// it does nothing, and a row that looks live and is not is the one
+        /// way this list can mislead
+        /// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §8).
+        liveness: Liveness,
     },
 }
 
@@ -271,6 +286,7 @@ pub fn rows() -> Vec<CommandRow> {
                 .chain(group.commands.iter().map(|command| CommandRow::Command {
                     keys: label(command.binding.keys),
                     action: command.binding.action,
+                    liveness: command.run.liveness(),
                 }))
         })
         .collect()
@@ -422,6 +438,7 @@ fn seek(from: usize, direction: Direction) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::state::Panel;
+    use crate::view::Liveness;
 
     /// The widest row `MIN_W` in the renderer is derived from
     /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §5): a
@@ -454,11 +471,37 @@ mod tests {
     }
 
     #[test]
+    fn a_row_that_cannot_be_run_says_so() {
+        let row = |action: &str| {
+            rows()
+                .into_iter()
+                .find(|row| matches!(row, CommandRow::Command { action: a, .. } if *a == action))
+                .unwrap_or_else(|| panic!("no row labelled {action:?}"))
+        };
+
+        assert!(matches!(
+            row("next field"),
+            CommandRow::Command {
+                liveness: Liveness::Inert,
+                ..
+            }
+        ));
+        assert!(matches!(
+            row("export these rows"),
+            CommandRow::Command {
+                liveness: Liveness::Live,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn the_palette_names_the_run_binding() {
         assert!(
             rows().contains(&CommandRow::Command {
                 keys: "ctrl-r".to_owned(),
                 action: "run the buffer",
+                liveness: Liveness::Live,
             }),
             "the palette claims to be complete, and ctrl-r is the one binding no key types"
         );
@@ -469,6 +512,7 @@ mod tests {
         assert!(rows().contains(&CommandRow::Command {
             keys: "v".to_owned(),
             action: "select rows",
+            liveness: Liveness::Live,
         }));
     }
 
@@ -478,6 +522,7 @@ mod tests {
             rows().contains(&CommandRow::Command {
                 keys: "ctrl-e".to_owned(),
                 action: "open in $EDITOR",
+                liveness: Liveness::Live,
             }),
             "the palette claims to be complete"
         );
@@ -534,6 +579,7 @@ mod tests {
             CommandRow::Command {
                 keys: "q".to_owned(),
                 action: "quit",
+                liveness: Liveness::Live,
             }
         );
         assert_eq!(rows.len(), row_count());

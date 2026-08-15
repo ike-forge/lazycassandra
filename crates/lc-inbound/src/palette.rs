@@ -2,6 +2,7 @@
 
 use lc_domain::commands::CommandRow;
 use lc_domain::style::Token;
+use lc_domain::view::Liveness;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Modifier;
@@ -139,15 +140,29 @@ fn item(row: &CommandRow, gutter: usize, theme: Theme) -> ListItem<'static> {
         // (theme.rs, `Token::HintKey`). A palette row sits on the overlay's
         // own ground, where the colour is the whole signal and an underline
         // under every row is a texture rather than a mark.
-        CommandRow::Command { keys, action } => ListItem::new(Line::from(vec![
-            Span::styled(format!("{action:<gutter$}"), theme.style(Token::HintAction)),
-            Span::styled(
-                format!("{GAP}{keys}"),
-                theme
-                    .style(Token::HintKey)
-                    .remove_modifier(Modifier::UNDERLINED),
-            ),
-        ])),
+        //
+        // A row that cannot be run recedes the way a dead hint does
+        // (`inbound/hints.rs`), rather than being dropped: the binding is
+        // still real, and a list that is complete does not hide a row for
+        // being unreachable this frame.
+        CommandRow::Command {
+            keys,
+            action,
+            liveness,
+        } => {
+            let (key, text) = match liveness {
+                Liveness::Live => (Token::HintKey, Token::HintAction),
+                Liveness::Inert => (Token::Faint, Token::Faint),
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{action:<gutter$}"), theme.style(text)),
+                Span::styled(
+                    format!("{GAP}{keys}"),
+                    theme.style(key).remove_modifier(Modifier::UNDERLINED),
+                ),
+            ]))
+        }
     }
 }
 
@@ -157,5 +172,75 @@ fn action_width(row: &CommandRow) -> usize {
     match row {
         CommandRow::Heading(_) | CommandRow::Separator => 0,
         CommandRow::Command { action, .. } => action.chars().count(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lc_domain::view::Liveness;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+
+    const WIDTH: u16 = 80;
+    const HEIGHT: u16 = 12;
+
+    fn drawn(rows: &[CommandRow]) -> Buffer {
+        let mut terminal =
+            Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| render(frame, rows, 0, Theme::default()))
+            .expect("TestBackend always draws");
+
+        terminal.backend().buffer().clone()
+    }
+
+    fn row(action: &'static str, liveness: Liveness) -> CommandRow {
+        CommandRow::Command {
+            keys: "tab".to_owned(),
+            action,
+            liveness,
+        }
+    }
+
+    /// The row is still readable and still lands under the cursor; what it
+    /// stops claiming is that `⏎` would do something
+    /// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §8).
+    #[test]
+    fn a_row_that_cannot_be_run_recedes() {
+        let rows = [
+            CommandRow::Heading("Export"),
+            row("next field", Liveness::Inert),
+            row("export these rows", Liveness::Live),
+            row("select, or export", Liveness::Live),
+            row("close the form", Liveness::Live),
+            row("previous field", Liveness::Live),
+        ];
+        // MIN_H demands enough rows for a palette to open at all
+        // (commands::tests::the_catalogue_is_taller_than_the_palettes_floor
+        // holds the same floor on the real catalogue); pad past a bare
+        // heading-plus-two so `rect` does not refuse the frame.
+        let area = rect(Rect::new(0, 0, WIDTH, HEIGHT), rows.len()).expect("fits this frame");
+        let buffer = drawn(&rows);
+        let theme = Theme::default();
+        // One column for the border, one for the palette's own PAD; one row
+        // for the border, one for the heading.
+        let x = area.x + 1 + PAD;
+        let y0 = area.y + 2;
+        let at = |line: u16| buffer.cell((x, y0 + line)).expect("inside the block").fg;
+
+        assert_eq!(
+            at(0),
+            theme.style(Token::Faint).fg.expect("faint spends a colour")
+        );
+        assert_eq!(
+            at(1),
+            theme
+                .style(Token::HintAction)
+                .fg
+                .expect("a live action spends a colour")
+        );
     }
 }
