@@ -79,7 +79,17 @@ pub(crate) const QUIT: Binding = Binding {
 /// lie in most frames (hint bar design §3). With the palette open it is never
 /// a lie, and `?`/`esc` together are what the user is owed for `q` still
 /// quitting (design §7) — both close it, so both are named.
+///
+/// `⏎ run` comes first so it is the first hint width-fitting gives up
+/// (`lc-inbound::hints::fit` drops from the front of `global`) — a user
+/// who has read this far still has `?`/`esc`/`q` to fall back on, the
+/// ways out the bar keeps longest everywhere else (palette execution
+/// design §12).
 const PALETTE_GLOBAL: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Enter)],
+        action: "run",
+    },
     Binding {
         keys: &[KeyPress::new(Key::Char('?')), KeyPress::new(Key::Escape)],
         action: "close",
@@ -164,11 +174,10 @@ pub(crate) fn bar(state: &State) -> HintBar {
         .as_ref()
         .map(|job| format!("exporting {} rows…", job.rows()));
 
-    // No panel group: `⏎` is inert until the palette can run a command
-    // (design §10), and moving — by a row, by a screen, or to an end — is
+    // No panel group: moving — by a row, by a screen, or to an end — is
     // assumed rather than taught, in here as in every panel bar
-    // (docs/shortcuts.md §2). That leaves nothing the palette alone responds
-    // to, so the bar names only the ways out.
+    // (docs/shortcuts.md §2). What is left, `⏎ run` and the two ways out,
+    // is all global (palette execution design §12).
     if matches!(state.overlay, Some(Overlay::Commands(_))) {
         return HintBar {
             panel: Vec::new(),
@@ -499,8 +508,10 @@ mod tests {
             "the palette answers to nothing a terminal list does not: {:?}",
             bar.panel
         );
-        assert_eq!(bar.global[0].keys, "?/esc");
-        assert_eq!(bar.global[0].action, "close");
+        assert_eq!(bar.global[0].keys, "⏎");
+        assert_eq!(bar.global[0].action, "run");
+        assert_eq!(bar.global[1].keys, "?/esc");
+        assert_eq!(bar.global[1].action, "close");
         assert_eq!(bar.global.last().expect("q is last").action, "quit");
     }
 

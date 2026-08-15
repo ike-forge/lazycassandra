@@ -887,7 +887,7 @@ mod tests {
         let drawn = row(&buffer, 23);
         let hints: String = drawn.chars().skip(taken).collect();
 
-        assert_eq!(hints.trim_end(), " ?/esc close | q quit");
+        assert_eq!(hints.trim_end(), " ⏎ run | ?/esc close | q quit");
     }
 
     #[test]
@@ -4588,7 +4588,7 @@ mod tests {
     #[test]
     fn a_command_row_names_what_it_does_before_the_key_it_costs() {
         let buffer = with_palette(100, 40);
-        let row = block_row(&buffer, "Commands", 13);
+        let row = block_row(&buffer, "Commands", 17);
 
         assert_eq!(row.trim(), "yank                  y");
     }

@@ -105,6 +105,27 @@ stored a tab nothing draws would put the panel somewhere the user cannot see it
 is. The tab the panel was left on is kept, not reset: stepping onto a keyspace
 and back is navigation, and it may not cost you the tab you were reading.
 
+### The command palette
+
+`?` opens it over any panel. It outranks focus and claims every unmodified key
+before the panel underneath is consulted (§2).
+
+| Key | Action |
+|---|---|
+| `j` `k` `↑` `↓` | Move the cursor, command to command. Headings and rules are stepped over. |
+| `PageDown` `PageUp` `ctrl-d` `ctrl-u` | Page the list. |
+| `Home` `End` | The first command, the last command. |
+| `⏎` | Close the palette and perform the selected command. |
+| `?` `Esc` | Close it. |
+| `q` | Quits, as everywhere else. |
+| anything else | Inert. Nothing means "close" in one frame and something else in the next. |
+
+`⏎` presses the row's own first key, in the panel the row belongs to — it
+focuses that panel first, whether or not the action that follows has anything
+to do. A row that means something only inside the export form is not pressed
+at all: it is drawn faint, and `⏎` on it closes the palette and stops
+([palette execution design](superpowers/specs/2026-08-15-palette-execution-design.md) §8).
+
 ### The search prompt
 
 `/` opens it over Tables, DDL or Table contents — the only panels a
@@ -660,9 +681,10 @@ those keys would break this rule, and is not what this is.
 The command palette sits above that. It is opened deliberately with `?`, closes
 with either `?` or `esc` — both named on its bar
 ([design](specs/2026-08-09-command-palette-design.md) §7) — and while it is up it
-takes motion, leaves `q` quitting, and makes every other key inert rather than
-dismissing. A key that means "close" in one frame and something else in the
-next is the ambiguity both halves of this rule exist to prevent.
+takes motion, runs the selected row on `⏎`, leaves `q` quitting, and makes
+every other key inert rather than dismissing. A key that means "close" in one
+frame and something else in the next is the ambiguity both halves of this
+rule exist to prevent.
 
 **A modal that claims every key says so by dimming what it covers.** While the
 palette, the message overlay, the theme picker or the diagnostics list is up,
@@ -882,6 +904,9 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | It does not open where it cannot be drawn | `the_palette_does_not_open_where_it_cannot_be_drawn` |
 | A resize that leaves it undrawable closes it too | `a_frame_that_shrinks_below_the_palette_closes_it` |
 | An open palette takes motion and swallows the rest | `an_open_palette_takes_the_motion_the_panel_would_have`, `an_open_palette_swallows_the_keys_it_does_not_use`, `q_quits_from_inside_the_palette` |
+| `⏎` runs the selected row, in its own panel | `enter_closes_the_palette_and_focuses_the_panel_the_row_belongs_to`, `enter_presses_the_rows_own_key`, `enter_on_the_run_row_runs_the_buffer`, `every_row_can_be_run` |
+| A row filed under a panel does something there | `a_row_filed_under_a_panel_stays_in_that_panel` |
+| A form row is documentation, not a command | `enter_on_a_form_row_closes_the_palette_and_stops`, `the_export_form_rows_are_documentation_rather_than_commands` (`commands.rs`) |
 | The cursor never lands on a heading | `the_palette_cursor_steps_over_a_heading`, `paging_settles_on_a_command_rather_than_a_heading` (`commands.rs`) |
 | No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` (`commands.rs`) |
 | The bar names `?`, and the palette's own keys | `the_bar_names_the_palette_between_panel_and_quit`, `the_bar_names_what_the_palette_responds_to` (`view/hints.rs`) |
@@ -929,7 +954,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The bar names `esc clear` only where a search is applied | `the_bar_names_esc_clear_only_where_a_search_is_applied` (`view/hints.rs`) |
 | The bar names `n next match` only where a search is applied | `the_bar_names_n_only_where_a_search_is_applied` (`view/hints.rs`) |
 | The bar names the prompt's own keys while it is up | `the_bar_names_what_the_prompt_responds_to` (`view/hints.rs`) |
-| The palette lists `/` | `the_catalogue_lists_search` (`commands.rs`) |
+| The palette lists `/`, under Global | `the_catalogue_lists_search_among_the_global_keys` (`commands.rs`) |
 | The marker is drawn, muted, right-aligned | `a_panel_wears_the_search_applied_to_it`, `the_marker_is_drawn_muted` (`inbound/render.rs`) |
 | The marker is dropped rather than truncated | `the_marker_is_dropped_rather_than_truncated`, `the_marker_fits_flush_against_the_corner_it_is_tuned_for` (`inbound/render.rs`) |
 | An unfocused panel still wears its marker | `an_unfocused_panel_still_wears_its_marker` (`inbound/render.rs`) |

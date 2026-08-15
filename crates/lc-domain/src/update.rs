@@ -4,7 +4,7 @@
 //! what should happen next; it cannot open a socket because it has nothing to
 //! open one with (architecture.md §3).
 
-use crate::commands::CommandsPanel;
+use crate::commands::{CommandsPanel, Run};
 use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
@@ -1143,6 +1143,7 @@ fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
             state.overlay = None;
             return Vec::new();
         }
+        Key::Enter => return run_selected(state),
         _ => {}
     }
 
@@ -1161,6 +1162,40 @@ fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 
     Vec::new()
+}
+
+/// `⏎`: close the palette, then perform the row the cursor is on.
+///
+/// The row's own first key, pressed through [`handle_key`], is what performs
+/// it. A table of actions here would be the second dispatch point
+/// docs/shortcuts.md §2 forbids, and a row that ran something other than what
+/// its key runs is the "bar that lies" one level down
+/// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §2).
+///
+/// The recursion terminates: the overlay is gone before the call, so
+/// `handle_key`'s palette arm cannot be re-entered on this pass.
+fn run_selected(state: &mut State) -> Vec<Effect> {
+    let Some(Overlay::Commands(open)) = &state.overlay else {
+        return Vec::new();
+    };
+    let selected = open.selected();
+    state.overlay = None;
+
+    let Some(command) = crate::commands::command_at(selected) else {
+        return Vec::new();
+    };
+
+    match command.run {
+        Run::Inert => return Vec::new(),
+        Run::In(panel) => state.focus_on(panel),
+        Run::Here => {}
+    }
+
+    let Some(press) = command.binding.keys.first().copied() else {
+        return Vec::new();
+    };
+
+    handle_key(state, press)
 }
 
 /// What an open diagnostics overlay responds to.
@@ -2266,7 +2301,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::{CATALOGUE, CommandsPanel};
+    use crate::commands::{CATALOGUE, CommandsPanel, Run};
     use crate::config::{Config, Diagnostic, Icons, Origin, Span as ConfigSpan};
     use crate::contents::{ContentsState, SelectionMode};
     use crate::ddl::DdlTab;
@@ -2913,14 +2948,14 @@ mod tests {
         press(&mut state, Key::PageDown);
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            17,
+            15,
             "paging is routed at the handle_key layer, same as j/k"
         );
 
         press(&mut state, Key::PageUp);
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            3,
+            1,
             "a page up from the second group lands inside the first"
         );
     }
@@ -2939,12 +2974,12 @@ mod tests {
     fn an_open_palette_swallows_the_keys_it_does_not_use() {
         // Each starting focus is chosen so a leaked key would be observable:
         // `t`/`Tab` need a focus their leak would actually move away from,
-        // `Enter`/`Space` need `Tables` on a keyspace with a table, since
-        // folding a childless one leaves no visible trace at all.
+        // `Space` needs `Tables` on a keyspace with a table, since folding a
+        // childless one leaves no visible trace at all. `Enter` is not among
+        // these cases: it runs the selected row (`run_selected`'s own tests).
         let cases = [
             (Key::Char('t'), Panel::Contents),
             (Key::Tab, Panel::Contents),
-            (Key::Enter, Panel::Tables),
             (Key::Char(' '), Panel::Tables),
         ];
 
@@ -2964,6 +2999,202 @@ mod tests {
                 "{key:?} reached past the palette"
             );
             assert!(effects.is_empty(), "{key:?} issued {effects:?}");
+        }
+    }
+
+    /// Walks the palette cursor down onto `action`'s row. `down` steps command
+    /// to command, so this reaches every row a user can reach and no other.
+    fn seat_on(state: &mut State, action: &str) {
+        for _ in 0..crate::commands::row_count() {
+            let seated = crate::commands::command_at(
+                palette(state).expect("the palette is open").selected(),
+            )
+            .is_some_and(|command| command.binding.action == action);
+
+            if seated {
+                return;
+            }
+            press(state, Key::Char('j'));
+        }
+
+        panic!("no row is labelled {action:?}");
+    }
+
+    #[test]
+    fn enter_closes_the_palette_and_focuses_the_panel_the_row_belongs_to() {
+        let mut state = measured(&["shop"]);
+        state.focus_on(Panel::Tables);
+
+        press(&mut state, Key::Char('?'));
+        seat_on(&mut state, "cycle selection mode");
+        press(&mut state, Key::Enter);
+
+        assert!(state.overlay.is_none(), "the palette closes first, always");
+        assert_eq!(
+            state.focus(),
+            Panel::Contents,
+            "the row is Table contents', so Table contents is where it is pressed"
+        );
+    }
+
+    #[test]
+    fn enter_presses_the_rows_own_key() {
+        let mut state = measured(&["shop"]);
+        state.focus_on(Panel::Contents);
+        let before = state.contents.mode;
+
+        press(&mut state, Key::Char('?'));
+        seat_on(&mut state, "cycle selection mode");
+        press(&mut state, Key::Enter);
+
+        assert_ne!(
+            state.contents.mode, before,
+            "running the row does what pressing m does"
+        );
+    }
+
+    /// The one case that proves an effect survives the dispatch: a row that
+    /// returns work rather than only moving state.
+    #[test]
+    fn enter_on_the_run_row_runs_the_buffer() {
+        let mut state = measured(&["shop"]);
+        state.focus_on(Panel::Queries);
+        type_into(&mut state, "select * from shop.a");
+        // The buffer survives a focus change; leaving Queries before `?` is
+        // what lets the palette open through the real key path rather than
+        // by assigning the overlay directly.
+        state.focus_on(Panel::Tables);
+
+        press(&mut state, Key::Char('?'));
+        seat_on(&mut state, "run the buffer");
+        let effects = press(&mut state, Key::Enter);
+
+        assert_eq!(state.focus(), Panel::Queries);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Execute { .. })),
+            "{effects:?} carries no statement to run"
+        );
+    }
+
+    /// Focus moves even when the action that follows has nothing to do — the
+    /// palette is how you get to the panel as well as to the binding.
+    #[test]
+    fn a_row_whose_action_cannot_act_still_moves_focus() {
+        let mut state = measured(&["shop"]);
+        state.focus_on(Panel::Tables);
+
+        press(&mut state, Key::Char('?'));
+        seat_on(&mut state, "run the buffer");
+        let effects = press(&mut state, Key::Enter);
+
+        assert_eq!(state.focus(), Panel::Queries);
+        assert!(effects.is_empty(), "an empty buffer runs nothing");
+    }
+
+    /// Design §9: "Every `Run::Inert` row leaves focus, both cursors, and
+    /// every selection as they were; only the overlay changed." `State` does
+    /// not derive `PartialEq`, so the comparison is by `view_model`, the same
+    /// shape `an_open_palette_swallows_the_keys_it_does_not_use` uses.
+    #[test]
+    fn enter_on_an_inert_row_closes_the_palette_and_stops() {
+        for group in CATALOGUE {
+            for command in group.commands {
+                if command.run != Run::Inert {
+                    continue;
+                }
+
+                let mut state = measured(&["shop"]);
+                state.focus_on(Panel::Tables);
+                let before = crate::view::view_model(&state);
+
+                press(&mut state, Key::Char('?'));
+                seat_on(&mut state, command.binding.action);
+                press(&mut state, Key::Enter);
+
+                assert!(
+                    state.overlay.is_none(),
+                    "{:?} left the palette open",
+                    command.binding.action
+                );
+                assert_eq!(
+                    crate::view::view_model(&state),
+                    before,
+                    "{:?} changed more than the overlay",
+                    command.binding.action
+                );
+            }
+        }
+    }
+
+    /// Every row, from a state with a schema and a focused tree: the palette
+    /// closes and nothing panics. The sweep is the point — a row added later
+    /// is covered without anyone remembering to cover it.
+    #[test]
+    fn every_row_can_be_run() {
+        for group in CATALOGUE {
+            for command in group.commands {
+                let mut state = measured(&["shop"]);
+                press(&mut state, Key::Char('?'));
+                seat_on(&mut state, command.binding.action);
+                let _ = press(&mut state, Key::Enter);
+
+                match command.run {
+                    // "Leave the editor" is the one row whose whole action is
+                    // to leave the panel it is filed under, so `⏎` on it
+                    // lands back on the default panel rather than on
+                    // Queries — a fair report of what Escape does there, not
+                    // a bug (`a_row_filed_under_a_panel_stays_in_that_panel`
+                    // carries the same exception).
+                    Run::In(_) if command.binding.action == "leave the editor" => {}
+                    Run::In(panel) => assert_eq!(
+                        state.focus(),
+                        panel,
+                        "{:?} is filed under {panel:?}",
+                        command.binding.action
+                    ),
+                    Run::Here | Run::Inert => {}
+                }
+            }
+        }
+    }
+
+    /// A row filed under a panel names a key that panel answers, and a key
+    /// that answers *there*: one that moved focus away would be a row whose
+    /// heading is a lie, which is how `tab` would read if it were filed under
+    /// Export rather than left inert.
+    #[test]
+    fn a_row_filed_under_a_panel_stays_in_that_panel() {
+        for group in CATALOGUE {
+            for command in group.commands {
+                let Run::In(panel) = command.run else {
+                    continue;
+                };
+                // The one honest exception: Escape's whole action in the
+                // editor is to leave it, so "leave the editor" is a row that
+                // leaves the panel it is filed under by design, not a row
+                // whose heading lies.
+                if command.binding.action == "leave the editor" {
+                    continue;
+                }
+                let key = *command
+                    .binding
+                    .keys
+                    .first()
+                    .expect("a binding names at least one key");
+
+                let mut state = measured(&["shop"]);
+                state.focus_on(panel);
+                let _ = press_binding(&mut state, key);
+
+                assert_eq!(
+                    state.focus(),
+                    panel,
+                    "{:?} is filed under {panel:?} and leaves it",
+                    command.binding.action
+                );
+            }
         }
     }
 
@@ -3472,7 +3703,7 @@ mod tests {
 
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            17,
+            15,
             "ctrl-d is pgdn by another name, and pgdn pages the palette"
         );
         assert_eq!(state.tables.cursor.index(), 0);
@@ -7020,8 +7251,8 @@ mod tests {
     fn catalogued() -> Vec<KeyPress> {
         CATALOGUE
             .iter()
-            .flat_map(|group| group.bindings)
-            .flat_map(|binding| binding.keys)
+            .flat_map(|group| group.commands)
+            .flat_map(|command| command.binding.keys)
             .copied()
             .collect()
     }
@@ -7206,8 +7437,8 @@ mod tests {
                 &plain
             };
 
-            for binding in group.bindings {
-                for &press in binding.keys {
+            for command in group.commands {
+                for &press in command.binding.keys {
                     assert!(
                         fixtures.iter().any(|state| does_something(state, press)),
                         "{} lists {press:?} and no state responds to it",
