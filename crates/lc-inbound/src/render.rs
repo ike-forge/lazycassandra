@@ -58,11 +58,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     };
     // The panels are context while a modal is up, not a place a key would
     // land, so they are drawn without the marks that say otherwise.
-    let beneath = if dims_the_panels(view.overlay.as_ref()) {
-        theme.dimmed()
-    } else {
-        theme
-    };
+    let dimmed = dims_the_panels(view.overlay.as_ref());
+    let beneath = if dimmed { theme.dimmed() } else { theme };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
     let mut ddl_selection = DdlSpan::default();
@@ -72,7 +69,13 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     for (index, panel) in view.panels.iter().enumerate() {
         let area = rects.get(panel.panel);
 
-        let is_focused_panel = panel.panel == view.focus;
+        // Not "the focused panel, drawn quietly": while a modal is up there
+        // is no focused panel at all, and this one reads exactly as the other
+        // three do. A style that merely muted the accent drew the title in
+        // the border's colour, one step *below* the unfocused panels beside
+        // it — the panel the user had just been in became the faintest thing
+        // on screen.
+        let is_focused_panel = panel.panel == view.focus && !dimmed;
         let (block, border, tabs) = panel_block(panel, area, is_focused_panel, beneath);
 
         let inner = block.inner(area);
@@ -4408,6 +4411,31 @@ mod tests {
             bordered(&dimmed),
             0,
             "and nothing beneath a modal claims the focus the modal has"
+        );
+    }
+
+    /// Not focused, and not fainter than the panels that were never focused
+    /// either: the title reads as any unfocused title does.
+    #[test]
+    fn the_panel_the_palette_covers_reads_as_an_unfocused_one() {
+        let buffer = with_palette(100, 40);
+        let theme = Theme::default();
+        let (x, y) = top_border(&buffer, "Tables");
+        // Past the corner, the two border dashes and the pad, onto the title.
+        let title = buffer.cell((x + 4, y)).expect("the title is drawn");
+
+        assert_eq!(
+            title.fg,
+            theme
+                .style(Token::Muted)
+                .fg
+                .expect("an unfocused title spends a colour"),
+            "the panel focus left reads like the ones it never had"
+        );
+        assert_ne!(
+            title.fg,
+            theme.palette().border,
+            "and not like its own border"
         );
     }
 

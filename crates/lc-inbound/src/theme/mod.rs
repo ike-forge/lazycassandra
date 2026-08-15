@@ -301,12 +301,13 @@ impl Theme {
 /// A dimmed theme draws these as nothing at all. `Token::Match` is not one of
 /// them: a filter is applied whether or not an overlay is up, and a panel that
 /// stopped marking its hits while the palette was open would be answering a
-/// different question than the one on screen.
+/// different question than the one on screen. Neither is `Token::Focused`:
+/// under a modal no panel *is* focused, and `render` stops asking for the
+/// token rather than asking for a hollowed-out version of it.
 const fn is_emphasis(token: Token) -> bool {
     matches!(
         token,
-        Token::Focused
-            | Token::Selected
+        Token::Selected
             | Token::SelectedCell
             | Token::SelectionBar
             | Token::Crosshair
@@ -718,14 +719,13 @@ pub(crate) mod tests {
     /// are the same amber — underline is the channel that survives both, and
     /// nothing else in the UI spends it (design §3.1).
     /// A dimmed theme is the palettes' colours without the marks that say
-    /// where a press would land. Content colours stay: a keyspace under an
+    /// where the cursor is. Content colours stay: a keyspace under an
     /// open palette is still a keyspace.
     #[test]
     fn a_dimmed_theme_draws_no_focus_and_no_cursor() {
         let theme = Theme::default().dimmed();
 
         for token in [
-            Token::Focused,
             Token::Selected,
             Token::SelectedCell,
             Token::SelectionBar,
