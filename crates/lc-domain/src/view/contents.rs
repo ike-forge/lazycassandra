@@ -9,7 +9,7 @@ use crate::contents::{ContentsState, GridPage, SelectionMode, Subject, TableRef}
 use crate::model::{CqlValue, Schema};
 use crate::search::Filter;
 use crate::state::{Panel, Ranges, State};
-use crate::style::Token;
+use crate::style::{Segment, Token};
 
 use super::{PanelBody, failure, waiting};
 
@@ -44,22 +44,40 @@ pub struct GridCell {
     pub matched: bool,
 }
 
-pub(super) fn title(state: &State) -> String {
+pub(super) fn title(state: &State) -> Vec<Segment> {
     const BASE: &str = "Table contents";
 
     match state.contents.state() {
-        ContentsState::Empty => BASE.to_owned(),
+        ContentsState::Empty => vec![Segment::plain(BASE)],
         ContentsState::Loading { subject, .. } | ContentsState::Failed { subject, .. } => {
-            format!("{BASE} — {}", subject.label())
+            named(BASE, subject, None)
         }
         ContentsState::Loaded { subject, page } => {
-            format!(
-                "{BASE} — {} ({})",
-                subject.label(),
-                rows(page.page().rows.len())
-            )
+            named(BASE, subject, Some(rows(page.page().rows.len())))
         }
     }
+}
+
+/// The panel's name, then what it is showing, then how much of it.
+///
+/// The qualified name keeps the schema's own colours ([`TableRef::segments`]):
+/// this panel does not follow the tree cursor, so its title is the only thing
+/// on screen saying which table is up (vision.md §4, principle 8), and it says
+/// it the way the tree does.
+fn named(base: &str, subject: &Subject, count: Option<String>) -> Vec<Segment> {
+    let mut segments = vec![Segment::plain(format!("{base} — "))];
+
+    match subject {
+        Subject::Table(table) => segments.extend(table.segments()),
+        // A typed statement names no one table, so there is nothing to colour.
+        Subject::Typed(_) => segments.push(Segment::plain(subject.label())),
+    }
+
+    if let Some(count) = count {
+        segments.push(Segment::plain(format!(" ({count})")));
+    }
+
+    segments
 }
 
 fn rows(count: usize) -> String {
@@ -280,6 +298,73 @@ mod tests {
             }
         );
         assert_eq!(contents_title(&state), "Table contents — shop.orders");
+    }
+
+    fn title_segments(state: &State) -> Vec<Segment> {
+        view_model(state).panels[2].title.tabs()[0]
+            .segments()
+            .to_vec()
+    }
+
+    fn showing_table(keyspace: &str, table: &str) -> State {
+        let mut state = tabled(&[(keyspace, &[table])]);
+        state.contents.requested(
+            QueryId::next(),
+            Subject::Table(TableRef::new(keyspace, table)),
+        );
+        state
+    }
+
+    /// The panel that does not follow the tree cursor still names its table
+    /// the way the tree does, colours included (vision.md §2).
+    #[test]
+    fn a_titles_table_name_wears_the_schemas_own_colours() {
+        let state = showing_table("shop", "orders");
+
+        assert_eq!(
+            title_segments(&state),
+            vec![
+                Segment::plain("Table contents — "),
+                Segment::styled("shop", Token::Keyspace),
+                Segment::styled(".", Token::Faint),
+                Segment::styled("orders", Token::Table),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_system_tables_title_is_faint_on_both_halves_as_its_tree_row_is() {
+        let state = showing_table("system_schema", "columns");
+
+        assert_eq!(
+            title_segments(&state)[1..],
+            [
+                Segment::styled("system_schema", Token::Faint),
+                Segment::styled(".", Token::Faint),
+                Segment::styled("columns", Token::Faint),
+            ]
+        );
+    }
+
+    /// A statement names no one table, so the title has nothing to colour —
+    /// and still reads exactly as it did.
+    #[test]
+    fn a_typed_subjects_title_carries_no_colour() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.contents.requested(
+            QueryId::next(),
+            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+        );
+
+        assert!(
+            title_segments(&state)
+                .iter()
+                .all(|segment| segment.token.is_none())
+        );
+        assert_eq!(
+            contents_title(&state),
+            "Table contents — SELECT * FROM shop.orders"
+        );
     }
 
     #[test]

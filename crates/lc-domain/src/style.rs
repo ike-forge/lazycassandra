@@ -6,6 +6,47 @@
 
 use crate::posture::Posture;
 
+/// A run of text drawn in one token.
+///
+/// `None` is the run whatever style the caller is drawing in covers — a
+/// panel's name is the panel's name, in whatever colour focus gives it. A
+/// `Some` is a run that carries a meaning of its own: a schema name reads as
+/// one wherever it is written, and the tree, the DDL panel and a title all
+/// spend the same two colours on a keyspace and a table (vision.md §2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Segment {
+    pub text: String,
+    pub token: Option<Token>,
+}
+
+impl Segment {
+    #[must_use]
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            token: None,
+        }
+    }
+
+    #[must_use]
+    pub fn styled(text: impl Into<String>, token: Token) -> Self {
+        Self {
+            text: text.into(),
+            token: Some(token),
+        }
+    }
+}
+
+/// Runs read as one string — what a border is measured against, and what a
+/// test asserts a title says.
+#[must_use]
+pub fn text(segments: &[Segment]) -> String {
+    segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect()
+}
+
 /// A thing worth distinguishing visually.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {

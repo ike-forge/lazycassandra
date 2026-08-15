@@ -440,12 +440,16 @@ fn panel_title<'a>(
         }
 
         let style = if tab.active { active } else { inactive };
-        let text = match form {
-            Strip::Short => tab.short(),
-            Strip::Full | Strip::Active => tab.text(),
+        let segments = match form {
+            Strip::Short => tab.short_segments(),
+            Strip::Full | Strip::Active => tab.segments(),
         };
 
-        spans.push(Span::styled(text, style));
+        for segment in segments {
+            let run = segment.token.map_or(style, |token| theme.style(token));
+
+            spans.push(Span::styled(segment.text.clone(), run));
+        }
     }
 
     spans.push(Span::raw(TITLE_PAD));
@@ -1606,6 +1610,29 @@ mod tests {
                 "ks00 is off screen, so nothing drawn is the selection"
             );
         }
+    }
+
+    /// The title is the only thing on screen naming the table this panel is
+    /// showing, and it names it in the tree's colours.
+    #[test]
+    fn a_contents_title_draws_its_table_in_the_schemas_colours() {
+        let state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
+        let buffer = draw_state(60, 12, &state);
+        let theme = Theme::default();
+        let border = row(&buffer, 0);
+        // Characters, not bytes: the border is drawn out of box-drawing glyphs
+        // and an em dash, and a byte offset into it is not a column.
+        let at = |text: &str| {
+            let byte = border.find(text).expect("the title names the table");
+            let column = border[..byte].chars().count();
+
+            u16::try_from(column).expect("a 60-column frame")
+        };
+        let fg = |x: u16| Some(buffer.cell((x, 0)).expect("inside the border").fg);
+
+        assert_eq!(fg(at("shop")), theme.style(Token::Keyspace).fg);
+        assert_eq!(fg(at("orders")), theme.style(Token::Table).fg);
+        assert_eq!(fg(at("shop") + 4), theme.style(Token::Faint).fg, "the dot");
     }
 
     #[test]

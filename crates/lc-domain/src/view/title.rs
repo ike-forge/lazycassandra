@@ -1,6 +1,8 @@
 //! A panel title that names the key reaching its panel, and which of its tabs
 //! is the one being drawn.
 
+use crate::style::Segment;
+
 /// What separates one tab from the next on a panel's top border.
 pub const TAB_SEPARATOR: &str = " - ";
 
@@ -22,10 +24,10 @@ pub struct PanelTitle {
 /// One tab of a panel's title strip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tab {
-    text: String,
+    text: Vec<Segment>,
     /// The name to fall back to on a border that cannot hold every full one.
     /// Equal to `text` for a tab with nothing to drop.
-    short: String,
+    short: Vec<Segment>,
     /// Whether this is the tab whose body the panel is drawing. Always true
     /// for a panel with one tab.
     pub active: bool,
@@ -42,9 +44,14 @@ pub(crate) struct TabSpec {
 impl PanelTitle {
     /// A panel with one tab, under `number`.
     pub(crate) fn single(number: char, text: String) -> Self {
+        Self::styled(number, vec![Segment::plain(text)])
+    }
+
+    /// A panel with one tab whose name is drawn in more than one colour.
+    pub(crate) fn styled(number: char, segments: Vec<Segment>) -> Self {
         Self {
             number,
-            tabs: vec![Tab::new(text.clone(), text, true)],
+            tabs: vec![Tab::new(segments.clone(), segments, true)],
         }
     }
 
@@ -55,7 +62,13 @@ impl PanelTitle {
     pub(crate) fn tabbed(number: char, specs: &[TabSpec]) -> Self {
         let tabs = specs
             .iter()
-            .map(|spec| Tab::new(spec.label.to_owned(), spec.short.to_owned(), spec.active))
+            .map(|spec| {
+                Tab::new(
+                    vec![Segment::plain(spec.label)],
+                    vec![Segment::plain(spec.short)],
+                    spec.active,
+                )
+            })
             .collect();
 
         Self { number, tabs }
@@ -93,7 +106,7 @@ impl PanelTitle {
 }
 
 impl Tab {
-    fn new(text: String, short: String, active: bool) -> Self {
+    fn new(text: Vec<Segment>, short: Vec<Segment>, active: bool) -> Self {
         Self {
             text,
             short,
@@ -102,13 +115,26 @@ impl Tab {
     }
 
     #[must_use]
-    pub fn text(&self) -> &str {
-        &self.text
+    pub fn text(&self) -> String {
+        crate::style::text(&self.text)
     }
 
     /// The name to draw where the full strip does not fit.
     #[must_use]
-    pub fn short(&self) -> &str {
+    pub fn short(&self) -> String {
+        crate::style::text(&self.short)
+    }
+
+    /// The full name, run by run — what a renderer draws when it can spend a
+    /// colour per run rather than one over the whole tab.
+    #[must_use]
+    pub fn segments(&self) -> &[Segment] {
+        &self.text
+    }
+
+    /// [`Tab::segments`] for the short name.
+    #[must_use]
+    pub fn short_segments(&self) -> &[Segment] {
         &self.short
     }
 }

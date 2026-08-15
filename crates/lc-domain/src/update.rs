@@ -8123,7 +8123,10 @@ mod tests {
 
         open_form(&mut state);
 
-        assert_eq!(form_of(&state).title(), "Export table shop.orders");
+        assert_eq!(
+            crate::style::text(&form_of(&state).title()),
+            "Export table shop.orders"
+        );
     }
 
     #[test]

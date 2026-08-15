@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::cell;
 use crate::contents::Subject;
 use crate::model::{CqlValue, Row};
+use crate::style::Segment;
 use crate::update::{ROW_LIMIT, Source};
 use crate::yank;
 
@@ -571,11 +572,21 @@ impl ExportForm {
     }
 
     /// What the form's border says it is about (design §1).
+    ///
+    /// The table's name keeps the schema's colours the tree and the Table
+    /// contents title give it ([`TableRef::segments`]).
     #[must_use]
-    pub fn title(&self) -> String {
+    pub fn title(&self) -> Vec<Segment> {
         match &self.subject {
-            Subject::Table(table) => format!("Export table {}", table.qualified()),
-            Subject::Typed(_) => format!("Export query {}", cut(&self.subject.label())),
+            Subject::Table(table) => {
+                let mut segments = vec![Segment::plain("Export table ")];
+                segments.extend(table.segments());
+                segments
+            }
+            Subject::Typed(_) => vec![Segment::plain(format!(
+                "Export query {}",
+                cut(&self.subject.label())
+            ))],
         }
     }
 
@@ -1071,7 +1082,10 @@ mod tests {
 
     #[test]
     fn a_table_form_is_titled_by_its_table() {
-        assert_eq!(form(Fetched::Some(200)).title(), "Export table shop.orders");
+        assert_eq!(
+            crate::style::text(&form(Fetched::Some(200)).title()),
+            "Export table shop.orders"
+        );
     }
 
     #[test]
@@ -1081,7 +1095,7 @@ mod tests {
             "x".repeat(200)
         );
         let form = ExportForm::opened(Subject::Typed(cql), Fetched::Some(200), Path::new(""));
-        let title = form.title();
+        let title = crate::style::text(&form.title());
 
         assert!(title.starts_with("Export query SELECT * FROM shop.orders"));
         assert!(title.ends_with('…'));
@@ -1099,7 +1113,7 @@ mod tests {
         let cql = format!("SELECT '{}'", "é".repeat(200));
         let form = ExportForm::opened(Subject::Typed(cql), Fetched::Some(200), Path::new(""));
 
-        assert!(form.title().ends_with('…'));
+        assert!(crate::style::text(&form.title()).ends_with('…'));
     }
 
     #[test]

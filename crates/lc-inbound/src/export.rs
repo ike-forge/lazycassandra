@@ -2,7 +2,7 @@
 //! (docs/superpowers/specs/2026-08-14-export-design.md §2).
 
 use lc_domain::export::{Confirm, Format, Scope, Stop};
-use lc_domain::style::Token;
+use lc_domain::style::{Segment, Token};
 use lc_domain::view::ExportView;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -44,6 +44,20 @@ fn centred(area: Rect, width: u16, height: u16) -> Option<Rect> {
     ))
 }
 
+/// The form's border text. A run with no token of its own keeps the block's
+/// own style; the table's name carries the schema colours the domain gave it.
+fn title(segments: &[Segment], theme: Theme) -> TextLine<'static> {
+    TextLine::from(
+        segments
+            .iter()
+            .map(|segment| match segment.token {
+                Some(token) => Span::styled(segment.text.clone(), theme.style(token)),
+                None => Span::raw(segment.text.clone()),
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
 pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     if view.confirm == Some(Confirm::Overwrite) {
         confirmation(frame, view, theme);
@@ -57,7 +71,7 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(theme.focus_border())
-        .title(view.title.as_str());
+        .title(title(&view.title, theme));
     let inner = block.inner(area);
 
     frame.render_widget(Clear, area);

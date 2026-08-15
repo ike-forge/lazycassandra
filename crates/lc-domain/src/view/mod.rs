@@ -13,6 +13,7 @@ pub(crate) mod hints;
 mod tables;
 mod title;
 
+pub use crate::style::Segment;
 pub use contents::{GridCell, GridColumn};
 pub use details::{ColumnKind, DetailRow, Details, Group, Heading, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness};
@@ -132,7 +133,7 @@ fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
 /// [`ExportForm`](crate::export::ExportForm).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportView {
-    pub title: String,
+    pub title: Vec<Segment>,
     /// Whole first, fetched second — the order they are drawn in.
     pub scope_labels: [String; 2],
     pub scope: Scope,
@@ -373,7 +374,7 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
 
             PanelTitle::tabbed(number, &specs)
         }
-        Panel::Contents => single(contents::title(state)),
+        Panel::Contents => PanelTitle::styled(number, contents::title(state)),
         Panel::Queries => single("Queries".to_owned()),
     }
 }
@@ -651,7 +652,7 @@ mod tests {
         let Some(OverlayView::Export(view)) = view_model(&state).overlay else {
             panic!("the form is projected");
         };
-        assert_eq!(view.title, "Export table shop.orders");
+        assert_eq!(crate::style::text(&view.title), "Export table shop.orders");
         assert_eq!(view.scope, Scope::Whole);
         assert!(view.fetched_enabled);
         assert_eq!(view.format, Format::Csv);
