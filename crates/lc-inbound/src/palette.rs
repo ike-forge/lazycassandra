@@ -79,10 +79,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     frame.render_widget(block, area);
 
     let gutter = rows.iter().map(action_width).max().unwrap_or(0);
-    let items: Vec<ListItem> = rows
-        .iter()
-        .map(|row| item(row, gutter, inner.width, theme))
-        .collect();
+    let items: Vec<ListItem> = rows.iter().map(|row| item(row, gutter, theme)).collect();
     let mut state = ListState::default().with_selected(Some(selected));
 
     frame.render_stateful_widget(
@@ -90,6 +87,8 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
         inner,
         &mut state,
     );
+
+    rules(frame, area, inner, rows, state.offset(), theme);
 
     let extent = Extent {
         position: state.offset(),
@@ -102,6 +101,48 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     }
 }
 
+/// Draws every visible group rule across the block, borders included.
+///
+/// Painted over the list rather than drawn as a row of its own: a `ListItem`
+/// is clipped to `inner`, and a rule that stops two columns short of the
+/// frame it belongs to reads as a row of content rather than as part of the
+/// block. Before the scrollbar, which owns the right border where the two
+/// meet.
+fn rules(
+    frame: &mut Frame,
+    area: Rect,
+    inner: Rect,
+    rows: &[CommandRow],
+    offset: usize,
+    theme: Theme,
+) {
+    let style = theme.modal_border();
+
+    for line in 0..inner.height {
+        let index = offset.saturating_add(usize::from(line));
+
+        if !matches!(rows.get(index), Some(CommandRow::Separator)) {
+            continue;
+        }
+
+        let y = inner.y + line;
+
+        for x in area.x..area.right() {
+            let symbol = if x == area.x {
+                symbols::line::VERTICAL_RIGHT
+            } else if x == area.right() - 1 {
+                symbols::line::VERTICAL_LEFT
+            } else {
+                symbols::line::HORIZONTAL
+            };
+
+            if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+                cell.set_symbol(symbol).set_style(style);
+            }
+        }
+    }
+}
+
 /// The palette says in a column what the bar says in a row, so it says it with
 /// the bar's tokens — a `CommandKey` token would be a second name for one
 /// meaning (architecture.md §6).
@@ -109,12 +150,11 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
 /// The action leads and the keys follow, the order a search-actions dialogue
 /// uses: a reader of the open palette is looking for a thing to do and wants
 /// the key it costs, not scanning a column of keys for one they already know.
-fn item(row: &CommandRow, gutter: usize, width: u16, theme: Theme) -> ListItem<'static> {
+fn item(row: &CommandRow, gutter: usize, theme: Theme) -> ListItem<'static> {
     match row {
-        CommandRow::Separator => ListItem::new(Line::from(Span::styled(
-            symbols::line::HORIZONTAL.repeat(usize::from(width)),
-            theme.border_style(),
-        ))),
+        // Blank: `rules` paints the line itself, across the borders a
+        // `ListItem` cannot reach.
+        CommandRow::Separator => ListItem::new(Line::default()),
         CommandRow::Heading(heading) => ListItem::new(Line::from(Span::styled(
             (*heading).to_owned(),
             theme.style(Token::Section),

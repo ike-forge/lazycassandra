@@ -4399,6 +4399,31 @@ mod tests {
         );
     }
 
+    /// A rule joins the block it divides: it reaches both borders and turns
+    /// them into junctions, rather than stopping at the pad columns and
+    /// reading as a row of content.
+    #[test]
+    fn a_rule_meets_the_block_it_divides() {
+        // Tall enough that the whole catalogue fits, so no scrollbar owns the
+        // right border where the rule lands.
+        let buffer = with_palette(100, 80);
+        let area = block_area(&buffer, "Commands");
+        let symbol = |x: u16, y: u16| {
+            buffer
+                .cell((x, y))
+                .expect("inside the block")
+                .symbol()
+                .to_owned()
+        };
+        let rule = (area.y + 1..area.bottom() - 1)
+            .find(|y| symbol(area.x, *y) == symbols::line::VERTICAL_RIGHT)
+            .expect("the catalogue has more than one group");
+
+        assert_eq!(symbol(area.right() - 1, rule), symbols::line::VERTICAL_LEFT);
+        assert_eq!(symbol(area.x + 1, rule), symbols::line::HORIZONTAL);
+        assert_eq!(symbol(area.right() - 2, rule), symbols::line::HORIZONTAL);
+    }
+
     /// The action leads, the keys follow — the shape a search-actions dialogue
     /// has, and the reason `MIN_W`'s two columns swapped places.
     #[test]
@@ -4556,15 +4581,19 @@ mod tests {
     /// Whether the block titled `title` has a scrollbar drawn over its right
     /// border. The track scan stops above the bottom border row: that row's
     /// corner is `┘`, which is `!= "│"` whether or not a scrollbar was drawn,
-    /// and including it would make the scan true unconditionally.
+    /// and including it would make the scan true unconditionally. The palette's
+    /// group rules meet the same border and are skipped for the same reason.
     fn has_scrollbar(buffer: &Buffer, title: &str) -> bool {
         let area = block_area(buffer, title);
         let x = area.right() - 1;
 
         (area.y + 1..area.bottom() - 1).any(|y| {
-            buffer
-                .cell((x, y))
-                .is_some_and(|cell| cell.symbol() != symbols::line::VERTICAL)
+            buffer.cell((x, y)).is_some_and(|cell| {
+                !matches!(
+                    cell.symbol(),
+                    symbols::line::VERTICAL | symbols::line::VERTICAL_LEFT
+                )
+            })
         })
     }
 
