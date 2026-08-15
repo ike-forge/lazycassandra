@@ -27,9 +27,11 @@ panel that takes text (§2).
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `/`¹ | Search the focused panel. |
+| `n`¹ | Move to the next match of the focused panel's search, wrapping. |
+| `N`¹ | Move to the previous match of the focused panel's search, wrapping. |
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
-| `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's filter, or leave the editor for Tables — first hit wins (§2). |
+| `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's search, or leave the editor for Tables — first hit wins (§2). |
 | `Tab` | Focus the next panel — Tables, Table contents, DDL, Queries — wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
 | `a`¹ | Focus T**a**bles. |
@@ -104,28 +106,28 @@ may not cost you the tab you were reading.
 ### The search prompt
 
 `/` opens it over Tables, DDL or Table contents — the only panels a
-filter can apply to. It is drawn on the bar row, not over the panels, but it
+search can apply to. It is drawn on the bar row, not over the panels, but it
 is an `Overlay` exactly like the command palette: it outranks focus and
 claims every printable key before the panel underneath ever sees one, `q`
 and `?` included — see §2's exceptions.
 
 | Key | Effect |
 |---|---|
-| any printable key | Appends to the query, then applies it live. |
-| `Backspace` | Removes the last character, then applies. |
-| `Enter` | Closes the prompt, leaving whatever filter is applied. |
-| `Esc` | Restores the filter that was applied before the prompt opened, then closes. |
-| anything the ctrl layer does not claim | Inert, including `Tab`/`Shift-Tab` — the panel being filtered cannot change under a live query. |
+| any printable key | Appends to the query, applies it live, and jumps the cursor to the first match, searching from where `/` was pressed. |
+| `Backspace` | Removes the last character, then applies and jumps the same way. |
+| `Enter` | Closes the prompt, leaving whatever search is applied and the cursor wherever it landed. |
+| `Esc` | Restores the search and the cursor to where they stood before the prompt opened, then closes. |
+| anything the ctrl layer does not claim | Inert, including `Tab`/`Shift-Tab` — the panel being searched cannot change under a live query. |
 
 Ctrl is dispatched above every overlay (§2), so a chord reaches `ctrl_key`
 before the prompt is consulted — and every member is inert here anyway, each
 for its own reason. `ctrl-d`/`ctrl-u` page nothing because `PageDown`/`PageUp`
 page nothing here, and the two spellings reach one implementation. `ctrl-t` is
 refused outright: it is the one opener a prompt cannot swallow, and a picker
-opened over a live query would strand the panel filtered with nothing left
-holding what it was filtered from. `ctrl-r` runs the buffer only from Queries,
+opened over a live query would strand the panel searched with nothing left
+holding what it was searched from. `ctrl-r` runs the buffer only from Queries,
 and no prompt can be open while Queries has focus. That takes two halves:
-Queries holds no filter, so no prompt can be opened *over* it; and focus cannot
+Queries holds no search, so no prompt can be opened *over* it; and focus cannot
 move *to* it under a live prompt, since the prompt swallows `Tab`/`Shift-Tab`,
 types the shortcut letters as text rather than acting on them, and a click is
 spent dismissing the prompt (§7).
@@ -133,11 +135,19 @@ spent dismissing the prompt (§7).
 A chord the layer has no member for is still refused rather than typed: ctrl
 is a layer of its own, and `ctrl-n` is not an `n`.
 
-Filtering is live: every edit re-applies the filter, so the panel underneath
-is the preview. `Enter` on an empty query therefore clears the filter — there
-is no separate binding for that, only the empty query the invariant already
-turns into "no filter".
-See [panel search design](specs/2026-08-10-panel-search-design.md) §3.
+Searching is live: every edit re-applies the search, so the panel underneath
+is the preview — Tables and Table contents highlight where a match sits
+rather than narrowing to it, and so does Table DDL; neither panel drops a
+row for a term that fails to match it. `Enter` on an empty query therefore
+clears the search — there is no separate binding for that, only the empty
+query the invariant already turns into "no search". The jump is measured
+from `origin`, the cursor position the prompt opened on, rather than from
+wherever the last keystroke landed: searching from the current cursor would
+walk the view forward as the term is extended, which is not what an
+incremental search means. `Esc` restores `origin` alongside the search it
+restores, so an abandoned prompt leaves the panel exactly as it was found.
+See [panel search design](specs/2026-08-10-panel-search-design.md) §3 and
+[search that highlights rather than hides](specs/2026-08-15-search-highlight-design.md) §5.2.
 
 ### The theme picker
 
@@ -173,10 +183,12 @@ arriving over an open picker, or a frame shrinking below it, unwinds the
 preview the same way `Esc` does, so a half-previewed theme never strands
 itself. See [themes design](specs/2026-08-10-themes-design.md) §6.
 
-The picker is behind ctrl because no shifted letter is bound in the program:
-`T` was the one exception and has been given back, so `A`, `B`, `C`, `D`, `T`
-and `U` are now unbound alike (§2, §4). `t` itself is free again since the
-focus letters moved to `a`/`b`/`c`/`d`.
+The picker is behind ctrl because a shifted letter was not free to give it a
+plain-key opener of its own: `T` was the one shifted letter ever bound and
+has been given back, so `A`, `B`, `C`, `D` and `U` stay unbound (§2, §4). `N`
+is the program's only shifted letter now, and it is spent walking a search
+backwards (§1's global table), not opening the picker. `t` itself is free
+again since the focus letters moved to `a`/`b`/`c`/`d`.
 
 ### The configuration diagnostics overlay
 
@@ -301,7 +313,7 @@ already the key that means *drop what is held*
 overlay dismisses; failing that, an extending range freezes exactly the way
 a second `v` would, so a reflex `esc` never discards a range still growing;
 failing that, the selection clears — every group at once, however many there
-are, rather than one at a time; failing that, the focused panel's filter
+are, rather than one at a time; failing that, the focused panel's search
 clears; failing that, Queries hands focus back to Tables. §2 restates this as
 the rule it now is.
 
@@ -323,11 +335,13 @@ row is Tables as it always was: `Enter` still reads it.
 A selection does not outlive what it was drawn against, groups and all. The
 DDL selection clears when the panel's subject or its tab changes, since a
 group describes rows on a tab about a table and neither survives a change to
-either. Tables' and DDL's selections also clear when their filter changes,
-for the same reason a cursor already does: a group is a set of positions in a
-list, and a filter that renumbers rows changes what a position addresses.
-Table contents is the exception — its filter only flags matching cells and
-never renumbers a row, so a selection there survives its filter changing. A
+either. Tables' and DDL's selections also clear when their search changes — Tables
+because forcing a matching keyspace open can renumber the rows a range
+addressed, the same reason a cursor already gets pulled back; DDL's clears
+too, though a search no longer drops or reorders a DDL row for it to
+renumber. Table contents is the exception it always was: its search only
+flags matching cells and never touches a row's position, so a selection
+there survives a search changing. A
 click clears the whole selection in whichever panel it lands in, alongside
 everything else a click already resets.
 
@@ -362,14 +376,14 @@ of the keypress, not of the network
 read moves it too — the panel is where the refusal is narrated. Returning is
 `Tab` or `t`, and the tree selection is where you left it.
 
-`l` and `h` on a keyspace are swallowed while a filter is applied — and so
+`l` and `h` on a keyspace are swallowed while a search is applied — and so
 are `Enter` and a click, on a keyspace row, for the same reason. A
-retained keyspace is forced open by the filter itself, so folding it would
-change nothing on screen — the projection puts it right back — and a key
-that looks broken is worse than a key that does nothing (panel search design
-§4.1). This is the existing rule that a panel which cannot honour a motion
+keyspace holding a match is forced open by the search itself, so folding it
+would change nothing on screen — the projection puts it right back — and a
+key that looks broken is worse than a key that does nothing (search
+highlight design §4.1). This is the existing rule that a panel which cannot honour a motion
 swallows it rather than passing it on (§2). `Enter` and a click still read a
-table into Contents under a filter; only the fold/unfold path is swallowed.
+table into Contents under a search; only the fold/unfold path is swallowed.
 
 ### DDL panel
 
@@ -491,8 +505,10 @@ and are gone.
 
 **Shift is never consulted for letters.** `A`, `C`, `T`, `U` arrive as
 distinct `Key::Char`s and stay unbound; a shifted letter is a binding of its
-own, not a synonym for the plain one. `T` was the one exception and has been
-given back — the theme picker moved to `ctrl-t` (§1's picker subsection). A
+own, not a synonym for the plain one. `T` was an exception and has been
+given back — the theme picker moved to `ctrl-t` (§1's picker subsection).
+`N` is the exception that remains: it walks a search backwards and is not a
+synonym for `n` (§1's global table; search highlight design §5.3). A
 shifted arrow is left as a synonym for the plain one, and stays that way:
 `v` is how a selection extends, so no arrow needs a shifted meaning of its
 own. Binding one now would be a fourth kind of duplicate — the same key,
@@ -577,9 +593,9 @@ surface — the bar has never claimed to be the complete list
 ([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` is named wherever it
 is unconditionally true, in that frame, that pressing it does something:
 Queries, where it leaves the editor for Tables; an open palette or search
-prompt, where it closes it; and a panel carrying a filter, where it clears
+prompt, where it closes it; and a panel carrying a search, where it clears
 one (panel search design §5.3). It stays out of a panel with neither an
-overlay up nor a filter applied, where it still only does something
+overlay up nor a search applied, where it still only does something
 conditionally, and naming it there would still be a lie in most frames
 (design §3). A binding that is in none of a title, the bar, or the palette is
 a binding only this file knows about.
@@ -660,12 +676,13 @@ the same as the palette and the picker, and it is the one overlay of the
 four where `q` does not quit: see its own subsection above.
 
 **`Esc` resolves in one order, first hit wins.** An overlay up is dismissed
-first — a search prompt cancels, restoring the filter it found applied; the
-palette just closes. Failing that, an extending range in the focused panel
-freezes, the way a second `v` would, so `Esc` never discards a range that is
-still growing. Failing that, the selection clears — every group at once,
-however many are held. Failing that, the focused panel's filter, if it has
-one, clears. Failing that, Queries hands focus back to Tables. Failing all
+first — a search prompt cancels, restoring the search and the cursor it found
+applied when it opened; the palette just closes. Failing that, an extending
+range in the focused panel freezes, the way a second `v` would, so `Esc`
+never discards a range that is still growing. Failing that, the selection
+clears — every group at once, however many are held. Failing that, the
+focused panel's search, if it has one, clears. Failing that, Queries hands
+focus back to Tables. Failing all
 five, `Esc` does nothing. The first rung preserves
 `escape_dismisses_the_overlay_before_it_leaves_the_editor`; extending it down
 the chain is what "the thing most recently put on screen comes off first"
@@ -678,11 +695,11 @@ mode design §4).
 
 ## 3. The key budget
 
-Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `m` `q` `u` `v` `y`, plus `?` and `/`.
-Taken, uppercase: none — no shifted letter is bound (§2).
+Taken, lowercase: `a` `b` `c` `d` `h` `j` `k` `l` `m` `n` `q` `u` `v` `y`, plus `?` and `/`.
+Taken, uppercase: `N` — the only shifted letter bound (§2).
 
-Free, lowercase: `e` `f` `g` `i` `n` `o` `p` `r` `s` `t` `w` `x`
-`z`, every digit, and every uppercase letter.
+Free, lowercase: `e` `f` `g` `i` `o` `p` `r` `s` `t` `w` `x`
+`z`, every digit, and every uppercase letter but `N`.
 
 `Space` is claimed for the first time, inside the export form only: it
 activates the focused stop there (§1's export-form subsection) and is free
@@ -770,7 +787,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
 | The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something`, `the_catalogue_lists_the_selection_mode_key`, `the_catalogue_lists_every_key_a_panel_hints_at` (`commands.rs`) |
 | A repeated focus letter does nothing further | `a_repeated_shortcut_leaves_a_panel_alone` |
-| A tab change resets the cursor and viewport and keeps the filter | `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `a_tab_change_leaves_the_filter_where_it_was` (`ddl.rs`) |
+| A tab change resets the cursor and viewport and keeps the search | `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `a_tab_change_leaves_the_search_where_it_was` (`ddl.rs`) |
 | The columns tab lists every column with its kind | `the_columns_tab_lists_every_column_with_the_part_it_plays`, `the_columns_tab_shows_the_columns_the_ddl_tab_leaves_out` (`view/details.rs`), `the_columns_tab_draws_every_column_with_its_kind_and_type` (`inbound/render.rs`) |
 | A strip too narrow keeps the drawn tab whole | `a_border_wide_enough_names_both_tabs_and_fades_the_one_not_drawn`, `a_border_too_narrow_for_either_strip_keeps_the_tab_it_is_drawing_whole` (`inbound/render.rs`) |
 | `q` quits and cancels | `q_quits`, `quitting_cancels_everything_still_in_flight` |
@@ -808,7 +825,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Each DDL tab has a key, and it is the one named here | `each_tab_answers_to_the_key_the_shortcuts_doc_names`, `a_tab_key_leads_back_to_the_tab_that_claims_it` (`ddl.rs`) |
 | A tab key reaches its tab from anywhere, and `d` comes back | `c_reaches_the_columns_tab_from_wherever_focus_was`, `d_returns_the_panel_to_its_ddl_tab`, `c_is_text_in_a_panel_that_takes_text` |
 | A keyspace is offered no Columns tab, and `c` stores none | `a_keyspace_is_offered_no_columns_tab_and_keeps_describing_itself` (`view/details.rs`), `c_on_a_keyspace_focuses_the_panel_and_draws_no_columns_tab` |
-| A tab change restarts the cursor; arriving at the tab drawn does not | `showing_a_tab_draws_it`, `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone`, `a_tab_change_leaves_the_filter_where_it_was` (`ddl.rs`) |
+| A tab change restarts the cursor; arriving at the tab drawn does not | `showing_a_tab_draws_it`, `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone`, `a_tab_change_leaves_the_search_where_it_was` (`ddl.rs`) |
 | Every title marks its own letter | `every_panel_title_marks_the_key_that_focuses_it` (`view/mod.rs`), plus the `PanelTitle` tests in `view/title.rs` |
 | The marked cell, and only it, wears the shortcut colour in a title | `each_panel_colours_the_key_that_focuses_it`, `nothing_but_the_shortcut_wears_the_shortcut_colour_in_a_title` (`inbound/render.rs`), `a_hot_key_is_underlined_and_nothing_else_is` (`inbound/theme/mod.rs`) |
 | A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |
@@ -848,54 +865,52 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update.rs`) |
 | `?` earns its place in the width-fitting bar, and goes before `q quit` but after `tab panel` | `a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel` (`inbound/hints.rs`) |
 | The palette is drawn, centred, capped and scrollable | `the_palette_lists_the_catalogue`, `the_palette_is_centred`, `a_wide_frame_does_not_get_a_wide_palette`, `a_tall_frame_does_not_get_a_palette_full_of_blank_rows`, `a_frame_too_small_for_a_palette_does_not_get_one` (`inbound/render.rs`) |
-| An empty query is no filter | `an_empty_query_is_not_a_filter` (`search.rs`) |
+| An empty query is no search | `an_empty_query_is_not_a_search` (`search.rs`) |
 | Matching folds case, and is a substring, literally | `matching_ignores_case_in_both_directions`, `matching_is_a_substring_anywhere_and_not_a_prefix`, `a_metacharacter_is_matched_literally`, `folding_reaches_past_ascii` (`search.rs`) |
 | The term is kept as typed, for the marker | `the_term_is_kept_as_typed_for_the_marker` (`search.rs`) |
-| `Filtered` refuses Queries and accepts the rest | `every_panel_but_queries_can_hold_a_filter`, `a_target_names_the_panel_it_came_from` (`search.rs`) |
-| A matching keyspace brings all its tables | `a_matching_keyspace_brings_all_of_its_tables` (`tree.rs`) |
-| A matching table brings its keyspace and no sibling | `a_matching_table_brings_its_keyspace_and_no_sibling` (`tree.rs`) |
-| A keyspace with nothing matching is dropped | `a_keyspace_with_nothing_matching_is_dropped` (`tree.rs`) |
-| A retained keyspace is drawn open whatever its fold state | `a_retained_keyspace_is_drawn_open_whatever_its_fold_state`, `a_keyspace_matching_by_name_is_open_only_when_it_has_tables` (`tree.rs`) |
-| Clearing the filter restores the fold state exactly | `clearing_the_filter_restores_the_fold_state_exactly` (`tree.rs`) |
-| `l`/`h`, `Enter`, and a click on a keyspace row are all swallowed while a filter is applied | `l_and_h_are_swallowed_while_a_filter_is_applied`, `folding_under_a_filter_does_not_disturb_the_fold_state_it_will_return_to`, `l_and_h_still_fold_once_the_filter_is_gone`, `no_tables_entry_point_writes_the_fold_state_under_a_filter`, `enter_still_reads_a_table_under_a_filter` |
-| The cursor clamps as a filter shrinks the tree | `the_cursor_clamps_as_a_filter_shrinks_the_tree` |
+| `Searched` refuses Queries and accepts the rest | `every_panel_but_queries_can_hold_a_search`, `a_target_names_the_panel_it_came_from` (`search.rs`) |
+| A search forces the keyspace holding a match open, and leaves its sibling's fold state alone | `a_matching_keyspace_is_forced_open_and_its_sibling_keeps_its_fold_state`, `a_keyspace_holding_a_match_stays_open_whatever_its_fold_state`, `a_keyspace_matching_by_name_is_open_only_when_it_has_tables` (`tree.rs`) |
+| A search drops no row, in either panel | `a_search_drops_no_row` (`tree.rs`), `a_search_drops_no_detail_row` (`view/details.rs`) |
+| Clearing a search restores the fold state exactly | `clearing_the_search_restores_the_fold_state_exactly` (`tree.rs`) |
+| `l`/`h`, `Enter`, and a click on a keyspace row are all swallowed while a search is applied | `l_and_h_are_swallowed_while_a_search_is_applied`, `folding_under_a_search_does_not_disturb_the_fold_state_it_will_return_to`, `l_and_h_still_fold_once_the_search_is_gone`, `no_tables_entry_point_writes_the_fold_state_under_a_search`, `enter_still_reads_a_table_under_a_search` |
 | A property matches on its name and on its value | `a_property_matches_on_its_name`, `a_property_matches_on_its_value` (`view/details.rs`) |
 | A column matches on its name and on its CQL type | `a_column_matches_on_its_name`, `a_column_matches_on_its_cql_type` (`view/details.rs`) |
-| A section emptied by the filter disappears | `a_section_emptied_by_the_filter_disappears` (`view/details.rs`) |
-| Headings are not matched | `a_heading_is_not_matched` (`view/details.rs`) |
-| Nothing matched gives a muted notice, in Tables and DDL | `a_filter_that_matches_nothing_says_so` (`view/tables.rs`), `nothing_matching_says_which_term_found_nothing` (`view/details.rs`) |
-| A filter changes nothing unless one is applied | `a_cluster_with_no_keyspaces_says_so_rather_than_listing_nothing` (`view/tables.rs`), `an_unfiltered_table_keeps_its_existing_behaviour` (`view/details.rs`), `no_filter_flags_nothing` (`view/contents.rs`) |
-| Matching cells are flagged and the grid keeps every row | `a_filter_flags_the_cells_that_match_and_keeps_every_row` (`view/contents.rs`) |
+| A section is never emptied by a search | `a_section_is_never_emptied_by_a_search` (`view/details.rs`) |
+| A search that matches nothing still draws the panel, rather than a notice | `a_search_that_matches_nothing_still_draws_the_tree` (`view/tables.rs`) |
+| A search changes nothing unless one is applied | `a_cluster_with_no_keyspaces_says_so_rather_than_listing_nothing` (`view/tables.rs`), `no_search_flags_nothing` (`view/contents.rs`) |
+| Matching cells are flagged and the grid keeps every row | `a_search_flags_the_cells_that_match_and_keeps_every_row` (`view/contents.rs`) |
 | A matched null is still a null | `a_matched_null_is_still_a_null` (`view/contents.rs`) |
-| `/` opens the prompt in each of the three panels that can hold a filter | `slash_opens_the_prompt_in_every_panel_that_can_hold_a_filter` |
+| `/` opens the prompt in each of the three panels that can hold a search | `slash_opens_the_prompt_in_every_panel_that_can_hold_a_search` |
 | `/` is text in Queries and opens nothing | `slash_is_text_in_queries_and_opens_nothing` |
 | `q` and `?` type themselves in the prompt | `q_and_the_question_mark_type_themselves_in_the_prompt` |
-| The prompt filters live, per keystroke | `the_prompt_filters_live_per_keystroke`, `backspace_narrows_the_query_and_re_applies_it`, `backspace_on_an_empty_query_is_inert_rather_than_closing` |
-| `Enter` commits and closes; an empty commit clears | `enter_commits_and_closes_leaving_the_filter_applied`, `an_empty_commit_clears_the_filter`, `backspacing_a_query_to_empty_clears_the_filter_live` |
-| `Esc` cancels, restoring the filter that was there | `escape_cancels_the_prompt_restoring_the_filter_that_was_there` |
-| `Esc`'s full precedence chain | `escape_clears_the_focused_panels_filter_when_no_overlay_is_up`, `escape_prefers_the_overlay_to_the_filter`, `escape_leaves_queries_when_nothing_else_claims_it` (rung 3 alone — rung 2 before rung 3 is unpinnable until Queries can hold a filter, design §8) |
+| The prompt searches live, per keystroke, and jumps to the first match | `the_prompt_searches_live_per_keystroke`, `backspace_narrows_the_query_and_re_applies_it`, `backspace_on_an_empty_query_is_inert_rather_than_closing` |
+| Every keystroke jumps from where `/` was pressed, not from the last landing | `extending_a_term_does_not_walk_the_cursor_forward` |
+| A term that matches nothing leaves the cursor where it was | `a_term_that_matches_nothing_leaves_the_cursor_where_it_was` |
+| `Enter` commits and closes, keeping the cursor where it landed; an empty commit clears the search | `enter_commits_and_closes_leaving_the_search_applied`, `enter_keeps_where_the_cursor_landed`, `an_empty_commit_clears_the_search`, `backspacing_a_query_to_empty_clears_the_search_live` |
+| `Esc` cancels, restoring the search and the cursor together | `escape_cancels_the_prompt_restoring_the_search_that_was_there`, `escape_restores_the_search_and_the_cursor_together` |
+| `Esc`'s full precedence chain | `escape_clears_the_focused_panels_search_when_no_overlay_is_up`, `escape_prefers_the_overlay_to_the_search`, `escape_leaves_queries_when_nothing_else_claims_it` (rung 3 alone — rung 2 before rung 3 is unpinnable until Queries can hold a search, design §8) |
 | `Tab` is inert while the prompt is up | `tab_is_inert_while_the_prompt_is_up` |
 | A click cancels the prompt | `a_click_cancels_the_prompt` |
 | A prompt refuses the one chord that would open an overlay over it, and an unclaimed chord is still not text | `ctrl_t_is_refused_over_a_live_prompt`, `an_unclaimed_ctrl_chord_is_not_text_in_the_prompt` |
-| A filter that shrinks DDL pulls its cursor back | `a_ddl_filter_that_shrinks_the_panel_pulls_its_cursor_back` |
-| A filter that empties DDL leaves its cursor at rest | `a_filter_that_empties_table_ddl_leaves_its_cursor_at_rest` |
-| Clearing a DDL filter keeps the cursor's index | `clearing_a_ddl_filter_leaves_the_cursor_on_the_index_it_held` |
-| The measurement after a filter pulls a stale DDL offset back inside | `the_measurement_after_a_filter_pulls_a_stale_ddl_offset_back_inside` |
-| `esc` clearing a DDL filter re-follows the selection | `escape_clearing_a_ddl_filter_re_follows_the_selection` |
-| The span the frame reports indexes the rows the filter left | `the_reported_span_indexes_the_rows_a_filter_left` (`inbound/render.rs`) |
-| A filter survives a focus change | `a_filter_survives_a_focus_change` |
-| A filter is read back from the panel it was applied to | `a_filter_is_read_back_from_the_panel_it_was_applied_to` (`state.rs`) |
-| The three filters are independent | `the_three_filters_are_independent` (`state.rs`) |
-| A panel is projected carrying the filter applied to it | `a_panel_carries_the_filter_applied_to_it` (`view/mod.rs`) |
+| `n` walks to the next match and wraps; `N` walks backwards; either is inert with no search applied | `n_walks_to_the_next_match_and_wraps`, `shift_n_walks_backwards`, `n_is_inert_where_no_search_is_applied` |
+| `n` types a character in Queries, like any letter | `n_types_a_character_in_queries` |
+| A live `v` range follows an `n` | `a_live_range_follows_an_n` |
+| A jump past the DDL viewport is repaired on the measurement that follows | `the_measurement_after_a_search_pulls_a_stale_ddl_offset_back_inside`, `escape_clearing_a_ddl_search_re_follows_the_selection` |
+| A search survives a focus change | `a_search_survives_a_focus_change` |
+| A search is read back from the panel it was applied to | `a_search_is_read_back_from_the_panel_it_was_applied_to` (`state.rs`) |
+| The three searches are independent | `the_three_searches_are_independent` (`state.rs`) |
+| A panel is projected carrying the search applied to it | `a_panel_carries_the_search_applied_to_it` (`view/mod.rs`) |
 | An open prompt is projected as its query | `an_open_prompt_is_projected_as_its_query` (`view/mod.rs`) |
-| The bar names `/ search` where it does something, and not in Queries | `the_bar_names_search_in_every_panel_that_can_hold_a_filter`, `the_bar_does_not_name_search_in_queries` (`view/hints.rs`) |
-| The bar names `esc clear` only where a filter is applied | `the_bar_names_esc_clear_only_where_a_filter_is_applied` (`view/hints.rs`) |
+| The bar names `/ search` where it does something, and not in Queries | `the_bar_names_search_in_every_panel_that_can_hold_a_search`, `the_bar_does_not_name_search_in_queries` (`view/hints.rs`) |
+| The bar names `esc clear` only where a search is applied | `the_bar_names_esc_clear_only_where_a_search_is_applied` (`view/hints.rs`) |
+| The bar names `n next match` only where a search is applied | `the_bar_names_n_only_where_a_search_is_applied` (`view/hints.rs`) |
 | The bar names the prompt's own keys while it is up | `the_bar_names_what_the_prompt_responds_to` (`view/hints.rs`) |
 | The palette lists `/` | `the_catalogue_lists_search` (`commands.rs`) |
-| The marker is drawn, muted, right-aligned | `a_panel_wears_the_filter_applied_to_it`, `the_marker_is_drawn_muted` (`inbound/render.rs`) |
+| The marker is drawn, muted, right-aligned | `a_panel_wears_the_search_applied_to_it`, `the_marker_is_drawn_muted` (`inbound/render.rs`) |
 | The marker is dropped rather than truncated | `the_marker_is_dropped_rather_than_truncated`, `the_marker_fits_flush_against_the_corner_it_is_tuned_for` (`inbound/render.rs`) |
 | An unfocused panel still wears its marker | `an_unfocused_panel_still_wears_its_marker` (`inbound/render.rs`) |
 | The prompt owns the bar row, and its cursor | `an_open_prompt_owns_the_bar_row`, `an_open_prompts_own_cursor_replaces_the_editors`, `the_prompts_cursor_sits_after_the_query` (`inbound/render.rs`) |
+| A match is painted where it sits, in Tables, and the search drops no row from the panel | `a_match_is_painted_where_it_sits`, `a_search_drops_no_row_from_the_panel` (`inbound/render.rs`) |
 | A matched cell reads apart from an unmatched one, on and off the selected row | `a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row` (`inbound/render.rs`) |
 | `Token::Match` is legible over `Token::Selected` | `a_match_is_legible_over_a_selected_row` (`inbound/theme/mod.rs`) |
 | `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
@@ -945,13 +960,13 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A yank carries the value, not the drawn cell | `a_yanked_value_is_not_ellipsised` (`yank.rs`) |
 | A null yanks as nothing, and the word does not | `a_null_yanks_as_an_empty_field`, `a_text_null_yanks_as_the_word` (`yank.rs`) |
 | A column and a DDL row carry their own fields | `a_column_row_carries_the_part_it_plays`, `a_partition_column_yanks_without_an_order`, `a_property_and_an_identity_row_yank_their_two_fields`, `a_keyspace_yanks_its_name_and_a_table_its_qualified_one` (`yank.rs`) |
-| Nothing under the cursor yanks nothing | `y_on_an_empty_panel_yanks_nothing`, `y_on_a_filter_that_matched_nothing_yanks_nothing` |
+| Nothing under the cursor yanks nothing, and a search that matches nothing still yanks the row under the cursor | `y_on_an_empty_panel_yanks_nothing`, `y_still_yanks_the_row_under_the_cursor_when_the_search_matches_nothing` |
 | `y` types itself in Queries, and yanks nothing | `y_is_text_in_the_editor` |
 | The encoder quotes exactly what it must | `a_field_is_quoted_only_when_it_has_to_be`, `an_embedded_quote_is_doubled`, `a_line_ends_without_a_newline` (`yank.rs`) |
 | `v` starts a range at the cursor, and motion extends it | `v_starts_a_range_at_the_cursor_and_motion_extends_it` |
 | A second `v` freezes the range and the cursor walks out of it | `a_second_v_freezes_the_range_and_the_cursor_walks_out_of_it` |
 | `Esc` freezes a live range before it clears one | `escape_freezes_a_live_range_before_it_clears_one` |
-| `Esc` prefers the selection to the filter | `escape_prefers_the_selection_to_the_filter` |
+| `Esc` prefers the selection to the search | `escape_prefers_the_selection_to_the_search` |
 | `v` in cell mode extends a rectangle | `v_in_cell_mode_extends_a_rectangle` |
 | `m` clears the range it would otherwise reinterpret | `m_clears_the_range_it_would_reinterpret` |
 | `Enter` is inert while more than one row is selected | `enter_is_inert_while_more_than_one_row_is_selected` |
@@ -959,7 +974,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A click clears the range it lands beside | `a_click_clears_the_range_it_lands_beside` |
 | A new subject clears the DDL range | `a_new_subject_clears_the_ddl_range` |
 | A tab change clears the range | `a_tab_change_clears_the_range` (`ddl.rs`) |
-| A filter clears the range it would renumber | `a_filter_clears_the_range_it_would_renumber` |
+| A search clears the range it would renumber | `a_search_clears_the_range_it_would_renumber` |
 | `y` yanks every row of a range, one per line | `y_yanks_every_row_of_a_range_one_per_line` |
 | `y` in cell mode yanks the block and nothing outside it | `y_in_cell_mode_yanks_the_block_and_nothing_outside_it` |
 | `y` on a single cell still yanks it bare | `y_on_a_single_cell_still_yanks_it_bare` |
@@ -970,7 +985,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `y` lights what it took, on the axes its mode bounds | `y_lights_up_what_it_yanked`, `row_mode_lights_the_whole_row_and_column_mode_the_whole_column`, `a_bare_y_lights_the_row_it_took` |
 | The flash fades, costs one repaint doing it, and the next key ends it | `the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint`, `the_next_key_ends_the_flash` |
 | The flash inverts the rows it took, and reaches one panel | `a_yanks_afterglow_inverts_the_rows_it_took`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render.rs`) |
-| The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a filter | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_filter` (`view/hints.rs`) |
+| The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a search | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_search` (`view/hints.rs`) |
 | `v` on an unheld row opens a second group beside what is frozen, and `Esc` takes both at once | `v_builds_two_groups_and_esc_takes_both` |
 | `v` on a held row drops that group and no other | `v_on_a_selected_row_drops_that_group_only`, `v_freezes_then_opens_a_second_group_then_drops_one` (`state.rs`) |
 | Dropping a group takes the anchor with it only when the anchor was inside it | `dropping_the_group_holding_the_anchor_takes_the_anchor`, `dropping_another_group_keeps_the_anchor`, `clamping_away_the_group_holding_the_anchor_takes_the_anchor` (`state.rs`) |
@@ -1019,10 +1034,11 @@ Bound, and spending nothing from §3's budget. See the
 | Left click | The hint bar | Nothing |
 | Wheel | The panel under the pointer | Scrolls three rows or lines, moving neither focus nor the selection |
 
-**A click on an open search prompt cancels it**, restoring the filter that
-was applied before the prompt opened — the same thing `Esc` does to it, and
-for the same reason: a click that lands somewhere unexpected must not leave
-state behind (panel search design §3.2).
+**A click on an open search prompt cancels it**, restoring the search and
+the cursor that stood before the prompt opened — the same thing `Esc` does
+to it, and for the same reason: a click that lands somewhere unexpected must
+not leave state behind (panel search design §3.2; search highlight design
+§5.2).
 
 **Queries is the exception: the wheel over it does nothing.** `panel_scroll`
 has no arm for `Panel::Queries` — the editor derives both offsets from the
