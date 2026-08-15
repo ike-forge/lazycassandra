@@ -28,7 +28,7 @@ impl Search {
 
         Some(Self {
             term: raw.to_owned(),
-            folded: casefold(raw),
+            folded: raw.to_lowercase(),
         })
     }
 
@@ -43,15 +43,16 @@ impl Search {
     /// Every occurrence, as byte ranges into `haystack` itself — sorted,
     /// disjoint, and each a valid slice of it.
     ///
-    /// Case folding is not length-preserving (`İ` folds to two chars, `ß` to
-    /// `ss`), so searching the folded haystack and reusing its offsets
-    /// would slice the source at a byte that is not a boundary. The fold is
-    /// therefore built per character alongside a table of where each folded
-    /// byte came from, and a hit's endpoints are mapped back through it.
+    /// `str::to_lowercase` is not length-preserving (`İ` folds to two chars,
+    /// `ß` stays one), so searching the folded haystack and reusing its
+    /// offsets would slice the source at a byte that is not a boundary. The
+    /// fold is therefore built per character alongside a table of where each
+    /// folded byte came from, and a hit's endpoints are mapped back through
+    /// it.
     ///
-    /// A hit that begins or ends inside one character's expansion — `s`
-    /// against `ß` — snaps outward to that character, which is the only thing
-    /// that can be sliced.
+    /// A hit that begins or ends inside one character's expansion — `i`
+    /// against `İ` — snaps outward to that character, which is the only
+    /// thing that can be sliced.
     #[must_use]
     pub fn ranges(&self, haystack: &str) -> Vec<Range<usize>> {
         let (folded, sources) = fold(haystack);
@@ -64,6 +65,14 @@ impl Search {
             let range = sources[start].start..sources[end - 1].end;
             at = end;
 
+            // The search over `folded` never revisits a byte, so its hits are
+            // already disjoint in folded space — but a hit can still snap
+            // outward into a source character an earlier hit already
+            // claimed, the way `i` matches both bytes of `İ`'s expansion at
+            // adjacent folded offsets. Comparing against only the last
+            // pushed range is enough because source ranges come out
+            // monotonic non-decreasing: each `range.start` is derived from a
+            // `folded` offset no earlier than the one before it.
             match ranges.last() {
                 Some(last) if last.end > range.start => {}
                 _ => ranges.push(range),
@@ -93,27 +102,12 @@ fn fold(haystack: &str) -> (String, Vec<Range<usize>>) {
         let source = offset..offset + character.len_utf8();
         let before = folded.len();
 
-        folded.push_str(&casefold_char(character));
+        folded.extend(character.to_lowercase());
         sources.resize(folded.len(), source);
         debug_assert!(folded.len() > before, "a fold produces at least one byte");
     }
 
     (folded, sources)
-}
-
-/// Case-folds every character of `s`, independently of position.
-fn casefold(s: &str) -> String {
-    s.chars().map(casefold_char).collect()
-}
-
-/// `char::to_lowercase` alone leaves some characters, such as `ß`, unfolded —
-/// they are already lowercase, so it has nothing to do. Round-tripping
-/// through uppercase first recovers the multi-character expansion (`ß` to
-/// `ss`) that full Unicode case folding would give, which is what lets a
-/// single `s` match inside it.
-fn casefold_char(character: char) -> String {
-    let upper: String = character.to_uppercase().collect();
-    upper.to_lowercase()
 }
 
 /// A panel that can hold a search.
@@ -289,16 +283,25 @@ mod tests {
 
     #[test]
     fn a_hit_inside_an_expansion_snaps_out_to_a_character() {
-        // `ß` folds to `ss`, so `s` hits half a character; the range has to be a
-        // slice of the source, which means the whole `ß`.
-        let search = Search::new("s").expect("non-empty");
-        let haystack = "straße";
+        // `İ` lowercases to `i` and a combining dot, so `i` hits half a
+        // character; the range has to be a slice of the source, which means
+        // the whole `İ`.
+        let search = Search::new("i").expect("non-empty");
+        let haystack = "İstanbul";
 
         let ranges = search.ranges(haystack);
 
-        assert_eq!(ranges.len(), 2);
-        assert_eq!(&haystack[ranges[0].clone()], "s");
-        assert_eq!(&haystack[ranges[1].clone()], "ß");
+        assert_eq!(ranges, vec![0..2]);
+        assert_eq!(&haystack[ranges[0].clone()], "İ");
+    }
+
+    #[test]
+    fn a_dotless_i_is_not_an_i() {
+        // U+0131 and `i` are different letters, and case folding does not
+        // merge them.
+        let search = Search::new("i").expect("non-empty");
+
+        assert!(!search.matches("kırmızı"));
     }
 
     #[test]
