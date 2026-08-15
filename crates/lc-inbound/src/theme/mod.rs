@@ -134,9 +134,24 @@ impl Palette {
     }
 }
 
+/// Whether a theme still draws the marks that say where the cursor and the
+/// focus are.
+///
+/// A modal overlay owns the frame, and the panels beneath it are context
+/// rather than a place a key would land. Drawn `Dimmed`, they keep their
+/// colours and lose their focus border, their cursor row, their cell and the
+/// washes around it — the emphasis reads as the overlay's, which is where the
+/// next press goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Emphasis {
+    Lit,
+    Dimmed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Theme {
     palette: Palette,
+    emphasis: Emphasis,
 }
 
 impl Default for Theme {
@@ -178,11 +193,20 @@ impl Theme {
                 ThemeChoice::Ported(Ported::CatppuccinMocha) => ported::catppuccin::MOCHA,
                 ThemeChoice::Custom(_) => ours::default::DARK,
             },
+            emphasis: Emphasis::Lit,
         }
     }
 
     pub(crate) const fn palette(self) -> Palette {
         self.palette
+    }
+
+    /// The same palette, drawing no focus or selection marks.
+    pub(crate) const fn dimmed(self) -> Self {
+        Self {
+            emphasis: Emphasis::Dimmed,
+            ..self
+        }
     }
 
     /// The whole frame's ground. Painted before anything else, so a widget
@@ -208,6 +232,10 @@ impl Theme {
     #[must_use]
     pub fn style(self, token: Token) -> Style {
         let palette = self.palette;
+
+        if matches!(self.emphasis, Emphasis::Dimmed) && is_emphasis(token) {
+            return Style::new();
+        }
 
         match token {
             Token::PartitionKey => fg(palette.partition).add_modifier(Modifier::BOLD),
@@ -267,6 +295,26 @@ impl Theme {
     }
 }
 
+/// Whether `token` is a mark saying where the cursor or the focus is, rather
+/// than a colour that means something about the content under it.
+///
+/// A dimmed theme draws these as nothing at all. `Token::Match` is not one of
+/// them: a filter is applied whether or not an overlay is up, and a panel that
+/// stopped marking its hits while the palette was open would be answering a
+/// different question than the one on screen.
+const fn is_emphasis(token: Token) -> bool {
+    matches!(
+        token,
+        Token::Focused
+            | Token::Selected
+            | Token::SelectedCell
+            | Token::SelectionBar
+            | Token::Crosshair
+            | Token::Ranged
+            | Token::Flash
+    )
+}
+
 /// Every palette a name can resolve to, built once at startup.
 ///
 /// Resolution happens here rather than per frame: a custom palette is
@@ -314,6 +362,7 @@ impl Themes {
 
         Theme {
             palette: self.grounded(palette),
+            emphasis: Emphasis::Lit,
         }
     }
 
@@ -668,6 +717,36 @@ pub(crate) mod tests {
     /// whose colour changes with focus, and in Beacon `focus` and `shortcut`
     /// are the same amber — underline is the channel that survives both, and
     /// nothing else in the UI spends it (design §3.1).
+    /// A dimmed theme is the palettes' colours without the marks that say
+    /// where a press would land. Content colours stay: a keyspace under an
+    /// open palette is still a keyspace.
+    #[test]
+    fn a_dimmed_theme_draws_no_focus_and_no_cursor() {
+        let theme = Theme::default().dimmed();
+
+        for token in [
+            Token::Focused,
+            Token::Selected,
+            Token::SelectedCell,
+            Token::SelectionBar,
+            Token::Crosshair,
+            Token::Ranged,
+            Token::Flash,
+        ] {
+            assert_eq!(
+                theme.style(token),
+                Style::new(),
+                "{token:?} still marks the panels a modal covers"
+            );
+        }
+
+        assert_eq!(
+            theme.style(Token::Keyspace),
+            Theme::default().style(Token::Keyspace),
+            "dimming is not a second palette"
+        );
+    }
+
     #[test]
     fn a_hot_key_is_underlined_and_nothing_else_is() {
         for choice in BuiltIn::ALL {

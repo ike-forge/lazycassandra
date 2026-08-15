@@ -4,6 +4,8 @@ use lc_domain::commands::CommandRow;
 use lc_domain::style::Token;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
+use ratatui::style::Modifier;
+use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState};
 
@@ -77,7 +79,10 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     frame.render_widget(block, area);
 
     let gutter = rows.iter().map(keys_width).max().unwrap_or(0);
-    let items: Vec<ListItem> = rows.iter().map(|row| item(row, gutter, theme)).collect();
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|row| item(row, gutter, inner.width, theme))
+        .collect();
     let mut state = ListState::default().with_selected(Some(selected));
 
     frame.render_stateful_widget(
@@ -100,14 +105,28 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
 /// The palette says in a column what the bar says in a row, so it says it with
 /// the bar's tokens — a `CommandKey` token would be a second name for one
 /// meaning (architecture.md §6).
-fn item(row: &CommandRow, gutter: usize, theme: Theme) -> ListItem<'static> {
+fn item(row: &CommandRow, gutter: usize, width: u16, theme: Theme) -> ListItem<'static> {
     match row {
+        CommandRow::Separator => ListItem::new(Line::from(Span::styled(
+            symbols::line::HORIZONTAL.repeat(usize::from(width)),
+            theme.border_style(),
+        ))),
         CommandRow::Heading(heading) => ListItem::new(Line::from(Span::styled(
             (*heading).to_owned(),
-            theme.style(Token::Muted),
+            theme.style(Token::Section),
         ))),
+        // The bar's key colour without the bar's underline: that modifier is
+        // there because a hint sits on a row whose colour changes with focus
+        // (theme.rs, `Token::HintKey`). A palette row sits on the overlay's
+        // own ground, where the colour is the whole signal and an underline
+        // under every row is a texture rather than a mark.
         CommandRow::Command { keys, action } => ListItem::new(Line::from(vec![
-            Span::styled(format!("{keys:<gutter$}"), theme.style(Token::HintKey)),
+            Span::styled(
+                format!("{keys:<gutter$}"),
+                theme
+                    .style(Token::HintKey)
+                    .remove_modifier(Modifier::UNDERLINED),
+            ),
             Span::styled(format!("{GAP}{action}"), theme.style(Token::HintAction)),
         ])),
     }
@@ -117,7 +136,7 @@ fn item(row: &CommandRow, gutter: usize, theme: Theme) -> ListItem<'static> {
 /// labels `hints::name` produces.
 fn keys_width(row: &CommandRow) -> usize {
     match row {
-        CommandRow::Heading(_) => 0,
+        CommandRow::Heading(_) | CommandRow::Separator => 0,
         CommandRow::Command { keys, .. } => keys.chars().count(),
     }
 }

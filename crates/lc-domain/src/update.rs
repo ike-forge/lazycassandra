@@ -2806,12 +2806,16 @@ mod tests {
         press(&mut state, Key::PageDown);
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            15,
+            16,
             "paging is routed at the handle_key layer, same as j/k"
         );
 
         press(&mut state, Key::PageUp);
-        assert_eq!(palette(&state).expect("still open").selected(), 1);
+        assert_eq!(
+            palette(&state).expect("still open").selected(),
+            2,
+            "a page up from the second group lands inside the first"
+        );
     }
 
     #[test]
@@ -3361,7 +3365,7 @@ mod tests {
 
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            15,
+            16,
             "ctrl-d is pgdn by another name, and pgdn pages the palette"
         );
         assert_eq!(state.tables.cursor.index(), 0);

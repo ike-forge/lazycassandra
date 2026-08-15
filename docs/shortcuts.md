@@ -609,11 +609,14 @@ a permanently grey hint teaches nothing.
 The palette is the half of that pair with no discretion. The bar picks what a
 panel's hints teach; the palette claims to be complete, so it may not omit a key
 that does something ([command palette design](specs/2026-08-09-command-palette-design.md)
-§2). Column motion is the case that proved it: `l`/`h` were already listed under
-`Tables` as fold and unfold, which is a true row about a different panel, so the
-sweep in §5 saw a key it already knew and the grid's meaning went unlisted. The
-catalogue now carries a `Table contents` group, and the same keys appear under
-both headings — the honest shape for a key each panel resolves for itself.
+§2). That claim is about keys, not about wordings. The shared motions — `j`/`k`,
+`h`/`l`, the arrows, the paging keys, `Home`/`End` — are listed once, under
+`Navigate`, and worded for the movement rather than for what a panel makes of
+it: `h`/`←` is "left, or fold". A panel's own group then carries only what that
+panel alone answers — `⏎` in the tree, `m` in the grid. Listing the horizontal
+pair under every heading that resolves it, which the catalogue did until
+2026-08-15, bought a per-panel noun and cost the reader the same two keys three
+times over before anything particular to a panel.
 
 **Focus is the mode, and an overlay outranks focus.** A panel either takes
 text or it does not, and `Panel::takes_text` is the one exhaustive answer. In a
@@ -636,6 +639,15 @@ with either `?` or `esc` — both named on its bar
 takes motion, leaves `q` quitting, and makes every other key inert rather than
 dismissing. A key that means "close" in one frame and something else in the
 next is the ambiguity both halves of this rule exist to prevent.
+
+**A modal that claims every key says so by dimming what it covers.** While the
+palette, the message overlay, the theme picker or the diagnostics list is up,
+the panels beneath keep their colours and lose their focus border, their cursor
+row, their cursor cell and the washes around it: a panel that still drew them
+would be claiming a press that cannot reach it. The search prompt and the
+export form are excluded — the prompt reads against the panel it filters, and
+the form confirms what the grid beneath it has selected
+([command palette design](specs/2026-08-09-command-palette-design.md) §8).
 
 The search prompt sits at the same rank, entered deliberately with `/` and
 left with `Enter` or `Esc`. Unlike the palette it takes text, not motion:

@@ -56,6 +56,13 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             return Rendered::default();
         }
     };
+    // The panels are context while a modal is up, not a place a key would
+    // land, so they are drawn without the marks that say otherwise.
+    let beneath = if dims_the_panels(view.overlay.as_ref()) {
+        theme.dimmed()
+    } else {
+        theme
+    };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
     let mut ddl_selection = DdlSpan::default();
@@ -66,7 +73,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         let area = rects.get(panel.panel);
 
         let is_focused_panel = panel.panel == view.focus;
-        let (block, border, tabs) = panel_block(panel, area, is_focused_panel, theme);
+        let (block, border, tabs) = panel_block(panel, area, is_focused_panel, beneath);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -82,7 +89,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         // blinks over the modal at a position that means nothing there.
         let focused = panel.panel == view.focus && view.overlay.is_none();
 
-        let body = crate::body::render(frame, inner, &panel.body, focused, theme);
+        let body = crate::body::render(frame, inner, &panel.body, focused, beneath);
 
         match &body {
             Some(drawn) => {
@@ -92,12 +99,12 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                     ddl_selection = drawn.selection;
                 }
                 if drawn.extent.overflows() {
-                    scrollbar(frame, area, &drawn.extent, border, theme);
+                    scrollbar(frame, area, &drawn.extent, border, beneath);
                 }
                 if let Some(columns) = &drawn.columns
                     && columns.overflows()
                 {
-                    horizontal_scrollbar(frame, area, columns, border, theme);
+                    horizontal_scrollbar(frame, area, columns, border, beneath);
                 }
             }
             // `Blank` and `Notice` do not scroll, so what such a panel can
@@ -191,6 +198,25 @@ fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
 
 /// The bordered block a panel is drawn in, the border style the scrollbars
 /// that hang off it share, and where each tab of its title landed.
+/// Whether `overlay` is a modal that owns the frame outright.
+///
+/// The search prompt is not one: it is drawn on the hint bar row and reads
+/// against the panel it filters, which has to keep saying which rows it is
+/// filtering. The export form is not one either — it exports what the grid
+/// beneath it has selected, and a form that dimmed its own subject would be
+/// asking the user to confirm a selection it had stopped drawing.
+fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
+    match overlay {
+        Some(
+            OverlayView::Message(_)
+            | OverlayView::Commands { .. }
+            | OverlayView::Themes { .. }
+            | OverlayView::Diagnostics { .. },
+        ) => true,
+        Some(OverlayView::Search { .. } | OverlayView::Export(_)) | None => false,
+    }
+}
+
 fn panel_block(
     panel: &lc_domain::view::PanelView,
     area: Rect,
@@ -4316,6 +4342,95 @@ mod tests {
             + 1
     }
 
+    /// The palette's first heading, its keys column, and the rule under the
+    /// first group, read as styled cells rather than as text.
+    #[test]
+    fn the_palette_marks_a_group_the_way_a_section_heading_is_marked() {
+        let buffer = with_palette(100, 40);
+        let (x, y) = top_border(&buffer, "Commands");
+        let theme = Theme::default();
+        // One column for the border, one for the palette's own padding.
+        let first = x + 2;
+        let cell = |at: u16| buffer.cell((first, at)).expect("inside the block");
+
+        assert_eq!(
+            cell(y + 1).fg,
+            theme
+                .style(Token::Section)
+                .fg
+                .expect("a section heading spends a colour"),
+            "a heading wears what Options wears"
+        );
+        assert!(
+            !cell(y + 2).modifier.contains(Modifier::UNDERLINED),
+            "a key in a column carries no underline: the colour is the whole mark"
+        );
+    }
+
+    #[test]
+    fn a_rule_separates_one_group_from_the_next() {
+        let buffer = with_palette(100, 40);
+        let rows: Vec<String> = (0..26)
+            .map(|line| block_row(&buffer, "Commands", line))
+            .collect();
+        let rule = rows
+            .iter()
+            .position(|row| row.trim().chars().all(|glyph| glyph == '─'))
+            .expect("the catalogue has more than one group");
+
+        assert_eq!(
+            rows[rule + 1].trim(),
+            "Navigate",
+            "the rule sits above the heading it separates from the group before"
+        );
+        assert_eq!(
+            rows[0].trim(),
+            "Global",
+            "and the first group is not preceded by one"
+        );
+    }
+
+    #[test]
+    fn the_panels_under_the_palette_show_no_focus() {
+        let lit = draw(100, 40);
+        let dimmed = with_palette(100, 40);
+        let focus = Theme::default().palette().focus;
+        let bordered = |buffer: &Buffer| {
+            buffer
+                .content()
+                .iter()
+                .filter(|cell| cell.fg == focus)
+                .count()
+        };
+
+        assert!(bordered(&lit) > 0, "a focused panel is drawn in focus");
+        assert_eq!(
+            bordered(&dimmed),
+            0,
+            "and nothing beneath a modal claims the focus the modal has"
+        );
+    }
+
+    #[test]
+    fn the_row_under_the_palette_is_not_highlighted() {
+        let buffer = with_palette(100, 40);
+        let selection = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the cursor row spends a background");
+        let inside = block_area(&buffer, "Commands");
+
+        for (index, cell) in buffer.content().iter().enumerate() {
+            let x = u16::try_from(index).unwrap_or(u16::MAX) % buffer.area.width;
+            let y = u16::try_from(index).unwrap_or(u16::MAX) / buffer.area.width;
+
+            assert!(
+                cell.bg != selection || inside.contains((x, y).into()),
+                "the tree's cursor row is still drawn at {x},{y}"
+            );
+        }
+    }
+
     #[test]
     fn the_palette_lists_the_catalogue() {
         let drawn = buffer_text(&with_palette(100, 40));
@@ -4327,7 +4442,7 @@ mod tests {
         assert!(drawn.contains("Global"));
         assert!(drawn.contains("dismiss the overlay"));
         assert!(drawn.contains("focus Table contents"));
-        assert!(drawn.contains("unfold the keyspace"));
+        assert!(drawn.contains("right, or unfold"));
     }
 
     #[test]
