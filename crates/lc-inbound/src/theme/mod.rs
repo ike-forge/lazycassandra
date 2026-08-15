@@ -238,13 +238,13 @@ impl Theme {
             // a panel border the theme may have coloured already, because
             // `Style::patch` lets this `fg` overwrite `border`'s.
             Token::Focused => fg(palette.focus).add_modifier(Modifier::BOLD),
-            // Underlined as well as coloured, in every state: the letter sits
-            // inside a title whose colour changes with focus, `focus` and
-            // `shortcut` are one hex in Beacon, and colour is the channel a
-            // user may have remapped or be unable to see. This withdraws
+            // Underlined as well as coloured, in every state: the key sits in
+            // a bar whose colour changes with focus, `focus` and `shortcut`
+            // are one hex in Beacon, and colour is the channel a user may have
+            // remapped or be unable to see. This withdraws
             // 2026-08-11-panel-focus-contrast-design.md §2's "a colour rather
             // than an underline" (design §3.1, rule 5).
-            Token::Shortcut | Token::HintKey => fg(palette.shortcut)
+            Token::HintKey => fg(palette.shortcut)
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(Modifier::UNDERLINED),
             Token::Selected => selected(&palette),
@@ -664,10 +664,10 @@ pub(crate) mod tests {
         );
     }
 
-    /// Rule 5: colour alone cannot carry the hot key. The letter sits inside a
-    /// title whose colour changes with focus, and in Beacon `focus` and
-    /// `shortcut` are the same amber — underline is the channel that survives
-    /// both, and nothing else in the UI spends it (design §3.1).
+    /// Rule 5: colour alone cannot carry the hot key. The key sits in a bar
+    /// whose colour changes with focus, and in Beacon `focus` and `shortcut`
+    /// are the same amber — underline is the channel that survives both, and
+    /// nothing else in the UI spends it (design §3.1).
     #[test]
     fn a_hot_key_is_underlined_and_nothing_else_is() {
         for choice in BuiltIn::ALL {
@@ -679,7 +679,7 @@ pub(crate) mod tests {
                     .add_modifier
                     .contains(Modifier::UNDERLINED);
 
-                if matches!(token, Token::Shortcut | Token::HintKey) {
+                if matches!(token, Token::HintKey) {
                     assert!(underlined, "{choice:?}: {token:?} is not underlined");
                 } else {
                     assert!(
@@ -693,7 +693,7 @@ pub(crate) mod tests {
 
     /// Every token, so a new one cannot be added without deciding what the
     /// tests above have to say about it.
-    pub(super) const EVERY_TOKEN: [Token; 33] = [
+    pub(super) const EVERY_TOKEN: [Token; 32] = [
         Token::PartitionKey,
         Token::PartitionKeyValue,
         Token::ClusteringKey,
@@ -719,7 +719,6 @@ pub(crate) mod tests {
         Token::Crosshair,
         Token::Ranged,
         Token::Flash,
-        Token::Shortcut,
         Token::HintKey,
         Token::HintAction,
         Token::PropertyName,

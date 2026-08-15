@@ -44,24 +44,26 @@ const GLOBAL: &[Binding] = &[
         action: "previous panel",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('a'))],
+        keys: &[KeyPress::new(Key::Char('1'))],
         action: "focus Tables",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('b'))],
+        keys: &[KeyPress::new(Key::Char('2'))],
+        action: "focus Table DDL",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('3'))],
         action: "focus Table contents",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('d'))],
-        action: "DDL, its DDL tab",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('c'))],
-        action: "DDL, its columns tab",
-    },
-    Binding {
-        keys: &[KeyPress::new(Key::Char('u'))],
+        keys: &[KeyPress::new(Key::Char('4'))],
         action: "focus Queries",
+    },
+    // The number pressed again is the same key doing the same thing one step
+    // further in, so it is listed beside `[`/`]` rather than five times over.
+    Binding {
+        keys: &[KeyPress::new(Key::Char(']')), KeyPress::new(Key::Char('['))],
+        action: "next / prev tab",
     },
     Binding {
         keys: &[KeyPress::new(Key::Char('y'))],

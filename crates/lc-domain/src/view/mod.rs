@@ -346,8 +346,8 @@ pub fn details_of(state: &State) -> Option<Details> {
 
 /// The tabs the Ddl panel offers for what the Tables cursor is on.
 ///
-/// Public because the key that reaches a tab must not store one the strip
-/// does not draw: `c` on a keyspace focuses the panel and no more.
+/// Public because walking the strip must not land on a tab it does not draw:
+/// on a keyspace there is one tab, and pressing `2` again stays on it.
 #[must_use]
 pub fn ddl_tabs(state: &State) -> &'static [DdlTab] {
     details::tabs_for(state)
@@ -355,10 +355,11 @@ pub fn ddl_tabs(state: &State) -> &'static [DdlTab] {
 
 /// A panel's top border: one name, or the strip of tabs it can show.
 fn title(state: &State, panel: Panel) -> PanelTitle {
-    let marking = |text: String| PanelTitle::marking(text, panel.shortcut());
+    let number = panel.number();
+    let single = |text: String| PanelTitle::single(number, text);
 
     match panel {
-        Panel::Tables => marking("Tables".to_owned()),
+        Panel::Tables => single("Tables".to_owned()),
         Panel::Ddl => {
             let tab = details::shown_tab(state);
             let specs: Vec<TabSpec> = details::tabs_for(state)
@@ -366,15 +367,14 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
                 .map(|candidate| TabSpec {
                     label: candidate.label(),
                     short: candidate.short_label(),
-                    shortcut: candidate.shortcut(),
                     active: *candidate == tab,
                 })
                 .collect();
 
-            PanelTitle::tabbed(&specs)
+            PanelTitle::tabbed(number, &specs)
         }
-        Panel::Contents => marking(contents::title(state)),
-        Panel::Queries => marking("Queries".to_owned()),
+        Panel::Contents => single(contents::title(state)),
+        Panel::Queries => single("Queries".to_owned()),
     }
 }
 
@@ -476,10 +476,10 @@ mod tests {
             [
                 // Nothing is selected, so the panel offers no Columns tab to
                 // describe a table with.
-                "Tables",
-                "DDL",
-                "Table contents",
-                "Queries"
+                "[1]-Tables",
+                "[2]-DDL",
+                "[3]-Table contents",
+                "[4]-Queries"
             ]
             .map(str::to_owned)
         );
@@ -695,17 +695,16 @@ mod tests {
     }
 
     #[test]
-    fn every_panel_title_marks_the_key_that_focuses_it() {
+    fn every_panel_title_opens_with_the_key_that_focuses_it() {
         for state in every_contents_state() {
             for panel in view_model(&state).panels {
-                let (_, mark, _) = panel.title.tabs()[0].split();
+                let expected = format!("[{}]-", panel.panel.number());
 
                 assert!(
-                    mark.eq_ignore_ascii_case(&panel.panel.shortcut().to_string()),
-                    "{:?} titled {:?} does not mark '{}'",
+                    panel.title.text().starts_with(&expected),
+                    "{:?} titled {:?} does not open with {expected:?}",
                     panel.panel,
                     panel.title.text(),
-                    panel.panel.shortcut()
                 );
             }
         }

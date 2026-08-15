@@ -16,7 +16,7 @@ use crate::body::{Body, Unit};
 ///
 /// Half-open — `start..end`, in absolute frame coordinates — and generic in
 /// what it names, because a grid's columns are named by index and a title
-/// strip's tabs by the key that reaches them.
+/// strip's tabs by their place in the strip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Band<T> {
     pub(crate) start: u16,
@@ -56,8 +56,8 @@ pub(crate) struct PanelHit {
     pub(crate) area: Rect,
     /// The body, inside the borders.
     pub(crate) inner: Rect,
-    /// The tabs on the top border, each naming the key that reaches it.
-    pub(crate) tabs: Vec<Band<char>>,
+    /// The tabs on the top border, each naming its place in the strip.
+    pub(crate) tabs: Vec<Band<usize>>,
     /// The columns of a grid body, each naming its index in the page.
     pub(crate) columns: Vec<Band<usize>>,
     pub(crate) rows: Option<RowStrip>,
@@ -124,7 +124,7 @@ impl PanelHit {
         panel: Panel,
         area: Rect,
         inner: Rect,
-        tabs: Vec<Band<char>>,
+        tabs: Vec<Band<usize>>,
         body: Option<&Body>,
     ) -> Self {
         Self {
@@ -144,11 +144,11 @@ impl PanelHit {
         // along its length — so the tabs are asked before the fall-through, not
         // after it.
         if position.y == self.area.y
-            && let Some(shortcut) = Band::at(&self.tabs, position.x)
+            && let Some(tab) = Band::at(&self.tabs, position.x)
         {
             return Click::Tab {
                 panel: self.panel,
-                shortcut,
+                tab,
             };
         }
 
@@ -434,18 +434,18 @@ mod tests {
     }
 
     #[test]
-    fn a_press_on_a_tab_names_the_key_that_reaches_it() {
+    fn a_press_on_a_tab_names_its_place_in_the_strip() {
         let mut ddl = plain(Panel::Ddl, Rect::new(0, 7, 16, 4));
         ddl.tabs = vec![
             Band {
                 start: 2,
                 end: 5,
-                names: 'd',
+                names: 0,
             },
             Band {
                 start: 8,
                 end: 15,
-                names: 'c',
+                names: 1,
             },
         ];
         let map = FrameMap::new([
@@ -459,14 +459,14 @@ mod tests {
             map.hit(3, 7),
             Some(Click::Tab {
                 panel: Panel::Ddl,
-                shortcut: 'd'
+                tab: 0
             })
         );
         assert_eq!(
             map.hit(9, 7),
             Some(Click::Tab {
                 panel: Panel::Ddl,
-                shortcut: 'c'
+                tab: 1
             })
         );
         assert_eq!(

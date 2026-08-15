@@ -196,14 +196,15 @@ fn panel_block(
     area: Rect,
     is_focused_panel: bool,
     theme: Theme,
-) -> (Block<'_>, Style, Vec<Band<char>>) {
+) -> (Block<'_>, Style, Vec<Band<usize>>) {
     let border = if is_focused_panel {
         theme.border_style().patch(theme.style(Token::Focused))
     } else {
         theme.border_style()
     };
+    let prefix = panel.title.prefix();
     let (tabs, form) = drawn_tabs(&panel.title, area.width);
-    let strip = strip(&tabs, form);
+    let strip = strip(&prefix, &tabs, form);
     // Right-aligned on the top border, and dropped whole when the border
     // cannot hold both: a truncated term is a lie about what is applied
     // (design §5.1). Drawn on every panel that has one, focused or not — the
@@ -220,6 +221,7 @@ fn panel_block(
         .border_type(BorderType::Rounded)
         .border_style(border)
         .title(panel_title(
+            &prefix,
             &tabs,
             form,
             is_focused_panel,
@@ -241,7 +243,7 @@ fn panel_block(
         );
     }
 
-    (block, border, tab_bands(&tabs, form, lead, area))
+    (block, border, tab_bands(&prefix, &tabs, form, lead, area))
 }
 
 /// Where each tab of a title strip landed on the top border.
@@ -254,12 +256,17 @@ fn panel_block(
 /// Clipped at the right corner: a strip too wide for its border is drawn short
 /// by `ratatui`, and a band running past what was drawn would claim border the
 /// user can see is blank.
-fn tab_bands(tabs: &[&Tab], form: Strip, lead: usize, area: Rect) -> Vec<Band<char>> {
+fn tab_bands(
+    prefix: &str,
+    tabs: &[&Tab],
+    form: Strip,
+    lead: usize,
+    area: Rect,
+) -> Vec<Band<usize>> {
     let limit = area.right().saturating_sub(1);
-    let mut start = area
-        .x
-        .saturating_add(1)
-        .saturating_add(columns(lead + TITLE_PAD.chars().count()));
+    let mut start = area.x.saturating_add(1).saturating_add(columns(
+        lead + TITLE_PAD.chars().count() + prefix.chars().count(),
+    ));
 
     let mut bands = Vec::new();
 
@@ -274,13 +281,11 @@ fn tab_bands(tabs: &[&Tab], form: Strip, lead: usize, area: Rect) -> Vec<Band<ch
         });
         let end = start.saturating_add(width).min(limit);
 
-        if let Some(shortcut) = tab.shortcut()
-            && start < end
-        {
+        if start < end {
             bands.push(Band {
                 start,
                 end,
-                names: shortcut,
+                names: index,
             });
         }
 
@@ -339,14 +344,15 @@ fn inset(columns: usize, border: Style) -> Span<'static> {
     Span::styled(BORDER_LINE.to_string().repeat(columns), border)
 }
 
-/// The shortcut span keeps its own `Token::Shortcut` style regardless of
-/// focus. The active tab takes `Token::Focused`'s colour when its panel is
-/// focused, matching the border, and drops one tier to `Token::Muted` when it
-/// is not — an unfocused panel's active tab still names what it is showing,
-/// but not as loudly as body text. An inactive tab sits a further tier down
-/// at `Token::Faint`, whether or not its panel has focus: it names something
-/// the panel is not showing.
+/// The `[1]-` prefix takes the same style as the active tab: it names the
+/// panel, and the panel is what the active tab names too. The active tab takes
+/// `Token::Focused`'s colour when its panel is focused, matching the border,
+/// and drops one tier to `Token::Muted` when it is not — an unfocused panel's
+/// active tab still names what it is showing, but not as loudly as body text.
+/// An inactive tab sits a further tier down at `Token::Faint`, whether or not
+/// its panel has focus: it names something the panel is not showing.
 fn panel_title<'a>(
+    prefix: &str,
     tabs: &[&'a Tab],
     form: Strip,
     is_focused_panel: bool,
@@ -354,7 +360,6 @@ fn panel_title<'a>(
     border: Style,
     lead: usize,
 ) -> Line<'a> {
-    let shortcut = theme.style(Token::Shortcut);
     let separator = theme.style(Token::Faint);
     let inactive = theme.style(Token::Faint);
     let active = if is_focused_panel {
@@ -363,7 +368,11 @@ fn panel_title<'a>(
         theme.style(Token::Muted)
     };
 
-    let mut spans = vec![inset(lead, border), Span::raw(TITLE_PAD)];
+    let mut spans = vec![
+        inset(lead, border),
+        Span::raw(TITLE_PAD),
+        Span::styled(prefix.to_owned(), active),
+    ];
 
     for (index, tab) in tabs.iter().enumerate() {
         if index > 0 {
@@ -371,18 +380,12 @@ fn panel_title<'a>(
         }
 
         let style = if tab.active { active } else { inactive };
-        let (before, mark, after) = match form {
-            Strip::Short => tab.split_short(),
-            Strip::Full | Strip::Active => tab.split(),
+        let text = match form {
+            Strip::Short => tab.short(),
+            Strip::Full | Strip::Active => tab.text(),
         };
 
-        spans.push(Span::styled(before, style));
-        // The active tab's mark spends no colour of its own, so it inherits
-        // whatever the border or the focus style put under it; an inactive
-        // tab's is faint with the rest of that tab, or the strip would mark a
-        // tab the panel is not showing more strongly than the one it is.
-        spans.push(Span::styled(mark, style.patch(shortcut)));
-        spans.push(Span::styled(after, style));
+        spans.push(Span::styled(text, style));
     }
 
     spans.push(Span::raw(TITLE_PAD));
@@ -407,14 +410,15 @@ enum Strip {
 /// the panel has a tab named `Table col`, which is a name no key reaches
 /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4). Every tab stays
 /// visible for as long as it can, because a tab nobody can see is one nobody
-/// presses `a` for.
+/// presses `2` for.
 fn drawn_tabs(title: &PanelTitle, width: u16) -> (Vec<&Tab>, Strip) {
     let all: Vec<&Tab> = title.tabs().iter().collect();
+    let prefix = title.prefix();
     let holds =
         |text: &str| text.chars().count() + 2 * TITLE_PAD.chars().count() + 2 <= usize::from(width);
 
     for form in [Strip::Full, Strip::Short] {
-        if holds(&strip(&all, form)) {
+        if holds(&strip(&prefix, &all, form)) {
             return (all, form);
         }
     }
@@ -425,15 +429,19 @@ fn drawn_tabs(title: &PanelTitle, width: u16) -> (Vec<&Tab>, Strip) {
     )
 }
 
-/// What `tabs` reads as on the border, separators included.
-fn strip(tabs: &[&Tab], form: Strip) -> String {
-    tabs.iter()
+/// What the title reads as on the border: the panel's number, then `tabs`
+/// with their separators.
+fn strip(prefix: &str, tabs: &[&Tab], form: Strip) -> String {
+    let joined = tabs
+        .iter()
         .map(|tab| match form {
             Strip::Short => tab.short(),
             Strip::Full | Strip::Active => tab.text(),
         })
         .collect::<Vec<_>>()
-        .join(lc_domain::view::TAB_SEPARATOR)
+        .join(lc_domain::view::TAB_SEPARATOR);
+
+    format!("{prefix}{joined}")
 }
 
 /// Both titles, the two corners, and the padding either side of each. The
@@ -741,14 +749,14 @@ mod tests {
         // rows to Ddl's 6, and Queries sits on its 3-row floor.
         let buffer = draw(40, 12);
 
-        assert_eq!(row(&buffer, 0), "╭── Tables ────╮╭── Table contents ────╮");
+        assert_eq!(row(&buffer, 0), "╭── [1]-Tables ╮╭── [3]-Table contents ╮");
         assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
         assert_eq!(row(&buffer, 4), "╰──────────────╯│                      │");
         // Nothing is selected, so the panel offers no Columns tab and the
         // strip is the one name.
-        assert_eq!(row(&buffer, 5), "╭── DDL ───────╮│                      │");
+        assert_eq!(row(&buffer, 5), "╭── [2]-DDL ───╮│                      │");
         assert_eq!(row(&buffer, 7), "│              │╰──────────────────────╯");
-        assert_eq!(row(&buffer, 8), "│              │╭── Queries ───────────╮");
+        assert_eq!(row(&buffer, 8), "│              │╭── [4]-Queries ───────╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
@@ -864,11 +872,8 @@ mod tests {
 
     #[test]
     fn the_focused_panels_plain_title_text_wears_the_focus_colour() {
-        // Row 0 is "╭Tables────────╮╭Table contents────────╮": Tables'
-        // shortcut 'T' sits at x=1 (its own colour), so x=2 is
-        // the first cell of its plain "ables" — and Contents is not focused,
-        // so x=18, inside its plain "able " before the 'c' shortcut at
-        // x=23, must stay uncoloured.
+        // Row 0 is "╭── [1]-Tables ╮╭── [3]-Table contents ╮": x=2 is inside
+        // Tables' inset and x=18 inside Contents', which is not focused.
         let buffer = draw(40, 12);
         let fg = |x, y| buffer.cell((x, y)).expect("cell is in bounds").fg;
         let focus = Theme::default().palette().focus;
@@ -900,34 +905,42 @@ mod tests {
     }
 
     #[test]
-    fn each_panel_colours_the_key_that_focuses_it() {
+    fn each_panel_opens_its_title_with_the_key_that_focuses_it() {
         let buffer = draw(40, 12);
-        let marked = |x, y| {
-            buffer.cell((x, y)).expect("cell is in bounds").fg
-                == Theme::default().palette().shortcut
-        };
 
-        // "╭── Tables" and "╭── Table contents" on row 0, "╭── DDL" on row 5,
-        // "╭── Queries" on row 8 — a corner, the inset and `TITLE_PAD` precede
-        // each name.
-        assert!(marked(5, 0), "Tables marks its a");
-        assert!(marked(22, 0), "Table contents marks its b");
-        assert!(marked(4, 5), "DDL marks its D");
-        assert!(marked(21, 8), "Queries marks its u");
+        for (panel, opening) in [
+            (Panel::Tables, "[1]-Tables"),
+            (Panel::Ddl, "[2]-DDL"),
+            (Panel::Contents, "[3]-Table contents"),
+            (Panel::Queries, "[4]-Queries"),
+        ] {
+            assert_eq!(
+                top_border(&buffer, opening).1,
+                match panel {
+                    Panel::Tables | Panel::Contents => 0,
+                    Panel::Ddl => 5,
+                    Panel::Queries => 8,
+                },
+                "{panel:?} is not titled {opening:?} where the draft puts it"
+            );
+        }
     }
 
+    /// The hint bar's keys are the only thing left wearing it: a title that
+    /// coloured one of its own characters is what `[1]-` replaced.
     #[test]
-    fn nothing_but_the_shortcut_wears_the_shortcut_colour_in_a_title() {
+    fn no_title_wears_the_shortcut_colour() {
         let buffer = draw(40, 12);
-        let marked = |x, y| {
-            buffer.cell((x, y)).expect("cell is in bounds").fg
-                == Theme::default().palette().shortcut
-        };
+        let shortcut = Theme::default().palette().shortcut;
 
-        for x in [0, 1, 3, 4, 9] {
-            assert!(!marked(x, 0), "column {x} of row 0 is not the mark");
+        for y in [0, 5, 7, 8] {
+            for x in 0..40 {
+                assert!(
+                    buffer.cell((x, y)).expect("cell is in bounds").fg != shortcut,
+                    "column {x} of border row {y} wears the hint bar's colour"
+                );
+            }
         }
-        assert!(!marked(5, 7), "only the first D of DDL is its mark");
     }
 
     #[test]
@@ -1548,7 +1561,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 0),
-            "╭── Tables ────╮╭── Table contents — shop.orders (2 rows) ─╮"
+            "╭── [1]-Tables ╮╭ [3]-Table contents — shop.orders (2 rows)╮"
         );
         assert_eq!(
             row(&buffer, 1),
@@ -2841,24 +2854,41 @@ mod tests {
         let lead: String = BORDER_LINE.to_string().repeat(TITLE_INSET);
 
         assert!(
-            border.starts_with(&format!("╭{lead} Tables ")),
+            border.starts_with(&format!("╭{lead} [1]-Tables ")),
             "the gap reads as the frame running on, got {border:?}"
         );
     }
 
     #[test]
     fn a_border_with_one_column_to_spare_gives_it_to_the_title_and_not_the_marker() {
-        // Tables on the sidebar's 16-column floor wearing `/or`: six columns
-        // of name, three of marker, four of padding and two of corner leave
-        // one. The title takes it, so the border does not read as two
+        // Tables on a 20-column sidebar wearing `/or`: ten columns of title —
+        // `[1]-` included — three of marker, four of padding and two of corner
+        // leave one. The title takes it, so the border does not read as two
         // alignments at once.
+        let mut state = browsing(&["shop"], 0);
+        state.apply_filter(Filtered::Tables, Filter::new("or"));
+
+        let buffer = draw_state(80, 12, &state);
+        let border = row(&buffer, 0);
+
+        assert!(border.starts_with("╭─ [1]-Tables  /or ╮"), "got {border:?}");
+    }
+
+    /// The `[1]-` costs four columns every title used to spend on its name, so
+    /// the sidebar's 16-column floor no longer holds a name *and* a marker.
+    /// The name wins: a panel that cannot say which one it is is worse than
+    /// one that cannot say it is filtered, and the filtered rows are on screen
+    /// either way (design §5.1).
+    #[test]
+    fn the_narrowest_sidebar_gives_its_border_to_the_title_alone() {
         let mut state = browsing(&["shop"], 0);
         state.apply_filter(Filtered::Tables, Filter::new("or"));
 
         let buffer = draw_state(40, 12, &state);
         let border = row(&buffer, 0);
 
-        assert!(border.starts_with("╭─ Tables  /or ╮"), "got {border:?}");
+        assert!(border.starts_with("╭── [1]-Tables ╮"), "got {border:?}");
+        assert!(!border.contains("/or"), "got {border:?}");
     }
 
     #[test]
@@ -2869,8 +2899,7 @@ mod tests {
 
         assert!(border.contains("DDL - Columns"), "got {border:?}");
 
-        // Past its 'C', which wears the shortcut colour whether or not its tab
-        // is the one drawn.
+        // Past its 'C', which the separator before it also holds.
         let (fg, _, modifier) = style_of_first(&buffer, "olumns");
         let faint = Theme::default().style(Token::Faint);
 
@@ -3744,7 +3773,7 @@ mod tests {
     }
 
     #[test]
-    fn the_map_resolves_every_drawn_tab_to_the_key_that_reaches_it() {
+    fn the_map_resolves_every_drawn_tab_to_its_place_in_the_strip() {
         let (buffer, map) = draw_mapped(104, 41, &listing(orders()));
         let strip = row(&buffer, DDL_BORDER);
 
@@ -3753,29 +3782,29 @@ mod tests {
             "row {DDL_BORDER} must be the strip this test is about: {strip:?}"
         );
 
-        for (label, shortcut) in [("DDL", 'd'), ("Columns", 'c')] {
+        for (label, tab) in [("DDL", 0), ("Columns", 1)] {
             assert_eq!(
                 map.hit(column_of(&buffer, DDL_BORDER, label), DDL_BORDER),
                 Some(Click::Tab {
                     panel: Panel::Ddl,
-                    shortcut
+                    tab
                 }),
-                "{label} is reached by {shortcut}, whichever name it is drawn under"
+                "{label} is the {tab}th tab, whichever name it is drawn under"
             );
         }
     }
 
     #[test]
-    fn a_single_tab_panel_resolves_its_title_to_its_own_key() {
+    fn a_single_tab_panel_resolves_its_title_to_its_one_tab() {
         let (buffer, map) = draw_mapped(40, 12, &browsing(&["shop"], 0));
 
         assert_eq!(
             map.hit(column_of(&buffer, 0, "Tables"), 0),
             Some(Click::Tab {
                 panel: Panel::Tables,
-                shortcut: 'a'
+                tab: 0
             }),
-            "a panel with one tab is its own tab, and `a` is how it is reached"
+            "a panel with one tab is its own tab"
         );
     }
 
@@ -4102,19 +4131,20 @@ mod tests {
 
     #[test]
     fn the_marker_fits_flush_against_the_corner_it_is_tuned_for() {
-        // At 40 columns Tables sits on its 16-column floor: 1 (`╭`) + 6
-        // (`Tables`) + 4 (`/ord`) + 1 (`╮`) leaves exactly 4 columns, which is
-        // what `TITLE_PAD` spends either side of each — so the two sit flush
-        // with a gap and no dash between them, nothing is left over for an
-        // inset, and one column narrower drops the marker.
+        // At 80 columns Tables gets 20: 1 (`╭`) + 10 (`[1]-Tables`) + 4
+        // (`/ord`) + 1 (`╮`) leaves exactly 4 columns, which is what
+        // `TITLE_PAD` spends either side of each — so the two sit flush with a
+        // gap and no dash between them, nothing is left over for an inset, and
+        // one column narrower drops the marker.
         let mut state = browsing(&["shop"], 0);
         state.apply_filter(Filtered::Tables, Filter::new("ord"));
 
-        let buffer = draw_state(40, 24, &state);
+        let buffer = draw_state(80, 24, &state);
         let border = row(&buffer, top_border(&buffer, "Tables").1);
 
         assert_eq!(
-            border, "╭ Tables  /ord ╮╭── Table contents ────╮",
+            border,
+            "╭ [1]-Tables  /ord ╮╭── [3]-Table contents ────────────────────────────────────╮",
             "the widest term this width can hold, sitting flush with no gap and no overlap"
         );
     }

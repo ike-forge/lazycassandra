@@ -26,22 +26,26 @@ impl DdlTab {
     /// The tabs in the order the title strip draws them.
     pub const ALL: [Self; 2] = [Self::Ddl, Self::Columns];
 
-    /// The key that reaches this tab, from any panel that does not take text.
+    /// The next tab in [`DdlTab::ALL`], wrapping.
     ///
-    /// A tab is a place, so it gets a key of its own rather than a second
-    /// meaning for the panel's — which is why `Ddl` answers to the panel's own
-    /// letter and `Columns` to its own leading one (docs/shortcuts.md §4).
+    /// A tab has no key of its own: the panel's number reaches the panel and,
+    /// pressed again, walks its tabs — so a reader who knows how to arrive
+    /// already knows how to look at the rest (docs/shortcuts.md §4).
     #[must_use]
-    pub const fn shortcut(self) -> char {
+    pub const fn next(self) -> Self {
         match self {
-            Self::Ddl => 'd',
-            Self::Columns => 'c',
+            Self::Ddl => Self::Columns,
+            Self::Columns => Self::Ddl,
         }
     }
 
+    /// The previous tab in [`DdlTab::ALL`], wrapping.
     #[must_use]
-    pub fn from_shortcut(key: char) -> Option<Self> {
-        Self::ALL.into_iter().find(|tab| tab.shortcut() == key)
+    pub const fn previous(self) -> Self {
+        match self {
+            Self::Ddl => Self::Columns,
+            Self::Columns => Self::Ddl,
+        }
     }
 
     #[must_use]
@@ -138,21 +142,18 @@ mod tests {
     }
 
     #[test]
-    fn each_tab_answers_to_the_key_the_shortcuts_doc_names() {
-        assert_eq!(
-            DdlTab::ALL.map(DdlTab::shortcut),
-            ['d', 'c'],
-            "the keys are a promise to the user's fingers, not an implementation detail"
-        );
-    }
-
-    #[test]
-    fn a_tab_key_leads_back_to_the_tab_that_claims_it() {
+    fn walking_the_tabs_wraps_and_stepping_back_undoes_it() {
         for tab in DdlTab::ALL {
-            assert_eq!(DdlTab::from_shortcut(tab.shortcut()), Some(tab));
+            assert_eq!(tab.next().previous(), tab);
         }
 
-        assert_eq!(DdlTab::from_shortcut('z'), None);
+        assert_eq!(
+            std::iter::successors(Some(DdlTab::ALL[0]), |tab| Some(tab.next()))
+                .take(DdlTab::ALL.len())
+                .collect::<Vec<_>>(),
+            DdlTab::ALL,
+            "one press per tab returns to where it started"
+        );
     }
 
     #[test]

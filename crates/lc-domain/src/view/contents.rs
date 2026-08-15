@@ -221,8 +221,10 @@ mod tests {
         panel_body(state, 2)
     }
 
+    /// The strip alone: the `[3]-` every title opens with is
+    /// `view::tests`' to pin, not this module's.
     fn contents_title(state: &State) -> String {
-        view_model(state).panels[2].title.text()
+        view_model(state).panels[2].title.strip()
     }
 
     fn page_of(columns: &[&str], rows: &[&[CqlValue]]) -> Page {

@@ -47,8 +47,6 @@ pub enum Token {
     Comment,
     /// The panel accepting input.
     Focused,
-    /// The key that focuses a panel, inside that panel's title.
-    Shortcut,
     /// A key the focused panel responds to, in the hint bar.
     HintKey,
     /// The name of a table option or replication setting, in the Table DDL

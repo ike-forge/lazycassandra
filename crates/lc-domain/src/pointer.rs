@@ -34,15 +34,14 @@ pub enum Click {
     },
     /// A grid's heading cell: the column it names, and no row.
     Column { panel: Panel, column: usize },
-    /// A tab on a panel's top border, named by the key that reaches it.
+    /// A tab on a panel's top border, by its place in the strip that was
+    /// drawn.
     ///
-    /// The key rather than the tab's position in the strip: the map a press is
-    /// resolved against describes the previous frame, and an index into a strip
-    /// that has since changed names whichever tab took that position. A
-    /// shortcut names the same place in every frame, and it is what makes this
-    /// gesture the `d`/`c` binding rather than a second route to it (design
-    /// §1).
-    Tab { panel: Panel, shortcut: char },
+    /// A tab has no key of its own to name it by, so this is an index into
+    /// the *previous* frame's strip: one that no longer exists is dropped
+    /// rather than clamped onto whichever tab took its position — the rule a
+    /// click on a vanished row already follows (design §6).
+    Tab { panel: Panel, tab: usize },
     /// Chrome: a border, blank space past the last row, or a body with no rows
     /// at all.
     Panel(Panel),
