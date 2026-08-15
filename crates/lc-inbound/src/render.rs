@@ -865,7 +865,7 @@ mod tests {
         let drawn = row(&buffer, 23);
         let hints: String = drawn.chars().skip(taken).collect();
 
-        assert_eq!(hints.trim_end(), " ?/esc close | q quit");
+        assert_eq!(hints.trim_end(), " ⏎ run | ?/esc close | q quit");
     }
 
     #[test]

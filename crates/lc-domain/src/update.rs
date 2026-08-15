@@ -1071,11 +1071,12 @@ fn run_selected(state: &mut State) -> Vec<Effect> {
     let Some(Overlay::Commands(open)) = &state.overlay else {
         return Vec::new();
     };
-    let Some(command) = crate::commands::command_at(open.selected()) else {
+    let selected = open.selected();
+    state.overlay = None;
+
+    let Some(command) = crate::commands::command_at(selected) else {
         return Vec::new();
     };
-
-    state.overlay = None;
 
     match command.run {
         Run::Inert => return Vec::new(),

@@ -657,9 +657,10 @@ those keys would break this rule, and is not what this is.
 The command palette sits above that. It is opened deliberately with `?`, closes
 with either `?` or `esc` — both named on its bar
 ([design](specs/2026-08-09-command-palette-design.md) §7) — and while it is up it
-takes motion, leaves `q` quitting, and makes every other key inert rather than
-dismissing. A key that means "close" in one frame and something else in the
-next is the ambiguity both halves of this rule exist to prevent.
+takes motion, runs the selected row on `⏎`, leaves `q` quitting, and makes
+every other key inert rather than dismissing. A key that means "close" in one
+frame and something else in the next is the ambiguity both halves of this
+rule exist to prevent.
 
 **A modal that claims every key says so by dimming what it covers.** While the
 palette, the message overlay, the theme picker or the diagnostics list is up,
