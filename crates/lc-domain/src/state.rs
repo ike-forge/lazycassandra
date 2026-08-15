@@ -1294,11 +1294,13 @@ impl State {
     ///
     /// Not a `&mut Option<Search>` handed out: repairing what a search
     /// invalidates — a cursor left pointing past the rows the panel now has —
-    /// belongs here rather than to every caller that sets one. Tables never
-    /// drops a row for the search it is given (design §4.1), but the row
-    /// count can still shrink between two calls here — a keyspace one search
-    /// forces open, another may not — so the clamp stays. A search renumbers
-    /// the rows under a range, so the repair it owes includes dropping one.
+    /// belongs here rather than to every caller that sets one. Tables is the
+    /// only target whose row count a search can still move: no search drops
+    /// a row (design §4.1), but forcing one keyspace open while another
+    /// falls back closed changes how many rows are on screen between two
+    /// calls here, so Tables' cursor still needs the clamp. DDL and Table
+    /// contents never move a row for a search, so neither clamps anything
+    /// here — see their own arms below.
     pub fn apply_search(&mut self, target: Searched, search: Option<Search>) {
         match target {
             Searched::Tables => {
@@ -1309,16 +1311,17 @@ impl State {
                 }
                 self.tables.selection.clear();
             }
-            // No repair here, and the two halves of the panel are repaired
-            // elsewhere for different reasons (design §3.3). Its offset is
-            // counted in wrapped lines, a width-dependent count only the
-            // renderer can produce, so `Msg::Measured` clamps it against a real
-            // count; clamping here would clamp against the previous frame's,
-            // which is wrong exactly when the search just shrank the body. Its
-            // cursor counts rows, and `update`'s epilogue clamps it on every
-            // message against `view::ddl_rows`, which counts the *narrowed*
-            // rows — so the clamp lands on the same keystroke that applied the
-            // search, with no line count involved.
+            // No repair here: a search never drops a DDL row (design §4.2),
+            // so neither the row count nor the line count is a search's to
+            // invalidate. What repair is still owed runs elsewhere, the same
+            // way it does for any other change to the panel (design §3.3).
+            // The offset is counted in wrapped lines, a width-dependent
+            // count only the renderer can produce, so it waits on the next
+            // `Msg::Measured` rather than being clamped against a stale
+            // count here. The cursor counts rows, and `clamp_lists`, run in
+            // `update`'s epilogue, clamps it against `view::ddl_rows` on
+            // every message — search included — so the clamp this arm would
+            // otherwise owe is already covered before the frame is drawn.
             Searched::Ddl => {
                 self.ddl.set_search(search);
                 self.ddl.selection.clear();

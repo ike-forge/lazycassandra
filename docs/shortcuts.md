@@ -875,6 +875,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `l`/`h`, `Enter`, and a click on a keyspace row are all swallowed while a search is applied | `l_and_h_are_swallowed_while_a_search_is_applied`, `folding_under_a_search_does_not_disturb_the_fold_state_it_will_return_to`, `l_and_h_still_fold_once_the_search_is_gone`, `no_tables_entry_point_writes_the_fold_state_under_a_search`, `enter_still_reads_a_table_under_a_search` |
 | A property matches on its name and on its value | `a_property_matches_on_its_name`, `a_property_matches_on_its_value` (`view/details.rs`) |
 | A column matches on its name and on its CQL type | `a_column_matches_on_its_name`, `a_column_matches_on_its_cql_type` (`view/details.rs`) |
+| A heading is never in the sequence a search walks, which is what keeps it unmatchable | `the_rows_the_cursor_walks_are_the_described_ones_and_no_headings` (`view/details.rs`) |
 | A section is never emptied by a search | `a_section_is_never_emptied_by_a_search` (`view/details.rs`) |
 | A search that matches nothing still draws the panel, rather than a notice | `a_search_that_matches_nothing_still_draws_the_tree` (`view/tables.rs`) |
 | A search changes nothing unless one is applied | `a_cluster_with_no_keyspaces_says_so_rather_than_listing_nothing` (`view/tables.rs`), `no_search_flags_nothing` (`view/contents.rs`) |
