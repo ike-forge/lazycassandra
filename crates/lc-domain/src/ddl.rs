@@ -1,5 +1,5 @@
 //! The DDL panel's state: a cursor over the rows it describes, a
-//! viewport over the lines they wrapped to, and the search narrowing them.
+//! viewport over the lines they wrapped to, and the search painted over them.
 //!
 //! A module of its own for the reason [`crate::tree`] and [`crate::contents`]
 //! are ones — per-panel state with its own vocabulary rather than another
@@ -114,7 +114,7 @@ impl DdlPanel {
         self.selection.clear();
     }
 
-    /// The search narrowing the panel's body, if any.
+    /// The search painted over the panel's body, if any.
     #[must_use]
     pub fn search(&self) -> Option<&Search> {
         self.search.as_ref()
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn a_tab_change_leaves_the_search_where_it_was() {
-        // The search is applied to the panel, not to a tab: it narrows
+        // The search is applied to the panel, not to a tab: it paints
         // whichever rows the panel is drawing, and clearing it is `Esc`'s job.
         let mut panel = DdlPanel::default();
         panel.set_search(Search::new("id"));

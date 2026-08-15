@@ -7798,7 +7798,7 @@ mod tests {
 
     /// The layer is dispatched above every overlay, so a chord that would open
     /// one has to refuse the prompt itself: opening a picker over a live query
-    /// would leave the panel filtered with nothing holding what it searched
+    /// would leave the panel searched with nothing holding what it searched
     /// from (docs/shortcuts.md §1).
     #[test]
     fn ctrl_t_is_refused_over_a_live_prompt() {

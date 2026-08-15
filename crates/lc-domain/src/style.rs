@@ -49,7 +49,9 @@ pub enum Token {
     HintAction,
     /// The row the cursor is on.
     Selected,
-    /// A cell whose text answered the applied filter.
+    /// The span of text a search matched, painted where it sits rather than
+    /// hiding the rest of the row — in Tables, Table DDL, and Table contents
+    /// alike.
     ///
     /// Named for what it marks, like [`Token::PropertyName`]: the domain
     /// still names no colour (architecture.md §6).
