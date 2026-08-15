@@ -7515,20 +7515,23 @@ mod tests {
 
     #[test]
     fn a_live_range_follows_an_n() {
-        let mut state = loaded();
+        // Same three-row ring as `shift_n_walks_backwards`: every row
+        // matches "o", so `n` from the middle genuinely moves the cursor and
+        // an exact-index assertion can tell a real jump from a bare `v`
+        // (which the `.ranges().is_empty()` version this replaces could not).
+        let mut state = browsing_tables(&[("box", &[]), ("shop", &["orders"])]);
         state.focus_on(Panel::Tables);
-        state.apply_search(Searched::Tables, Search::new("orders"));
-        press(&mut state, Key::Char('v'));
+        state.apply_search(Searched::Tables, Search::new("o"));
+        state.tables.cursor.go_to(1, tree_rows(&state));
 
+        press(&mut state, Key::Char('v'));
         press(&mut state, Key::Char('n'));
 
-        assert!(
-            !state
-                .tables
-                .selection
-                .ranges(state.tables.cursor.index())
-                .is_empty(),
-            "n is a motion, so an extending range follows it"
+        assert_eq!(state.tables.cursor.index(), 2, "n landed on the next match");
+        assert_eq!(
+            state.tables.selection.ranges(state.tables.cursor.index()),
+            Ranges::of(Range::new(1, 2)),
+            "the range runs from the anchor n was pressed on to where it landed"
         );
     }
 
