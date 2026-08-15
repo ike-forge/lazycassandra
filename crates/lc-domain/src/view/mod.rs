@@ -578,7 +578,11 @@ mod tests {
 
     #[test]
     fn an_open_prompt_is_projected_as_its_query() {
-        let mut prompt = crate::search::Prompt::opened(crate::search::Searched::Tables, None);
+        let mut prompt = crate::search::Prompt::opened(
+            crate::search::Searched::Tables,
+            None,
+            crate::search::Origin::default(),
+        );
         prompt.push('o');
         prompt.push('r');
         let mut state = State::default();

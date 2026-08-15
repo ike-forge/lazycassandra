@@ -560,7 +560,11 @@ mod tests {
     #[test]
     fn the_bar_names_what_the_prompt_responds_to() {
         let mut state = fits();
-        state.overlay = Some(Overlay::Search(Prompt::opened(Searched::Tables, None)));
+        state.overlay = Some(Overlay::Search(Prompt::opened(
+            Searched::Tables,
+            None,
+            crate::search::Origin::default(),
+        )));
 
         let bar = bar(&state);
 

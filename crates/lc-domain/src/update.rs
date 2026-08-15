@@ -14,7 +14,7 @@ use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Sc
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::ports::ExportError;
 use crate::posture::Posture;
-use crate::search::{Prompt, Searched};
+use crate::search::{Direction, Origin, Prompt, Searched};
 use crate::state::{
     ConnectionState, Cursor, DiagnosticsPanel, ExportJob, Flash, Geometry, Message, Overlay, Panel,
     Range, Ranges, SchemaState, Scroll, Selection, State,
@@ -846,7 +846,10 @@ fn raise(state: &mut State, message: Message) {
 /// `ctrl-t` is not refused (final review I2).
 fn unwind_overlay(state: &mut State) {
     if let Some(Overlay::Search(prompt)) = &state.overlay {
-        state.apply_search(prompt.target(), prompt.previous().cloned());
+        let (target, previous, origin) =
+            (prompt.target(), prompt.previous().cloned(), prompt.origin());
+        state.apply_search(target, previous);
+        restore_origin(state, target, origin);
     }
     restore_theme(state);
 }
@@ -860,6 +863,77 @@ fn unwind_overlay(state: &mut State) {
 fn restore_theme(state: &mut State) {
     if let Some(Overlay::Themes { restored, .. }) = &state.overlay {
         state.theme = restored.clone();
+    }
+}
+
+/// Where `target`'s cursor is now.
+fn origin_of(state: &State, target: Searched) -> Origin {
+    match target {
+        Searched::Tables => Origin {
+            row: state.tables.cursor.index(),
+            column: 0,
+        },
+        Searched::Ddl => Origin {
+            row: state.ddl.cursor.index(),
+            column: 0,
+        },
+        Searched::Contents => Origin {
+            row: state.contents.cursor.index(),
+            column: state.contents.column.index(),
+        },
+    }
+}
+
+/// Puts `target`'s cursor back where it was.
+fn restore_origin(state: &mut State, target: Searched, origin: Origin) {
+    match target {
+        Searched::Tables => {
+            let len = tree_rows(state);
+            state.tables.cursor.go_to(origin.row, len);
+        }
+        Searched::Ddl => {
+            let len = crate::view::ddl_rows(state);
+            state.ddl.cursor.go_to(origin.row, len);
+        }
+        Searched::Contents => {
+            let rows = state.contents.row_count();
+            let columns = state.contents.column_count();
+            state.contents.cursor.go_to(origin.row, rows);
+            state.contents.column.go_to(origin.column, columns);
+        }
+    }
+}
+
+/// Moves `target`'s cursor to the next match from `from`, and leaves it where
+/// it is when nothing matches (design §5.2).
+fn jump_to_match(state: &mut State, target: Searched, from: Origin, direction: Direction) {
+    match target {
+        Searched::Tables => {
+            let row = state
+                .schema()
+                .and_then(|schema| state.tables.next_match(schema, from.row, direction));
+            if let Some(row) = row {
+                let len = tree_rows(state);
+                state.tables.cursor.go_to(row, len);
+            }
+        }
+        Searched::Ddl => {
+            if let Some(row) = crate::view::ddl_next_match(state, from.row, direction) {
+                let len = crate::view::ddl_rows(state);
+                state.ddl.cursor.go_to(row, len);
+            }
+        }
+        Searched::Contents => {
+            if let Some((row, column)) = state
+                .contents
+                .next_match((from.row, from.column), direction)
+            {
+                let rows = state.contents.row_count();
+                let columns = state.contents.column_count();
+                state.contents.cursor.go_to(row, rows);
+                state.contents.column.go_to(column, columns);
+            }
+        }
     }
 }
 
@@ -877,7 +951,8 @@ fn open_prompt(state: &mut State) {
     };
 
     let previous = state.search(target).cloned();
-    state.overlay = Some(Overlay::Search(Prompt::opened(target, previous)));
+    let origin = origin_of(state, target);
+    state.overlay = Some(Overlay::Search(Prompt::opened(target, previous, origin)));
     state.apply_search(target, None);
 }
 
@@ -911,8 +986,9 @@ fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
         _ => return Vec::new(),
     }
 
-    let (target, search) = (prompt.target(), prompt.search());
+    let (target, search, origin) = (prompt.target(), prompt.search(), prompt.origin());
     state.apply_search(target, search);
+    jump_to_match(state, target, origin, Direction::Forwards);
 
     Vec::new()
 }
@@ -926,6 +1002,7 @@ fn escape(state: &mut State) {
     match state.overlay.take() {
         Some(Overlay::Search(prompt)) => {
             state.apply_search(prompt.target(), prompt.previous().cloned());
+            restore_origin(state, prompt.target(), prompt.origin());
             return;
         }
         Some(Overlay::Themes { restored, .. }) => {
@@ -3674,6 +3751,13 @@ mod tests {
             },
         );
         state
+    }
+
+    /// Two keyspaces, one holding `orders`, both folded — so `tree_rows` is
+    /// 2 without a search and a search that matches forces the right one
+    /// open.
+    fn loaded() -> State {
+        browsing_tables(&[("shop", &["orders"]), ("billing", &[])])
     }
 
     fn row_count(state: &State) -> usize {
@@ -7155,6 +7239,86 @@ mod tests {
 
         assert!(state.overlay.is_none());
         assert_eq!(state.search(Searched::Tables), None);
+    }
+
+    #[test]
+    fn typing_a_term_selects_the_first_match() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        press(&mut state, Key::Char('/'));
+
+        for character in "orders".chars() {
+            press(&mut state, Key::Char(character));
+        }
+
+        let schema = state.schema().expect("schema loaded");
+        let Some(Node::Table { table, .. }) = state.tables.selected(schema) else {
+            panic!("the cursor must be on the matching table");
+        };
+        assert!(table.name.contains("orders"));
+    }
+
+    #[test]
+    fn extending_a_term_does_not_walk_the_cursor_forward() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        press(&mut state, Key::Char('/'));
+
+        press(&mut state, Key::Char('o'));
+        let after_one = state.tables.cursor.index();
+        press(&mut state, Key::Backspace);
+        press(&mut state, Key::Char('o'));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            after_one,
+            "every keystroke searches from where / was pressed, not from the last landing"
+        );
+    }
+
+    #[test]
+    fn a_term_that_matches_nothing_leaves_the_cursor_where_it_was() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        state.tables.cursor.go_to(1, tree_rows(&state));
+        press(&mut state, Key::Char('/'));
+
+        for character in "zzz".chars() {
+            press(&mut state, Key::Char(character));
+        }
+
+        assert_eq!(state.tables.cursor.index(), 1);
+    }
+
+    #[test]
+    fn escape_restores_the_search_and_the_cursor_together() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        state.tables.cursor.go_to(1, tree_rows(&state));
+        press(&mut state, Key::Char('/'));
+        for character in "orders".chars() {
+            press(&mut state, Key::Char(character));
+        }
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(state.tables.cursor.index(), 1, "the cursor goes back too");
+        assert_eq!(state.search(Searched::Tables), None);
+    }
+
+    #[test]
+    fn enter_keeps_where_the_cursor_landed() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        press(&mut state, Key::Char('/'));
+        for character in "orders".chars() {
+            press(&mut state, Key::Char(character));
+        }
+        let landed = state.tables.cursor.index();
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(state.tables.cursor.index(), landed);
     }
 
     #[test]

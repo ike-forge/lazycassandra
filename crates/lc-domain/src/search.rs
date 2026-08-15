@@ -168,6 +168,17 @@ impl Direction {
     }
 }
 
+/// Where the cursor was when a prompt opened, in the units the target counts.
+///
+/// One type across the three panels rather than an enum: `column` is the
+/// grid's second cursor and is zero in a list, which is what those panels
+/// already mean by a position.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Origin {
+    pub row: usize,
+    pub column: usize,
+}
+
 /// An open search prompt.
 ///
 /// Lives in [`crate::state::Overlay`] rather than beside it, so "a palette and
@@ -181,16 +192,22 @@ pub struct Prompt {
     /// Live search overwrites the target's search on every keystroke, so
     /// cancelling needs something to put back (design §3).
     previous: Option<Search>,
+    /// The target panel's cursor when the prompt opened. Every keystroke
+    /// searches from here, not from the last landing, so extending a term
+    /// does not walk the cursor forward (design §5.2).
+    origin: Origin,
 }
 
 impl Prompt {
-    /// Opens over `target`, remembering the search it is about to overwrite.
+    /// Opens over `target`, remembering the search it is about to overwrite
+    /// and the cursor it is about to move.
     #[must_use]
-    pub fn opened(target: Searched, previous: Option<Search>) -> Self {
+    pub fn opened(target: Searched, previous: Option<Search>, origin: Origin) -> Self {
         Self {
             target,
             query: String::new(),
             previous,
+            origin,
         }
     }
 
@@ -210,6 +227,11 @@ impl Prompt {
     #[must_use]
     pub const fn previous(&self) -> Option<&Search> {
         self.previous.as_ref()
+    }
+
+    #[must_use]
+    pub const fn origin(&self) -> Origin {
+        self.origin
     }
 
     /// What the query now means, for a caller that must apply it.

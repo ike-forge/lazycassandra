@@ -3910,7 +3910,11 @@ mod tests {
         // a cursor of its own, on the bar row — still not the editor's, for
         // the same reason as before (design §5.2).
         let mut state = with_query("SELECT", Panel::Queries);
-        state.overlay = Some(Overlay::Search(Prompt::opened(Searched::Tables, None)));
+        state.overlay = Some(Overlay::Search(Prompt::opened(
+            Searched::Tables,
+            None,
+            lc_domain::search::Origin::default(),
+        )));
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
@@ -4039,7 +4043,8 @@ mod tests {
 
     #[test]
     fn an_open_prompt_owns_the_bar_row() {
-        let mut prompt = Prompt::opened(Searched::Tables, None);
+        let mut prompt =
+            Prompt::opened(Searched::Tables, None, lc_domain::search::Origin::default());
         prompt.push('o');
         prompt.push('r');
         let mut state = State::default();
@@ -4061,7 +4066,8 @@ mod tests {
 
     #[test]
     fn the_prompts_cursor_sits_after_the_query() {
-        let mut prompt = Prompt::opened(Searched::Tables, None);
+        let mut prompt =
+            Prompt::opened(Searched::Tables, None, lc_domain::search::Origin::default());
         prompt.push('o');
         prompt.push('r');
         let mut state = State::default();
@@ -4082,7 +4088,8 @@ mod tests {
 
     #[test]
     fn the_prompts_cursor_stays_inside_the_frame_when_the_query_fills_the_bar() {
-        let mut prompt = Prompt::opened(Searched::Tables, None);
+        let mut prompt =
+            Prompt::opened(Searched::Tables, None, lc_domain::search::Origin::default());
         for c in "a query long enough to overrun a narrow terminal's hint bar".chars() {
             prompt.push(c);
         }
@@ -4101,7 +4108,8 @@ mod tests {
 
     #[test]
     fn the_prompts_query_carries_a_theme_token() {
-        let mut prompt = Prompt::opened(Searched::Tables, None);
+        let mut prompt =
+            Prompt::opened(Searched::Tables, None, lc_domain::search::Origin::default());
         prompt.push('o');
         let mut state = State::default();
         state.overlay = Some(Overlay::Search(prompt));
