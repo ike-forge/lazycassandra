@@ -169,6 +169,17 @@ pub(crate) fn lay_out(
         for detail in &section.rows {
             let mut drawn = row_lines(detail, content, style, search, theme);
 
+            // The band first, the cursor's highlight over it, the way the
+            // tree and the grid stack them: a yank sends the cursor back to
+            // the row `v` was pressed on, so the anchor is both the cursor
+            // and part of what was taken, and a row that answered only to the
+            // cursor would drop the afterglow exactly there (visual mode
+            // design §6.1).
+            if marked.holds(row) {
+                let band = theme.style(marked.band);
+                drawn = drawn.into_iter().map(|line| patched(line, band)).collect();
+            }
+
             if row == selected {
                 let highlight = theme.style(Token::Selected);
                 drawn = drawn
@@ -179,9 +190,6 @@ pub(crate) fn lay_out(
                     first: lines.len(),
                     lines: drawn.len(),
                 };
-            } else if marked.holds(row) {
-                let band = theme.style(marked.band);
-                drawn = drawn.into_iter().map(|line| patched(line, band)).collect();
             }
 
             rows.extend(std::iter::repeat_n(Some(row), drawn.len()));
@@ -598,6 +606,7 @@ fn count(text: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use lc_domain::state::{Range, Ranges};
     use lc_domain::style::Token;
     use lc_domain::view::{Heading, IdentityKind, Section};
 
@@ -1058,6 +1067,63 @@ mod tests {
             laid.lines.len(),
             "the last row's span ends where the body does"
         );
+    }
+
+    fn two_column_details() -> Details {
+        Details {
+            sections: vec![Section {
+                heading: Some(Heading {
+                    text: "Columns".to_owned(),
+                    token: Token::Section,
+                }),
+                group: Group::Shape,
+                token: None,
+                rows: vec![
+                    DetailRow::Column {
+                        name: "id".to_owned(),
+                        cql_type: "uuid".to_owned(),
+                        kind: ColumnKind::Partition,
+                    },
+                    DetailRow::Column {
+                        name: "email".to_owned(),
+                        cql_type: "text".to_owned(),
+                        kind: ColumnKind::Regular,
+                    },
+                ],
+            }],
+        }
+    }
+
+    /// A yank sends the cursor back to the row `v` was pressed on, so the
+    /// anchor is inside the afterglow *and* under the cursor. The band is what
+    /// says what was taken — the tree and the grid both keep it under the
+    /// cursor's own highlight, and so does this panel (visual mode design
+    /// §6.1).
+    #[test]
+    fn the_cursor_row_inside_a_range_keeps_the_band_under_its_highlight() {
+        let theme = Theme::default();
+        let marked = Marked {
+            ranges: Ranges::of(Range::new(0, 1)),
+            band: Token::Flash,
+        };
+
+        let laid = lay_out(&two_column_details(), 0, &marked, 28, None, theme);
+
+        let flash = theme.style(Token::Flash);
+        let selected = theme.style(Token::Selected);
+        let cursor = &laid.lines[1];
+
+        assert!(
+            cursor.style.add_modifier.contains(
+                flash
+                    .add_modifier
+                    .iter()
+                    .next()
+                    .expect("the flash is a modifier")
+            ),
+            "the anchor lost the afterglow the rest of the range kept"
+        );
+        assert_eq!(cursor.style.bg, selected.bg, "and still says where it is");
     }
 
     /// A heading is coloured by what it names and its rows by what they are.
