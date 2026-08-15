@@ -144,8 +144,11 @@ query the invariant already turns into "no search". The jump is measured
 from `origin`, the cursor position the prompt opened on, rather than from
 wherever the last keystroke landed: searching from the current cursor would
 walk the view forward as the term is extended, which is not what an
-incremental search means. `Esc` restores `origin` alongside the search it
-restores, so an abandoned prompt leaves the panel exactly as it was found.
+incremental search means. No match leaves the cursor at `origin`, whether
+that keystroke is the prompt's first or one that walks a term that used to
+match into one that no longer does. `Esc` restores `origin` alongside the
+search it restores, so an abandoned prompt leaves the panel exactly as it
+was found.
 See [panel search design](specs/2026-08-10-panel-search-design.md) §3 and
 [search that highlights rather than hides](specs/2026-08-15-search-highlight-design.md) §5.2.
 

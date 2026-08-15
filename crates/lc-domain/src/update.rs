@@ -906,34 +906,43 @@ fn restore_origin(state: &mut State, target: Searched, origin: Origin) {
     }
 }
 
-/// Moves `target`'s cursor to the next match from `from`, and leaves it where
-/// it is when nothing matches (design §5.2).
+/// Moves `target`'s cursor to the next match from `from`, and falls back to
+/// `from` itself when nothing matches (design §5.2) — a no-op for `n`/`N`,
+/// which always call with `from` already the cursor, and the promised
+/// restore to `origin` for a live `/` prompt whose term stops matching.
 fn jump_to_match(state: &mut State, target: Searched, from: Origin, direction: Direction) {
     match target {
         Searched::Tables => {
             let row = state
                 .schema()
                 .and_then(|schema| state.tables.next_match(schema, from.row, direction));
-            if let Some(row) = row {
-                let len = tree_rows(state);
-                state.tables.cursor.go_to(row, len);
+            match row {
+                Some(row) => {
+                    let len = tree_rows(state);
+                    state.tables.cursor.go_to(row, len);
+                }
+                None => restore_origin(state, target, from),
             }
         }
-        Searched::Ddl => {
-            if let Some(row) = crate::view::ddl_next_match(state, from.row, direction) {
+        Searched::Ddl => match crate::view::ddl_next_match(state, from.row, direction) {
+            Some(row) => {
                 let len = crate::view::ddl_rows(state);
                 state.ddl.cursor.go_to(row, len);
             }
-        }
+            None => restore_origin(state, target, from),
+        },
         Searched::Contents => {
-            if let Some((row, column)) = state
+            let hit = state
                 .contents
-                .next_match((from.row, from.column), direction)
-            {
-                let rows = state.contents.row_count();
-                let columns = state.contents.column_count();
-                state.contents.cursor.go_to(row, rows);
-                state.contents.column.go_to(column, columns);
+                .next_match((from.row, from.column), direction);
+            match hit {
+                Some((row, column)) => {
+                    let rows = state.contents.row_count();
+                    let columns = state.contents.column_count();
+                    state.contents.cursor.go_to(row, rows);
+                    state.contents.column.go_to(column, columns);
+                }
+                None => restore_origin(state, target, from),
             }
         }
     }
@@ -7316,6 +7325,70 @@ mod tests {
         }
 
         assert_eq!(state.tables.cursor.index(), 1);
+    }
+
+    #[test]
+    fn a_term_extended_past_its_last_match_restores_the_cursor_to_origin() {
+        // Regression for the reviewer's repro: a term that jumps the cursor
+        // and then stops matching must snap back to `origin`, not strand the
+        // cursor at the last row it landed on (design §5.2).
+        let mut state = browsing_tables(&[
+            ("aaa", &[]),
+            ("bbb", &[]),
+            ("ccc", &[]),
+            ("ddd", &[]),
+            ("orders_ks", &[]),
+        ]);
+        state.focus_on(Panel::Tables);
+        state.tables.cursor.go_to(1, tree_rows(&state));
+        press(&mut state, Key::Char('/'));
+
+        for character in "orders".chars() {
+            press(&mut state, Key::Char(character));
+        }
+        assert_eq!(
+            state.tables.cursor.index(),
+            4,
+            "orders matches orders_ks, the fifth row"
+        );
+
+        press(&mut state, Key::Char('x'));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "ordersx matches nothing, so the cursor snaps back to origin"
+        );
+    }
+
+    #[test]
+    fn backspace_to_empty_restores_the_cursor_to_origin() {
+        let mut state = browsing_tables(&[
+            ("aaa", &[]),
+            ("bbb", &[]),
+            ("ccc", &[]),
+            ("ddd", &[]),
+            ("orders_ks", &[]),
+        ]);
+        state.focus_on(Panel::Tables);
+        state.tables.cursor.go_to(1, tree_rows(&state));
+        press(&mut state, Key::Char('/'));
+
+        for character in "ordersx".chars() {
+            press(&mut state, Key::Char(character));
+        }
+        assert_eq!(state.tables.cursor.index(), 1, "ordersx matches nothing");
+
+        for _ in 0.."ordersx".chars().count() {
+            press(&mut state, Key::Backspace);
+        }
+
+        assert_eq!(state.search(Searched::Tables), None);
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "the buffer is empty, but origin is still where the cursor belongs"
+        );
     }
 
     #[test]
