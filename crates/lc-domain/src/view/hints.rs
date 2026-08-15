@@ -84,7 +84,7 @@ pub(crate) const QUIT: Binding = Binding {
 /// (`lc-inbound::hints::fit` drops from the front of `global`) — a user
 /// who has read this far still has `?`/`esc`/`q` to fall back on, the
 /// ways out the bar keeps longest everywhere else (palette execution
-/// design §7).
+/// design §12).
 const PALETTE_GLOBAL: &[Binding] = &[
     Binding {
         keys: &[KeyPress::new(Key::Enter)],
@@ -169,7 +169,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
     // No panel group: moving — by a row, by a screen, or to an end — is
     // assumed rather than taught, in here as in every panel bar
     // (docs/shortcuts.md §2). What is left, `⏎ run` and the two ways out,
-    // is all global (palette execution design §7).
+    // is all global (palette execution design §12).
     if matches!(state.overlay, Some(Overlay::Commands(_))) {
         return HintBar {
             panel: Vec::new(),

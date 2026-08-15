@@ -2986,21 +2986,39 @@ mod tests {
         assert!(effects.is_empty(), "an empty buffer runs nothing");
     }
 
+    /// Design §9: "Every `Run::Inert` row leaves focus, both cursors, and
+    /// every selection as they were; only the overlay changed." `State` does
+    /// not derive `PartialEq`, so the comparison is by `view_model`, the same
+    /// shape `an_open_palette_swallows_the_keys_it_does_not_use` uses.
     #[test]
-    fn enter_on_a_form_row_closes_the_palette_and_stops() {
-        let mut state = measured(&["shop"]);
-        state.focus_on(Panel::Tables);
+    fn enter_on_an_inert_row_closes_the_palette_and_stops() {
+        for group in CATALOGUE {
+            for command in group.commands {
+                if command.run != Run::Inert {
+                    continue;
+                }
 
-        press(&mut state, Key::Char('?'));
-        seat_on(&mut state, "next field");
-        press(&mut state, Key::Enter);
+                let mut state = measured(&["shop"]);
+                state.focus_on(Panel::Tables);
+                let before = crate::view::view_model(&state);
 
-        assert!(state.overlay.is_none());
-        assert_eq!(
-            state.focus(),
-            Panel::Tables,
-            "replaying tab with no form up would have moved panel focus, which is not what the row says"
-        );
+                press(&mut state, Key::Char('?'));
+                seat_on(&mut state, command.binding.action);
+                press(&mut state, Key::Enter);
+
+                assert!(
+                    state.overlay.is_none(),
+                    "{:?} left the palette open",
+                    command.binding.action
+                );
+                assert_eq!(
+                    crate::view::view_model(&state),
+                    before,
+                    "{:?} changed more than the overlay",
+                    command.binding.action
+                );
+            }
+        }
     }
 
     /// Every row, from a state with a schema and a focused tree: the palette

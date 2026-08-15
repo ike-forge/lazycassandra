@@ -79,7 +79,11 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     frame.render_widget(block, area);
 
     let gutter = rows.iter().map(action_width).max().unwrap_or(0);
-    let items: Vec<ListItem> = rows.iter().map(|row| item(row, gutter, theme)).collect();
+    let items: Vec<ListItem> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| item(row, gutter, index == selected, theme))
+        .collect();
     let mut state = ListState::default().with_selected(Some(selected));
 
     frame.render_stateful_widget(
@@ -126,7 +130,7 @@ fn rules(
 /// The action leads and the keys follow, the order a search-actions dialogue
 /// uses: a reader of the open palette is looking for a thing to do and wants
 /// the key it costs, not scanning a column of keys for one they already know.
-fn item(row: &CommandRow, gutter: usize, theme: Theme) -> ListItem<'static> {
+fn item(row: &CommandRow, gutter: usize, selected: bool, theme: Theme) -> ListItem<'static> {
     match row {
         // Blank: `rules` paints the line itself, across the borders a
         // `ListItem` cannot reach.
@@ -150,9 +154,16 @@ fn item(row: &CommandRow, gutter: usize, theme: Theme) -> ListItem<'static> {
             action,
             liveness,
         } => {
-            let (key, text) = match liveness {
-                Liveness::Live => (Token::HintKey, Token::HintAction),
-                Liveness::Inert => (Token::Faint, Token::Faint),
+            // The cursor still lands on an inert row, and it still reads at
+            // full contrast there — a row you cannot run is still a row you
+            // are reading
+            // (docs/superpowers/specs/2026-08-15-palette-execution-design.md
+            // §8).
+            let (key, text) = match (liveness, selected) {
+                (Liveness::Live, _) | (Liveness::Inert, true) => {
+                    (Token::HintKey, Token::HintAction)
+                }
+                (Liveness::Inert, false) => (Token::Faint, Token::Faint),
             };
 
             ListItem::new(Line::from(vec![
@@ -186,12 +197,12 @@ mod tests {
     const WIDTH: u16 = 80;
     const HEIGHT: u16 = 12;
 
-    fn drawn(rows: &[CommandRow]) -> Buffer {
+    fn drawn(rows: &[CommandRow], selected: usize) -> Buffer {
         let mut terminal =
             Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("TestBackend always initialises");
 
         terminal
-            .draw(|frame| render(frame, rows, 0, Theme::default()))
+            .draw(|frame| render(frame, rows, selected, Theme::default()))
             .expect("TestBackend always draws");
 
         terminal.backend().buffer().clone()
@@ -223,7 +234,7 @@ mod tests {
         // holds the same floor on the real catalogue); pad past a bare
         // heading-plus-two so `rect` does not refuse the frame.
         let area = rect(Rect::new(0, 0, WIDTH, HEIGHT), rows.len()).expect("fits this frame");
-        let buffer = drawn(&rows);
+        let buffer = drawn(&rows, 0);
         let theme = Theme::default();
         // One column for the border, one for the palette's own PAD; one row
         // for the border, one for the heading.
@@ -241,6 +252,36 @@ mod tests {
                 .style(Token::HintAction)
                 .fg
                 .expect("a live action spends a colour")
+        );
+    }
+
+    /// Design §8: "it still reads at full contrast when selected — a row you
+    /// cannot run is still a row you are reading."
+    #[test]
+    fn a_selected_inert_row_reads_at_full_contrast() {
+        let rows = [
+            CommandRow::Heading("Export"),
+            row("next field", Liveness::Inert),
+            row("export these rows", Liveness::Live),
+            row("select, or export", Liveness::Live),
+            row("close the form", Liveness::Live),
+            row("previous field", Liveness::Live),
+        ];
+        let area = rect(Rect::new(0, 0, WIDTH, HEIGHT), rows.len()).expect("fits this frame");
+        // Index 1 in `rows` is the inert row; the cursor seats on it.
+        let buffer = drawn(&rows, 1);
+        let theme = Theme::default();
+        let x = area.x + 1 + PAD;
+        let y0 = area.y + 2;
+        let at_inert_row = buffer.cell((x, y0)).expect("inside the block").fg;
+
+        assert_eq!(
+            at_inert_row,
+            theme
+                .style(Token::HintAction)
+                .fg
+                .expect("a live action spends a colour"),
+            "a selected inert row must still read at full contrast"
         );
     }
 }

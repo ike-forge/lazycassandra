@@ -117,7 +117,7 @@ before the panel underneath is consulted (§2).
 focuses that panel first, whether or not the action that follows has anything
 to do. A row that means something only inside the export form is not pressed
 at all: it is drawn faint, and `⏎` on it closes the palette and stops
-([palette execution design](superpowers/specs/2026-08-15-palette-execution-design.md) §5).
+([palette execution design](superpowers/specs/2026-08-15-palette-execution-design.md) §8).
 
 ### The search prompt
 
