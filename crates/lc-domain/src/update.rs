@@ -2952,11 +2952,12 @@ mod tests {
         let mut state = measured(&["shop"]);
         state.focus_on(Panel::Queries);
         type_into(&mut state, "select * from shop.a");
-        // `?` cannot open the palette here: the editor claims it as text
-        // first, the same reason `an_open_palette_swallows_ctrl_r` opens the
-        // overlay directly rather than through a press.
-        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
+        // The buffer survives a focus change; leaving Queries before `?` is
+        // what lets the palette open through the real key path rather than
+        // by assigning the overlay directly.
+        state.focus_on(Panel::Tables);
 
+        press(&mut state, Key::Char('?'));
         seat_on(&mut state, "run the buffer");
         let effects = press(&mut state, Key::Enter);
 
@@ -3014,6 +3015,13 @@ mod tests {
                 let _ = press(&mut state, Key::Enter);
 
                 match command.run {
+                    // "Leave the editor" is the one row whose whole action is
+                    // to leave the panel it is filed under, so `⏎` on it
+                    // lands back on the default panel rather than on
+                    // Queries — a fair report of what Escape does there, not
+                    // a bug (`a_row_filed_under_a_panel_stays_in_that_panel`
+                    // carries the same exception).
+                    Run::In(_) if command.binding.action == "leave the editor" => {}
                     Run::In(panel) => assert_eq!(
                         state.focus(),
                         panel,
@@ -3037,6 +3045,13 @@ mod tests {
                 let Run::In(panel) = command.run else {
                     continue;
                 };
+                // The one honest exception: Escape's whole action in the
+                // editor is to leave it, so "leave the editor" is a row that
+                // leaves the panel it is filed under by design, not a row
+                // whose heading lies.
+                if command.binding.action == "leave the editor" {
+                    continue;
+                }
                 let key = *command
                     .binding
                     .keys
