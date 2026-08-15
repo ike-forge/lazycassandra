@@ -1,7 +1,7 @@
 //! What the focused panel responds to, as the bar will say it.
 
 use crate::model::{Key, KeyPress};
-use crate::search::Searched;
+use crate::search::{Direction, Searched};
 use crate::state::{Overlay, Panel, State};
 
 /// A binding, keyed by the presses `handle_key` actually matches on.
@@ -235,11 +235,18 @@ pub(crate) fn bar(state: &State) -> HintBar {
             ..rendered(binding)
         })
         .collect();
-    let searched = Searched::of(state.focus()).is_some_and(|target| state.search(target).is_some());
-    if searched {
-        panel.push(rendered(&NEXT_MATCH));
+    let target = Searched::of(state.focus()).filter(|target| state.search(*target).is_some());
+    if let Some(target) = target {
+        panel.push(Hint {
+            liveness: if next_match_is_live(state, target) {
+                Liveness::Live
+            } else {
+                Liveness::Inert
+            },
+            ..rendered(&NEXT_MATCH)
+        });
     }
-    if searched || selected(state) {
+    if target.is_some() || selected(state) {
         panel.push(rendered(&CLEAR));
     }
 
@@ -284,6 +291,32 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
     }
 
     Liveness::Live
+}
+
+/// Whether `n`/`N` would move `target`'s cursor this frame: whether the
+/// panel's own `next_match`, from where the cursor already sits, finds
+/// anything — which is `false` both when the term matches nothing and when
+/// Contents holds a search with no page loaded (design §5.3, §5.1).
+fn next_match_is_live(state: &State, target: Searched) -> bool {
+    match target {
+        Searched::Tables => state.schema().is_some_and(|schema| {
+            state
+                .tables
+                .next_match(schema, state.tables.cursor.index(), Direction::Forwards)
+                .is_some()
+        }),
+        Searched::Ddl => {
+            crate::view::ddl_next_match(state, state.ddl.cursor.index(), Direction::Forwards)
+                .is_some()
+        }
+        Searched::Contents => state
+            .contents
+            .next_match(
+                (state.contents.cursor.index(), state.contents.column.index()),
+                Direction::Forwards,
+            )
+            .is_some(),
+    }
 }
 
 fn rendered(binding: &Binding) -> Hint {
@@ -586,6 +619,48 @@ mod tests {
                 .panel
                 .iter()
                 .any(|hint| hint.keys == "n" && hint.action == "next match")
+        );
+    }
+
+    fn next_match_hint(bar: &HintBar) -> &Hint {
+        bar.panel
+            .iter()
+            .find(|hint| hint.action == "next match")
+            .expect("a search is applied, so the hint is named")
+    }
+
+    #[test]
+    fn the_next_match_hint_is_inert_when_the_term_matches_nothing() {
+        let mut state = crate::view::tests_support::tabled(&[("shop", &["orders"])]);
+        state.focus_on(Panel::Tables);
+        state.apply_search(Searched::Tables, Search::new("zzz"));
+
+        assert_eq!(
+            next_match_hint(&bar(&state)).liveness,
+            Liveness::Inert,
+            "n does nothing when nothing matches, and a bar that lies is worse than no bar"
+        );
+    }
+
+    #[test]
+    fn the_next_match_hint_is_live_when_something_matches() {
+        let mut state = crate::view::tests_support::tabled(&[("shop", &["orders"])]);
+        state.focus_on(Panel::Tables);
+        state.apply_search(Searched::Tables, Search::new("shop"));
+
+        assert_eq!(next_match_hint(&bar(&state)).liveness, Liveness::Live);
+    }
+
+    #[test]
+    fn the_next_match_hint_is_inert_in_contents_with_no_page_loaded() {
+        let mut state = fits();
+        state.focus_on(Panel::Contents);
+        state.apply_search(Searched::Contents, Search::new("id"));
+
+        assert_eq!(
+            next_match_hint(&bar(&state)).liveness,
+            Liveness::Inert,
+            "n does nothing over an empty grid"
         );
     }
 
