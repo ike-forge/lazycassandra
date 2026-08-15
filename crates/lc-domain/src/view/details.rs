@@ -10,7 +10,7 @@ use crate::ddl::DdlTab;
 use crate::model::{
     ClassKind, ClassOption, ClusteringOrder, Column, Keyspace, Replication, Setting, Table,
 };
-use crate::search::Search;
+use crate::search::{Direction, Search};
 use crate::state::{Panel, State};
 use crate::style::Token;
 use crate::tree::Node;
@@ -285,10 +285,7 @@ fn scrolled(state: &State, details: Details) -> PanelBody {
 impl DetailRow {
     /// Whether `n` stops on this row — not whether it is drawn: every row is
     /// drawn regardless of a search (design §4.2).
-    // `n`'s `next_match` (search highlight design §5.1) is the only
-    // production caller and lands in a later task of this slice; until then
-    // only the tests below reach this.
-    #[allow(dead_code)]
+    #[must_use]
     pub(crate) fn matches(&self, search: &Search) -> bool {
         match self {
             Self::KeyColumn { name, cql_type, .. } | Self::Column { name, cql_type, .. } => {
@@ -304,6 +301,28 @@ impl DetailRow {
             Self::Identity { name, .. } => search.matches(name),
         }
     }
+}
+
+/// The row `n` reaches from `from`, wrapping (design §5.1).
+///
+/// Over `Details::rows`, which is the sequence the panel draws and the
+/// sequence its cursor counts, so the two cannot disagree about what row 5 is.
+#[must_use]
+pub(crate) fn next_match(
+    details: &Details,
+    search: &Search,
+    from: usize,
+    direction: Direction,
+) -> Option<usize> {
+    let rows: Vec<&DetailRow> = details.rows().collect();
+    let len = rows.len();
+
+    (0..len)
+        .scan(from, |at, _| {
+            *at = direction.step(*at, len);
+            Some(*at)
+        })
+        .find(|at| rows[*at].matches(search))
 }
 
 /// One table option, read as a class where its name says it carries one and
@@ -1104,6 +1123,43 @@ mod tests {
                 .any(|heading| heading == "Options"),
             "Options has no matching row and must still be drawn"
         );
+    }
+
+    #[test]
+    fn the_next_match_is_the_one_after_the_cursor() {
+        let state = searched_ddl("order");
+        let search = state.ddl.search().expect("applied above");
+        let details = details(&state);
+
+        let first = next_match(&details, search, 0, Direction::Forwards).expect("a match");
+        let second =
+            next_match(&details, search, first, Direction::Forwards).expect("a second match");
+
+        assert!(second > first, "n moves forward: {first} then {second}");
+    }
+
+    #[test]
+    fn the_next_match_wraps_and_a_lone_match_returns_to_itself() {
+        let state = searched_ddl("customer_id");
+        let search = state.ddl.search().expect("applied above");
+        let details = details(&state);
+
+        let only = next_match(&details, search, 0, Direction::Forwards).expect("a match");
+
+        assert_eq!(
+            next_match(&details, search, only, Direction::Forwards),
+            Some(only),
+            "one match is its own next"
+        );
+    }
+
+    #[test]
+    fn no_match_is_none() {
+        let state = searched_ddl("zzz");
+        let search = state.ddl.search().expect("applied above");
+        let details = details(&state);
+
+        assert_eq!(next_match(&details, search, 0, Direction::Forwards), None);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use crate::model::{Keyspace, Schema, Table};
-use crate::search::Search;
+use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
 
 /// The Tables panel's own state.
@@ -109,6 +109,31 @@ impl TablesPanel {
                 .tables
                 .values()
                 .any(|table| search.matches(&table.name))
+    }
+
+    /// The row `n` reaches from `from`, wrapping, or `None` when no search is
+    /// applied or nothing matches.
+    ///
+    /// `from` is exclusive, so `n` on a match goes to the next one and a lone
+    /// match is its own next (design §5.1). Derived from `rows` rather than
+    /// from a stored match list: the answer is O(rows) over data already in
+    /// memory, and a stored list would need invalidating on every schema
+    /// reload, fold and term change.
+    #[must_use]
+    pub fn next_match(&self, schema: &Schema, from: usize, direction: Direction) -> Option<usize> {
+        let search = self.search.as_ref()?;
+        let rows = self.rows(schema);
+        let len = rows.len();
+
+        (0..len)
+            .scan(from, |at, _| {
+                *at = direction.step(*at, len);
+                Some(*at)
+            })
+            .find(|at| match rows[*at] {
+                Node::Keyspace { keyspace, .. } => search.matches(&keyspace.name),
+                Node::Table { table, .. } => search.matches(&table.name),
+            })
     }
 
     /// The node the cursor is on.
@@ -637,6 +662,57 @@ mod tests {
             labels.iter().any(|label| label.contains("orders")),
             "a match inside a folded keyspace is not left hidden: {labels:?}"
         );
+    }
+
+    fn schema() -> Schema {
+        schema_of(&[
+            ("shop", &["orders", "orders_by_customer"][..]),
+            ("logs", &["order_events"][..]),
+        ])
+    }
+
+    #[test]
+    fn the_next_match_is_the_one_after_the_cursor() {
+        let schema = schema();
+        let mut panel = TablesPanel::default();
+        panel.set_search(Search::new("order"));
+
+        let first = panel
+            .next_match(&schema, 0, Direction::Forwards)
+            .expect("a match");
+        let second = panel
+            .next_match(&schema, first, Direction::Forwards)
+            .expect("a second match");
+
+        assert!(second > first, "n moves forward: {first} then {second}");
+    }
+
+    #[test]
+    fn the_next_match_wraps_and_a_lone_match_returns_to_itself() {
+        let schema = schema();
+        let mut panel = TablesPanel::default();
+        panel.set_search(Search::new("orders_by_customer"));
+
+        let only = panel
+            .next_match(&schema, 0, Direction::Forwards)
+            .expect("a match");
+
+        assert_eq!(
+            panel.next_match(&schema, only, Direction::Forwards),
+            Some(only),
+            "one match is its own next"
+        );
+    }
+
+    #[test]
+    fn no_search_and_no_match_are_both_none() {
+        let schema = schema();
+        let mut panel = TablesPanel::default();
+
+        assert_eq!(panel.next_match(&schema, 0, Direction::Forwards), None);
+
+        panel.set_search(Search::new("zzz"));
+        assert_eq!(panel.next_match(&schema, 0, Direction::Forwards), None);
     }
 
     #[test]

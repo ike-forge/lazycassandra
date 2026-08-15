@@ -7,7 +7,7 @@
 
 use crate::grid::ColumnScroll;
 use crate::model::{DbError, Page, QueryId};
-use crate::search::Search;
+use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
 
 /// The Contents panel's own state.
@@ -212,6 +212,42 @@ impl ContentsPanel {
         self.search = search;
     }
 
+    /// The cell `n` reaches from `from`, as `(row, column)`, wrapping.
+    ///
+    /// Row-major: across the row first, then down. Both cursors move, so the
+    /// cell cursor lands on the cell that matched — which is the reason the
+    /// panel has two (design §5.1).
+    #[must_use]
+    pub fn next_match(&self, from: (usize, usize), direction: Direction) -> Option<(usize, usize)> {
+        let search = self.search.as_ref()?;
+        let ContentsState::Loaded { page, .. } = &self.state else {
+            return None;
+        };
+        let page = page.page();
+        let columns = page.columns.len();
+        let len = page.rows.len().checked_mul(columns)?;
+
+        if len == 0 {
+            return None;
+        }
+
+        let from = from.0 * columns + from.1;
+
+        (0..len)
+            .scan(from, |at, _| {
+                *at = direction.step(*at, len);
+                Some(*at)
+            })
+            .find(|at| {
+                let (row, column) = (at / columns, at % columns);
+                page.rows[row]
+                    .values
+                    .get(column)
+                    .is_some_and(|value| search.matches(&crate::cell::text(value)))
+            })
+            .map(|at| (at / columns, at % columns))
+    }
+
     /// The query this panel is waiting on, if any.
     #[must_use]
     pub const fn outstanding(&self) -> Option<QueryId> {
@@ -329,6 +365,69 @@ mod tests {
         let query = QueryId::next();
         panel.requested(query, Subject::Table(TableRef::new("shop", "orders")));
         (panel, query)
+    }
+
+    /// Two columns, three rows, with matches for `"ali"` at `(0, 1)` and
+    /// `(2, 1)` only — `(0, 0)` deliberately does not match, so a forward
+    /// search from it and a forward search from the last match can be
+    /// compared for equality.
+    fn loaded_panel() -> ContentsPanel {
+        let (mut panel, query) = loading();
+        panel.page_ready(
+            query,
+            Page {
+                columns: vec!["a".to_owned(), "b".to_owned()],
+                rows: vec![
+                    Row {
+                        values: vec![
+                            CqlValue::Text("Bob".to_owned()),
+                            CqlValue::Text("Ali".to_owned()),
+                        ],
+                    },
+                    Row {
+                        values: vec![
+                            CqlValue::Text("Carl".to_owned()),
+                            CqlValue::Text("Dana".to_owned()),
+                        ],
+                    },
+                    Row {
+                        values: vec![
+                            CqlValue::Text("Eve".to_owned()),
+                            CqlValue::Text("Alison".to_owned()),
+                        ],
+                    },
+                ],
+                next: None,
+            },
+        );
+        panel
+    }
+
+    #[test]
+    fn the_next_match_is_the_next_cell_row_major() {
+        let mut panel = loaded_panel();
+        panel.set_search(Search::new("ali"));
+
+        assert_eq!(
+            panel.next_match((0, 0), Direction::Forwards),
+            Some((0, 1)),
+            "across the row before down it"
+        );
+    }
+
+    #[test]
+    fn the_next_match_wraps_past_the_last_row() {
+        let mut panel = loaded_panel();
+        panel.set_search(Search::new("ali"));
+        let last = panel
+            .next_match((0, 0), Direction::Backwards)
+            .expect("a match");
+
+        assert_eq!(
+            panel.next_match(last, Direction::Forwards),
+            panel.next_match((0, 0), Direction::Forwards),
+            "forward from the last match is the first one again"
+        );
     }
 
     #[test]

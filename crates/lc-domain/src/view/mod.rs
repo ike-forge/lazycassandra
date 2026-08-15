@@ -28,6 +28,7 @@ use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
 use crate::export::{Confirm, Format, Scope, Stop};
 use crate::model::DbError;
+use crate::search::Direction;
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
 use crate::theme::{BuiltIn, ThemeChoice};
@@ -344,6 +345,16 @@ pub fn details_of(state: &State) -> Option<Details> {
     details::of(state)
 }
 
+/// The Table DDL row `n` reaches, for a caller that has a `State` and not a
+/// `Details`.
+#[must_use]
+pub fn ddl_next_match(state: &State, from: usize, direction: Direction) -> Option<usize> {
+    let search = state.ddl.search()?;
+    let details = details::of(state)?;
+
+    details::next_match(&details, search, from, direction)
+}
+
 /// The tabs the Ddl panel offers for what the Tables cursor is on.
 ///
 /// Public because the key that reaches a tab must not store one the strip
@@ -536,6 +547,33 @@ mod tests {
         assert_eq!(view.panels[2].search.as_deref(), Some("ORD"), "as typed");
         assert_eq!(view.panels[0].search, None);
         assert_eq!(view.panels[3].search, None, "Queries holds none");
+    }
+
+    #[test]
+    fn ddl_next_match_walks_the_selected_tables_rows() {
+        let mut state = tabled(&[("shop", &["orders_by_customer"])]);
+        let schema = state.schema().expect("connected above").clone();
+        state.tables.open(&schema);
+        state.tables.open(&schema);
+        state.apply_search(
+            crate::search::Searched::Ddl,
+            crate::search::Search::new("order"),
+        );
+
+        assert!(
+            ddl_next_match(&state, 0, Direction::Forwards).is_some(),
+            "the search reaches the selected table's own rows"
+        );
+    }
+
+    #[test]
+    fn ddl_next_match_is_none_without_a_search() {
+        let mut state = tabled(&[("shop", &["orders_by_customer"])]);
+        let schema = state.schema().expect("connected above").clone();
+        state.tables.open(&schema);
+        state.tables.open(&schema);
+
+        assert_eq!(ddl_next_match(&state, 0, Direction::Forwards), None);
     }
 
     #[test]

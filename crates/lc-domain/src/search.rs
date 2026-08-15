@@ -144,6 +144,30 @@ impl Searched {
     }
 }
 
+/// Which way `n` and `N` walk the matches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Forwards,
+    Backwards,
+}
+
+impl Direction {
+    /// The next position along, wrapping. `len` is never zero at a call site
+    /// that has a match to step towards, and a zero returns zero rather than
+    /// panicking on the remainder.
+    #[must_use]
+    pub const fn step(self, at: usize, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+
+        match self {
+            Self::Forwards => (at + 1) % len,
+            Self::Backwards => (at + len - 1) % len,
+        }
+    }
+}
+
 /// An open search prompt.
 ///
 /// Lives in [`crate::state::Overlay`] rather than beside it, so "a palette and
@@ -325,6 +349,13 @@ mod tests {
         assert_eq!(Searched::of(Panel::Ddl), Some(Searched::Ddl));
         assert_eq!(Searched::of(Panel::Contents), Some(Searched::Contents));
         assert_eq!(Searched::of(Panel::Queries), None);
+    }
+
+    #[test]
+    fn a_step_wraps_at_both_ends() {
+        assert_eq!(Direction::Forwards.step(2, 3), 0);
+        assert_eq!(Direction::Backwards.step(0, 3), 2);
+        assert_eq!(Direction::Forwards.step(0, 1), 0, "one row is its own next");
     }
 
     #[test]
