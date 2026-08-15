@@ -26,7 +26,7 @@ const MAX_W: u16 = 60;
 const MIN_H: u16 = 8;
 /// Between the left border and the keys column.
 const PAD: u16 = 1;
-/// Between the keys column and the action column.
+/// Between the action column and the keys column.
 const GAP: &str = "  ";
 
 /// Where a palette listing `rows` rows goes in `area`, or `None` when it does
@@ -67,7 +67,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
+        .border_style(theme.modal_border())
         .title("Commands");
     let inner = block.inner(area).inner(Margin {
         horizontal: PAD,
@@ -78,7 +78,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     frame.buffer_mut().set_style(area, theme.overlay_ground());
     frame.render_widget(block, area);
 
-    let gutter = rows.iter().map(keys_width).max().unwrap_or(0);
+    let gutter = rows.iter().map(action_width).max().unwrap_or(0);
     let items: Vec<ListItem> = rows
         .iter()
         .map(|row| item(row, gutter, inner.width, theme))
@@ -98,13 +98,17 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     };
 
     if extent.overflows() {
-        crate::render::scrollbar(frame, area, &extent, theme.border_style(), theme);
+        crate::render::scrollbar(frame, area, &extent, theme.modal_border(), theme);
     }
 }
 
 /// The palette says in a column what the bar says in a row, so it says it with
 /// the bar's tokens — a `CommandKey` token would be a second name for one
 /// meaning (architecture.md §6).
+///
+/// The action leads and the keys follow, the order a search-actions dialogue
+/// uses: a reader of the open palette is looking for a thing to do and wants
+/// the key it costs, not scanning a column of keys for one they already know.
 fn item(row: &CommandRow, gutter: usize, width: u16, theme: Theme) -> ListItem<'static> {
     match row {
         CommandRow::Separator => ListItem::new(Line::from(Span::styled(
@@ -121,22 +125,22 @@ fn item(row: &CommandRow, gutter: usize, width: u16, theme: Theme) -> ListItem<'
         // own ground, where the colour is the whole signal and an underline
         // under every row is a texture rather than a mark.
         CommandRow::Command { keys, action } => ListItem::new(Line::from(vec![
+            Span::styled(format!("{action:<gutter$}"), theme.style(Token::HintAction)),
             Span::styled(
-                format!("{keys:<gutter$}"),
+                format!("{GAP}{keys}"),
                 theme
                     .style(Token::HintKey)
                     .remove_modifier(Modifier::UNDERLINED),
             ),
-            Span::styled(format!("{GAP}{action}"), theme.style(Token::HintAction)),
         ])),
     }
 }
 
 /// Columns, on the same single-width assumption the hint bar makes of the
 /// labels `hints::name` produces.
-fn keys_width(row: &CommandRow) -> usize {
+fn action_width(row: &CommandRow) -> usize {
     match row {
         CommandRow::Heading(_) | CommandRow::Separator => 0,
-        CommandRow::Command { keys, .. } => keys.chars().count(),
+        CommandRow::Command { action, .. } => action.chars().count(),
     }
 }

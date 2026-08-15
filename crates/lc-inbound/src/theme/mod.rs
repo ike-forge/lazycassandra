@@ -222,6 +222,13 @@ impl Theme {
         Style::new().bg(self.palette.surface).fg(self.palette.text)
     }
 
+    /// A modal overlay's border. The overlay takes every key while it is up,
+    /// so it wears the accent a focused panel wears — and the panels beneath
+    /// it have just stopped wearing it (`render::dims_the_panels`).
+    pub(crate) fn modal_border(self) -> Style {
+        self.border_style().patch(self.style(Token::Focused))
+    }
+
     /// A panel's border. `Token::Focused` is patched on top of this rather
     /// than replacing it, so a focused panel's border becomes the theme's
     /// `focus` colour on top of `border`.

@@ -52,7 +52,7 @@ pub(crate) fn render(frame: &mut Frame, labels: &[String], selected: usize, them
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
+        .border_style(theme.modal_border())
         .title("Theme");
     let inner = block.inner(area).inner(Margin {
         horizontal: PAD,

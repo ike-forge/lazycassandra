@@ -631,6 +631,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
+    use ratatui::layout::Position;
     use ratatui::style::{Color, Modifier};
     use std::collections::BTreeMap;
 
@@ -4364,8 +4365,13 @@ mod tests {
                 .expect("a section heading spends a colour"),
             "a heading wears what Options wears"
         );
+        let area = block_area(&buffer, "Commands");
         assert!(
-            !cell(y + 2).modifier.contains(Modifier::UNDERLINED),
+            (area.x + 1..area.right() - 1).all(|x| !buffer
+                .cell((x, y + 2))
+                .expect("inside the block")
+                .modifier
+                .contains(Modifier::UNDERLINED)),
             "a key in a column carries no underline: the colour is the whole mark"
         );
     }
@@ -4393,25 +4399,54 @@ mod tests {
         );
     }
 
+    /// The action leads, the keys follow — the shape a search-actions dialogue
+    /// has, and the reason `MIN_W`'s two columns swapped places.
     #[test]
-    fn the_panels_under_the_palette_show_no_focus() {
+    fn a_command_row_names_what_it_does_before_the_key_it_costs() {
+        let buffer = with_palette(100, 40);
+        let row = block_row(&buffer, "Commands", 12);
+
+        assert_eq!(row.trim(), "yank                  y");
+    }
+
+    #[test]
+    fn the_palette_wears_the_focus_the_panels_gave_up() {
         let lit = draw(100, 40);
-        let dimmed = with_palette(100, 40);
+        let covered = with_palette(100, 40);
         let focus = Theme::default().palette().focus;
-        let bordered = |buffer: &Buffer| {
-            buffer
-                .content()
-                .iter()
-                .filter(|cell| cell.fg == focus)
+        let modal = block_area(&covered, "Commands");
+        let outside = |buffer: &Buffer, block: Option<Rect>| {
+            cells(buffer)
+                .filter(|(at, cell)| {
+                    cell.fg == focus && !block.is_some_and(|block| block.contains(*at))
+                })
                 .count()
         };
 
-        assert!(bordered(&lit) > 0, "a focused panel is drawn in focus");
+        assert!(outside(&lit, None) > 0, "a focused panel is drawn in focus");
         assert_eq!(
-            bordered(&dimmed),
+            outside(&covered, Some(modal)),
             0,
             "and nothing beneath a modal claims the focus the modal has"
         );
+        assert!(
+            cells(&covered).any(|(at, cell)| modal.contains(at) && cell.fg == focus),
+            "which the modal itself is now wearing"
+        );
+    }
+
+    /// Every cell of `buffer`, with where it sits.
+    fn cells(buffer: &Buffer) -> impl Iterator<Item = (Position, &Cell)> {
+        buffer.content().iter().enumerate().map(|(index, cell)| {
+            let index = u16::try_from(index).unwrap_or(u16::MAX);
+            (
+                Position::new(
+                    buffer.area.x + index % buffer.area.width,
+                    buffer.area.y + index / buffer.area.width,
+                ),
+                cell,
+            )
+        })
     }
 
     /// Not focused, and not fainter than the panels that were never focused
