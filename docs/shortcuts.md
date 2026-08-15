@@ -906,7 +906,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The bar names `/ search` where it does something, and not in Queries | `the_bar_names_search_in_every_panel_that_can_hold_a_filter`, `the_bar_does_not_name_search_in_queries` (`view/hints.rs`) |
 | The bar names `esc clear` only where a filter is applied | `the_bar_names_esc_clear_only_where_a_filter_is_applied` (`view/hints.rs`) |
 | The bar names the prompt's own keys while it is up | `the_bar_names_what_the_prompt_responds_to` (`view/hints.rs`) |
-| The palette lists `/` | `the_catalogue_lists_search` (`commands.rs`) |
+| The palette lists `/`, under Global | `the_catalogue_lists_search_among_the_global_keys` (`commands.rs`) |
 | The marker is drawn, muted, right-aligned | `a_panel_wears_the_filter_applied_to_it`, `the_marker_is_drawn_muted` (`inbound/render.rs`) |
 | The marker is dropped rather than truncated | `the_marker_is_dropped_rather_than_truncated`, `the_marker_fits_flush_against_the_corner_it_is_tuned_for` (`inbound/render.rs`) |
 | An unfocused panel still wears its marker | `an_unfocused_panel_still_wears_its_marker` (`inbound/render.rs`) |

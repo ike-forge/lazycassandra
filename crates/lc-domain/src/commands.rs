@@ -58,6 +58,15 @@ const GLOBAL: &[Command] = &[
         "choose a theme",
         Run::Here,
     ),
+    // Queries is the one panel this does nothing in: there the editor claims
+    // `/` as text before the binding is consulted (panel search design §5.3,
+    // §8). That is a panel that has not caught up rather than a key that is
+    // not global (palette execution design §6).
+    Command::new(
+        &[KeyPress::new(Key::Char('/'))],
+        "search this panel",
+        Run::Here,
+    ),
     Command::new(
         &[KeyPress::new(Key::Escape)],
         "dismiss the overlay",
@@ -82,16 +91,6 @@ const GLOBAL: &[Command] = &[
     Command::new(&[KeyPress::new(Key::Char('y'))], "yank", Run::Here),
     Command::new(&[KeyPress::new(Key::Char('v'))], "select rows", Run::Here),
 ];
-
-/// `/` joins the focused panel's own group, not `GLOBAL`: it does nothing in
-/// Queries, where the editor claims it as text before this binding is ever
-/// consulted (panel search design §5.3, §8). `GLOBAL` would assert it works
-/// everywhere, which is false there.
-const SEARCH: &[Command] = &[Command::new(
-    &[KeyPress::new(Key::Char('/'))],
-    "search this panel",
-    Run::Here,
-)];
 
 const MOTION: &[Command] = &[
     Command::new(
@@ -162,11 +161,7 @@ const EXPORT: &[Command] = &[
         Run::In(Panel::Contents),
     ),
     Command::new(&[KeyPress::new(Key::Tab)], "next field", Run::Inert),
-    Command::new(
-        &[KeyPress::new(Key::BackTab)],
-        "previous field",
-        Run::Inert,
-    ),
+    Command::new(&[KeyPress::new(Key::BackTab)], "previous field", Run::Inert),
     Command::new(
         &[KeyPress::new(Key::Char(' '))],
         "select, or export",
@@ -229,10 +224,6 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Tables",
         commands: TABLES,
-    },
-    Group {
-        heading: "Search",
-        commands: SEARCH,
     },
     Group {
         heading: "Table contents",
@@ -548,14 +539,27 @@ mod tests {
         assert_eq!(rows.len(), row_count());
     }
 
+    /// `/` is global, and Queries is the one panel that has not caught up:
+    /// there the editor claims it as text before the binding is consulted
+    /// (panel search design §5.3). A heading of its own said that far more
+    /// heavily than a comment does.
     #[test]
-    fn the_catalogue_lists_search() {
+    fn the_catalogue_lists_search_among_the_global_keys() {
+        let global = CATALOGUE
+            .iter()
+            .find(|group| group.heading == "Global")
+            .expect("no Global group");
+
         assert!(
-            commands().iter().any(|command| command
-                .binding
-                .keys
-                .contains(&KeyPress::new(Key::Char('/')))),
-            "no row binds /"
+            global
+                .commands
+                .iter()
+                .any(|command| command.binding.keys == [KeyPress::new(Key::Char('/'))]),
+            "no global row binds /"
+        );
+        assert!(
+            !CATALOGUE.iter().any(|group| group.heading == "Search"),
+            "one row does not need a heading"
         );
     }
 
