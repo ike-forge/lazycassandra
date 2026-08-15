@@ -288,10 +288,13 @@ fn row_lines(
 /// — the shape a key column already uses, so the two read as one table down
 /// the panel.
 ///
-/// The label wears the icon and the colour the Tables tree gives that kind of
-/// name, and the name itself is left plain: the label is what tells the two
-/// rows apart, and two coloured runs on a line this narrow is one too many
-/// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.2).
+/// Label and name both wear the icon and the colour the Tables tree gives that
+/// kind of name. This withdraws
+/// docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.2's "the name
+/// is left plain": the name is the schema, and a schema name reads as one
+/// wherever it is written — the tree, the Table contents title, this row
+/// (vision.md §2). The two runs are one colour, not two, so the line is no
+/// busier than it was.
 fn identity_lines(
     kind: IdentityKind,
     name: &str,
@@ -307,15 +310,12 @@ fn identity_lines(
         .into_iter()
         .enumerate()
         .map(|(index, text)| {
+            let style = theme.style(kind.token());
+
             if index == 0 {
-                marked(&text, taken, theme.style(kind.token()), search, theme)
+                marked(&text, taken, style, search, theme)
             } else {
-                Line::from(crate::highlight::spans(
-                    &text,
-                    search,
-                    Style::default(),
-                    theme,
-                ))
+                Line::from(crate::highlight::spans(&text, search, style, theme))
             }
         })
         .collect()
@@ -370,8 +370,8 @@ fn column_lines(
 }
 
 /// `text` with its first `taken` characters lifted into a span of their own;
-/// the rest split against `search` (the label is never matched — Identity
-/// matches only `name`, search highlight design §4.2).
+/// the rest split against `search` in the same style (the label is never
+/// matched — Identity matches only `name`, search highlight design §4.2).
 fn marked(
     text: &str,
     taken: usize,
@@ -383,12 +383,7 @@ fn marked(
     let rest: String = text.chars().skip(taken).collect();
 
     let mut spans = vec![TextSpan::styled(mark, style)];
-    spans.extend(crate::highlight::spans(
-        &rest,
-        search,
-        Style::default(),
-        theme,
-    ));
+    spans.extend(crate::highlight::spans(&rest, search, style, theme));
     Line::from(spans)
 }
 
@@ -805,8 +800,10 @@ mod tests {
         );
     }
 
+    /// Label and name alike: the name is the schema, and a schema name is
+    /// drawn as one wherever it is written (vision.md §2).
     #[test]
-    fn only_the_label_of_an_identity_row_carries_the_kinds_colour() {
+    fn an_identity_row_carries_the_kinds_colour_over_both_its_halves() {
         let theme = Theme::default();
         let lines = identity_lines(IdentityKind::Keyspace, "shop", 23, None, theme);
         let keyspace = theme.style(Token::Keyspace).fg;
@@ -816,11 +813,30 @@ mod tests {
             lines[0].spans[0].content,
             format!("{}Keyspace", crate::icons::KEYSPACE)
         );
-        assert_eq!(lines[0].spans[0].style.fg, keyspace);
-        assert_eq!(
-            lines[0].spans[1].style.fg, None,
-            "the name is left alone, as a column's is beside its marker"
-        );
+
+        for span in &lines[0].spans {
+            assert_eq!(
+                span.style.fg, keyspace,
+                "{:?} lost the colour",
+                span.content
+            );
+        }
+    }
+
+    /// A name too long for the margin wraps to a line of its own, which is
+    /// still the same name and still the same colour.
+    #[test]
+    fn a_wrapped_identity_name_keeps_the_kinds_colour() {
+        let theme = Theme::default();
+        let lines = identity_lines(IdentityKind::Table, "orders_by_customer", 23, None, theme);
+        let table = theme.style(Token::Table).fg;
+
+        assert!(lines.len() > 1, "the name has to have wrapped");
+        for line in &lines {
+            for span in &line.spans {
+                assert_eq!(span.style.fg, table, "{:?} lost the colour", span.content);
+            }
+        }
     }
 
     #[test]

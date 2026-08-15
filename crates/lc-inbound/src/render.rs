@@ -6,7 +6,7 @@ use lc_domain::style::Token;
 use lc_domain::view::{OverlayView, PanelTitle, Tab};
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, ScrollbarState};
@@ -453,7 +453,9 @@ fn panel_title<'a>(
         };
 
         for segment in segments {
-            let run = segment.token.map_or(style, |token| theme.style(token));
+            let run = segment
+                .token
+                .map_or(style, |token| schema_run(theme.style(token)));
 
             spans.push(Span::styled(segment.text.clone(), run));
         }
@@ -461,6 +463,15 @@ fn panel_title<'a>(
 
     spans.push(Span::raw(TITLE_PAD));
     Line::from(spans)
+}
+
+/// A title run that carries its own token, drawn on a border whose style it
+/// inherits. The bold comes from [`Theme::focus_border`] and belongs to the
+/// border and the panel's own name — a schema name is not emphasis, and a
+/// title that bolds it says the name matters more than the row it came from
+/// (vision.md §2).
+fn schema_run(style: Style) -> Style {
+    style.remove_modifier(Modifier::BOLD)
 }
 
 /// How much of a panel's title strip its border turned out to hold.
@@ -1707,6 +1718,32 @@ mod tests {
         assert_eq!(fg(at("shop")), theme.style(Token::Keyspace).fg);
         assert_eq!(fg(at("orders")), theme.style(Token::Table).fg);
         assert_eq!(fg(at("shop") + 4), theme.style(Token::Faint).fg, "the dot");
+    }
+
+    /// The focused panel's border is bold, and the title inherits it. A schema
+    /// name is not emphasis, so it does not keep it.
+    #[test]
+    fn a_titles_table_is_not_bold_under_the_focused_borders_own_weight() {
+        let state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
+        let buffer = draw_state(60, 12, &state);
+        let border = row(&buffer, 0);
+        let bold = |text: &str| {
+            let byte = border.find(text).expect("the title names the table");
+            let column = u16::try_from(border[..byte].chars().count()).expect("a 60-column frame");
+
+            buffer
+                .cell((column, 0))
+                .expect("inside the border")
+                .modifier
+                .contains(Modifier::BOLD)
+        };
+
+        assert!(!bold("shop"), "the keyspace kept the border's weight");
+        assert!(!bold("orders"), "the table kept the border's weight");
+        assert!(
+            bold("[3]"),
+            "the panel's own number still wears the focus the border gave it"
+        );
     }
 
     #[test]

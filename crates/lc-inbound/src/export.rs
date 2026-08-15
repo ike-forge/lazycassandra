@@ -6,6 +6,7 @@ use lc_domain::style::{Segment, Token};
 use lc_domain::view::ExportView;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 use unicode_width::UnicodeWidthChar as _;
@@ -51,7 +52,12 @@ fn title(segments: &[Segment], theme: Theme) -> TextLine<'static> {
         segments
             .iter()
             .map(|segment| match segment.token {
-                Some(token) => Span::styled(segment.text.clone(), theme.style(token)),
+                // Bold dropped for the reason `render::schema_run` gives: the
+                // form's border is bold, and a schema name is not emphasis.
+                Some(token) => Span::styled(
+                    segment.text.clone(),
+                    theme.style(token).remove_modifier(Modifier::BOLD),
+                ),
                 None => Span::raw(segment.text.clone()),
             })
             .collect::<Vec<_>>(),
