@@ -150,6 +150,14 @@ const CLEAR: Binding = Binding {
     action: "clear",
 };
 
+/// Named on the same condition as [`CLEAR`]: `n`/`N` are inert without a
+/// search applied, and a hint that would do nothing this frame is a lie
+/// (docs/shortcuts.md §2, design §5.3).
+const NEXT_MATCH: Binding = Binding {
+    keys: &[KeyPress::new(Key::Char('n'))],
+    action: "next match",
+};
+
 pub(crate) fn bar(state: &State) -> HintBar {
     let export = state
         .export
@@ -228,6 +236,9 @@ pub(crate) fn bar(state: &State) -> HintBar {
         })
         .collect();
     let searched = Searched::of(state.focus()).is_some_and(|target| state.search(target).is_some());
+    if searched {
+        panel.push(rendered(&NEXT_MATCH));
+    }
     if searched || selected(state) {
         panel.push(rendered(&CLEAR));
     }
@@ -554,6 +565,27 @@ mod tests {
                 .iter()
                 .any(|hint| hint.keys == "esc" && hint.action == "clear"),
             "in this frame pressing esc unconditionally does something"
+        );
+    }
+
+    #[test]
+    fn the_bar_names_n_only_where_a_search_is_applied() {
+        let mut state = fits();
+        state.focus_on(Panel::Tables);
+        assert!(
+            bar(&state)
+                .panel
+                .iter()
+                .all(|hint| hint.action != "next match")
+        );
+
+        state.apply_search(Searched::Tables, Search::new("o"));
+
+        assert!(
+            bar(&state)
+                .panel
+                .iter()
+                .any(|hint| hint.keys == "n" && hint.action == "next match")
         );
     }
 

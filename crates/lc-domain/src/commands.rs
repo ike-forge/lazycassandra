@@ -77,10 +77,20 @@ const GLOBAL: &[Binding] = &[
 /// Queries, where the editor claims it as text before this binding is ever
 /// consulted (panel search design §5.3, §8). `GLOBAL` would assert it works
 /// everywhere, which is false there.
-const SEARCH: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Char('/'))],
-    action: "search this panel",
-}];
+const SEARCH: &[Binding] = &[
+    Binding {
+        keys: &[KeyPress::new(Key::Char('/'))],
+        action: "search this panel",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('n'))],
+        action: "next match",
+    },
+    Binding {
+        keys: &[KeyPress::new(Key::Char('N'))],
+        action: "previous match",
+    },
+];
 
 const MOTION: &[Binding] = &[
     Binding {

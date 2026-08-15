@@ -635,6 +635,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
             }
         }
         Key::Char('v') => toggle_visual(state),
+        Key::Char('n') => next_match_key(state, Direction::Forwards),
+        Key::Char('N') => next_match_key(state, Direction::Backwards),
         // Last, so every binding above keeps precedence over a panel key. A
         // DDL tab is a place the same way a panel is, so its key both focuses
         // the panel and draws the tab — one press to arrive, whichever tab was
@@ -935,6 +937,25 @@ fn jump_to_match(state: &mut State, target: Searched, from: Origin, direction: D
             }
         }
     }
+}
+
+/// `n` and `N` walk the focused panel's matches, wrapping.
+///
+/// Motions, so they take the path `j` and `k` take and an extending range
+/// follows them. Inert where the panel holds no search — a panel that cannot
+/// honour a motion swallows it (docs/shortcuts.md §2) — and unreachable from
+/// Queries, which takes text and holds no search (design §5.3).
+fn next_match_key(state: &mut State, direction: Direction) {
+    let Some(target) = Searched::of(state.focus()) else {
+        return;
+    };
+
+    if state.search(target).is_none() {
+        return;
+    }
+
+    let from = origin_of(state, target);
+    jump_to_match(state, target, from, direction);
 }
 
 /// `/` opens a prompt over the focused panel. Refused where the panel holds no
@@ -7007,6 +7028,12 @@ mod tests {
         let mut export_open = contents_showing(ROW_LIMIT);
         ctrl(&mut export_open, Key::Char('e'));
 
+        // The one fixture `n`/`N` do something in: a search applied, with
+        // more than one match to walk between (design §5.3).
+        let mut searched = browsing_tables(&[("shop", &["orders"])]);
+        searched.geometry = geometry;
+        searched.apply_search(Searched::Tables, Search::new("o"));
+
         vec![
             covered,
             elsewhere,
@@ -7016,6 +7043,7 @@ mod tests {
             yankable,
             grid,
             export_open,
+            searched,
         ]
     }
 
@@ -7319,6 +7347,95 @@ mod tests {
         press(&mut state, Key::Enter);
 
         assert_eq!(state.tables.cursor.index(), landed);
+    }
+
+    #[test]
+    fn n_walks_to_the_next_match_and_wraps() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        // "o" rather than "orders": the tree has two rows carrying an "o" —
+        // the "shop" keyspace and the "orders" table it holds — so two
+        // presses land on two different rows. A single-match term is not
+        // this test's job; that shape is `shift_n_walks_backwards`'s, where
+        // a lone match returning to itself (design §5.1) still leaves `N`
+        // undistinguished from a synonym only by direction, not by index.
+        state.apply_search(Searched::Tables, Search::new("o"));
+
+        press(&mut state, Key::Char('n'));
+        let first = state.tables.cursor.index();
+        press(&mut state, Key::Char('n'));
+        let second = state.tables.cursor.index();
+
+        assert_ne!(first, second, "n moves off the match it is on");
+
+        for _ in 0..20 {
+            press(&mut state, Key::Char('n'));
+        }
+        assert!(
+            state.tables.cursor.index() < tree_rows(&state),
+            "wrapping keeps the cursor inside the tree"
+        );
+    }
+
+    #[test]
+    fn shift_n_walks_backwards() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        state.apply_search(Searched::Tables, Search::new("orders"));
+
+        press(&mut state, Key::Char('n'));
+        let forward = state.tables.cursor.index();
+        press(&mut state, Key::Char('n'));
+        press(&mut state, Key::Char('N'));
+
+        assert_eq!(
+            state.tables.cursor.index(),
+            forward,
+            "N is not a synonym for n"
+        );
+    }
+
+    #[test]
+    fn n_is_inert_where_no_search_is_applied() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        let before = state.tables.cursor.index();
+
+        press(&mut state, Key::Char('n'));
+
+        assert_eq!(state.tables.cursor.index(), before);
+    }
+
+    #[test]
+    fn n_types_a_character_in_queries() {
+        let mut state = loaded();
+        state.focus_on(Panel::Queries);
+
+        press(&mut state, Key::Char('n'));
+
+        assert!(
+            state.queries.text().contains('n'),
+            "a panel that takes text takes it"
+        );
+    }
+
+    #[test]
+    fn a_live_range_follows_an_n() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        state.apply_search(Searched::Tables, Search::new("orders"));
+        press(&mut state, Key::Char('v'));
+
+        press(&mut state, Key::Char('n'));
+
+        assert!(
+            !state
+                .tables
+                .selection
+                .ranges(state.tables.cursor.index())
+                .is_empty(),
+            "n is a motion, so an extending range follows it"
+        );
     }
 
     #[test]
