@@ -11,6 +11,7 @@ mod body;
 mod details;
 mod diagnostics;
 mod export;
+mod highlight;
 mod hints;
 pub mod hit;
 mod icons;

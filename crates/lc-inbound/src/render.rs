@@ -82,7 +82,14 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         // blinks over the modal at a position that means nothing there.
         let focused = panel.panel == view.focus && view.overlay.is_none();
 
-        let body = crate::body::render(frame, inner, &panel.body, focused, theme);
+        let body = crate::body::render(
+            frame,
+            inner,
+            &panel.body,
+            panel.search.as_ref(),
+            focused,
+            theme,
+        );
 
         match &body {
             Some(drawn) => {
@@ -212,7 +219,7 @@ fn panel_block(
     let marker = panel
         .search
         .as_ref()
-        .map(|term| format!("/{term}"))
+        .map(|search| format!("/{}", search.as_str()))
         .filter(|marker| marker_fits(area.width, &strip, marker));
     let (lead, trail) = insets(area.width, &strip, marker.as_deref());
 
@@ -1214,6 +1221,73 @@ mod tests {
         assert_eq!(
             row(&buffer, 3),
             "│ └─ \u{f0ce} users   ▐│                      │"
+        );
+    }
+
+    #[test]
+    fn a_match_is_painted_where_it_sits() {
+        // A search forces the keyspace holding the match open (§4.1), so no
+        // explicit unfold is needed for `orders` to draw.
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders", "users"])])),
+        });
+        state.apply_search(Searched::Tables, Search::new("der"));
+
+        let buffer = draw_state(40, 12, &state);
+        assert_eq!(
+            row(&buffer, 2),
+            "│ ├─ \u{f0ce} orders  ││                      │"
+        );
+
+        let table = Theme::default()
+            .style(Token::Table)
+            .fg
+            .expect("a table spends a colour");
+        let matched = Theme::default()
+            .style(Token::Match)
+            .fg
+            .expect("a match spends a colour");
+        let fg = |x: u16| buffer.cell((x, 2)).expect("inside the panel").fg;
+
+        // "orders", starting at column 7: "or" unmatched, "der" matched, "s"
+        // unmatched.
+        assert_eq!(fg(7), table, "'o' is unmatched");
+        assert_eq!(fg(8), table, "'r' is unmatched");
+        assert_eq!(fg(9), matched, "'d' wears the match colour");
+        assert_eq!(fg(10), matched, "'e' wears the match colour");
+        assert_eq!(fg(11), matched, "'r' wears the match colour");
+        assert_eq!(fg(12), table, "'s' is unmatched");
+    }
+
+    #[test]
+    fn a_search_drops_no_row_from_the_panel() {
+        let mut state = State::default();
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders", "users"])])),
+        });
+        state.apply_search(Searched::Tables, Search::new("orders"));
+
+        let buffer = draw_state(40, 12, &state);
+
+        assert_eq!(
+            row(&buffer, 1),
+            "│▌\u{f084} shop       ││Press Enter on a table│",
+            "the keyspace is still drawn"
+        );
+        assert_eq!(
+            row(&buffer, 2),
+            "│ ├─ \u{f0ce} orders  ││                      │",
+            "the matching row is still drawn"
+        );
+        assert_eq!(
+            row(&buffer, 3),
+            "│ └─ \u{f0ce} users   ││                      │",
+            "`users`, which does not match, is still drawn — the search hides nothing"
         );
     }
 
@@ -3045,9 +3119,10 @@ mod tests {
 
         // 40x20: a fourteen-column, nine-row Ddl body — narrow enough that
         // `orders()` wraps well past it.
-        let total = crate::details::lay_out(&details, 0, &Marked::none(), 14, Theme::default())
-            .lines
-            .len();
+        let total =
+            crate::details::lay_out(&details, 0, &Marked::none(), 14, None, Theme::default())
+                .lines
+                .len();
         assert!(
             total > 9,
             "the fixture must overflow the panel or this test proves nothing"
@@ -3079,7 +3154,8 @@ mod tests {
         // `comment` is the last row and wraps to three lines at this width.
         // Scrolled until its first line is the eighth of the nine visible, two
         // of them are in view and the third is below the fold.
-        let laid = crate::details::lay_out(&details, last, &Marked::none(), 14, Theme::default());
+        let laid =
+            crate::details::lay_out(&details, last, &Marked::none(), 14, None, Theme::default());
         let total = laid.lines.len();
         assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
         for _ in 0..laid.selection.first - 7 {
@@ -3227,6 +3303,7 @@ mod tests {
                 0,
                 &Marked::none(),
                 14,
+                None,
                 Theme::default()
             )
             .lines
@@ -3285,6 +3362,7 @@ mod tests {
             0,
             &Marked::none(),
             WIDTH,
+            None,
             Theme::default(),
         )
         .lines;

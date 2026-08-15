@@ -200,11 +200,13 @@ pub struct PanelView {
     pub panel: Panel,
     pub title: PanelTitle,
     pub body: PanelBody,
-    /// The applied search's term, as typed. Drawn on the panel's own top
-    /// border, focused or not: a search that survives a focus change has to
-    /// say so from the panel it is applied to, not from the bar, which only
-    /// ever describes the focused panel (panel search design §5.1).
-    pub search: Option<String>,
+    /// The applied search. Its term is drawn on the panel's own top border,
+    /// focused or not — a search that survives a focus change has to say so
+    /// from the panel it is applied to, not from the bar, which only ever
+    /// describes the focused panel (panel search design §5.1) — and the
+    /// renderer splits each string it draws against it (search highlight
+    /// design §3.1).
+    pub search: Option<crate::search::Search>,
 }
 
 /// What a panel has to show.
@@ -313,7 +315,7 @@ pub fn view_model(state: &State) -> ViewModel {
             body: body(state, panel),
             search: crate::search::Searched::of(panel)
                 .and_then(|target| state.search(target))
-                .map(|search| search.as_str().to_owned()),
+                .cloned(),
         }),
         focus: state.focus(),
         hints: hints::bar(state),
@@ -544,7 +546,14 @@ mod tests {
 
         let view = view_model(&state);
 
-        assert_eq!(view.panels[2].search.as_deref(), Some("ORD"), "as typed");
+        assert_eq!(
+            view.panels[2]
+                .search
+                .as_ref()
+                .map(crate::search::Search::as_str),
+            Some("ORD"),
+            "as typed"
+        );
         assert_eq!(view.panels[0].search, None);
         assert_eq!(view.panels[3].search, None, "Queries holds none");
     }

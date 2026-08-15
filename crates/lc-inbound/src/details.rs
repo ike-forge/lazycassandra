@@ -23,6 +23,7 @@
 
 use lc_domain::grid::BAR;
 use lc_domain::model::{ClusteringOrder, Setting};
+use lc_domain::search::Search;
 use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{ColumnKind, DetailRow, Details, Group, IdentityKind};
@@ -59,16 +60,41 @@ pub(crate) struct Laid {
     pub(crate) rows: Vec<Option<usize>>,
 }
 
+/// The view model's Ddl body, as the renderer reads it.
+///
+/// A struct rather than five more parameters, the same reason `body.rs`'s
+/// `GridView` and `TreeView` exist.
+#[derive(Clone, Copy)]
+pub(crate) struct DetailsView<'a> {
+    pub(crate) details: &'a Details,
+    pub(crate) selected: usize,
+    pub(crate) offset: usize,
+    pub(crate) marked: &'a Marked,
+    pub(crate) search: Option<&'a Search>,
+}
+
 pub(crate) fn render(
     frame: &mut Frame,
     area: Rect,
-    details: &Details,
-    selected: usize,
-    offset: usize,
-    marked: &Marked,
+    view: &DetailsView,
     theme: Theme,
 ) -> (crate::body::Extent, Span, Vec<Option<usize>>) {
-    let laid = lay_out(details, selected, marked, usize::from(area.width), theme);
+    let DetailsView {
+        details,
+        selected,
+        offset,
+        marked,
+        search,
+    } = *view;
+
+    let laid = lay_out(
+        details,
+        selected,
+        marked,
+        usize::from(area.width),
+        search,
+        theme,
+    );
     let total = laid.lines.len();
     // `Paragraph::scroll` is u16, and a body past 65535 lines is unreachable;
     // the extent keeps the offset itself, so the thumb stays right regardless.
@@ -102,6 +128,7 @@ pub(crate) fn lay_out(
     selected: usize,
     marked: &Marked,
     width: usize,
+    search: Option<&Search>,
     theme: Theme,
 ) -> Laid {
     // Every row reserves the bar's column, the Tables tree's way and the
@@ -140,7 +167,7 @@ pub(crate) fn lay_out(
         }
 
         for detail in &section.rows {
-            let mut drawn = row_lines(detail, content, style, theme);
+            let mut drawn = row_lines(detail, content, style, search, theme);
 
             if row == selected {
                 let highlight = theme.style(Token::Selected);
@@ -222,7 +249,13 @@ fn patched(mut line: Line<'static>, style: Style) -> Line<'static> {
     line
 }
 
-fn row_lines(row: &DetailRow, width: usize, style: Style, theme: Theme) -> Vec<Line<'static>> {
+fn row_lines(
+    row: &DetailRow,
+    width: usize,
+    style: Style,
+    search: Option<&Search>,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     match row {
         DetailRow::KeyColumn {
             name,
@@ -230,21 +263,23 @@ fn row_lines(row: &DetailRow, width: usize, style: Style, theme: Theme) -> Vec<L
             cql_type,
         } => key_column_lines(name, *order, cql_type, width)
             .into_iter()
-            .map(|text| Line::styled(text, style))
+            .map(|text| Line::from(crate::highlight::spans(&text, search, style, theme)))
             .collect(),
         DetailRow::Column {
             name,
             cql_type,
             kind,
-        } => column_lines(name, cql_type, *kind, width, theme),
-        DetailRow::Property { name, value } => property_lines(name, value, width, style, theme),
+        } => column_lines(name, cql_type, *kind, width, search, theme),
+        DetailRow::Property { name, value } => {
+            property_lines(name, value, width, style, search, theme)
+        }
         DetailRow::ClassProperty {
             name,
             class,
             settings,
             ..
-        } => class_property_lines(name, class, settings, width, style, theme),
-        DetailRow::Identity { kind, name } => identity_lines(*kind, name, width, theme),
+        } => class_property_lines(name, class, settings, width, style, search, theme),
+        DetailRow::Identity { kind, name } => identity_lines(*kind, name, width, search, theme),
     }
 }
 
@@ -260,21 +295,29 @@ fn identity_lines(
     kind: IdentityKind,
     name: &str,
     width: usize,
+    search: Option<&Search>,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let icon = crate::icons::identity(kind.token());
     let label = prefixed(icon, kind.label(), width);
     let taken = count(&label);
-    let mut lines = laid_out(&label, name, width)
+
+    laid_out(&label, name, width)
         .into_iter()
-        .map(Line::raw)
-        .collect::<Vec<Line<'static>>>();
-
-    if let Some(first) = lines.first_mut() {
-        *first = marked(first, taken, theme.style(kind.token()));
-    }
-
-    lines
+        .enumerate()
+        .map(|(index, text)| {
+            if index == 0 {
+                marked(&text, taken, theme.style(kind.token()), search, theme)
+            } else {
+                Line::from(crate::highlight::spans(
+                    &text,
+                    search,
+                    Style::default(),
+                    theme,
+                ))
+            }
+        })
+        .collect()
 }
 
 fn key_column_lines(
@@ -309,6 +352,7 @@ fn column_lines(
     cql_type: &str,
     kind: ColumnKind,
     width: usize,
+    search: Option<&Search>,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let marker = if kind.is_key() {
@@ -320,17 +364,31 @@ fn column_lines(
 
     laid_out(&format!("{marker}{name}"), cql_type, width)
         .into_iter()
-        .map(|text| Line::styled(text, style))
+        .map(|text| Line::from(crate::highlight::spans(&text, search, style, theme)))
         .collect()
 }
 
-/// `line` with its first `taken` characters lifted into a span of their own.
-fn marked(line: &Line<'static>, taken: usize, style: Style) -> Line<'static> {
-    let text = line.to_string();
+/// `text` with its first `taken` characters lifted into a span of their own;
+/// the rest split against `search` (the label is never matched — Identity
+/// matches only `name`, search highlight design §4.2).
+fn marked(
+    text: &str,
+    taken: usize,
+    style: Style,
+    search: Option<&Search>,
+    theme: Theme,
+) -> Line<'static> {
     let mark: String = text.chars().take(taken).collect();
     let rest: String = text.chars().skip(taken).collect();
 
-    Line::from(vec![TextSpan::styled(mark, style), TextSpan::raw(rest)])
+    let mut spans = vec![TextSpan::styled(mark, style)];
+    spans.extend(crate::highlight::spans(
+        &rest,
+        search,
+        Style::default(),
+        theme,
+    ));
+    Line::from(spans)
 }
 
 /// `left` with `right` at the margin when the two fit, `right` wrapped beneath
@@ -360,28 +418,39 @@ fn property_lines(
     value: &str,
     width: usize,
     style: Style,
+    search: Option<&Search>,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let label = theme.style(Token::PropertyName);
 
     if value.is_empty() {
-        return vec![Line::from(TextSpan::styled(truncate(name, width), label))];
+        return vec![Line::from(crate::highlight::spans(
+            &truncate(name, width),
+            search,
+            label,
+            theme,
+        ))];
     }
 
     if let Some(gap) = gap(name, value, width) {
-        return vec![Line::from(vec![
-            TextSpan::styled(name.to_owned(), label),
-            TextSpan::styled(format!("{}{value}", " ".repeat(gap)), style),
-        ])];
+        let mut spans = crate::highlight::spans(name, search, label, theme);
+        spans.push(TextSpan::styled(" ".repeat(gap), style));
+        spans.extend(crate::highlight::spans(value, search, style, theme));
+        return vec![Line::from(spans)];
     }
 
-    std::iter::once(Line::from(TextSpan::styled(truncate(name, width), label)))
-        .chain(
-            wrap(value, width, INDENT)
-                .into_iter()
-                .map(|text| Line::styled(text, style)),
-        )
-        .collect()
+    std::iter::once(Line::from(crate::highlight::spans(
+        &truncate(name, width),
+        search,
+        label,
+        theme,
+    )))
+    .chain(
+        wrap(value, width, INDENT)
+            .into_iter()
+            .map(|text| Line::from(crate::highlight::spans(&text, search, style, theme))),
+    )
+    .collect()
 }
 
 /// A class-valued property: the class where a plain property puts its value,
@@ -393,6 +462,7 @@ fn class_property_lines(
     settings: &[Setting],
     width: usize,
     style: Style,
+    search: Option<&Search>,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let label = theme.style(Token::PropertyName);
@@ -406,25 +476,52 @@ fn class_property_lines(
     let value = format!("{class}{}", tail_at(&tail));
 
     if let Some(gap) = gap(name, &value, width) {
-        return vec![Line::from(vec![
-            TextSpan::styled(name.to_owned(), label),
-            TextSpan::styled(format!("{}{class}", " ".repeat(gap)), style),
-            TextSpan::styled(tail_at(&tail), faint),
-        ])];
+        let mut spans = crate::highlight::spans(name, search, label, theme);
+        spans.push(TextSpan::styled(" ".repeat(gap), style));
+        spans.extend(crate::highlight::spans(class, search, style, theme));
+        spans.extend(crate::highlight::spans(
+            &tail_at(&tail),
+            search,
+            faint,
+            theme,
+        ));
+        return vec![Line::from(spans)];
     }
 
     // The class and the settings wrap as two blocks rather than as one run of
     // text: a wrapped line carries one style, and splitting the class across
     // lines is already the worst this panel does to a name it promises not to
     // abbreviate — colouring half of it faint on top of that would be worse.
-    std::iter::once(Line::from(TextSpan::styled(truncate(name, width), label)))
-        .chain(styled(wrap(class, width, INDENT), style))
-        .chain(styled(wrap(&tail, width, INDENT), faint))
-        .collect()
+    std::iter::once(Line::from(crate::highlight::spans(
+        &truncate(name, width),
+        search,
+        label,
+        theme,
+    )))
+    .chain(highlighted(
+        wrap(class, width, INDENT),
+        search,
+        style,
+        theme,
+    ))
+    .chain(highlighted(
+        wrap(&tail, width, INDENT),
+        search,
+        faint,
+        theme,
+    ))
+    .collect()
 }
 
-fn styled(texts: Vec<String>, style: Style) -> impl Iterator<Item = Line<'static>> {
-    texts.into_iter().map(move |text| Line::styled(text, style))
+fn highlighted(
+    texts: Vec<String>,
+    search: Option<&Search>,
+    style: Style,
+    theme: Theme,
+) -> impl Iterator<Item = Line<'static>> {
+    texts
+        .into_iter()
+        .map(move |text| Line::from(crate::highlight::spans(&text, search, style, theme)))
 }
 
 /// The settings run as it follows the class on a shared line: with the space
@@ -521,6 +618,7 @@ mod tests {
             value,
             width,
             Style::new(),
+            None,
             Theme::default(),
         ))
     }
@@ -545,6 +643,7 @@ mod tests {
             &settings,
             width,
             Style::new(),
+            None,
             Theme::default(),
         ))
     }
@@ -613,7 +712,14 @@ mod tests {
     }
 
     fn listed(name: &str, cql_type: &str, kind: ColumnKind, width: usize) -> Vec<String> {
-        texts(&column_lines(name, cql_type, kind, width, Theme::default()))
+        texts(&column_lines(
+            name,
+            cql_type,
+            kind,
+            width,
+            None,
+            Theme::default(),
+        ))
     }
 
     #[test]
@@ -648,11 +754,11 @@ mod tests {
             (ColumnKind::Static, Token::StaticColumn),
             (ColumnKind::Regular, Token::RegularColumn),
         ] {
-            let lines = column_lines("customer_id", "uuid", kind, 23, theme);
+            let lines = column_lines("customer_id", "uuid", kind, 23, None, theme);
             let colour = theme.style(token).fg;
 
-            assert_eq!(
-                lines[0].style.fg, colour,
+            assert!(
+                lines[0].spans.iter().all(|span| span.style.fg == colour),
                 "{kind:?} must read as its own kind end to end"
             );
         }
@@ -672,7 +778,7 @@ mod tests {
     }
 
     fn named(kind: IdentityKind, name: &str, width: usize) -> Vec<String> {
-        texts(&identity_lines(kind, name, width, Theme::default()))
+        texts(&identity_lines(kind, name, width, None, Theme::default()))
     }
 
     #[test]
@@ -701,7 +807,7 @@ mod tests {
     #[test]
     fn only_the_label_of_an_identity_row_carries_the_kinds_colour() {
         let theme = Theme::default();
-        let lines = identity_lines(IdentityKind::Keyspace, "shop", 23, theme);
+        let lines = identity_lines(IdentityKind::Keyspace, "shop", 23, None, theme);
         let keyspace = theme.style(Token::Keyspace).fg;
 
         assert!(keyspace.is_some(), "the token has to spend a colour");
@@ -763,6 +869,7 @@ mod tests {
             "864000",
             23,
             Style::new(),
+            None,
             Theme::default(),
         );
         let accent = Theme::default().style(Token::PropertyName).fg;
@@ -780,6 +887,7 @@ mod tests {
             "Order history for one customer.",
             23,
             Style::new(),
+            None,
             Theme::default(),
         );
         assert_eq!(wrapped[0].spans[0].style.fg, accent);
@@ -792,6 +900,39 @@ mod tests {
             property("comment", "Order history for one customer.", 23),
             ["comment", "  Order history for one", "  customer."]
         );
+    }
+
+    #[test]
+    fn a_match_a_wrap_split_is_painted_on_neither_half() {
+        // "one customer" straddles the wrap boundary: fragment one ends in
+        // "one" and fragment two opens with "customer.", so neither drawn
+        // fragment holds the whole term (search highlight design §3.1).
+        let theme = Theme::default();
+        let search = Search::new("one customer").expect("non-empty");
+        let style = theme.style(Token::Faint);
+
+        let lines = property_lines(
+            "comment",
+            "Order history for one customer.",
+            23,
+            style,
+            Some(&search),
+            theme,
+        );
+
+        assert_eq!(
+            texts(&lines),
+            ["comment", "  Order history for one", "  customer."],
+            "the wrap itself does not move for a search"
+        );
+
+        let matched = theme.style(Token::Match).fg;
+        for line in &lines[1..] {
+            assert!(
+                line.spans.iter().all(|span| span.style.fg != matched),
+                "a match a wrap split in half is painted on neither half: {line:?}"
+            );
+        }
     }
 
     #[test]
@@ -873,12 +1014,12 @@ mod tests {
         };
 
         assert_eq!(
-            lay_out(&details, 0, &Marked::none(), 28, Theme::default()).selection,
+            lay_out(&details, 0, &Marked::none(), 28, None, Theme::default()).selection,
             Span { first: 0, lines: 1 },
             "the identity row opens the body, so nothing precedes it"
         );
 
-        let laid = lay_out(&details, 1, &Marked::none(), 28, Theme::default());
+        let laid = lay_out(&details, 1, &Marked::none(), 28, None, Theme::default());
 
         assert_eq!(
             laid.selection,
@@ -891,6 +1032,7 @@ mod tests {
             details.row_count() - 1,
             &Marked::none(),
             28,
+            None,
             Theme::default(),
         );
         assert!(laid.selection.lines > 1, "the comment wraps");
@@ -922,7 +1064,7 @@ mod tests {
             }],
         };
 
-        let laid = lay_out(&details, usize::MAX, &Marked::none(), 28, theme);
+        let laid = lay_out(&details, usize::MAX, &Marked::none(), 28, None, theme);
         let section = theme.style(Token::Section);
 
         assert_eq!(laid.lines[0].style, section);

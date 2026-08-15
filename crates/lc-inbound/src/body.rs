@@ -18,6 +18,7 @@
 
 use lc_domain::contents::SelectionMode;
 use lc_domain::grid::{BAR, COLUMN_SPACING, available, fitting};
+use lc_domain::search::Search;
 use lc_domain::state::{Ranges, Span};
 use lc_domain::style::Token;
 use lc_domain::view::{GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow};
@@ -110,6 +111,7 @@ pub(crate) fn render(
     frame: &mut Frame,
     area: Rect,
     body: &PanelBody,
+    search: Option<&Search>,
     focused: bool,
     theme: Theme,
 ) -> Option<Body> {
@@ -133,10 +135,13 @@ pub(crate) fn render(
             extent: tree(
                 frame,
                 area,
-                rows,
-                *selected,
-                *offset,
-                &Marked::new(ranges.clone(), *flash),
+                &TreeView {
+                    rows,
+                    selected: *selected,
+                    offset: *offset,
+                    marked: &Marked::new(ranges.clone(), *flash),
+                    search,
+                },
                 theme,
             ),
             columns: None,
@@ -154,10 +159,13 @@ pub(crate) fn render(
             let (extent, selection, rows) = crate::details::render(
                 frame,
                 area,
-                details,
-                *selected,
-                *offset,
-                &Marked::new(ranges.clone(), *flash),
+                &crate::details::DetailsView {
+                    details,
+                    selected: *selected,
+                    offset: *offset,
+                    marked: &Marked::new(ranges.clone(), *flash),
+                    search,
+                },
                 theme,
             );
             Some(Body {
@@ -214,15 +222,29 @@ const fn visible(selected: usize, offset: usize, height: usize) -> Option<usize>
     }
 }
 
-fn tree(
-    frame: &mut Frame,
-    area: Rect,
-    rows: &[TreeRow],
+/// The view model's tree, as the renderer reads it.
+///
+/// A struct rather than six more parameters: the fields arrive together from
+/// one `PanelBody::Tree` and mean nothing apart, the same reason
+/// [`GridView`] exists.
+#[derive(Clone, Copy)]
+struct TreeView<'a> {
+    rows: &'a [TreeRow],
     selected: usize,
     offset: usize,
-    marked: &Marked,
-    theme: Theme,
-) -> Extent {
+    marked: &'a Marked,
+    search: Option<&'a Search>,
+}
+
+fn tree(frame: &mut Frame, area: Rect, view: &TreeView, theme: Theme) -> Extent {
+    let TreeView {
+        rows,
+        selected,
+        offset,
+        marked,
+        search,
+    } = *view;
+
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
@@ -232,6 +254,7 @@ fn tree(
                 row,
                 index == selected || ranged,
                 ranged.then_some(marked.band),
+                search,
                 theme,
             )
         })
@@ -755,7 +778,13 @@ fn truncated(text: &str, width: u16) -> String {
     out
 }
 
-fn item(row: &TreeRow, marked: bool, band: Option<Token>, theme: Theme) -> ListItem<'static> {
+fn item(
+    row: &TreeRow,
+    marked: bool,
+    band: Option<Token>,
+    search: Option<&Search>,
+    theme: Theme,
+) -> ListItem<'static> {
     // A keyspace opens at the margin and its tables hang off it, so the shape
     // of the tree is the indentation and no separate fold marker is spent on
     // saying what the drawn rows already say
@@ -782,13 +811,15 @@ fn item(row: &TreeRow, marked: bool, band: Option<Token>, theme: Theme) -> ListI
             .add_modifier(Modifier::BOLD),
     );
 
-    let line = Line::from(vec![
-        selection_bar(marked, theme),
-        TextSpan::raw(limb),
-        icon,
-        TextSpan::raw(row.label.clone()),
-    ])
-    .style(theme.style(row.token));
+    let mut spans = vec![selection_bar(marked, theme), TextSpan::raw(limb), icon];
+    spans.extend(crate::highlight::spans(
+        &row.label,
+        search,
+        theme.style(row.token),
+        theme,
+    ));
+
+    let line = Line::from(spans);
 
     let item = ListItem::new(line);
 
