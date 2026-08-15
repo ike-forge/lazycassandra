@@ -1294,8 +1294,10 @@ impl State {
     ///
     /// Not a `&mut Option<Search>` handed out: repairing what a search
     /// invalidates — a cursor left pointing past the rows the panel now has —
-    /// belongs here rather than to every caller that sets one. The Tables
-    /// cursor clamp lands with the narrowed tree it needs. A search renumbers
+    /// belongs here rather than to every caller that sets one. Tables never
+    /// drops a row for the search it is given (design §4.1), but the row
+    /// count can still shrink between two calls here — a keyspace one search
+    /// forces open, another may not — so the clamp stays. A search renumbers
     /// the rows under a range, so the repair it owes includes dropping one.
     pub fn apply_search(&mut self, target: Searched, search: Option<Search>) {
         match target {

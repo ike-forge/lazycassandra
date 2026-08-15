@@ -4161,7 +4161,7 @@ mod tests {
     fn enter_still_reads_a_table_under_a_search() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.apply_search(Searched::Tables, Search::new("orders"));
-        assert_eq!(row_count(&state), 2, "shop and orders both survive");
+        assert_eq!(row_count(&state), 3, "a search drops no row");
 
         state.tables.cursor.go_to(1, row_count(&state));
         let effects = press(&mut state, Key::Enter);
@@ -4179,23 +4179,6 @@ mod tests {
         press(&mut state, Key::Char('l'));
 
         assert_eq!(row_count(&state), 3);
-    }
-
-    #[test]
-    fn the_cursor_clamps_as_a_search_shrinks_the_tree() {
-        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
-        press(&mut state, Key::Char('l'));
-        press(&mut state, Key::Char('j'));
-        press(&mut state, Key::Char('j'));
-        assert_eq!(state.tables.cursor.index(), 2, "on users");
-
-        state.apply_search(Searched::Tables, Search::new("orders"));
-
-        assert_eq!(
-            state.tables.cursor.index(),
-            1,
-            "two rows survive, so the last one is index 1"
-        );
     }
 
     #[test]
@@ -5201,11 +5184,15 @@ mod tests {
     }
 
     #[test]
-    fn y_on_a_search_that_matched_nothing_yanks_nothing() {
+    fn y_still_yanks_the_row_under_the_cursor_when_the_search_matches_nothing() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         state.apply_search(Searched::Tables, Search::new("zzz"));
 
-        assert!(press(&mut state, Key::Char('y')).is_empty());
+        assert_eq!(
+            press(&mut state, Key::Char('y')),
+            vec![Effect::Yank("shop".to_owned())],
+            "a search drops no row, so the cursor still sits on one"
+        );
     }
 
     #[test]

@@ -24,9 +24,7 @@ pub struct TreeRow {
 /// What a tree row names.
 ///
 /// A table carries whether it is the last one drawn under its keyspace, which
-/// is what decides the limb the renderer draws it on. Last-ness is over the
-/// rows the panel actually shows, so a search that hides the tail of a
-/// keyspace moves the elbow up rather than leaving it on a row nobody sees
+/// is what decides the limb the renderer draws it on
 /// (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
@@ -72,13 +70,7 @@ fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<&Flash>) -> PanelBo
         .collect();
 
     if rows.is_empty() {
-        return match tables.search() {
-            Some(search) => waiting(&format!(
-                "No keyspace or table matches \"{}\"",
-                search.as_str()
-            )),
-            None => waiting("No keyspaces"),
-        };
+        return waiting("No keyspaces");
     }
 
     PanelBody::Tree {
@@ -284,17 +276,15 @@ mod tests {
     }
 
     #[test]
-    fn a_search_that_matches_nothing_says_so() {
+    fn a_search_that_matches_nothing_still_draws_the_tree() {
         let mut state = tabled(&[("shop", &["orders"])]);
         state.apply_search(Searched::Tables, Search::new("zzz"));
 
-        assert_eq!(
-            tables_body(&state),
-            PanelBody::Notice {
-                text: "No keyspace or table matches \"zzz\"".to_owned(),
-                token: Some(Token::Muted),
-            }
-        );
+        let PanelBody::Tree { rows, .. } = tables_body(&state) else {
+            panic!("a search must not turn the tree into a notice");
+        };
+
+        assert!(!rows.is_empty());
     }
 
     #[test]
