@@ -7354,44 +7354,65 @@ mod tests {
         let mut state = loaded();
         state.focus_on(Panel::Tables);
         // "o" rather than "orders": the tree has two rows carrying an "o" —
-        // the "shop" keyspace and the "orders" table it holds — so two
-        // presses land on two different rows. A single-match term is not
-        // this test's job; that shape is `shift_n_walks_backwards`'s, where
-        // a lone match returning to itself (design §5.1) still leaves `N`
-        // undistinguished from a synonym only by direction, not by index.
+        // the "shop" keyspace (row 1) and the "orders" table it holds
+        // (row 2) — against "billing" (row 0), which holds neither letter.
+        // Exact indices, not a before/after comparison, so the third press
+        // pins the wrap past row 0 rather than merely staying in bounds by
+        // accident.
         state.apply_search(Searched::Tables, Search::new("o"));
 
         press(&mut state, Key::Char('n'));
-        let first = state.tables.cursor.index();
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "\"shop\" is the first match after row 0"
+        );
+
         press(&mut state, Key::Char('n'));
-        let second = state.tables.cursor.index();
+        assert_eq!(
+            state.tables.cursor.index(),
+            2,
+            "\"orders\" is the second match"
+        );
 
-        assert_ne!(first, second, "n moves off the match it is on");
-
-        for _ in 0..20 {
-            press(&mut state, Key::Char('n'));
-        }
-        assert!(
-            state.tables.cursor.index() < tree_rows(&state),
-            "wrapping keeps the cursor inside the tree"
+        press(&mut state, Key::Char('n'));
+        assert_eq!(
+            state.tables.cursor.index(),
+            1,
+            "the last match wraps past row 0 back to the first"
         );
     }
 
     #[test]
     fn shift_n_walks_backwards() {
-        let mut state = loaded();
+        // Two matches is not enough to tell `n` from `N` apart: with only
+        // one other match in the ring, walking either direction from it
+        // lands on that same other match. A third row is what makes forward
+        // and backward diverge, so "orders" (one match) and "o" against
+        // `loaded()` (two matches, but the ring itself is three rows with
+        // only two of them matching) both fail to pin this — `box` is
+        // added so every row of a three-row ring matches "o" and the
+        // starting row genuinely has a different match on each side of it.
+        let mut state = browsing_tables(&[("box", &[]), ("shop", &["orders"])]);
         state.focus_on(Panel::Tables);
-        state.apply_search(Searched::Tables, Search::new("orders"));
+        state.apply_search(Searched::Tables, Search::new("o"));
+        // Rows, alphabetical: "box" (0), "shop" (1, forced open by its own
+        // match), "orders" (2) — every one of the three matches "o".
+        state.tables.cursor.go_to(1, tree_rows(&state));
 
         press(&mut state, Key::Char('n'));
-        let forward = state.tables.cursor.index();
-        press(&mut state, Key::Char('n'));
-        press(&mut state, Key::Char('N'));
-
         assert_eq!(
             state.tables.cursor.index(),
-            forward,
-            "N is not a synonym for n"
+            2,
+            "n from the middle row is the match after it"
+        );
+
+        state.tables.cursor.go_to(1, tree_rows(&state));
+        press(&mut state, Key::Char('N'));
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "N from the same row is the match before it, not a synonym for n"
         );
     }
 
