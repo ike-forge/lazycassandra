@@ -431,6 +431,71 @@ mod tests {
     }
 
     #[test]
+    fn no_search_applied_is_none() {
+        let panel = loaded_panel();
+
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
+    }
+
+    #[test]
+    fn a_search_matching_nothing_is_none() {
+        let mut panel = loaded_panel();
+        panel.set_search(Search::new("zzz"));
+
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
+    }
+
+    #[test]
+    fn an_empty_panel_has_no_match_to_reach() {
+        let mut panel = ContentsPanel::default();
+        panel.set_search(Search::new("ali"));
+
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
+    }
+
+    #[test]
+    fn a_loading_panel_has_no_page_to_search() {
+        let (mut panel, _) = loading();
+        panel.set_search(Search::new("ali"));
+
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
+    }
+
+    #[test]
+    fn a_failed_panel_has_no_page_to_search() {
+        let (mut panel, query) = loading();
+        panel.failed(query, DbError::Timeout);
+        panel.set_search(Search::new("ali"));
+
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
+    }
+
+    #[test]
+    fn a_page_with_no_rows_has_no_match_to_reach() {
+        let (mut panel, query) = loading();
+        panel.page_ready(query, page(0));
+        panel.set_search(Search::new("ali"));
+
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
+    }
+
+    #[test]
+    fn a_page_with_no_columns_has_no_match_to_reach() {
+        let (mut panel, query) = loading();
+        panel.page_ready(
+            query,
+            Page {
+                columns: Vec::new(),
+                rows: vec![Row { values: Vec::new() }],
+                next: None,
+            },
+        );
+        panel.set_search(Search::new("ali"));
+
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
+    }
+
+    #[test]
     fn a_fresh_panel_is_waiting_on_nothing() {
         let panel = ContentsPanel::default();
 
