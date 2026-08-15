@@ -108,13 +108,27 @@ pub(crate) enum Unit {
     Lines { rows: Vec<Option<usize>> },
 }
 
+/// A panel's frame, as the bodies that draw into it need it: the rect inside
+/// the borders, the bordered rect itself, and the style those borders wear.
+/// Only the grid needs the last two — its heading rule meets the frame the
+/// same way the palette's group rules meet theirs — but a body takes one
+/// argument for where it is rather than three that can disagree.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Chrome {
+    pub(crate) inner: Rect,
+    pub(crate) block: Rect,
+    pub(crate) border: Style,
+}
+
 pub(crate) fn render(
     frame: &mut Frame,
-    area: Rect,
+    chrome: Chrome,
     body: &PanelBody,
     focused: bool,
     theme: Theme,
 ) -> Option<Body> {
+    let area = chrome.inner;
+
     if area.is_empty() {
         return None;
     }
@@ -178,7 +192,7 @@ pub(crate) fn render(
             selection: Span::default(),
         }),
         PanelBody::Grid { .. } => {
-            let (extent, horizontal, bands) = grid(frame, area, &grid_view(body)?, theme);
+            let (extent, horizontal, bands) = grid(frame, chrome, &grid_view(body)?, theme);
 
             Some(Body {
                 extent,
@@ -283,10 +297,12 @@ struct GridView<'a> {
 
 fn grid(
     frame: &mut Frame,
-    area: Rect,
+    chrome: Chrome,
     view: &GridView,
     theme: Theme,
 ) -> (Extent, Extent, Vec<Band<usize>>) {
+    let area = chrome.inner;
+
     let GridView {
         columns,
         rows,
@@ -409,6 +425,8 @@ fn grid(
     }
 
     frame.render_stateful_widget(table, area, &mut state);
+
+    heading_rule(frame, chrome);
 
     (
         Extent {
@@ -660,6 +678,23 @@ fn bands(area: Rect, widths: &[u16], first_column: usize, gutter: u16) -> Vec<Ba
             band
         })
         .collect()
+}
+
+/// The line under the headings.
+///
+/// The heading is two rows tall and the second was blank, which read as a gap
+/// rather than as a line under a heading. It carries the rule instead, drawn
+/// the way the palette draws the rules between its groups: out to the panel's
+/// own border, in whatever style that border wears.
+fn heading_rule(frame: &mut Frame, chrome: Chrome) {
+    if chrome.inner.height >= HEADER_ROWS {
+        crate::render::rule(
+            frame,
+            chrome.block,
+            chrome.inner.y + HEADER_ROWS - 1,
+            chrome.border,
+        );
+    }
 }
 
 /// The grid's heading row: a blank cell over the bar and the gutter, then the

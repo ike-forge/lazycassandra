@@ -56,7 +56,7 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme.modal_border())
+        .border_style(theme.focus_border())
         .title(view.title.as_str());
     let inner = block.inner(area);
 

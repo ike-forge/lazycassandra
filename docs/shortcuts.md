@@ -645,7 +645,9 @@ palette, the message overlay, the theme picker or the diagnostics list is up,
 there is no focused panel — all four take the border and title an unfocused
 panel takes — and the cursor row, the cursor cell and the washes around it are
 not drawn: a panel that still drew them would be claiming a press that cannot
-reach it. The search prompt and the
+reach it. The hint bar recedes with them — every hint on it goes `Faint`, the
+weight an inert hint already carries, because the modal has claimed those keys
+and is listing them itself. The search prompt and the
 export form are excluded — the prompt reads against the panel it filters, and
 the form confirms what the grid beneath it has selected
 ([command palette design](specs/2026-08-09-command-palette-design.md) §8).

@@ -222,10 +222,10 @@ impl Theme {
         Style::new().bg(self.palette.surface).fg(self.palette.text)
     }
 
-    /// A modal overlay's border. The overlay takes every key while it is up,
-    /// so it wears the accent a focused panel wears — and the panels beneath
-    /// it have just stopped wearing it (`render::dims_the_panels`).
-    pub(crate) fn modal_border(self) -> Style {
+    /// A frame around the thing taking keys: the focused panel, or the modal
+    /// that has taken focus from every panel at once
+    /// (`render::dims_the_panels`).
+    pub(crate) fn focus_border(self) -> Style {
         self.border_style().patch(self.style(Token::Focused))
     }
 
@@ -240,8 +240,18 @@ impl Theme {
     pub fn style(self, token: Token) -> Style {
         let palette = self.palette;
 
-        if matches!(self.emphasis, Emphasis::Dimmed) && is_emphasis(token) {
-            return Style::new();
+        if matches!(self.emphasis, Emphasis::Dimmed) {
+            if is_emphasis(token) {
+                return Style::new();
+            }
+            // A hint the modal has taken over is inert, and `Faint` is what an
+            // inert hint already wears (`hints::Segment::spans`) — the bar
+            // recedes in the vocabulary it already has rather than in a new
+            // one. The overlays draw their own keys through a lit theme, so
+            // this reaches the bar alone.
+            if matches!(token, Token::HintKey | Token::HintAction) {
+                return fg(self.palette.faint);
+            }
         }
 
         match token {
@@ -751,6 +761,11 @@ pub(crate) mod tests {
             theme.style(Token::Keyspace),
             Theme::default().style(Token::Keyspace),
             "dimming is not a second palette"
+        );
+        assert_eq!(
+            theme.style(Token::HintKey),
+            Theme::default().style(Token::Faint),
+            "a hint the modal has taken over recedes the way an inert one does"
         );
     }
 

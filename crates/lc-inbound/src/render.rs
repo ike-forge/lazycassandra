@@ -92,7 +92,12 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         // blinks over the modal at a position that means nothing there.
         let focused = panel.panel == view.focus && view.overlay.is_none();
 
-        let body = crate::body::render(frame, inner, &panel.body, focused, beneath);
+        let chrome = crate::body::Chrome {
+            inner,
+            block: area,
+            border,
+        };
+        let body = crate::body::render(frame, chrome, &panel.body, focused, beneath);
 
         match &body {
             Some(drawn) => {
@@ -121,8 +126,11 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let bar = rects.bar();
     let (loader, hint_bar) = bar_split(bar);
     frame.render_widget(crate::loader::line(view.activity, theme), loader);
+    // The bar goes quiet with the panels: while a modal is up it is naming
+    // keys the modal has already claimed, and the modal is listing them
+    // itself.
     frame.render_widget(
-        crate::hints::line(&view.hints, hint_bar.width, theme),
+        crate::hints::line(&view.hints, hint_bar.width, beneath),
         hint_bar,
     );
 
@@ -201,6 +209,29 @@ fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
 
 /// The bordered block a panel is drawn in, the border style the scrollbars
 /// that hang off it share, and where each tab of its title landed.
+/// Draws a rule across `block` at `y`, meeting both of its borders.
+///
+/// `block` is the bordered rect, not its inside: a rule that stops short of
+/// the frame it divides reads as a row of content. Painted straight onto the
+/// buffer because that is the only way to reach the border columns a widget
+/// is clipped out of, and before any scrollbar, which owns the right border
+/// where the two meet.
+pub(crate) fn rule(frame: &mut Frame, block: Rect, y: u16, style: Style) {
+    for x in block.x..block.right() {
+        let symbol = if x == block.x {
+            symbols::line::VERTICAL_RIGHT
+        } else if x == block.right() - 1 {
+            symbols::line::VERTICAL_LEFT
+        } else {
+            symbols::line::HORIZONTAL
+        };
+
+        if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+            cell.set_symbol(symbol).set_style(style);
+        }
+    }
+}
+
 /// Whether `overlay` is a modal that owns the frame outright.
 ///
 /// The search prompt is not one: it is drawn on the hint bar row and reads
@@ -227,7 +258,7 @@ fn panel_block(
     theme: Theme,
 ) -> (Block<'_>, Style, Vec<Band<usize>>) {
     let border = if is_focused_panel {
-        theme.border_style().patch(theme.style(Token::Focused))
+        theme.focus_border()
     } else {
         theme.border_style()
     };
@@ -1600,8 +1631,8 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 2),
-            "│              ││                                          │",
-            "a blank line under the headings keeps them from reading as a row"
+            "│              │├──────────────────────────────────────────┤",
+            "a rule under the headings keeps them from reading as a row"
         );
         assert_eq!(
             row(&buffer, 3),
@@ -3728,6 +3759,25 @@ mod tests {
         ))
     }
 
+    /// The same rule the palette draws between its groups, in the panel's own
+    /// border style: it meets both borders rather than floating inside them.
+    #[test]
+    fn the_rule_under_a_grids_headings_meets_the_panel() {
+        let (buffer, _) = draw_mapped(80, 14, &grid_state());
+        let area = block_area(&buffer, "Table contents");
+        let symbol = |x: u16| {
+            buffer
+                .cell((x, area.y + 1 + crate::body::HEADER_ROWS - 1))
+                .expect("inside the block")
+                .symbol()
+                .to_owned()
+        };
+
+        assert_eq!(symbol(area.x), symbols::line::VERTICAL_RIGHT);
+        assert_eq!(symbol(area.right() - 1), symbols::line::VERTICAL_LEFT);
+        assert_eq!(symbol(area.x + 1), symbols::line::HORIZONTAL);
+    }
+
     #[test]
     fn a_grids_heading_names_a_column_rather_than_its_first_row() {
         let (buffer, map) = draw_mapped(60, 12, &grid_state());
@@ -3737,8 +3787,10 @@ mod tests {
             "row 1 must be the header row this test is about"
         );
         assert!(
-            block_row(&buffer, "Table contents", 1).trim().is_empty(),
-            "row 2 is the blank line under the headings"
+            block_row(&buffer, "Table contents", 1)
+                .chars()
+                .all(|glyph| glyph == '─'),
+            "row 2 is the rule under the headings"
         );
         assert!(
             row(&buffer, 3).contains("ada@example.com"),
@@ -4517,6 +4569,37 @@ mod tests {
                 "the tree's cursor row is still drawn at {x},{y}"
             );
         }
+    }
+
+    #[test]
+    fn the_bar_goes_quiet_under_the_palette() {
+        let theme = Theme::default();
+        let lit = draw(100, 40);
+        let covered = with_palette(100, 40);
+        let bar = |buffer: &Buffer| {
+            let y = buffer.area.height - 1;
+            (0..buffer.area.width)
+                .filter_map(|x| buffer.cell((x, y)))
+                .filter(|cell| cell.symbol() != " ")
+                .map(|cell| cell.fg)
+                .collect::<Vec<_>>()
+        };
+
+        let key = theme.style(Token::HintKey).fg.expect("a key is coloured");
+        let faint = theme.style(Token::Faint).fg.expect("faint is a colour");
+
+        assert!(
+            bar(&lit).contains(&key),
+            "the bar names live keys when nothing covers it"
+        );
+        assert!(
+            !bar(&covered).contains(&key),
+            "and none of them stays lit while the palette is up"
+        );
+        assert!(
+            bar(&covered).contains(&faint),
+            "they recede rather than disappear"
+        );
     }
 
     #[test]

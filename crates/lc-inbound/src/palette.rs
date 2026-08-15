@@ -5,7 +5,6 @@ use lc_domain::style::Token;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Modifier;
-use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState};
 
@@ -67,7 +66,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme.modal_border())
+        .border_style(theme.focus_border())
         .title("Commands");
     let inner = block.inner(area).inner(Margin {
         horizontal: PAD,
@@ -97,17 +96,11 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     };
 
     if extent.overflows() {
-        crate::render::scrollbar(frame, area, &extent, theme.modal_border(), theme);
+        crate::render::scrollbar(frame, area, &extent, theme.focus_border(), theme);
     }
 }
 
-/// Draws every visible group rule across the block, borders included.
-///
-/// Painted over the list rather than drawn as a row of its own: a `ListItem`
-/// is clipped to `inner`, and a rule that stops two columns short of the
-/// frame it belongs to reads as a row of content rather than as part of the
-/// block. Before the scrollbar, which owns the right border where the two
-/// meet.
+/// Draws every visible group rule, `crate::render::rule` doing the reaching.
 fn rules(
     frame: &mut Frame,
     area: Rect,
@@ -116,29 +109,11 @@ fn rules(
     offset: usize,
     theme: Theme,
 ) {
-    let style = theme.modal_border();
-
     for line in 0..inner.height {
         let index = offset.saturating_add(usize::from(line));
 
-        if !matches!(rows.get(index), Some(CommandRow::Separator)) {
-            continue;
-        }
-
-        let y = inner.y + line;
-
-        for x in area.x..area.right() {
-            let symbol = if x == area.x {
-                symbols::line::VERTICAL_RIGHT
-            } else if x == area.right() - 1 {
-                symbols::line::VERTICAL_LEFT
-            } else {
-                symbols::line::HORIZONTAL
-            };
-
-            if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
-                cell.set_symbol(symbol).set_style(style);
-            }
+        if matches!(rows.get(index), Some(CommandRow::Separator)) {
+            crate::render::rule(frame, area, inner.y + line, theme.focus_border());
         }
     }
 }
