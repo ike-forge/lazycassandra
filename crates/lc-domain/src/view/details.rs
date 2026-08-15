@@ -15,7 +15,7 @@ use crate::state::{Panel, State};
 use crate::style::Token;
 use crate::tree::Node;
 
-use super::{PanelBody, waiting};
+use super::PanelBody;
 
 /// The groups the panel draws, identity first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,13 +204,8 @@ pub(super) fn body(state: &State) -> PanelBody {
     }
 }
 
-/// What the Tables cursor is on, described and narrowed by the panel's search
-/// — or nothing, when the cursor is on nothing.
-///
-/// The search is applied here rather than in [`body`] so that
-/// [`ddl_rows`](super::ddl_rows) counts the rows the panel actually draws: the
-/// cursor is clamped against that count, and a count of rows nobody can see
-/// would let it walk off the end of a filtered panel (design §3.3).
+/// What the Tables cursor is on, described — or nothing, when the cursor is
+/// on nothing.
 ///
 /// A range covering more than one row also answers `None`: the panel
 /// describes one node, and a range names several (design §4).
@@ -221,15 +216,11 @@ pub(super) fn of(state: &State) -> Option<Details> {
 
     let schema = state.schema()?;
 
-    let mut details = match (state.tables.selected(schema)?, shown_tab(state)) {
+    let details = match (state.tables.selected(schema)?, shown_tab(state)) {
         (Node::Table { keyspace, table }, DdlTab::Ddl) => of_table(keyspace, table),
         (Node::Table { keyspace, table }, DdlTab::Columns) => columns_of(keyspace, table),
         (Node::Keyspace { keyspace, .. }, _) => of_keyspace(keyspace),
     };
-
-    if let Some(search) = state.ddl.search() {
-        details.retain(search);
-    }
 
     Some(details)
 }
@@ -274,11 +265,7 @@ fn describes_a_table(state: &State) -> bool {
 
 fn scrolled(state: &State, details: Details) -> PanelBody {
     if details.sections.is_empty() {
-        // Every subject the panel describes has identity rows of its own, so a
-        // search is the only thing that can empty it.
-        return state.ddl.search().map_or(PanelBody::Blank, |search| {
-            waiting(&format!("No property matches \"{}\"", search.as_str()))
-        });
+        return PanelBody::Blank;
     }
 
     let flash = super::flash_over(state, Panel::Ddl);
@@ -295,23 +282,14 @@ fn scrolled(state: &State, details: Details) -> PanelBody {
     }
 }
 
-impl Details {
-    /// Drops the rows that miss, then the groups that emptied.
-    ///
-    /// Headings are not matched: the search is over properties and values, and
-    /// a heading match would resurrect a whole group whose rows all missed
-    /// (design §4.2).
-    fn retain(&mut self, search: &Search) {
-        for section in &mut self.sections {
-            section.rows.retain(|row| row.matches(search));
-        }
-
-        self.sections.retain(|section| !section.rows.is_empty());
-    }
-}
-
 impl DetailRow {
-    fn matches(&self, search: &Search) -> bool {
+    /// Whether `n` stops on this row — not whether it is drawn: every row is
+    /// drawn regardless of a search (design §4.2).
+    // `n`'s `next_match` (search highlight design §5.1) is the only
+    // production caller and lands in a later task of this slice; until then
+    // only the tests below reach this.
+    #[allow(dead_code)]
+    pub(crate) fn matches(&self, search: &Search) -> bool {
         match self {
             Self::KeyColumn { name, cql_type, .. } | Self::Column { name, cql_type, .. } => {
                 search.matches(name) || search.matches(cql_type)
@@ -322,7 +300,7 @@ impl DetailRow {
             Self::ClassProperty { name, raw, .. } => search.matches(name) || search.matches(raw),
             // The label is not matched, for the reason a section heading is
             // not: `Keyspace` and `Table` are the same two words on every
-            // table, so a search over them narrows nothing.
+            // table and would tell `n` nothing about where it stops.
             Self::Identity { name, .. } => search.matches(name),
         }
     }
@@ -745,21 +723,6 @@ mod tests {
     }
 
     #[test]
-    fn a_search_narrows_the_columns_tab_too() {
-        let mut state = columns_tab(&browsing(every_kind()));
-        state.apply_search(Searched::Ddl, Search::new("timeuuid"));
-
-        assert_eq!(
-            details(&state).rows().cloned().collect::<Vec<_>>(),
-            [DetailRow::Column {
-                name: "order_id".to_owned(),
-                cql_type: "timeuuid".to_owned(),
-                kind: ColumnKind::Clustering,
-            }]
-        );
-    }
-
-    #[test]
     fn a_selected_table_is_named_by_its_keyspace_and_its_own_name() {
         assert_eq!(
             identity_rows(&details(&browsing(orders()))),
@@ -982,21 +945,6 @@ mod tests {
     }
 
     #[test]
-    fn a_class_row_matches_a_term_the_summary_no_longer_draws() {
-        let mut state = browsing(configured(&[(
-            "compression",
-            "{chunk_length_in_kb: 16, class: org.apache.cassandra.io.compress.LZ4Compressor}",
-        )]));
-        state.apply_search(Searched::Ddl, Search::new("io.compress"));
-
-        assert_eq!(
-            section(&details(&state), "Options").rows.len(),
-            1,
-            "the package is gone from the panel but not from the option"
-        );
-    }
-
-    #[test]
     fn the_compact_options_are_listed_before_the_ones_that_wrap() {
         let details = details(&browsing(orders()));
 
@@ -1125,118 +1073,108 @@ mod tests {
         state
     }
 
+    fn section_headings(details: &Details) -> Vec<String> {
+        details
+            .sections
+            .iter()
+            .filter_map(|section| section.heading.as_ref())
+            .map(|heading| heading.text.clone())
+            .collect()
+    }
+
     #[test]
-    fn a_property_matches_on_its_name() {
-        let details = details(&searched_ddl("gc_grace"));
+    fn a_search_drops_no_detail_row() {
+        let whole = details(&browsing(orders()));
+        let searched = details(&searched_ddl("zzz"));
 
         assert_eq!(
-            section(&details, "Options").rows,
-            [DetailRow::Property {
-                name: "gc_grace_seconds".to_owned(),
-                value: "864000".to_owned(),
-            }],
-            "gc_grace_seconds survives; comment and bloom_filter_fp_chance must be gone"
+            searched.rows().count(),
+            whole.rows().count(),
+            "a search that matches nothing still draws every row"
         );
+    }
+
+    #[test]
+    fn a_section_is_never_emptied_by_a_search() {
+        let details = details(&searched_ddl("customer_id"));
+
+        assert!(
+            section_headings(&details)
+                .iter()
+                .any(|heading| heading == "Options"),
+            "Options has no matching row and must still be drawn"
+        );
+    }
+
+    #[test]
+    fn a_row_still_knows_whether_it_matches() {
+        let search = Search::new("timeuuid").expect("non-empty");
+        let row = DetailRow::Column {
+            name: "created_at".to_owned(),
+            cql_type: "timeuuid".to_owned(),
+            kind: ColumnKind::Regular,
+        };
+
+        assert!(row.matches(&search), "the cql type answers a search");
+    }
+
+    #[test]
+    fn a_class_property_matches_the_map_it_flattened() {
+        let search = Search::new("io.compress").expect("non-empty");
+        let row = DetailRow::ClassProperty {
+            name: "compression".to_owned(),
+            class: "LZ4Compressor".to_owned(),
+            settings: Vec::new(),
+            raw: "{'class': 'org.apache.cassandra.io.compress.LZ4Compressor'}".to_owned(),
+        };
+
+        assert!(row.matches(&search), "raw is what a yank copies");
+    }
+
+    #[test]
+    fn a_property_matches_on_its_name() {
+        let search = Search::new("gc_grace").expect("non-empty");
+        let row = DetailRow::Property {
+            name: "gc_grace_seconds".to_owned(),
+            value: "864000".to_owned(),
+        };
+
+        assert!(row.matches(&search));
     }
 
     #[test]
     fn a_property_matches_on_its_value() {
-        // "Order history" is the comment's value; the property's name does not
-        // contain the term.
-        let details = details(&searched_ddl("Order history"));
+        let search = Search::new("Order history").expect("non-empty");
+        let row = DetailRow::Property {
+            name: "comment".to_owned(),
+            value: "Order history.".to_owned(),
+        };
 
-        assert_eq!(
-            section(&details, "Options").rows,
-            [DetailRow::Property {
-                name: "comment".to_owned(),
-                value: "Order history.".to_owned(),
-            }],
-            "only the comment property carries the term, in its value"
-        );
+        assert!(row.matches(&search), "the name does not carry the term");
     }
 
     #[test]
     fn a_column_matches_on_its_name() {
-        let details = details(&searched_ddl("customer_id"));
+        let search = Search::new("customer_id").expect("non-empty");
+        let row = DetailRow::KeyColumn {
+            name: "customer_id".to_owned(),
+            order: None,
+            cql_type: "uuid".to_owned(),
+        };
 
-        assert_eq!(
-            headings(&details),
-            ["Partition Key"],
-            "Clustering Key and Options emptied out and must be absent"
-        );
-        assert_eq!(
-            section(&details, "Partition Key").rows,
-            [DetailRow::KeyColumn {
-                name: "customer_id".to_owned(),
-                order: None,
-                cql_type: "uuid".to_owned(),
-            }],
-            "customer_id survives; order_date, order_id and status must be gone"
-        );
+        assert!(row.matches(&search));
     }
 
     #[test]
     fn a_column_matches_on_its_cql_type() {
-        let details = details(&searched_ddl("timeuuid"));
+        let search = Search::new("timeuuid").expect("non-empty");
+        let row = DetailRow::KeyColumn {
+            name: "order_id".to_owned(),
+            order: Some(ClusteringOrder::Ascending),
+            cql_type: "timeuuid".to_owned(),
+        };
 
-        assert_eq!(
-            headings(&details),
-            ["Clustering Key"],
-            "Partition Key and Options carry no timeuuid and must be absent"
-        );
-        assert_eq!(
-            section(&details, "Clustering Key").rows,
-            [DetailRow::KeyColumn {
-                name: "order_id".to_owned(),
-                order: Some(ClusteringOrder::Ascending),
-                cql_type: "timeuuid".to_owned(),
-            }],
-            "only order_id's type contains timeuuid; order_date must be gone"
-        );
-    }
-
-    #[test]
-    fn a_section_emptied_by_the_search_disappears() {
-        let details = details(&searched_ddl("customer_id"));
-
-        assert_eq!(
-            headings(&details),
-            ["Partition Key"],
-            "Clustering Key and Options emptied out and must be absent, per Section's own doc"
-        );
-    }
-
-    #[test]
-    fn a_heading_is_not_matched() {
-        // "Partition Key" is a heading; no row in that section carries the word.
-        assert_eq!(
-            ddl_body(&searched_ddl("Partition")),
-            PanelBody::Notice {
-                text: "No property matches \"Partition\"".to_owned(),
-                token: Some(Token::Muted),
-            },
-            "matching a heading would resurrect a group whose rows all missed"
-        );
-    }
-
-    #[test]
-    fn nothing_matching_says_which_term_found_nothing() {
-        assert_eq!(
-            ddl_body(&searched_ddl("zzz")),
-            PanelBody::Notice {
-                text: "No property matches \"zzz\"".to_owned(),
-                token: Some(Token::Muted),
-            }
-        );
-    }
-
-    #[test]
-    fn an_unsearched_table_keeps_its_existing_behaviour() {
-        assert_eq!(
-            headings(&details(&browsing(orders()))),
-            ["Partition Key", "Clustering Key", "Options"],
-            "no search applied means nothing is retained away"
-        );
+        assert!(row.matches(&search), "the name does not carry the term");
     }
 
     #[test]

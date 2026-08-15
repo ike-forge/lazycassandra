@@ -7460,88 +7460,6 @@ mod tests {
         assert_eq!(searching(&state).map(Prompt::query), Some(""));
     }
 
-    /// `ddl_rows` counts the rows the panel draws, so a search that empties a
-    /// section pulls the cursor back with it — the clamp in `clamp_lists`
-    /// needs no special case for the search (panel search design §3.3).
-    #[test]
-    fn a_ddl_search_that_shrinks_the_panel_pulls_its_cursor_back() {
-        let mut state = read_shop_orders();
-        state.focus_on(Panel::Ddl);
-        sized(&mut state, [8, 4, 8, 1], 40);
-        press(&mut state, Key::End);
-        let unfiltered = crate::view::ddl_rows(&state);
-        assert!(
-            state.ddl.cursor.index() > 0,
-            "the fixture starts at the end"
-        );
-
-        press(&mut state, Key::Char('/'));
-        press(&mut state, Key::Char('i'));
-        press(&mut state, Key::Char('d'));
-        press(&mut state, Key::Enter);
-
-        let filtered = crate::view::ddl_rows(&state);
-        assert!(
-            filtered > 0 && filtered < unfiltered,
-            "the fixture's search must narrow the panel without emptying it"
-        );
-        assert!(
-            state.ddl.cursor.index() < filtered,
-            "the cursor cannot sit on a row the search removed"
-        );
-    }
-
-    /// The empty end of the same clamp: a panel with no rows left has nothing
-    /// for its cursor to be on, and motion over it is the swallow every other
-    /// empty list gets rather than an index that drifts past zero.
-    #[test]
-    fn a_search_that_empties_table_ddl_leaves_its_cursor_at_rest() {
-        let mut state = read_shop_orders();
-        state.focus_on(Panel::Ddl);
-        sized(&mut state, [8, 4, 8, 1], 40);
-        press(&mut state, Key::End);
-
-        state.apply_search(Searched::Ddl, Search::new("no such property"));
-        press(&mut state, Key::Char('j'));
-
-        assert_eq!(crate::view::ddl_rows(&state), 0);
-        assert_eq!(state.ddl.cursor.index(), 0);
-
-        press(&mut state, Key::End);
-
-        assert_eq!(state.ddl.cursor.index(), 0, "End over nothing goes nowhere");
-    }
-
-    /// Clearing keeps the index rather than mapping it back onto the full
-    /// list. There is no row identity to carry across — the rows that survived
-    /// are a different sequence — and a clamp is owed only where the list
-    /// shrinks under the cursor (panel search design §3.3).
-    #[test]
-    fn clearing_a_ddl_search_leaves_the_cursor_on_the_index_it_held() {
-        let mut state = read_shop_orders();
-        state.focus_on(Panel::Ddl);
-        sized(&mut state, [8, 4, 8, 1], 40);
-
-        press(&mut state, Key::Char('/'));
-        press(&mut state, Key::Char('a'));
-        press(&mut state, Key::Enter);
-        press(&mut state, Key::End);
-        let deep = state.ddl.cursor.index();
-        assert!(
-            deep > 0,
-            "the search must leave more than one row for the cursor to be deep in"
-        );
-
-        press(&mut state, Key::Escape);
-
-        assert!(state.search(Searched::Ddl).is_none());
-        assert_eq!(state.ddl.cursor.index(), deep);
-        assert!(
-            deep + 1 < crate::view::ddl_rows(&state),
-            "and it now names a row of the full list that it was never on"
-        );
-    }
-
     /// The blank frame design §3.3 accepts, carried to its repair: the offset
     /// a wheel produced from pre-search geometry is out of range for the body
     /// the search left, and the next measurement pulls it back. One frame
@@ -7570,8 +7488,8 @@ mod tests {
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('t'));
 
-        // The frame the search produced: nine wrapped lines in a four-line
-        // panel, so no offset past five is drawable.
+        // A frame of nine wrapped lines in a four-line panel: no offset past
+        // five is drawable, whatever the search reported.
         sized(&mut state, [8, 4, 8, 1], 9);
 
         assert_eq!(state.ddl.scroll.offset(), 5);
