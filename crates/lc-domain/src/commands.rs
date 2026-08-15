@@ -77,13 +77,8 @@ const GLOBAL: &[Command] = &[
         Run::Here,
     ),
     Command::new(&[KeyPress::new(Key::Char('4'))], "focus Queries", Run::Here),
-    // The number pressed again is the same key doing the same thing one step
-    // further in, so it is listed beside `[`/`]` rather than five times over.
-    Command::new(
-        &[KeyPress::new(Key::Char(']')), KeyPress::new(Key::Char('['))],
-        "next / prev tab",
-        Run::Here,
-    ),
+    Command::new(&[KeyPress::new(Key::Char(']'))], "next tab", Run::Here),
+    Command::new(&[KeyPress::new(Key::Char('['))], "prev tab", Run::Here),
     Command::new(&[KeyPress::new(Key::Char('y'))], "yank", Run::Here),
     Command::new(&[KeyPress::new(Key::Char('v'))], "select rows", Run::Here),
 ];
@@ -166,9 +161,10 @@ const EXPORT: &[Command] = &[
         "export these rows",
         Run::In(Panel::Contents),
     ),
+    Command::new(&[KeyPress::new(Key::Tab)], "next field", Run::Inert),
     Command::new(
-        &[KeyPress::new(Key::Tab), KeyPress::new(Key::BackTab)],
-        "next/previous field",
+        &[KeyPress::new(Key::BackTab)],
+        "previous field",
         Run::Inert,
     ),
     Command::new(
@@ -204,8 +200,13 @@ const QUERIES: &[Command] = &[
         Run::In(Panel::Queries),
     ),
     Command::new(
-        &[KeyPress::new(Key::Home), KeyPress::new(Key::End)],
-        "line start/end",
+        &[KeyPress::new(Key::Home)],
+        "line start",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[KeyPress::new(Key::End)],
+        "line end",
         Run::In(Panel::Queries),
     ),
     Command::new(
@@ -828,6 +829,39 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// `⏎` presses a row's first key, so a row naming a key and its opposite
+    /// would make that press a coin flip
+    /// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §4).
+    #[test]
+    fn a_row_names_one_action_or_a_set_of_synonyms() {
+        let named = |action: &str, key: KeyPress| {
+            assert!(
+                commands()
+                    .iter()
+                    .any(|command| command.binding.action == action
+                        && command.binding.keys.first() == Some(&key)),
+                "no row presses {key:?} for {action:?}"
+            );
+        };
+
+        named("next tab", KeyPress::new(Key::Char(']')));
+        named("prev tab", KeyPress::new(Key::Char('[')));
+        named("next field", KeyPress::new(Key::Tab));
+        named("previous field", KeyPress::new(Key::BackTab));
+        named("line start", KeyPress::new(Key::Home));
+        named("line end", KeyPress::new(Key::End));
+
+        for command in commands() {
+            assert!(
+                !command.binding.action.contains('/')
+                    || command.binding.keys.len() == 1
+                    || command.binding.action.contains(", or "),
+                "{:?} names several keys and several actions",
+                command.binding.action
+            );
         }
     }
 }
