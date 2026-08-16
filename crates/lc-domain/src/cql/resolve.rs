@@ -258,8 +258,16 @@ impl Machine {
         self.expect = match word {
             "FROM" | "INTO" | "UPDATE" | "TRUNCATE" | "TABLE" => self.enter(Expect::Table),
             "USE" | "KEYSPACE" | "SCHEMA" => self.enter(Expect::Keyspace),
-            "SELECT" | "DELETE" | "WHERE" | "AND" | "SET" | "BY" | "TOKEN" | "PRIMARY"
-            | "RENAME" | "DROP" => self.enter(Expect::Column),
+            "SELECT" | "DELETE" | "WHERE" | "SET" | "BY" | "TOKEN" | "PRIMARY" | "RENAME"
+            | "DROP" => self.enter(Expect::Column),
+            // `AND` continues whatever clause is already open rather than
+            // assuming a `WHERE`/`IF` condition list: in a `WITH` clause
+            // it chains another option (`WITH a = 1 AND b = 2`), and it must
+            // not steal that clause back into `Column`.
+            "AND" => {
+                let base = self.base;
+                self.enter(base)
+            }
             "ADD" => {
                 self.alternating = true;
                 self.enter(Expect::Column)
@@ -841,6 +849,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_chained_with_option_stays_a_property_rather_than_reopening_a_condition_list() {
+        assert_eq!(
+            roles("CREATE TABLE t (id uuid) WITH comment = 'x' AND compaction = {'class': 'X'}"),
+            vec![
+                ("t".to_owned(), Some(Role::Table)),
+                ("id".to_owned(), Some(Role::Column)),
+                ("comment".to_owned(), Some(Role::Property)),
+                ("compaction".to_owned(), Some(Role::Property)),
+            ],
+            "the map literal's keys carry no role either"
+        );
+        assert_eq!(
+            roles(
+                "ALTER KEYSPACE k WITH durable_writes = true \
+                 AND replication = {'class': 'SimpleStrategy'}"
+            ),
+            vec![
+                ("k".to_owned(), Some(Role::Keyspace)),
+                ("durable_writes".to_owned(), Some(Role::Property)),
+                ("replication".to_owned(), Some(Role::Property)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_where_clauses_and_still_yields_a_column() {
+        assert_eq!(
+            roles("SELECT * FROM t WHERE a = 1 AND b = 2"),
+            vec![
+                ("t".to_owned(), Some(Role::Table)),
+                ("a".to_owned(), Some(Role::Column)),
+                ("b".to_owned(), Some(Role::Column)),
+            ]
+        );
+    }
+
     /// Statements lifted from the CQL grammar, one per clause position §3's
     /// table names, covering every statement kind this module resolves.
     const CORPUS: &[&str] = &[
@@ -856,6 +901,7 @@ mod tests {
         "DROP TABLE IF EXISTS k.t",
         "TRUNCATE TABLE k.t",
         "USE k",
+        "CREATE TABLE t (id uuid) WITH comment = 'x' AND compaction = {'class': 'X'}",
     ];
 
     #[test]
