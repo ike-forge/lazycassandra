@@ -32,7 +32,7 @@ use crate::model::DbError;
 use crate::search::{Direction, Search, Sift};
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
-use crate::theme::{BuiltIn, ThemeChoice};
+use crate::theme::ThemeChoice;
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,17 +190,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
             query: prompt.query().to_owned(),
         }),
         Overlay::Themes { cursor, sift, .. } => Some(OverlayView::Themes {
-            labels: BuiltIn::ALL
-                .iter()
-                .map(|built_in| built_in.label().to_owned())
-                .chain(
-                    state
-                        .config
-                        .themes
-                        .iter()
-                        .map(|theme| theme.name.as_str().to_owned()),
-                )
-                .collect(),
+            labels: crate::update::theme_labels(&state.config),
             selected: cursor.index(),
             sift: sift.as_ref().map(sift_view),
         }),
@@ -497,7 +487,7 @@ mod tests {
     use crate::export::{ExportForm, Fetched, Format, Scope, Stop};
     use crate::model::{ConnId, DbError, JobId, Page, QueryId};
     use crate::state::{Cursor, ExportJob, Message, Overlay};
-    use crate::theme::{Ours, Ported, ThemeName};
+    use crate::theme::{BuiltIn, Ours, Ported, ThemeName};
     use crate::update::init;
 
     #[test]

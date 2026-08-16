@@ -2566,6 +2566,7 @@ mod tests {
     use crate::state::{Connection, FLASH_TICKS, Range, Span};
     use crate::theme::{Ours, Ported};
     use crate::tree::tests_support::schema_of as tabled_schema;
+    use crate::view::OverlayView;
     use crate::view::Stroke;
     use crate::view::tests_support::tabled;
 
@@ -3248,6 +3249,33 @@ mod tests {
         type_into(&mut state, "zzz");
 
         assert_eq!(theme_picker(&state), Some(origin));
+    }
+
+    /// Overlay search design §1: `theme_labels` is the order the search
+    /// scans and `view_model`'s `OverlayView::Themes::labels` is what the
+    /// renderer draws, so a search must land on the row the renderer reports
+    /// at that index — a config theme included, which every other picker
+    /// search test above runs without (`Config::default()` has none).
+    #[test]
+    fn typing_seats_on_a_config_theme_at_the_renderers_own_index() {
+        let mut state = measured(&["a"]);
+        let theme = custom_theme("midnight");
+        state.config.themes = vec![theme.clone()];
+        ctrl(&mut state, Key::Char('t'));
+
+        press(&mut state, Key::Char('/'));
+        type_into(&mut state, "midnight");
+
+        let Some(OverlayView::Themes { labels, .. }) = crate::view::view_model(&state).overlay
+        else {
+            panic!("the picker is up");
+        };
+        let expected = labels
+            .iter()
+            .position(|label| label == "midnight")
+            .expect("the config theme is in the picker's labels");
+
+        assert_eq!(theme_picker(&state), Some(expected));
     }
 
     /// Design §5: with a sift up the overlay takes text, so the letters that
