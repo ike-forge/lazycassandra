@@ -566,8 +566,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return ctrl_key(state, press.key);
     }
 
-    // An open palette takes the keys it uses
-    // (docs/superpowers/specs/2026-08-09-command-palette-design.md §7).
+    // An open palette takes motion until a search is up, and text while one is
+    // (docs/superpowers/specs/2026-08-16-overlay-search-design.md §5).
     if matches!(state.overlay, Some(Overlay::Commands(_))) {
         return palette_key(state, press.key);
     }
@@ -578,8 +578,9 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return diagnostics_key(state, press.key);
     }
 
-    // The theme picker takes motion, not text, the same as the palette
-    // (design §6).
+    // The theme picker takes motion until a search is up, and text while one
+    // is, the same as the palette
+    // (docs/superpowers/specs/2026-08-16-overlay-search-design.md §5).
     if matches!(state.overlay, Some(Overlay::Themes { .. })) {
         return themes_key(state, press.key);
     }
@@ -1106,6 +1107,11 @@ fn escape(state: &mut State) {
             state.theme = restored;
             return;
         }
+        Some(Overlay::Commands(mut panel)) if panel.sift().is_some() => {
+            panel.restore_origin();
+            state.overlay = Some(Overlay::Commands(panel));
+            return;
+        }
         Some(
             Overlay::Message(_)
             | Overlay::Commands(_)
@@ -1153,6 +1159,10 @@ fn open_palette(state: &mut State) {
 /// palette does not use is inert rather than dismissing, so no letter means
 /// "close" in one frame and something else in the next (design §7).
 fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(&state.overlay, Some(Overlay::Commands(panel)) if panel.sift().is_some()) {
+        return palette_sift_key(state, key);
+    }
+
     let height = state.geometry.command_rows();
 
     match key {
@@ -1176,6 +1186,31 @@ fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::PageUp => panel.page_up(height),
         Key::Home => panel.to_start(),
         Key::End => panel.to_end(),
+        Key::Char('/') => panel.open_sift(),
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+/// What a palette with a live sift responds to.
+///
+/// Text, for the reason [`themes_sift_key`] takes text: an overlay with a
+/// prompt up is a panel that takes text (overlay search design §5).
+fn palette_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(key, Key::Escape) {
+        escape(state);
+        return Vec::new();
+    }
+
+    let Some(Overlay::Commands(panel)) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char(character) => panel.push(character),
+        Key::Backspace => panel.pop(),
+        Key::Enter => panel.close_sift(),
         _ => {}
     }
 
@@ -1313,7 +1348,8 @@ fn seat_from(labels: &[String], search: &Search, origin: usize) -> Option<usize>
 /// Refused over a live prompt too, which no unmodified key needs to say: the
 /// ctrl layer is dispatched above every overlay, so this is the one opener a
 /// prompt cannot swallow, and replacing one would strand the panel under a
-/// half-typed query with nothing left holding the search it had.
+/// half-typed query with nothing left holding the search it had. Refused the
+/// same way over a picker's own live sift, for the same reason.
 fn open_themes(state: &mut State) {
     let last = BuiltIn::ALL.len() + state.config.themes.len();
     let busy = matches!(
@@ -3158,6 +3194,63 @@ mod tests {
 
         press(&mut state, Key::Escape);
 
+        assert!(state.overlay.is_none());
+    }
+
+    /// Design §5: with a sift up the palette takes text, so `q` and `?` type
+    /// themselves rather than quitting or closing.
+    #[test]
+    fn a_letter_typed_into_the_palettes_sift_does_not_quit_or_close() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('q'));
+        press(&mut state, Key::Char('?'));
+
+        assert!(!state.should_quit);
+        let panel = palette(&state).expect("the palette is still up");
+        assert_eq!(panel.sift().map(Sift::query), Some("q?"));
+    }
+
+    /// Design §1: `⏎` closes the prompt and keeps the cursor, so the next
+    /// `⏎` runs the row the search landed on.
+    #[test]
+    fn enter_closes_the_palettes_sift_and_the_next_one_runs_the_row() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+
+        press(&mut state, Key::Char('/'));
+        for character in "choose a theme".chars() {
+            press(&mut state, Key::Char(character));
+        }
+        press(&mut state, Key::Enter);
+        assert!(palette(&state).expect("still up").sift().is_none());
+
+        press(&mut state, Key::Enter);
+        assert!(
+            matches!(state.overlay, Some(Overlay::Themes { .. })),
+            "the row the search found is the row that ran"
+        );
+    }
+
+    /// Design §1: `Esc` closes the prompt and restores the row; a second one
+    /// closes the palette.
+    #[test]
+    fn escape_leaves_the_palettes_sift_before_the_palette() {
+        let mut state = measured(&["a"]);
+        press(&mut state, Key::Char('?'));
+        let origin = palette(&state).expect("open").selected();
+
+        press(&mut state, Key::Char('/'));
+        press(&mut state, Key::Char('q'));
+        press(&mut state, Key::Escape);
+
+        let panel = palette(&state).expect("the palette survives the first esc");
+        assert!(panel.sift().is_none());
+        assert_eq!(panel.selected(), origin);
+
+        press(&mut state, Key::Escape);
         assert!(state.overlay.is_none());
     }
 

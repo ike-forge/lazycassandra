@@ -7,6 +7,7 @@
 //! arm of `handle_key` claims.
 
 use crate::model::{Key, KeyPress};
+use crate::search::Sift;
 use crate::state::{Cursor, Panel};
 use crate::view::Binding;
 use crate::view::Liveness;
@@ -366,9 +367,14 @@ impl Direction {
 /// motion seats it on a command, which is the invariant a renderer would
 /// otherwise have to defend against — the same reason [`Cursor`]'s index is
 /// private (conventions.md §1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandsPanel {
     cursor: Cursor,
+    /// The live search over the catalogue, while one is up. Held here rather
+    /// than beside the overlay so that seating stays behind this type's
+    /// methods, which is what keeps the cursor off a heading
+    /// (overlay search design §4).
+    sift: Option<Sift>,
 }
 
 impl CommandsPanel {
@@ -377,6 +383,7 @@ impl CommandsPanel {
     pub fn opened() -> Self {
         let mut panel = Self {
             cursor: Cursor::default(),
+            sift: None,
         };
         panel.to_start();
         panel
@@ -386,6 +393,72 @@ impl CommandsPanel {
     #[must_use]
     pub const fn selected(&self) -> usize {
         self.cursor.index()
+    }
+
+    #[must_use]
+    pub const fn sift(&self) -> Option<&Sift> {
+        self.sift.as_ref()
+    }
+
+    /// Opens a search on the row the cursor is on.
+    pub fn open_sift(&mut self) {
+        self.sift = Some(Sift::opened(self.selected()));
+    }
+
+    /// Drops the search, leaving the cursor where it landed.
+    pub fn close_sift(&mut self) {
+        self.sift = None;
+    }
+
+    pub fn push(&mut self, character: char) {
+        if let Some(sift) = &mut self.sift {
+            sift.push(character);
+            self.reseat();
+        }
+    }
+
+    /// Deletes a character, or closes the search when there is none left —
+    /// which is what a `backspace` on an empty query means (design §5).
+    pub fn pop(&mut self) {
+        let Some(sift) = &mut self.sift else {
+            return;
+        };
+
+        if sift.pop() {
+            self.reseat();
+        } else {
+            self.sift = None;
+        }
+    }
+
+    /// Seats the cursor back where the search opened, and drops it.
+    pub fn restore_origin(&mut self) {
+        if let Some(sift) = self.sift.take() {
+            self.seat(sift.origin(), Direction::Down);
+        }
+    }
+
+    /// The first command at or after the origin whose action matches,
+    /// wrapping once; the origin itself when nothing does (design §6).
+    fn reseat(&mut self) {
+        let Some(sift) = &self.sift else {
+            return;
+        };
+        let origin = sift.origin();
+        let seat = sift
+            .search()
+            .and_then(|search| {
+                let total = row_count();
+                (0..total)
+                    .map(|step| (origin + step) % total)
+                    .find(|index| {
+                        command_at(*index)
+                            .is_some_and(|command| search.matches(command.binding.action))
+                    })
+            })
+            .unwrap_or(origin);
+
+        self.seat(seat, Direction::Down);
     }
 
     /// Moves to the next command, skipping a heading, and stopping on the
@@ -958,5 +1031,91 @@ mod tests {
                 command.binding.action
             );
         }
+    }
+
+    fn row_of(action: &str) -> usize {
+        rows()
+            .iter()
+            .position(|row| matches!(row, CommandRow::Command { action: it, .. } if *it == action))
+            .expect("a command with that action")
+    }
+
+    /// Overlay search design §6: the scan runs over command rows only, so a
+    /// search can no more land on a heading than `j` can.
+    #[test]
+    fn a_search_seats_the_palette_on_a_command() {
+        let mut panel = CommandsPanel::opened();
+        panel.open_sift();
+
+        for character in "choose a theme".chars() {
+            panel.push(character);
+        }
+
+        assert_eq!(panel.selected(), row_of("choose a theme"));
+        assert!(
+            command_at(panel.selected()).is_some(),
+            "never a heading or a rule"
+        );
+    }
+
+    /// Design §6: the term matches the action and nothing else — typing the
+    /// key column's text finds nothing.
+    #[test]
+    fn the_palettes_search_reads_the_action_and_not_the_keys() {
+        let mut panel = CommandsPanel::opened();
+        let origin = panel.selected();
+        panel.open_sift();
+
+        for character in "ctrl-".chars() {
+            panel.push(character);
+        }
+
+        assert_eq!(panel.selected(), origin, "no action says ctrl-");
+    }
+
+    /// Design §6: the scan wraps once past the end of the catalogue.
+    #[test]
+    fn the_palettes_search_wraps_past_the_end() {
+        let mut panel = CommandsPanel::opened();
+        panel.to_end();
+        panel.open_sift();
+
+        for character in "quit".chars() {
+            panel.push(character);
+        }
+
+        assert_eq!(panel.selected(), row_of("quit"));
+    }
+
+    /// Design §1: `Esc` puts the cursor back on the row the prompt opened on.
+    #[test]
+    fn restoring_a_palette_sift_puts_the_cursor_back() {
+        let mut panel = CommandsPanel::opened();
+        panel.down();
+        let origin = panel.selected();
+        panel.open_sift();
+        panel.push('q');
+
+        panel.restore_origin();
+
+        assert_eq!(panel.selected(), origin);
+        assert!(panel.sift().is_none());
+    }
+
+    /// Design §5: a `backspace` that finds the query empty closes the prompt
+    /// and leaves the cursor.
+    #[test]
+    fn popping_an_empty_palette_sift_closes_it() {
+        let mut panel = CommandsPanel::opened();
+        panel.open_sift();
+        panel.push('q');
+        let landed = panel.selected();
+
+        panel.pop();
+        assert!(panel.sift().is_some());
+
+        panel.pop();
+        assert!(panel.sift().is_none());
+        assert_eq!(panel.selected(), landed, "closing moves nothing");
     }
 }
