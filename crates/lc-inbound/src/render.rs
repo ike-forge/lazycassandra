@@ -141,27 +141,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         hint_bar,
     );
 
-    match &view.overlay {
-        Some(OverlayView::Message(message)) => crate::overlay::render(frame, message, theme),
-        Some(OverlayView::Commands { rows, selected, .. }) => {
-            crate::palette::render(frame, rows, *selected, theme);
-        }
-        // Drawn on the hint bar row, not here: a prompt is a text field, not
-        // a modal over the panels (design §5.2).
-        Some(OverlayView::Search { query }) => {
-            render_prompt(frame, hint_bar, query, view, theme);
-        }
-        Some(OverlayView::Themes {
-            labels, selected, ..
-        }) => {
-            crate::themes::render(frame, labels, *selected, theme);
-        }
-        Some(OverlayView::Diagnostics { rows, selected }) => {
-            crate::diagnostics::render(frame, rows, *selected, theme);
-        }
-        Some(OverlayView::Export(view)) => crate::export::render(frame, view, theme),
-        None => {}
-    }
+    render_overlay(frame, view, hint_bar, theme);
 
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
@@ -170,6 +150,57 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_grid_width(grid_width)
             .with_theme_rows(theme_rows),
         map: FrameMap::new(hits),
+    }
+}
+
+/// The one overlay this frame is showing, if any — the modal over the
+/// panels, and, for the two that carry a live search, the prompt on the hint
+/// bar row after it (overlay search design §7).
+fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) {
+    match &view.overlay {
+        Some(OverlayView::Message(message)) => crate::overlay::render(frame, message, theme),
+        Some(OverlayView::Commands {
+            rows,
+            selected,
+            sift,
+        }) => {
+            crate::palette::render(
+                frame,
+                rows,
+                *selected,
+                sift.as_ref().and_then(|sift| sift.search.as_ref()),
+                theme,
+            );
+            if let Some(sift) = sift {
+                render_prompt(frame, hint_bar, &sift.query, view, theme);
+            }
+        }
+        // Drawn on the hint bar row, not here: a prompt is a text field, not
+        // a modal over the panels (design §5.2).
+        Some(OverlayView::Search { query }) => {
+            render_prompt(frame, hint_bar, query, view, theme);
+        }
+        Some(OverlayView::Themes {
+            labels,
+            selected,
+            sift,
+        }) => {
+            crate::themes::render(
+                frame,
+                labels,
+                *selected,
+                sift.as_ref().and_then(|sift| sift.search.as_ref()),
+                theme,
+            );
+            if let Some(sift) = sift {
+                render_prompt(frame, hint_bar, &sift.query, view, theme);
+            }
+        }
+        Some(OverlayView::Diagnostics { rows, selected }) => {
+            crate::diagnostics::render(frame, rows, *selected, theme);
+        }
+        Some(OverlayView::Export(view)) => crate::export::render(frame, view, theme),
+        None => {}
     }
 }
 
@@ -911,6 +942,35 @@ mod tests {
             "Queries takes text: {:?}",
             bars[3]
         );
+    }
+
+    /// Overlay search design §7: an overlay's prompt draws where a panel's
+    /// prompt draws — on the hint bar row.
+    #[test]
+    fn an_overlay_sift_draws_its_prompt_on_the_hint_bar() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
+        let mut state = State::default();
+        let mut panel = CommandsPanel::opened();
+        panel.open_sift();
+        panel.push('q');
+        state.overlay = Some(Overlay::Commands(panel));
+
+        terminal
+            .draw(|frame| {
+                render(frame, &view_model(&state), Theme::default());
+            })
+            .expect("a frame");
+
+        let bar: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .skip(80 * 23)
+            .map(Cell::symbol)
+            .collect();
+
+        assert!(bar.contains("/q"), "the prompt is on the bar: {bar}");
     }
 
     #[test]

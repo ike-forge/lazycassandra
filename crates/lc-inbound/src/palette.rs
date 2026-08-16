@@ -1,6 +1,7 @@
 //! The command palette: every binding, drawn over the panels.
 
 use lc_domain::commands::CommandRow;
+use lc_domain::search::Search;
 use lc_domain::style::Token;
 use lc_domain::view::Liveness;
 use ratatui::Frame;
@@ -60,7 +61,13 @@ fn percent(value: u16, share: u16) -> u16 {
     u16::try_from(u32::from(value) * u32::from(share) / 100).unwrap_or(u16::MAX)
 }
 
-pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, theme: Theme) {
+pub(crate) fn render(
+    frame: &mut Frame,
+    rows: &[CommandRow],
+    selected: usize,
+    search: Option<&Search>,
+    theme: Theme,
+) {
     let Some(area) = rect(frame.area(), rows.len()) else {
         return;
     };
@@ -82,7 +89,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[CommandRow], selected: usize, th
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
-        .map(|(index, row)| item(row, gutter, index == selected, theme))
+        .map(|(index, row)| item(row, gutter, index == selected, search, theme))
         .collect();
     let mut state = ListState::default().with_selected(Some(selected));
 
@@ -130,7 +137,13 @@ fn rules(
 /// The action leads and the keys follow, the order a search-actions dialogue
 /// uses: a reader of the open palette is looking for a thing to do and wants
 /// the key it costs, not scanning a column of keys for one they already know.
-fn item(row: &CommandRow, gutter: usize, selected: bool, theme: Theme) -> ListItem<'static> {
+fn item(
+    row: &CommandRow,
+    gutter: usize,
+    selected: bool,
+    search: Option<&Search>,
+    theme: Theme,
+) -> ListItem<'static> {
     match row {
         // Blank: `rules` paints the line itself, across the borders a
         // `ListItem` cannot reach.
@@ -166,13 +179,18 @@ fn item(row: &CommandRow, gutter: usize, selected: bool, theme: Theme) -> ListIt
                 (Liveness::Inert, false) => (Token::Faint, Token::Faint),
             };
 
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{action:<gutter$}"), theme.style(text)),
-                Span::styled(
-                    format!("{GAP}{keys}"),
-                    theme.style(key).remove_modifier(Modifier::UNDERLINED),
-                ),
-            ]))
+            let mut spans = crate::highlight::spans(
+                &format!("{action:<gutter$}"),
+                search,
+                theme.style(text),
+                theme,
+            );
+            spans.push(Span::styled(
+                format!("{GAP}{keys}"),
+                theme.style(key).remove_modifier(Modifier::UNDERLINED),
+            ));
+
+            ListItem::new(Line::from(spans))
         }
     }
 }
@@ -202,7 +220,7 @@ mod tests {
             Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("TestBackend always initialises");
 
         terminal
-            .draw(|frame| render(frame, rows, selected, Theme::default()))
+            .draw(|frame| render(frame, rows, selected, None, Theme::default()))
             .expect("TestBackend always draws");
 
         terminal.backend().buffer().clone()
@@ -214,6 +232,52 @@ mod tests {
             action,
             liveness,
         }
+    }
+
+    fn drawn_with(rows: &[CommandRow], selected: usize, term: &str) -> Buffer {
+        let mut terminal =
+            Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("TestBackend always initialises");
+        let search = Search::new(term);
+
+        terminal
+            .draw(|frame| render(frame, rows, selected, search.as_ref(), Theme::default()))
+            .expect("TestBackend always draws");
+
+        terminal.backend().buffer().clone()
+    }
+
+    /// Overlay search design §7: the matched span is painted where it sits,
+    /// the rest of the row untouched.
+    #[test]
+    fn a_matched_span_is_marked_in_the_action() {
+        let rows = [
+            CommandRow::Heading("Export"),
+            row("export these rows", Liveness::Live),
+            row("close the form", Liveness::Live),
+            row("next field", Liveness::Live),
+            row("previous field", Liveness::Live),
+            row("select, or export", Liveness::Live),
+        ];
+        let area = rect(Rect::new(0, 0, WIDTH, HEIGHT), rows.len()).expect("fits this frame");
+        let buffer = drawn_with(&rows, 1, "export");
+        let theme = Theme::default();
+        let x = area.x + 1 + PAD;
+        let y = area.y + 2;
+        let matched = theme
+            .style(Token::Match)
+            .fg
+            .expect("a mark spends a colour");
+
+        assert_eq!(
+            buffer.cell((x, y)).expect("inside the block").fg,
+            matched,
+            "the term's first character wears the mark"
+        );
+        assert_ne!(
+            buffer.cell((x + 7, y)).expect("inside the block").fg,
+            matched,
+            "the rest of the action does not"
+        );
     }
 
     /// The row is still readable and still lands under the cursor; what it
