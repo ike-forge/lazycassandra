@@ -1017,11 +1017,27 @@ mod tests {
     #[test]
     fn every_prefix_of_every_statement_in_the_grammar_resolves() {
         // The buffer is half-typed far more often than it is finished; a
-        // resolver that panicked on a prefix would take the whole frame down.
+        // resolver that panicked on a prefix would take the whole frame down,
+        // and one that put a role on a keyword would colour it as a name.
         for text in CORPUS {
             for cut in 0..=text.len() {
-                if text.is_char_boundary(cut) {
-                    let _ = resolve(&pieces(&text[..cut]));
+                if !text.is_char_boundary(cut) {
+                    continue;
+                }
+
+                let scanned = pieces(&text[..cut]);
+                let analysis = resolve(&scanned);
+
+                for (index, piece) in scanned.iter().enumerate() {
+                    if matches!(piece.kind, Kind::Keyword | Kind::Literal | Kind::Whitespace) {
+                        assert_eq!(
+                            analysis.role(index),
+                            None,
+                            "{:?} gave {:?} a role",
+                            &text[..cut],
+                            piece.text
+                        );
+                    }
                 }
             }
         }
@@ -1113,11 +1129,24 @@ mod tests {
     }
 
     #[test]
-    fn every_offset_of_every_statement_in_the_grammar_has_a_context() {
+    fn every_offset_of_every_statement_in_the_grammar_has_its_tables_in_scope() {
         for text in CORPUS {
             let scanned = pieces(text);
+            // A `;` opens a second statement with a table set of its own, so
+            // only a single-statement entry has one set to hold every offset
+            // to. The batched entry is still walked, for the panic.
+            let whole = (!text.contains(';'))
+                .then(|| resolve(&scanned).tables_at(scanned.len() - 1).to_vec());
+
             for offset in 0..=text.chars().count() {
-                let _ = context_at(&scanned, offset);
+                let at = context_at(&scanned, offset);
+
+                if let Some(whole) = &whole {
+                    assert_eq!(
+                        &at.tables, whole,
+                        "{text:?} lost its tables at offset {offset}"
+                    );
+                }
             }
         }
     }
