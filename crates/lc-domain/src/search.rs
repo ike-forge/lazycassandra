@@ -249,6 +249,57 @@ impl Prompt {
     }
 }
 
+/// A live search over an overlay's list.
+///
+/// Not a [`Prompt`]: that one targets a [`Searched`] panel and remembers the
+/// search it overwrote, and an overlay search overwrites nothing — it is
+/// applied to no one, and nothing survives the prompt closing
+/// (docs/superpowers/specs/2026-08-16-overlay-search-design.md §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sift {
+    query: String,
+    /// The row the prompt opened on. Every keystroke searches from here, not
+    /// from the last landing, so extending a term does not walk the cursor
+    /// forward (panel search design §5.2).
+    origin: usize,
+}
+
+impl Sift {
+    #[must_use]
+    pub const fn opened(origin: usize) -> Self {
+        Self {
+            query: String::new(),
+            origin,
+        }
+    }
+
+    #[must_use]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    #[must_use]
+    pub const fn origin(&self) -> usize {
+        self.origin
+    }
+
+    /// What the query now means, `None` while it is empty.
+    #[must_use]
+    pub fn search(&self) -> Option<Search> {
+        Search::new(&self.query)
+    }
+
+    pub fn push(&mut self, character: char) {
+        self.query.push(character);
+    }
+
+    /// Reports whether anything was there to delete: a `backspace` that finds
+    /// the query already empty is what closes the prompt (design §5).
+    pub fn pop(&mut self) -> bool {
+        self.query.pop().is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +447,39 @@ mod tests {
                 assert_eq!(target.panel(), panel);
             }
         }
+    }
+
+    #[test]
+    fn a_sift_remembers_the_row_it_opened_on() {
+        let sift = Sift::opened(7);
+
+        assert_eq!(sift.origin(), 7);
+        assert_eq!(sift.query(), "");
+        assert!(sift.search().is_none(), "an empty query matches nothing");
+    }
+
+    #[test]
+    fn a_sift_builds_a_search_from_what_was_typed() {
+        let mut sift = Sift::opened(0);
+        sift.push('A');
+        sift.push('s');
+
+        assert_eq!(sift.query(), "As");
+        assert!(
+            sift.search()
+                .expect("two characters is a term")
+                .matches("Ash dark"),
+            "the term folds case, as every search does"
+        );
+    }
+
+    #[test]
+    fn popping_an_empty_sift_reports_that_it_is_spent() {
+        let mut sift = Sift::opened(0);
+        sift.push('a');
+
+        assert!(sift.pop(), "a sift with characters left is not spent");
+        assert!(!sift.pop(), "popping nothing is what closes the prompt");
+        assert_eq!(sift.query(), "");
     }
 }
