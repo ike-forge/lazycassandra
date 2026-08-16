@@ -10,6 +10,7 @@ use crate::model::{Key, KeyPress};
 use crate::state::{Cursor, Panel};
 use crate::view::Binding;
 use crate::view::Liveness;
+use crate::view::Stroke;
 use crate::view::hints::label;
 
 /// One labelled group of commands.
@@ -31,7 +32,7 @@ pub struct Command {
 }
 
 impl Command {
-    const fn new(keys: &'static [KeyPress], action: &'static str, run: Run) -> Self {
+    const fn new(keys: &'static [Stroke], action: &'static str, run: Run) -> Self {
         Self {
             binding: Binding { keys, action },
             run,
@@ -61,72 +62,60 @@ impl Run {
 }
 
 const GLOBAL: &[Command] = &[
-    Command::new(&[KeyPress::new(Key::Char('q'))], "quit", Run::Here),
-    Command::new(&[KeyPress::new(Key::Char('?'))], "commands", Run::Here),
-    Command::new(
-        &[KeyPress::ctrl(Key::Char('t'))],
-        "choose a theme",
-        Run::Here,
-    ),
+    Command::new(&[Stroke::key(Key::Char('q'))], "quit", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('?'))], "commands", Run::Here),
+    Command::new(&[Stroke::ctrl(Key::Char('t'))], "choose a theme", Run::Here),
     // Queries is the one panel this does nothing in: there the editor claims
     // `/` as text before the binding is consulted (panel search design §5.3,
     // §8). That is a panel that has not caught up rather than a key that is
     // not global (palette execution design §6).
     Command::new(
-        &[KeyPress::new(Key::Char('/'))],
+        &[Stroke::key(Key::Char('/'))],
         "search this panel",
         Run::Here,
     ),
-    Command::new(&[KeyPress::new(Key::Char('n'))], "next match", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('n'))], "next match", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('N'))], "previous match", Run::Here),
     Command::new(
-        &[KeyPress::new(Key::Char('N'))],
-        "previous match",
-        Run::Here,
-    ),
-    Command::new(
-        &[KeyPress::new(Key::Escape)],
+        &[Stroke::key(Key::Escape)],
         "dismiss the overlay",
         Run::Here,
     ),
-    Command::new(&[KeyPress::new(Key::Tab)], "next panel", Run::Here),
-    Command::new(&[KeyPress::new(Key::BackTab)], "previous panel", Run::Here),
-    Command::new(&[KeyPress::new(Key::Char('1'))], "focus Tables", Run::Here),
-    Command::new(
-        &[KeyPress::new(Key::Char('2'))],
-        "focus Table DDL",
-        Run::Here,
-    ),
+    Command::new(&[Stroke::key(Key::Tab)], "next panel", Run::Here),
+    Command::new(&[Stroke::key(Key::BackTab)], "previous panel", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('1'))], "focus Tables", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('2'))], "focus Table DDL", Run::Here),
     // The one panel with a second tab names it, because the pairing is what
     // teaches the rule: two rows over the same key, and a reader who never
     // presses `]` still learns that `2` again reaches the Columns tab.
     Command::new(
-        &[KeyPress::new(Key::Char('2'))],
+        &[Stroke::key(Key::Char('2'))],
         "focus Table columns",
         Run::Here,
     ),
     Command::new(
-        &[KeyPress::new(Key::Char('3'))],
+        &[Stroke::key(Key::Char('3'))],
         "focus Table contents",
         Run::Here,
     ),
-    Command::new(&[KeyPress::new(Key::Char('4'))], "focus Queries", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('4'))], "focus Queries", Run::Here),
     // The rule itself — a number pressed again steps one tab further in —
     // lives here rather than under all five numbers: only the DDL panel has a
     // tab to reach today, and only that press is spelled out above.
-    Command::new(&[KeyPress::new(Key::Char(']'))], "next tab", Run::Here),
-    Command::new(&[KeyPress::new(Key::Char('['))], "prev tab", Run::Here),
-    Command::new(&[KeyPress::new(Key::Char('y'))], "yank", Run::Here),
-    Command::new(&[KeyPress::new(Key::Char('v'))], "select rows", Run::Here),
+    Command::new(&[Stroke::key(Key::Char(']'))], "next tab", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('['))], "prev tab", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('y'))], "yank", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('v'))], "select rows", Run::Here),
 ];
 
 const MOTION: &[Command] = &[
     Command::new(
-        &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Down)],
+        &[Stroke::key(Key::Char('j')), Stroke::key(Key::Down)],
         "down one row",
         Run::Here,
     ),
     Command::new(
-        &[KeyPress::new(Key::Char('k')), KeyPress::new(Key::Up)],
+        &[Stroke::key(Key::Char('k')), Stroke::key(Key::Up)],
         "up one row",
         Run::Here,
     ),
@@ -136,27 +125,41 @@ const MOTION: &[Command] = &[
     // panel repeated the pair under every heading that answers it, which is
     // three rows saying "these keys go sideways" in three wordings.
     Command::new(
-        &[KeyPress::new(Key::Char('h')), KeyPress::new(Key::Left)],
+        &[Stroke::key(Key::Char('h')), Stroke::key(Key::Left)],
         "left, or fold",
         Run::Here,
     ),
     Command::new(
-        &[KeyPress::new(Key::Char('l')), KeyPress::new(Key::Right)],
+        &[Stroke::key(Key::Char('l')), Stroke::key(Key::Right)],
         "right, or unfold",
         Run::Here,
     ),
     Command::new(
-        &[KeyPress::new(Key::PageDown), KeyPress::ctrl(Key::Char('d'))],
+        &[Stroke::key(Key::PageDown), Stroke::ctrl(Key::Char('d'))],
         "down one screen",
         Run::Here,
     ),
     Command::new(
-        &[KeyPress::new(Key::PageUp), KeyPress::ctrl(Key::Char('u'))],
+        &[Stroke::key(Key::PageUp), Stroke::ctrl(Key::Char('u'))],
         "up one screen",
         Run::Here,
     ),
-    Command::new(&[KeyPress::new(Key::Home)], "to the start", Run::Here),
-    Command::new(&[KeyPress::new(Key::End)], "to the end", Run::Here),
+    // `gg` is one row's second spelling rather than a row of its own: it is
+    // the landing `home` already makes, in the spelling a vim hand types
+    // (docs/shortcuts.md §1).
+    Command::new(
+        &[
+            Stroke::key(Key::Home),
+            Stroke::Chord(&[KeyPress::new(Key::Char('g')), KeyPress::new(Key::Char('g'))]),
+        ],
+        "to the start",
+        Run::Here,
+    ),
+    Command::new(
+        &[Stroke::key(Key::End), Stroke::key(Key::Char('G'))],
+        "to the end",
+        Run::Here,
+    ),
 ];
 
 // The actions are cut to twenty characters because MIN_W is derived from the
@@ -166,13 +169,13 @@ const MOTION: &[Command] = &[
 // The horizontal keys are not here: they are `Navigate`'s, and a panel group
 // lists only what that panel alone answers.
 const TABLES: &[Command] = &[Command::new(
-    &[KeyPress::new(Key::Enter)],
+    &[Stroke::key(Key::Enter)],
     "fold/unfold, or read",
     Run::In(Panel::Tables),
 )];
 
 const CONTENTS: &[Command] = &[Command::new(
-    &[KeyPress::new(Key::Char('m'))],
+    &[Stroke::key(Key::Char('m'))],
     "cycle selection mode",
     Run::In(Panel::Contents),
 )];
@@ -183,18 +186,18 @@ const CONTENTS: &[Command] = &[Command::new(
 /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §2).
 const EXPORT: &[Command] = &[
     Command::new(
-        &[KeyPress::ctrl(Key::Char('e'))],
+        &[Stroke::ctrl(Key::Char('e'))],
         "export these rows",
         Run::In(Panel::Contents),
     ),
-    Command::new(&[KeyPress::new(Key::Tab)], "next field", Run::Inert),
-    Command::new(&[KeyPress::new(Key::BackTab)], "previous field", Run::Inert),
+    Command::new(&[Stroke::key(Key::Tab)], "next field", Run::Inert),
+    Command::new(&[Stroke::key(Key::BackTab)], "previous field", Run::Inert),
     Command::new(
-        &[KeyPress::new(Key::Char(' '))],
+        &[Stroke::key(Key::Char(' '))],
         "select, or export",
         Run::Inert,
     ),
-    Command::new(&[KeyPress::new(Key::Escape)], "close the form", Run::Inert),
+    Command::new(&[Stroke::key(Key::Escape)], "close the form", Run::Inert),
 ];
 
 // The editor's printable keys are not rows: every one of them types itself,
@@ -202,37 +205,37 @@ const EXPORT: &[Command] = &[
 // (docs/shortcuts.md §2). What is listed is what a key does *not* do elsewhere.
 const QUERIES: &[Command] = &[
     Command::new(
-        &[KeyPress::ctrl(Key::Char('r'))],
+        &[Stroke::ctrl(Key::Char('r'))],
         "run the buffer",
         Run::In(Panel::Queries),
     ),
     Command::new(
-        &[KeyPress::ctrl(Key::Char('e'))],
+        &[Stroke::ctrl(Key::Char('e'))],
         "open in $EDITOR",
         Run::In(Panel::Queries),
     ),
     Command::new(
-        &[KeyPress::new(Key::Enter)],
+        &[Stroke::key(Key::Enter)],
         "split the line",
         Run::In(Panel::Queries),
     ),
     Command::new(
-        &[KeyPress::new(Key::Backspace), KeyPress::new(Key::Delete)],
+        &[Stroke::key(Key::Backspace), Stroke::key(Key::Delete)],
         "delete a character",
         Run::In(Panel::Queries),
     ),
     Command::new(
-        &[KeyPress::new(Key::Home)],
+        &[Stroke::key(Key::Home)],
         "line start",
         Run::In(Panel::Queries),
     ),
     Command::new(
-        &[KeyPress::new(Key::End)],
+        &[Stroke::key(Key::End)],
         "line end",
         Run::In(Panel::Queries),
     ),
     Command::new(
-        &[KeyPress::new(Key::Escape)],
+        &[Stroke::key(Key::Escape)],
         "leave the editor",
         Run::In(Panel::Queries),
     ),
@@ -487,6 +490,20 @@ mod tests {
         }
     }
 
+    /// A chord is spelled as it is typed, and set beside the key that does
+    /// the same thing rather than given a row of its own.
+    #[test]
+    fn the_chord_is_spelled_as_one_stroke() {
+        assert!(
+            rows().contains(&CommandRow::Command {
+                keys: "home/gg".to_owned(),
+                action: "to the start",
+                liveness: Liveness::Live,
+            }),
+            "the palette must spell gg as two presses of one key, not two alternatives"
+        );
+    }
+
     #[test]
     fn a_row_that_cannot_be_run_says_so() {
         let row = |action: &str| {
@@ -645,7 +662,7 @@ mod tests {
             global
                 .commands
                 .iter()
-                .any(|command| command.binding.keys == [KeyPress::new(Key::Char('/'))]),
+                .any(|command| command.binding.keys == [Stroke::key(Key::Char('/'))]),
             "no global row binds /"
         );
         assert!(
@@ -657,10 +674,9 @@ mod tests {
     #[test]
     fn the_catalogue_lists_the_selection_mode_key() {
         assert!(
-            commands().iter().any(|command| command
-                .binding
-                .keys
-                .contains(&KeyPress::new(Key::Char('m')))),
+            commands()
+                .iter()
+                .any(|command| command.binding.keys.contains(&Stroke::key(Key::Char('m')))),
             "no row binds m"
         );
     }
@@ -730,14 +746,8 @@ mod tests {
     fn only_the_shared_group_lists_the_horizontal_keys() {
         for group in CATALOGUE {
             for command in group.commands {
-                let horizontal = command
-                    .binding
-                    .keys
-                    .contains(&KeyPress::new(Key::Char('h')))
-                    || command
-                        .binding
-                        .keys
-                        .contains(&KeyPress::new(Key::Char('l')));
+                let horizontal = command.binding.keys.contains(&Stroke::key(Key::Char('h')))
+                    || command.binding.keys.contains(&Stroke::key(Key::Char('l')));
 
                 assert!(
                     !horizontal || group.heading == "Navigate",
@@ -893,7 +903,7 @@ mod tests {
             .expect("no Export group");
 
         for command in export.commands {
-            let expected = if command.binding.keys == [KeyPress::ctrl(Key::Char('e'))] {
+            let expected = if command.binding.keys == [Stroke::ctrl(Key::Char('e'))] {
                 Run::In(Panel::Contents)
             } else {
                 Run::Inert
@@ -932,7 +942,7 @@ mod tests {
     /// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §4).
     #[test]
     fn a_row_names_one_action_or_a_set_of_synonyms() {
-        let named = |action: &str, key: KeyPress| {
+        let named = |action: &str, key: Stroke| {
             assert!(
                 commands()
                     .iter()
@@ -942,12 +952,12 @@ mod tests {
             );
         };
 
-        named("next tab", KeyPress::new(Key::Char(']')));
-        named("prev tab", KeyPress::new(Key::Char('[')));
-        named("next field", KeyPress::new(Key::Tab));
-        named("previous field", KeyPress::new(Key::BackTab));
-        named("line start", KeyPress::new(Key::Home));
-        named("line end", KeyPress::new(Key::End));
+        named("next tab", Stroke::key(Key::Char(']')));
+        named("prev tab", Stroke::key(Key::Char('[')));
+        named("next field", Stroke::key(Key::Tab));
+        named("previous field", Stroke::key(Key::BackTab));
+        named("line start", Stroke::key(Key::Home));
+        named("line end", Stroke::key(Key::End));
 
         for command in commands() {
             assert!(
