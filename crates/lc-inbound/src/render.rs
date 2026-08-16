@@ -143,7 +143,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 
     match &view.overlay {
         Some(OverlayView::Message(message)) => crate::overlay::render(frame, message, theme),
-        Some(OverlayView::Commands { rows, selected }) => {
+        Some(OverlayView::Commands { rows, selected, .. }) => {
             crate::palette::render(frame, rows, *selected, theme);
         }
         // Drawn on the hint bar row, not here: a prompt is a text field, not
@@ -151,7 +151,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         Some(OverlayView::Search { query }) => {
             render_prompt(frame, hint_bar, query, view, theme);
         }
-        Some(OverlayView::Themes { labels, selected }) => {
+        Some(OverlayView::Themes {
+            labels, selected, ..
+        }) => {
             crate::themes::render(frame, labels, *selected, theme);
         }
         Some(OverlayView::Diagnostics { rows, selected }) => {
@@ -887,7 +889,7 @@ mod tests {
         let drawn = row(&buffer, 23);
         let hints: String = drawn.chars().skip(taken).collect();
 
-        assert_eq!(hints.trim_end(), " ⏎ run | ?/esc close | q quit");
+        assert_eq!(hints.trim_end(), " ⏎ run | ?/esc close | q quit | / search");
     }
 
     #[test]
