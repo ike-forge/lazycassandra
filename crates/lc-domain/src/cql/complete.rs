@@ -18,8 +18,10 @@ use crate::model::{Schema, Table};
 /// shorter one (design §5.3).
 const MOST: usize = 12;
 
-/// What kind of thing a candidate is — what the popup colours it by, and the
-/// order the list is built in.
+/// What kind of thing a candidate is — what the popup colours it by.
+///
+/// The order the list is offered in comes from the chain [`suggest`] builds
+/// for the cursor's position, not from this enum's derived `Ord`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CandidateKind {
     Keyword,
@@ -168,10 +170,7 @@ pub fn suggest(
 /// — and because a keyword is the same wherever the cursor is, while a name
 /// depends on a panel the user may not be looking at (design §5.2).
 fn unqualified(schema: Option<&Schema>, keyspace: Option<&str>, prefix: &str) -> Vec<Candidate> {
-    let keywords = KEYWORDS
-        .iter()
-        .filter(|keyword| matches(keyword, prefix))
-        .map(|keyword| Candidate::plain(*keyword, CandidateKind::Keyword));
+    let keywords = keywords(prefix);
 
     let keyspaces = schema.into_iter().flat_map(|schema| {
         schema
@@ -207,16 +206,21 @@ fn names_first(schema: Option<&Schema>, keyspace: Option<&str>, prefix: &str) ->
         .into_iter()
         .flat_map(|keyspace| tables_of(schema, keyspace, prefix));
 
-    let keywords = KEYWORDS
-        .iter()
-        .filter(|keyword| matches(keyword, prefix))
-        .map(|keyword| Candidate::plain(*keyword, CandidateKind::Keyword));
-
     tables
         .chain(keyspaces(schema, prefix))
-        .chain(keywords)
+        .chain(keywords(prefix))
         .take(MOST)
         .collect()
+}
+
+/// The grammar's own words, which every position offers: a clause keyword is
+/// reachable from inside the clause before it, and `SELECT id, fr` is how
+/// `FROM` gets typed.
+fn keywords(prefix: &str) -> impl Iterator<Item = Candidate> + '_ {
+    KEYWORDS
+        .iter()
+        .filter(move |keyword| matches(keyword, prefix))
+        .map(|keyword| Candidate::plain(*keyword, CandidateKind::Keyword))
 }
 
 /// Keyspaces alone: what `Expect::Keyspace` wants (design §6) — `USE` takes
@@ -233,17 +237,27 @@ fn keyspaces(schema: Option<&Schema>, prefix: &str) -> Vec<Candidate> {
 
 /// The columns a select list can name, offered from the one table in scope
 /// or, where the statement names none or several, from every table there is
-/// (design §6).
+/// (design §6) — and then the keywords, which no column position may hide.
+///
+/// A select list and a `WHERE` list both stay `Expect::Column` until a
+/// keyword ends them, so keywords offered only elsewhere would make `FROM`
+/// and `LIMIT` untypeable through the popup.
 fn columns(
     schema: Option<&Schema>,
     context: &Context,
     keyspace: Option<&str>,
     prefix: &str,
 ) -> Vec<Candidate> {
-    match context.tables.as_slice() {
+    let columns = match context.tables.as_slice() {
         [table] => columns_of(schema, &resolved(table, keyspace), prefix),
         _ => every_column(schema, prefix),
-    }
+    };
+
+    columns
+        .into_iter()
+        .chain(keywords(prefix))
+        .take(MOST)
+        .collect()
 }
 
 /// A table's columns in the order vision.md §2 reads them: partition,
@@ -623,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn a_select_list_over_one_table_offers_only_that_tables_columns() {
+    fn a_select_list_over_one_table_offers_that_tables_columns_first() {
         let schema = schema();
 
         // The cursor is at the end of the buffer in `typed`; place it after `i`.
@@ -633,17 +647,37 @@ mod tests {
         }
         let completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
 
-        assert!(
-            completion
-                .candidates()
-                .iter()
-                .all(|candidate| candidate.kind == CandidateKind::Column),
-            "a select list over a known table wants columns, not keywords"
-        );
         assert_eq!(
             completion.candidates().first().map(|c| c.text.as_str()),
             Some("id"),
             "the fixture's only column starting with `i`"
+        );
+        assert_eq!(
+            completion.candidates().first().map(|c| c.kind),
+            Some(CandidateKind::Column),
+            "a select list over a known table leads with its columns"
+        );
+    }
+
+    #[test]
+    fn a_column_position_still_reaches_the_keyword_that_ends_it() {
+        assert!(
+            offers("SELECT id, fr", Some("shop")).contains(&"FROM".to_owned()),
+            "`fr` in a select list is how FROM gets typed"
+        );
+        assert!(
+            offers("SELECT * fr", Some("shop")).contains(&"FROM".to_owned()),
+            "`*` never leaves the column position, and FROM must survive it"
+        );
+
+        let after_where = offers("SELECT id FROM shop.orders WHERE li", Some("shop"));
+        assert!(
+            after_where.contains(&"line".to_owned()),
+            "the table's own column leads"
+        );
+        assert!(
+            after_where.contains(&"LIMIT".to_owned()),
+            "and the keyword that ends the clause is still reachable"
         );
     }
 
@@ -774,13 +808,23 @@ mod tests {
     #[test]
     fn a_cursor_after_use_offers_keyspaces_only() {
         let schema = schema();
-        let completion = suggest(&typed("USE sh"), Some(&schema), None).expect("offers");
+        // `se` is `SELECT` and `SET` as well as `secrets`, and the panel is
+        // on a keyspace with tables of its own: only the `Expect::Keyspace`
+        // branch can leave keyspaces alone in the list.
+        let completion = suggest(&typed("USE se"), Some(&schema), Some("shop")).expect("offers");
 
         assert!(
             completion
                 .candidates()
                 .iter()
-                .all(|candidate| candidate.kind == CandidateKind::Keyspace)
+                .all(|candidate| candidate.kind == CandidateKind::Keyspace),
+            "USE takes a keyspace and nothing else"
+        );
+        assert!(
+            completion
+                .candidates()
+                .iter()
+                .any(|candidate| candidate.text == "secrets")
         );
     }
 
