@@ -96,7 +96,7 @@ pub(crate) fn render(
 mod tests {
     use lc_domain::state::{Cursor, Overlay, State};
     use lc_domain::view::view_model;
-    use lc_domain::{BuiltIn, Ported, ThemeChoice};
+    use lc_domain::{BuiltIn, Ours, Ported, ThemeChoice};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Cell;
@@ -161,7 +161,10 @@ mod tests {
         );
     }
 
-    /// Design §7: the picker marks the matched span in a label.
+    /// Design §7: the picker marks the matched span in a label. Pinned to the
+    /// matched label's own cell, the way `palette.rs`'s equivalent test does
+    /// — asserting that some cell somewhere carries the mark would still pass
+    /// if an unrelated glyph happened to share `Token::Match`'s colour.
     #[test]
     fn a_matched_span_is_marked_in_a_label() {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
@@ -171,6 +174,10 @@ mod tests {
             .iter()
             .map(|built_in| built_in.label().to_owned())
             .collect();
+        let area = rect(terminal.get_frame().area(), labels.len()).expect("fits this frame");
+        let row = index_of(BuiltIn::Ours(Ours::QuillDark));
+        let x = area.x + 1 + PAD;
+        let y = area.y + 1 + u16::try_from(row).expect("small row index");
 
         terminal
             .draw(|frame| render(frame, &labels, 0, search.as_ref(), Theme::of(&choice)))
@@ -180,14 +187,15 @@ mod tests {
             .style(Token::Match)
             .fg
             .expect("a mark spends a colour");
-        assert!(
+        assert_eq!(
             terminal
                 .backend()
                 .buffer()
-                .content()
-                .iter()
-                .any(|cell| cell.fg == matched),
-            "the label that matched carries the mark"
+                .cell((x, y))
+                .expect("inside the block")
+                .fg,
+            matched,
+            "the matched label's own cell wears the mark"
         );
     }
 
