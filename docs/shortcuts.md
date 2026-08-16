@@ -211,11 +211,10 @@ was before config existed.
 | `/` | Search the list: typing walks the cursor to the next matching row, marking the hit and previewing it. `⏎` keeps the theme, `Esc` puts it back. |
 
 Search here previews the same way motion already does: the cursor is what
-sets `State.theme`, so walking it with `/` walks the preview too. Once the
-prompt is up, `/` is text like every other printable key, the same rule that
-lets `q` and `?` type there instead of quitting or closing — see §2's rule
-below
-([overlay search design](specs/2026-08-16-overlay-search-design.md) §5).
+sets `State.theme`, so walking it with `/` walks the preview too. A term
+matching nothing leaves the cursor, and so the preview, right where the
+prompt opened — see §2's rule below for the key itself
+([overlay search design](specs/2026-08-16-overlay-search-design.md) §5, §6).
 
 `Home`/`End` are deliberately inert here. The list is every theme there is and
 always shorter than the block drawing it, so a screen *is* the whole list:
