@@ -32,6 +32,20 @@ pub enum Role {
     Property,
 }
 
+/// What a statement does, as far as a reader outside this module needs to
+/// know.
+///
+/// `Select` alone is named because it is the only verb whose tables are the
+/// rows a grid holds: a `SELECT`'s one table is the table its result set came
+/// from, while an `INSERT`'s or a `TRUNCATE`'s is a table it wrote to and
+/// never read (design §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Statement {
+    Select,
+    #[default]
+    Other,
+}
+
 /// A table as the statement wrote it.
 ///
 /// Folded to lower case where it was unquoted, because CQL folds an unquoted
@@ -74,9 +88,11 @@ pub struct Analysis {
     /// the last entry is the expectation past the final piece, which is where
     /// a cursor at the end of the buffer sits.
     expects: Vec<Expect>,
-    /// The statement each piece belongs to, as an index into `tables`.
+    /// The statement each piece belongs to, as an index into `tables` and
+    /// `kinds`.
     statement: Vec<usize>,
     tables: Vec<Vec<Name>>,
+    kinds: Vec<Statement>,
 }
 
 impl Analysis {
@@ -99,6 +115,16 @@ impl Analysis {
             .get(index)
             .and_then(|statement| self.tables.get(*statement))
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// What the statement the piece at `index` belongs to does.
+    #[must_use]
+    pub fn statement_at(&self, index: usize) -> Statement {
+        self.statement
+            .get(index)
+            .and_then(|statement| self.kinds.get(*statement))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// How many statements the buffer holds — a `BEGIN BATCH` counts as one
@@ -165,6 +191,7 @@ fn piece_at(pieces: &[Piece], offset: usize) -> usize {
 pub(crate) fn resolve(pieces: &[Piece]) -> Analysis {
     let mut machine = Machine {
         tables: vec![Vec::new()],
+        kinds: vec![Statement::default()],
         ..Machine::default()
     };
 
@@ -220,6 +247,8 @@ struct Machine {
     expects: Vec<Expect>,
     statement: Vec<usize>,
     tables: Vec<Vec<Name>>,
+    /// One per scope in `tables`, decided by the verb that opened it.
+    kinds: Vec<Statement>,
     /// The keyspace of a qualified name whose table has not been read yet,
     /// paired with the index of the role it was provisionally given: a bare
     /// name in table position is a table until a `.` proves it was a
@@ -288,6 +317,12 @@ impl Machine {
         }
 
         if self.verb == Verb::Unread {
+            if word == "SELECT"
+                && let Some(kind) = self.kinds.last_mut()
+            {
+                *kind = Statement::Select;
+            }
+
             self.verb = match word {
                 "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" | "USE" | "DROP" => {
                     Verb::Data
@@ -451,6 +486,7 @@ impl Machine {
 
     fn end_statement(&mut self) {
         self.tables.push(Vec::new());
+        self.kinds.push(Statement::default());
         self.expect = Expect::Keyword;
         self.base = Expect::Keyword;
         self.verb = Verb::Unread;
@@ -478,6 +514,7 @@ impl Machine {
         // disappear from the count entirely.
         if !self.has_content && self.tables.last().is_some_and(Vec::is_empty) {
             self.tables.pop();
+            self.kinds.pop();
         }
 
         Analysis {
@@ -485,6 +522,7 @@ impl Machine {
             expects: self.expects,
             statement: self.statement,
             tables: self.tables,
+            kinds: self.kinds,
         }
     }
 }

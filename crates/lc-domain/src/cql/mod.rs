@@ -13,7 +13,7 @@ mod resolve;
 
 pub use complete::{Candidate, CandidateKind, Completion, suggest};
 pub use format::format;
-pub use resolve::{Analysis, Context, Expect, Name, Role};
+pub use resolve::{Analysis, Context, Expect, Name, Role, Statement};
 
 use crate::style::{Segment, Token};
 use lex::Kind;
@@ -24,16 +24,19 @@ use resolve::resolve;
 /// module.
 ///
 /// `None` where the buffer resolves to anything other than exactly one
-/// statement naming exactly one table: a `BEGIN BATCH` splits into one scope
+/// `SELECT` naming exactly one table: a `BEGIN BATCH` splits into one scope
 /// per `;`, so its first scope alone can name one table while the buffer as
 /// a whole names several, and a caller that only checked `tables_at(0)`
-/// would be fooled by it.
+/// would be fooled by it. The verb matters for the same reason the count
+/// does — an `INSERT INTO shop.orders` names a table it wrote and never
+/// read, so its columns say nothing about the rows on screen
+/// (cql semantics design §7).
 #[must_use]
 pub fn sole_table(cql: &str) -> Option<Name> {
     let scanned = lex::pieces(cql);
     let analysis = resolve(&scanned);
 
-    if analysis.statements() != 1 {
+    if analysis.statements() != 1 || analysis.statement_at(0) != Statement::Select {
         return None;
     }
 
@@ -244,6 +247,19 @@ mod tests {
             Some((Some("shop".to_owned()), "orders".to_owned())),
             "whitespace after the semicolon"
         );
+    }
+
+    #[test]
+    fn a_statement_that_is_not_a_select_names_no_sole_table() {
+        // Each names exactly one table, and none of them read a row from it.
+        assert_eq!(sole_table("insert into shop.orders (id) values (1)"), None);
+        assert_eq!(sole_table("truncate shop.orders"), None);
+        assert_eq!(sole_table("update shop.orders set total = 1"), None);
+        assert_eq!(
+            sole_table("create table shop.orders (id uuid primary key)"),
+            None
+        );
+        assert_eq!(sole_table("use shop"), None);
     }
 
     #[test]
