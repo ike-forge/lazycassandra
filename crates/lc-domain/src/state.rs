@@ -12,15 +12,15 @@ use crate::config::{Config, Diagnostic};
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::export::ExportForm;
-use crate::model::{ConnId, DbError, JobId, Key, KeyPress, QueryId, Schema, Statement};
+use crate::model::{ConnId, DbError, JobId, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::queries::QueriesPanel;
-use crate::search::{Prompt, Search, Searched};
+use crate::search::{Prompt, Search, Searched, Sift};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
 use crate::tree::TablesPanel;
 use crate::update::Source;
-use crate::view::hints::Binding;
+use crate::view::hints::{Binding, Stroke};
 
 #[derive(Debug, Clone, Default)]
 pub struct State {
@@ -64,6 +64,21 @@ pub struct State {
     pub cwd: PathBuf,
     /// The one export in flight, if any. One at a time (export design §5).
     pub export: Option<ExportJob>,
+    /// The prefix the last press armed, if it armed one. Spent by the next
+    /// key whatever that key is, so `g` followed by anything but `g` is that
+    /// key on its own (docs/shortcuts.md §1).
+    pub pending: Option<Prefix>,
+}
+
+/// A key that means nothing on its own and waits for the one after it.
+///
+/// An enum with a single variant rather than a flag: what is held is *which*
+/// prefix is armed, and a second prefix must not arrive as a second bool
+/// (conventions.md §1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prefix {
+    /// `g`, waiting for the `g` that completes `gg`.
+    G,
 }
 
 /// A running export.
@@ -232,6 +247,10 @@ pub enum Overlay {
     Themes {
         cursor: Cursor,
         restored: ThemeChoice,
+        /// The live search over the list, while one is up. A field rather
+        /// than a sibling variant: a prompt and a picker must both be up
+        /// (overlay search design §4).
+        sift: Option<Sift>,
     },
     /// What the config files got wrong, drawn over the panels at startup.
     Diagnostics(DiagnosticsPanel),
@@ -354,47 +373,47 @@ const TABLES_HINTS: &[Binding] = &[
     // focused panel and nothing finer (design §1), so one label has to cover
     // both — "open" is true of either row, "read" of half of them.
     Binding {
-        keys: &[KeyPress::new(Key::Enter)],
+        keys: &[Stroke::key(Key::Enter)],
         action: "open",
     },
     // Not global: it does nothing in Queries, where `/` is text (panel
     // search design §5.3).
     Binding {
-        keys: &[KeyPress::new(Key::Char('/'))],
+        keys: &[Stroke::key(Key::Char('/'))],
         action: "search",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('v'))],
+        keys: &[Stroke::key(Key::Char('v'))],
         action: "select",
     },
 ];
 
 const DDL_HINTS: &[Binding] = &[
     Binding {
-        keys: &[KeyPress::new(Key::Char('/'))],
+        keys: &[Stroke::key(Key::Char('/'))],
         action: "search",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('v'))],
+        keys: &[Stroke::key(Key::Char('v'))],
         action: "select",
     },
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
     Binding {
-        keys: &[KeyPress::ctrl(Key::Char('e'))],
+        keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "export",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('m'))],
+        keys: &[Stroke::key(Key::Char('m'))],
         action: "mode",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('/'))],
+        keys: &[Stroke::key(Key::Char('/'))],
         action: "search",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('v'))],
+        keys: &[Stroke::key(Key::Char('v'))],
         action: "select",
     },
 ];
@@ -403,30 +422,30 @@ const QUERIES_HINTS: &[Binding] = &[
     // First: it is what the panel is for. `⏎ newline` and `esc leave` are what
     // it does on the way there.
     Binding {
-        keys: &[KeyPress::ctrl(Key::Char('r'))],
+        keys: &[Stroke::ctrl(Key::Char('r'))],
         action: "run",
     },
     // Unconditionally true in every frame Queries is focused, so it is named
     // plainly rather than greyed — unlike `ctrl-r`, which lies on an empty
     // buffer (external editor design §5).
     Binding {
-        keys: &[KeyPress::ctrl(Key::Char('e'))],
+        keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "edit",
     },
     // Greyed on a buffer already laid out, for the reason `ctrl-r` is greyed
     // on an empty one (query editor design §4.3).
     Binding {
-        keys: &[KeyPress::ctrl(Key::Char('f'))],
+        keys: &[Stroke::ctrl(Key::Char('f'))],
         action: "format",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Enter)],
+        keys: &[Stroke::key(Key::Enter)],
         action: "newline",
     },
     // Named here and nowhere else: `Esc` only leaves a panel that takes text,
     // so this is the one bar where saying so is true (hint bar design §3).
     Binding {
-        keys: &[KeyPress::new(Key::Escape)],
+        keys: &[Stroke::key(Key::Escape)],
         action: "leave",
     },
 ];

@@ -11,8 +11,41 @@ use crate::state::{Overlay, Panel, State};
 /// no bar (design §2). `update::tests` presses every one of these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
-    pub keys: &'static [KeyPress],
+    pub keys: &'static [Stroke],
     pub action: &'static str,
+}
+
+/// One way of pressing a binding: a key on its own, or keys typed in order.
+///
+/// A chord is not two alternatives spelled side by side. `g` on its own moves
+/// nothing and only arms what the next press completes, so a slice of
+/// [`KeyPress`] cannot say what `gg` is without claiming that a lone `g` goes
+/// to the start (docs/shortcuts.md §1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stroke {
+    Key(KeyPress),
+    Chord(&'static [KeyPress]),
+}
+
+impl Stroke {
+    #[must_use]
+    pub const fn key(key: Key) -> Self {
+        Self::Key(KeyPress::new(key))
+    }
+
+    #[must_use]
+    pub const fn ctrl(key: Key) -> Self {
+        Self::Key(KeyPress::ctrl(key))
+    }
+
+    /// The presses that perform it, in the order they are typed.
+    #[must_use]
+    pub fn presses(self) -> Vec<KeyPress> {
+        match self {
+            Self::Key(press) => vec![press],
+            Self::Chord(presses) => presses.to_vec(),
+        }
+    }
 }
 
 /// Whether pressing a hint's key in this frame would do anything.
@@ -54,11 +87,11 @@ pub struct HintBar {
 /// and `tab panel` — which teaches only one binding — is the first to go.
 pub(crate) const GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[KeyPress::new(Key::Tab)],
+        keys: &[Stroke::key(Key::Tab)],
         action: "panel",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('?'))],
+        keys: &[Stroke::key(Key::Char('?'))],
         action: "commands",
     },
 ];
@@ -70,7 +103,7 @@ pub(crate) const GLOBAL: &[Binding] = &[
 /// `pub(crate)` so `update`'s "every global hint does something" test can
 /// still reach it now that it has left [`GLOBAL`].
 pub(crate) const QUIT: Binding = Binding {
-    keys: &[KeyPress::new(Key::Char('q'))],
+    keys: &[Stroke::key(Key::Char('q'))],
     action: "quit",
 };
 
@@ -87,16 +120,20 @@ pub(crate) const QUIT: Binding = Binding {
 /// design §12).
 const PALETTE_GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[KeyPress::new(Key::Enter)],
+        keys: &[Stroke::key(Key::Enter)],
         action: "run",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('?')), KeyPress::new(Key::Escape)],
+        keys: &[Stroke::key(Key::Char('?')), Stroke::key(Key::Escape)],
         action: "close",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('q'))],
+        keys: &[Stroke::key(Key::Char('q'))],
         action: "quit",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
     },
 ];
 
@@ -105,7 +142,7 @@ const PALETTE_GLOBAL: &[Binding] = &[
 /// `q`, so naming `quit` here would be the exact lie this bar exists to
 /// prevent (design §9).
 const DIAGNOSTICS_GLOBAL: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Escape)],
+    keys: &[Stroke::key(Key::Escape)],
     action: "close",
 }];
 
@@ -114,10 +151,16 @@ const DIAGNOSTICS_GLOBAL: &[Binding] = &[Binding {
 /// because that is what the press does — the cursor writes `State.theme` on
 /// every step (themes design §6). The one bar that still names `j`/`k`: what
 /// it teaches is the side effect, not the motion.
-pub(crate) const THEMES: &[Binding] = &[Binding {
-    keys: &[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))],
-    action: "preview",
-}];
+pub(crate) const THEMES: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('j')), Stroke::key(Key::Char('k'))],
+        action: "preview",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+];
 
 /// The two ways out are named apart, because they differ in what they leave
 /// behind: `⏎` keeps the previewed theme and `esc` puts back the one the
@@ -125,15 +168,15 @@ pub(crate) const THEMES: &[Binding] = &[Binding {
 /// [`PALETTE_GLOBAL`] names it — the picker leaves quitting alone.
 pub(crate) const THEMES_GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[KeyPress::new(Key::Enter)],
+        keys: &[Stroke::key(Key::Enter)],
         action: "keep",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Escape)],
+        keys: &[Stroke::key(Key::Escape)],
         action: "cancel",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Char('q'))],
+        keys: &[Stroke::key(Key::Char('q'))],
         action: "quit",
     },
 ];
@@ -143,11 +186,11 @@ pub(crate) const THEMES_GLOBAL: &[Binding] = &[
 /// lie design §2 exists to prevent (panel search design §5.2).
 const SEARCH_GLOBAL: &[Binding] = &[
     Binding {
-        keys: &[KeyPress::new(Key::Enter)],
+        keys: &[Stroke::key(Key::Enter)],
         action: "apply",
     },
     Binding {
-        keys: &[KeyPress::new(Key::Escape)],
+        keys: &[Stroke::key(Key::Escape)],
         action: "cancel",
     },
 ];
@@ -156,7 +199,7 @@ const SEARCH_GLOBAL: &[Binding] = &[
 /// true: `tab` moves focus every other one, and the global hint that says so
 /// is dropped for exactly these frames (query editor design §5.5).
 const COMPLETE: Binding = Binding {
-    keys: &[KeyPress::new(Key::Tab)],
+    keys: &[Stroke::key(Key::Tab)],
     action: "complete",
 };
 
@@ -164,7 +207,7 @@ const COMPLETE: Binding = Binding {
 /// (hint bar design §3). With a search applied, it clears one — which is
 /// what keeps clearing discoverable (panel search design §5.3).
 const CLEAR: Binding = Binding {
-    keys: &[KeyPress::new(Key::Escape)],
+    keys: &[Stroke::key(Key::Escape)],
     action: "clear",
 };
 
@@ -172,7 +215,7 @@ const CLEAR: Binding = Binding {
 /// search applied, and a hint that would do nothing this frame is a lie
 /// (docs/shortcuts.md §2, design §5.3).
 const NEXT_MATCH: Binding = Binding {
-    keys: &[KeyPress::new(Key::Char('n'))],
+    keys: &[Stroke::key(Key::Char('n'))],
     action: "next match",
 };
 
@@ -181,6 +224,16 @@ pub(crate) fn bar(state: &State) -> HintBar {
         .export
         .as_ref()
         .map(|job| format!("exporting {} rows…", job.rows()));
+
+    // An overlay with a prompt up is a panel that takes text, and the two
+    // ways out are the prompt's two (overlay search design §8).
+    if sifting(state) {
+        return HintBar {
+            panel: Vec::new(),
+            global: SEARCH_GLOBAL.iter().map(rendered).collect(),
+            export,
+        };
+    }
 
     // No panel group: moving — by a row, by a screen, or to an end — is
     // assumed rather than taught, in here as in every panel bar
@@ -240,8 +293,8 @@ pub(crate) fn bar(state: &State) -> HintBar {
     let fits = state.geometry.command_rows() > 0;
     let mut global: Vec<Hint> = GLOBAL
         .iter()
-        .filter(|binding| fits || !binding.keys.contains(&KeyPress::new(Key::Char('?'))))
-        .filter(|binding| !completing || !binding.keys.contains(&KeyPress::new(Key::Tab)))
+        .filter(|binding| fits || !binding.keys.contains(&Stroke::key(Key::Char('?'))))
+        .filter(|binding| !completing || !binding.keys.contains(&Stroke::key(Key::Tab)))
         .map(rendered)
         .collect();
     if !state.focus().takes_text() {
@@ -283,6 +336,15 @@ pub(crate) fn bar(state: &State) -> HintBar {
     }
 }
 
+/// Whether an overlay has a live search over its list.
+fn sifting(state: &State) -> bool {
+    match &state.overlay {
+        Some(Overlay::Commands(panel)) => panel.sift().is_some(),
+        Some(Overlay::Themes { sift, .. }) => sift.is_some(),
+        _ => false,
+    }
+}
+
 /// Whether the focused panel is carrying a live range. A hint must be true in
 /// the frame it is drawn in, and under a live range `esc` unconditionally
 /// clears it (docs/shortcuts.md §2) — the same rule that already puts `esc`
@@ -309,12 +371,12 @@ fn selected(state: &State) -> bool {
 /// frame with no room to draw the form — the same promise `?` keeps above
 /// (export design §1).
 fn liveness(state: &State, binding: &Binding) -> Liveness {
-    let runs = binding.keys == [KeyPress::ctrl(Key::Char('r'))];
+    let runs = binding.keys == [Stroke::ctrl(Key::Char('r'))];
     if runs && state.queries.text().trim().is_empty() {
         return Liveness::Inert;
     }
 
-    let formats = binding.keys == [KeyPress::ctrl(Key::Char('f'))];
+    let formats = binding.keys == [Stroke::ctrl(Key::Char('f'))];
     if formats {
         let text = state.queries.text();
         if crate::cql::format(&text) == text {
@@ -364,8 +426,21 @@ fn rendered(binding: &Binding) -> Hint {
     }
 }
 
-pub(crate) fn label(keys: &[KeyPress]) -> String {
-    keys.iter().copied().map(name).collect::<Vec<_>>().join("/")
+/// Alternatives are separated, a chord's presses are run together: `home/gg`
+/// is two ways to reach one place, and the second is two keystrokes.
+pub(crate) fn label(keys: &[Stroke]) -> String {
+    keys.iter()
+        .copied()
+        .map(stroke_name)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn stroke_name(stroke: Stroke) -> String {
+    match stroke {
+        Stroke::Key(press) => name(press),
+        Stroke::Chord(presses) => presses.iter().copied().map(name).collect(),
+    }
 }
 
 fn name(press: KeyPress) -> String {
@@ -422,23 +497,20 @@ mod tests {
     #[test]
     fn a_binding_behind_ctrl_is_named_with_a_ctrl_prefix() {
         assert_eq!(
-            label(&[
-                KeyPress::ctrl(Key::Char('d')),
-                KeyPress::ctrl(Key::Char('u')),
-            ]),
+            label(&[Stroke::ctrl(Key::Char('d')), Stroke::ctrl(Key::Char('u')),]),
             "ctrl-d/ctrl-u"
         );
-        assert_eq!(label(&[KeyPress::new(Key::Char('j'))]), "j");
+        assert_eq!(label(&[Stroke::key(Key::Char('j'))]), "j");
     }
 
     #[test]
     fn several_keys_for_one_action_join_with_a_slash() {
         assert_eq!(
-            label(&[KeyPress::new(Key::Char('j')), KeyPress::new(Key::Char('k'))]),
+            label(&[Stroke::key(Key::Char('j')), Stroke::key(Key::Char('k'))]),
             "j/k"
         );
         assert_eq!(
-            label(&[KeyPress::new(Key::PageDown), KeyPress::new(Key::PageUp)]),
+            label(&[Stroke::key(Key::PageDown), Stroke::key(Key::PageUp)]),
             "pgdn/pgup"
         );
     }
@@ -446,11 +518,11 @@ mod tests {
     #[test]
     fn a_key_with_no_printable_form_is_named_rather_than_drawn() {
         assert_eq!(
-            label(&[KeyPress::new(Key::Home), KeyPress::new(Key::End)]),
+            label(&[Stroke::key(Key::Home), Stroke::key(Key::End)]),
             "home/end"
         );
-        assert_eq!(label(&[KeyPress::new(Key::Char(' '))]), "space");
-        assert_eq!(label(&[KeyPress::new(Key::Tab)]), "tab");
+        assert_eq!(label(&[Stroke::key(Key::Char(' '))]), "space");
+        assert_eq!(label(&[Stroke::key(Key::Tab)]), "tab");
     }
 
     #[test]
@@ -540,7 +612,56 @@ mod tests {
         assert_eq!(bar.global[0].action, "run");
         assert_eq!(bar.global[1].keys, "?/esc");
         assert_eq!(bar.global[1].action, "close");
-        assert_eq!(bar.global.last().expect("q is last").action, "quit");
+        assert_eq!(bar.global[2].keys, "q");
+        assert_eq!(bar.global[2].action, "quit");
+        assert_eq!(bar.global.last().expect("/ is last").action, "search");
+    }
+
+    /// Design §8: the overlays name the key that searches them.
+    #[test]
+    fn the_overlay_bars_name_the_search_key() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
+
+        let bar = bar(&state);
+
+        assert!(
+            bar.global.iter().any(|hint| hint.action == "search"),
+            "the palette's bar names /"
+        );
+    }
+
+    /// Design §8: a live sift shows the prompt's own bar — the two ways out
+    /// are the same two, and `q quit` goes with it, because `q` is text now.
+    #[test]
+    fn a_live_sift_shows_the_prompts_bar() {
+        let mut state = State::default();
+        let mut panel = CommandsPanel::opened();
+        panel.open_sift();
+        state.overlay = Some(Overlay::Commands(panel));
+
+        let bar = bar(&state);
+        let actions: Vec<&str> = bar.global.iter().map(|hint| hint.action).collect();
+
+        assert_eq!(actions, ["apply", "cancel"]);
+    }
+
+    /// Design §8: the picker's own live sift collapses its bar the same way
+    /// the palette's does — `sifting()`'s `Themes` arm, not only its
+    /// `Commands` one.
+    #[test]
+    fn a_live_sift_over_the_picker_shows_the_prompts_bar() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Themes {
+            cursor: Cursor::default(),
+            restored: ThemeChoice::default(),
+            sift: Some(crate::search::Sift::opened(0)),
+        });
+
+        let bar = bar(&state);
+        let actions: Vec<&str> = bar.global.iter().map(|hint| hint.action).collect();
+
+        assert_eq!(actions, ["apply", "cancel"]);
     }
 
     #[test]
@@ -549,6 +670,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor: Cursor::default(),
             restored: ThemeChoice::default(),
+            sift: None,
         });
 
         let bar = bar(&state);
@@ -558,7 +680,7 @@ mod tests {
                 .iter()
                 .map(|hint| (hint.keys.as_str(), hint.action))
                 .collect::<Vec<_>>(),
-            [("j/k", "preview")],
+            [("j/k", "preview"), ("/", "search")],
             "the focused panel responds to nothing while the picker is up"
         );
         assert_eq!(

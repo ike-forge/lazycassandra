@@ -117,10 +117,11 @@ before the panel underneath is consulted (§2).
 |---|---|
 | `j` `k` `↑` `↓` | Move the cursor, command to command. Headings and rules are stepped over. |
 | `PageDown` `PageUp` `ctrl-d` `ctrl-u` | Page the list. |
-| `Home` `End` | The first command, the last command. |
+| `Home` `gg`, `End` `G` | The first command, the last command. |
 | `⏎` | Close the palette and perform the selected command. |
 | `?` `Esc` | Close it. |
 | `q` | Quits, as everywhere else. |
+| `/` | Search the list: typing walks the cursor to the next matching row, marking the hit. `⏎` keeps the row, `Esc` puts it back. |
 | anything else | Inert. Nothing means "close" in one frame and something else in the next. |
 
 `⏎` presses the row's own first key, in the panel the row belongs to — it
@@ -128,6 +129,15 @@ focuses that panel first, whether or not the action that follows has anything
 to do. A row that means something only inside the export form is not pressed
 at all: it is drawn faint, and `⏎` on it closes the palette and stops
 ([palette execution design](superpowers/specs/2026-08-15-palette-execution-design.md) §8).
+
+`/` searches the action text alone — never the key column, never a group
+heading — and the cursor it walks only ever lands on a command, the same
+skip-the-heading rule `j`/`k` and paging already keep. A term matching
+nothing leaves the cursor where the prompt opened. The catalogue this table
+draws gained no row of its own for it: a row saying `/` searches the palette
+would be a row about the palette inside the palette, so the hint bar names
+the key instead — a mode names its own keys
+([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §6, §8).
 
 ### The search prompt
 
@@ -198,14 +208,25 @@ was before config existed.
 |---|---|
 | `j` / `k`, `Down` / `Up` | Moves the cursor, **and sets `State.theme`** — the frame repaints in that theme immediately. |
 | `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen — which here is the whole list. |
+| `Home` / `End`, `gg` / `G` | The first theme, the last theme — previewing it, as every motion here does. |
 | `Enter` | Closes, keeping whatever theme is set. |
 | `Esc` | Sets `State.theme` back to the theme the picker opened on, then closes. |
 | `q` | Quits, as everywhere else. The picker takes motion, not text, so it leaves `q` alone — the palette's rule (§2). |
+| `/` | Search the list: typing walks the cursor to the next matching row, marking the hit and previewing it. `⏎` keeps the theme, `Esc` puts it back. |
 
-`Home`/`End` are deliberately inert here. The list is every theme there is and
-always shorter than the block drawing it, so a screen *is* the whole list:
-paging already lands on either end in one press, and a second key for that
-landing is a second key for one action.
+Search here previews the same way motion already does: the cursor is what
+sets `State.theme`, so walking it with `/` walks the preview too. A term
+matching nothing leaves the cursor, and so the preview, right where the
+prompt opened — see §2's rule below for the key itself
+([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §5, §6).
+
+The ends are reachable here as they are in every other list. Paging does land
+on either end in one press — the list is every theme there is and always
+shorter than the block drawing it, so a screen *is* the whole list — and
+`Home`/`End` and `gg`/`G` were inert here for exactly that reason until the
+chord arrived. What changed the answer is that a hand which types `G` in the
+panels and in the palette and gets nothing in the picker has found the one
+list that is different, which costs more than the arm does.
 
 Live preview is why the picker restores rather than merely reverts: a message
 arriving over an open picker, or a frame shrinking below it, unwinds the
@@ -230,7 +251,7 @@ file has a problem it never appears at all.
 |---|---|
 | `j` / `k`, `Down` / `Up` | Moves the cursor. |
 | `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen. |
-| `Home` / `End` | To the first / last diagnostic. |
+| `Home` / `End`, `gg` / `G` | To the first / last diagnostic. |
 | `Esc` | Closes it. |
 
 Unlike the palette, the prompt and the theme picker, `q` does nothing here
@@ -291,8 +312,22 @@ Queries moves the cursor through its buffer.
 | `h` / `←` | Left one column in Contents; fold it in Tables, stepping out from a table row first. |
 | `PageDown` / `ctrl-d` | Down one panel height. |
 | `PageUp` / `ctrl-u` | Up one panel height. |
-| `Home` | To the start (to the **line**'s start in Queries — §2). |
-| `End` | To the end (to the **line**'s end in Queries — §2). |
+| `Home`, `gg` | To the start (to the **line**'s start in Queries — §2). |
+| `End`, `G` | To the end (to the **line**'s end in Queries — §2). |
+
+`gg` and `G` are the vim spelling of `Home` and `End`, and reach the same
+`Motion::Start`/`Motion::End` rather than a copy of them — the relation
+`ctrl-d`/`ctrl-u` already have to `PageDown`/`PageUp` (§2). They apply to
+whatever list the frame is driving: the focused panel, or the overlay in front
+of it when that overlay takes motion — the command palette, the diagnostics
+list and the theme picker all answer them.
+
+`g` on its own is a prefix, not a motion: it arms the chord and moves nothing,
+and the very next press spends it whatever that press is, so `g` then `j` is a
+`j`. It is armed in `State.pending`, taken at the top of `handle_key` so every
+path below — the ctrl layer, an overlay, a panel that takes text — disarms it,
+and a pointer gesture clears it too. In Queries and under a search prompt both
+keys are text, the panel-that-takes-text rule as everywhere else.
 
 `ctrl-d`/`ctrl-u` are the vim spelling of the two paging keys and reach the
 same code rather than a copy of it, overlays included: whatever `PageDown`
@@ -547,16 +582,18 @@ kinds of duplicate survive, and only these three: the arrows and
 reaches a list at all (vision.md §4, principle 2); the pointer, which
 necessarily repeats what the keyboard does (§7); and `ctrl-d`/`ctrl-u`, which
 are the vim spelling of a paging key rather than a second implementation of
-paging — they dispatch to `PageDown`/`PageUp`'s own arm. `Space` on a tree
-row and `Home`/`End` in the theme picker were duplicates of the fourth kind
-and are gone.
+paging — they dispatch to `PageDown`/`PageUp`'s own arm, and `gg`/`G` are the
+same kind of spelling for `Home`/`End` (§1's motion table). `Space` on a tree
+row was a duplicate of the fourth kind and is gone.
 
 **Shift is never consulted for letters.** `A`, `C`, `T`, `U` arrive as
 distinct `Key::Char`s and stay unbound; a shifted letter is a binding of its
 own, not a synonym for the plain one. `T` was an exception and has been
 given back — the theme picker moved to `ctrl-t` (§1's picker subsection).
-`N` is the exception that remains: it walks a search backwards and is not a
-synonym for `n` (§1's global table; search highlight design §5.3). A
+Two exceptions remain: `N`, which walks a search backwards and is not a
+synonym for `n` (§1's global table; search highlight design §5.3), and `G`,
+which reaches the end of a list and is not a synonym for `g` — `g` alone is a
+prefix that moves nothing (§1's motion table). A
 shifted arrow is left as a synonym for the plain one, and stays that way:
 `v` is how a selection extends, so no arrow needs a shifted meaning of its
 own. Binding one now would be a fourth kind of duplicate — the same key,
@@ -752,19 +789,36 @@ file had something to report, and is left with `Esc` alone. It takes motion
 the same as the palette and the picker, and it is the one overlay of the
 four where `q` does not quit: see its own subsection above.
 
-**`Esc` resolves in one order, first hit wins.** An overlay up is dismissed
-first — a search prompt cancels, restoring the search and the cursor it found
-applied when it opened; the palette just closes. Failing that, an extending
+The palette and the picker each carry a `/` of their own now, and while
+either's is up the overlay it belongs to stops taking motion and takes text
+instead — the panel-that-takes-text rule, applied a second time, inside an
+overlay that already claimed every key once. Every printable key types
+itself there, `q` included, the same swap the search prompt already makes
+of the palette and the picker's own `q`-quits rule. The list under it never
+narrows — a cursor walks to the match instead, the same live-as-you-type
+preview the search prompt gives Tables, DDL and Table contents — and nothing
+of the search outlives the prompt: `⏎` keeps only the row the cursor found,
+`Esc` puts the cursor back where the prompt opened, and either way the query
+itself is gone once the prompt closes, with no highlight and no `n`/`N` left
+to walk
+([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §2, §5, §6).
+
+**`Esc` resolves in one order, first hit wins.** A live sift inside an
+overlay comes off first, restoring the cursor to the row the prompt opened on
+and, in the picker, the theme it previewed with it — the overlay itself stays
+up. Failing that, an overlay up is dismissed — a search prompt cancels,
+restoring the search and the cursor it found applied when it opened; the
+palette just closes. Failing that, an extending
 range in the focused panel freezes, the way a second `v` would, so `Esc`
 never discards a range that is still growing. Failing that, the selection
 clears — every group at once, however many are held. Failing that, the
 focused panel's search, if it has one, clears. Failing that, Queries hands
 focus back to Tables. Failing all
-five, `Esc` does nothing. The first rung preserves
+six, `Esc` does nothing. The first rung preserves
 `escape_dismisses_the_overlay_before_it_leaves_the_editor`; extending it down
 the chain is what "the thing most recently put on screen comes off first"
 means once a panel can carry state of its own (panel search design §6, visual
-mode design §4).
+mode design §4, overlay search design §1).
 
 **No key without a test.** Every binding above is pinned by name in §5.
 
@@ -772,13 +826,16 @@ mode design §4).
 
 ## 3. The key budget
 
-Taken, lowercase: `h` `j` `k` `l` `m` `n` `q` `v` `y`, plus `?` and `/`.
+Taken, lowercase: `g` `h` `j` `k` `l` `m` `n` `q` `v` `y`, plus `?` and `/`.
+`g` is spent as a prefix rather than as a binding: it is the first half of
+`gg` and does nothing alone, which spends it just the same.
 Taken, digits: `1` `2` `3` `4`.
 Taken, punctuation: `[` and `]`.
-Taken, uppercase: `N` — the only shifted letter bound (§2).
+Taken, uppercase: `N` and `G` — the only shifted letters bound (§2).
 
-Free, lowercase: `a` `b` `c` `d` `e` `f` `g` `i` `o` `p` `r` `s` `t` `u`
-`w` `x` `z`, the digits `5`–`9` and `0`, and every uppercase letter but `N`.
+Free, lowercase: `a` `b` `c` `d` `e` `f` `i` `o` `p` `r` `s` `t` `u`
+`w` `x` `z`, the digits `5`–`9` and `0`, and every uppercase letter but `N`
+and `G`.
 
 `Space` is claimed for the first time, inside the export form only: it
 activates the focused stop there (§1's export-form subsection) and is free
@@ -874,6 +931,10 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Esc` clears the overlay | `escape_dismisses_the_overlay` |
 | `Tab`/`Shift-Tab` cycle in number order and wrap | `tab_walks_the_panels_in_number_order_and_wraps`, `shift_tab_walks_them_the_other_way` |
 | Paging and `Home`/`End` | `page_down_moves_the_tree_by_one_panel_height`, `home_and_end_reach_the_ends_of_the_tree_in_one_key` |
+| `gg`/`G` reach the ends of a panel's list | `gg_and_shift_g_reach_the_ends_of_the_tree`, `gg_and_shift_g_reach_the_ends_of_the_ddl_rows`, `gg_and_shift_g_reach_the_ends_of_the_grids_rows` |
+| `g` alone is a prefix, and the next key spends it | `a_lone_g_moves_nothing`, `a_key_between_the_two_gs_spends_the_prefix` |
+| `gg`/`G` reach the ends of an overlay's list too | `gg_and_shift_g_reach_the_ends_of_an_open_palette`, `gg_and_shift_g_reach_the_ends_of_the_diagnostics`, `the_ends_are_reachable_in_the_picker` |
+| Both are text where a panel or a prompt takes text | `g_is_text_in_queries_and_under_a_prompt` |
 | Ctrl/alt are not synonyms | `an_unbound_ctrl_key_does_nothing`, `an_alt_modified_key_is_not_a_binding` |
 | `ctrl-d`/`ctrl-u` page whatever `PageDown`/`PageUp` page | `ctrl_d_and_ctrl_u_page_the_focused_panel`, `ctrl_d_pages_an_open_palette_rather_than_the_panel_underneath`, `ctrl_d_pages_the_editor_the_way_pgdn_does`, `ctrl_d_and_ctrl_u_page_the_picker_too`, `ctrl_d_is_inert_under_a_search_prompt` |
 | The letters the numbers replaced stay free | `the_letters_the_numbers_replaced_stay_unbound` |
@@ -884,7 +945,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The picker cursor stops at either end of the list | `the_picker_cursor_cannot_run_off_the_list` |
 | Paging reaches the ends of the theme list, previewing | `paging_reaches_the_ends_of_the_theme_list` |
 | `q` still quits with the picker open | `q_still_quits_with_the_picker_open` |
-| `Home`/`End` are inert in the picker | `the_ends_are_inert_in_the_picker` |
+| The ends are reachable in the picker, in both spellings | `the_ends_are_reachable_in_the_picker` |
 | Moving the picker cursor asks for a repaint | `moving_the_picker_cursor_asks_for_a_repaint` |
 | The bar names what the picker responds to, and nothing else | `the_bar_names_what_the_picker_responds_to` (`view/hints.rs`) |
 | The picker is refused where it cannot be drawn | `a_frame_too_small_for_a_list_refuses_the_picker` |
