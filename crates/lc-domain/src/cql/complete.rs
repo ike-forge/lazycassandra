@@ -23,13 +23,33 @@ pub enum CandidateKind {
     Keyword,
     Keyspace,
     Table,
+    Column,
 }
 
 /// One offer.
+///
+/// `label` is what the popup draws and `text` is what accepting types. They
+/// differ for a column offered with no table in scope, which is shown
+/// qualified so two `id` columns are told apart but typed bare, because
+/// `SELECT shop.orders.id` is not CQL (design §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub text: String,
+    pub label: String,
     pub kind: CandidateKind,
+}
+
+impl Candidate {
+    /// A candidate that draws exactly what it types.
+    #[must_use]
+    pub fn plain(text: impl Into<String>, kind: CandidateKind) -> Self {
+        let text = text.into();
+        Self {
+            label: text.clone(),
+            text,
+            kind,
+        }
+    }
 }
 
 /// The offers standing against the word before the cursor.
@@ -140,20 +160,14 @@ fn unqualified(schema: Option<&Schema>, keyspace: Option<&str>, prefix: &str) ->
     let keywords = KEYWORDS
         .iter()
         .filter(|keyword| matches(keyword, prefix))
-        .map(|keyword| Candidate {
-            text: (*keyword).to_owned(),
-            kind: CandidateKind::Keyword,
-        });
+        .map(|keyword| Candidate::plain(*keyword, CandidateKind::Keyword));
 
     let keyspaces = schema.into_iter().flat_map(|schema| {
         schema
             .keyspaces
             .keys()
             .filter(|name| matches(name, prefix))
-            .map(|name| Candidate {
-                text: name.clone(),
-                kind: CandidateKind::Keyspace,
-            })
+            .map(|name| Candidate::plain(name.clone(), CandidateKind::Keyspace))
     });
 
     let tables = keyspace
@@ -169,10 +183,7 @@ fn tables_of(schema: Option<&Schema>, keyspace: &str, prefix: &str) -> Vec<Candi
         .into_iter()
         .flat_map(|keyspace| keyspace.tables.keys())
         .filter(|name| matches(name, prefix))
-        .map(|name| Candidate {
-            text: name.clone(),
-            kind: CandidateKind::Table,
-        })
+        .map(|name| Candidate::plain(name.clone(), CandidateKind::Table))
         .take(MOST)
         .collect()
 }
@@ -251,6 +262,27 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_name_or_a_keyword_labels_itself() {
+        let schema = schema();
+        let completion = suggest(&typed("ord"), Some(&schema), Some("shop")).expect("offers");
+
+        for candidate in completion.candidates() {
+            assert_eq!(
+                candidate.label, candidate.text,
+                "a name has nothing to add to itself"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plain_candidate_draws_what_it_types() {
+        let candidate = Candidate::plain("SELECT", CandidateKind::Keyword);
+
+        assert_eq!(candidate.label, "SELECT");
+        assert_eq!(candidate.text, "SELECT");
     }
 
     #[test]

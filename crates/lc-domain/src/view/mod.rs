@@ -233,11 +233,12 @@ fn completion(completion: &Completion) -> CompletionView {
             .candidates()
             .iter()
             .map(|candidate| CompletionRow {
-                text: candidate.text.clone(),
+                text: candidate.label.clone(),
                 token: match candidate.kind {
                     CandidateKind::Keyword => Token::Keyword,
                     CandidateKind::Keyspace => Token::Keyspace,
                     CandidateKind::Table => Token::Table,
+                    CandidateKind::Column => Token::Reference,
                 },
             })
             .collect(),
