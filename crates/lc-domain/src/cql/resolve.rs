@@ -127,6 +127,15 @@ pub(crate) fn resolve(pieces: &[Piece]) -> Analysis {
 )]
 struct Machine {
     expect: Expect,
+    /// The clause `expect` returns to once a value or an alias that
+    /// interrupted it is done. Set only when a keyword actually opens a
+    /// clause — `SET`, `WHERE`, `VALUES`, `FROM`, … — never by `=` or `AS`,
+    /// which is what makes it the thing left standing after either kind of
+    /// interruption. A `,` restores `expect` from it, which is the one
+    /// mechanism behind both a `SET a = 1, b = 2` list staying on `Column`
+    /// after each value and a `VALUES (1, 2)` list staying on `Value`; an
+    /// alias reads it the same way once the aliased name is consumed.
+    base: Expect,
     /// Whether the statement's first keyword has been read yet. Distinct from
     /// `covered`: once the verb is decided, a later keyword that happens to
     /// share a spelling with a covered verb — `SELECT` as a permission name
@@ -218,16 +227,28 @@ impl Machine {
         }
 
         self.expect = match word {
-            "FROM" | "INTO" | "UPDATE" | "TRUNCATE" => Expect::Table,
-            "USE" => Expect::Keyspace,
-            "SELECT" | "DELETE" | "WHERE" | "AND" | "IF" | "SET" | "BY" | "TOKEN" => Expect::Column,
-            "VALUES" | "USING" | "LIMIT" | "IN" | "CONTAINS" => Expect::Value,
+            "FROM" | "INTO" | "UPDATE" | "TRUNCATE" => self.enter(Expect::Table),
+            "USE" => self.enter(Expect::Keyspace),
+            "SELECT" | "DELETE" | "WHERE" | "AND" | "IF" | "SET" | "BY" | "TOKEN" => {
+                self.enter(Expect::Column)
+            }
+            "VALUES" | "USING" | "LIMIT" | "IN" | "CONTAINS" => self.enter(Expect::Value),
+            // `AS` interrupts the clause it sits in rather than opening one
+            // of its own, so it leaves `base` alone — `identifier` reads
+            // `base` to resume that clause once the alias is consumed.
             "AS" => Expect::Alias,
             // `ALLOW FILTERING`, `IF [NOT] EXISTS`, `DISTINCT`, `JSON`: none
             // of these take a name, so they fall through unchanged like any
             // other keyword this machine has no clause for.
             _ => self.expect,
         };
+    }
+
+    /// Opens a clause: what `expect` becomes now, and what `,` and an alias
+    /// return it to once something has interrupted it.
+    fn enter(&mut self, clause: Expect) -> Expect {
+        self.base = clause;
+        clause
     }
 
     fn punctuation(&mut self, text: &str) {
@@ -241,11 +262,12 @@ impl Machine {
                     } else if self.expect == Expect::Table {
                         // `INSERT INTO t (` opens the column list right after
                         // the table, with no clause keyword in between.
-                        self.expect = Expect::Column;
+                        self.expect = self.enter(Expect::Column);
                     }
                     self.depth += 1;
                 }
                 ')' => self.depth = self.depth.saturating_sub(1),
+                ',' => self.expect = self.base,
                 ';' => self.end_statement(),
                 '=' | '<' | '>' | '!' => self.expect = Expect::Value,
                 _ => {}
@@ -289,8 +311,9 @@ impl Machine {
             Expect::Column => Some(Role::Column),
             Expect::Alias => {
                 // An alias only ever renames the one selector `AS` follows;
-                // the clause it interrupted resumes right after.
-                self.expect = Expect::Column;
+                // the clause it interrupted resumes right after, the same
+                // way a `,` resumes it past a value.
+                self.expect = self.base;
                 Some(Role::Alias)
             }
             Expect::Keyword | Expect::Value | Expect::Nothing => None,
@@ -314,6 +337,7 @@ impl Machine {
     fn end_statement(&mut self) {
         self.tables.push(Vec::new());
         self.expect = Expect::Keyword;
+        self.base = Expect::Keyword;
         self.verb_seen = false;
         self.covered = false;
         self.depth = 0;
@@ -551,6 +575,36 @@ mod tests {
                 ("id".to_owned(), Some(Role::Column)),
                 ("total".to_owned(), Some(Role::Column)),
             ]
+        );
+    }
+
+    #[test]
+    fn a_comma_in_a_set_clause_resumes_column_rather_than_staying_on_value() {
+        assert_eq!(
+            roles("UPDATE shop.orders SET total = 3, price = 5 WHERE id = 7"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("total".to_owned(), Some(Role::Column)),
+                ("price".to_owned(), Some(Role::Column)),
+                ("id".to_owned(), Some(Role::Column)),
+            ],
+            "a value ending at a comma must not leave every later assignment unrolled"
+        );
+    }
+
+    #[test]
+    fn an_inserts_name_list_and_value_list_each_keep_their_own_role_past_a_comma() {
+        assert_eq!(
+            roles("INSERT INTO shop.orders (id, total) VALUES (7, 8)"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("id".to_owned(), Some(Role::Column)),
+                ("total".to_owned(), Some(Role::Column)),
+            ],
+            "the name list stays columns and the value list stays values, \
+             on both sides of their own comma"
         );
     }
 
