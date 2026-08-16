@@ -17,6 +17,7 @@ pub use resolve::{Analysis, Context, Expect, Name, Role};
 
 use crate::style::{Segment, Token};
 use lex::Kind;
+use resolve::resolve;
 
 /// `text` as one styled line per buffer line, in order.
 ///
@@ -25,14 +26,16 @@ use lex::Kind;
 /// (design §3).
 #[must_use]
 pub fn highlight(text: &str) -> Vec<Vec<Segment>> {
+    let scanned = lex::pieces(text);
+    let analysis = resolve(&scanned);
     let mut lines = Vec::new();
     let mut line: Vec<Segment> = Vec::new();
 
-    for piece in lex::pieces(text) {
-        let token = token(piece.kind);
+    for (index, piece) in scanned.iter().enumerate() {
+        let token = token(piece.kind, analysis.role(index));
 
-        for (index, chunk) in piece.text.split('\n').enumerate() {
-            if index > 0 {
+        for (at, chunk) in piece.text.split('\n').enumerate() {
+            if at > 0 {
                 lines.push(std::mem::take(&mut line));
             }
             if !chunk.is_empty() {
@@ -59,12 +62,20 @@ fn push(line: &mut Vec<Segment>, text: &str, token: Option<Token>) {
 }
 
 /// Punctuation and whitespace carry no meaning of their own: `,` in a select
-/// list is the panel's text colour, the way a panel's name is the panel's name
-/// (style.rs's [`Segment`] doc).
-const fn token(kind: Kind) -> Option<Token> {
+/// list is the panel's text colour, the way a panel's name is the panel's
+/// name (style.rs's [`Segment`] doc).
+///
+/// A name's role outranks its kind: the tree, the DDL panel and the editor
+/// spend one colour on a keyspace and another on a table
+/// (cql semantics design §4).
+const fn token(kind: Kind, role: Option<Role>) -> Option<Token> {
     match kind {
         Kind::Keyword => Some(Token::Keyword),
-        Kind::Identifier => Some(Token::Reference),
+        Kind::Identifier => Some(match role {
+            Some(Role::Keyspace) => Token::Keyspace,
+            Some(Role::Table) => Token::Table,
+            _ => Token::Reference,
+        }),
         Kind::Literal => Some(Token::Literal),
         Kind::Comment => Some(Token::Comment),
         Kind::Punctuation | Kind::Whitespace => None,
@@ -112,7 +123,7 @@ mod tests {
                 (None, " "),
                 (Some(Token::Keyword), "FROM"),
                 (None, " "),
-                (Some(Token::Reference), "orders"),
+                (Some(Token::Table), "orders"),
                 (None, " "),
                 (Some(Token::Keyword), "WHERE"),
                 (None, " "),
@@ -142,5 +153,42 @@ mod tests {
     #[test]
     fn a_trailing_newline_leaves_an_empty_last_line() {
         assert_eq!(highlight("SELECT\n").len(), 2);
+    }
+
+    #[test]
+    fn a_qualified_table_paints_its_keyspace_and_its_table_apart() {
+        let lines = highlight("SELECT id FROM shop.orders");
+
+        assert_eq!(
+            tokens(&lines[0]),
+            vec![
+                (Some(Token::Keyword), "SELECT"),
+                (None, " "),
+                (Some(Token::Reference), "id"),
+                (None, " "),
+                (Some(Token::Keyword), "FROM"),
+                (None, " "),
+                (Some(Token::Keyspace), "shop"),
+                (None, "."),
+                (Some(Token::Table), "orders"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_name_the_cluster_never_heard_of_is_painted_by_its_position() {
+        let lines = highlight("SELECT * FROM shp.ordrs");
+
+        assert!(
+            tokens(&lines[0]).contains(&(Some(Token::Keyspace), "shp")),
+            "colour says what the grammar means, not what the schema has"
+        );
+    }
+
+    #[test]
+    fn a_name_in_a_statement_the_resolver_does_not_follow_stays_a_reference() {
+        let lines = highlight("GRANT SELECT ON shop.orders TO ike");
+
+        assert!(tokens(&lines[0]).contains(&(Some(Token::Reference), "shop")));
     }
 }
