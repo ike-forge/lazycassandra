@@ -238,12 +238,20 @@ struct Machine {
     /// when this is `Some`, which is what keeps `count(id), max(id)` from
     /// having the `(` after `max` walk back past the comma and relabel `id`.
     last_identifier: Option<usize>,
+    /// Whether any piece but whitespace or a comment has been seen since the
+    /// last `end_statement` — not `verb != Verb::Unread`, because a stray
+    /// identifier or a lone `)` after a `;` never reaches `keyword()` either,
+    /// and would otherwise leave a scope that holds real, if nonsense, text
+    /// looking exactly like the placeholder a trailing `;` opens on the
+    /// chance nothing follows. `finish` reads this to tell the two apart.
+    has_content: bool,
 }
 
 impl Machine {
     fn step(&mut self, piece: &Piece) {
         self.expects.push(self.expect);
         self.statement.push(self.tables.len() - 1);
+        self.has_content |= !matches!(piece.kind, Kind::Whitespace | Kind::Comment);
 
         let role = match piece.kind {
             Kind::Keyword => {
@@ -450,6 +458,7 @@ impl Machine {
         self.depth = 0;
         self.pending_keyspace = None;
         self.last_identifier = None;
+        self.has_content = false;
     }
 
     fn finish(mut self, pieces: usize) -> Analysis {
@@ -457,13 +466,17 @@ impl Machine {
         self.expects.push(self.expect);
 
         // `end_statement` opens the next scope the moment it sees `;`, on
-        // the chance something follows it. Nothing ever did here — no
-        // keyword decided a verb for it, which is also why it named no
-        // table — so the buffer holds one statement fewer than one scope
-        // per `;` would suggest: a trailing `;` (whitespace after it
-        // included) must not make an ordinary `select … from t;` look like
-        // two statements and defeat `sole_table`'s one-statement guard.
-        if self.verb == Verb::Unread && self.tables.last().is_some_and(Vec::is_empty) {
+        // the chance something follows it. Nothing but whitespace or a
+        // comment ever did here — so the buffer holds one statement fewer
+        // than one scope per `;` would suggest: a trailing `;` (whitespace
+        // or a trailing comment after it included) must not make an
+        // ordinary `select … from t;` look like two statements and defeat
+        // `sole_table`'s one-statement guard. `has_content` rather than
+        // `verb != Verb::Unread`: a stray identifier or a lone `)` reaches
+        // neither `keyword()` nor `record()`, so checking the verb alone
+        // would pop a scope that holds real, if nonsense, text and make it
+        // disappear from the count entirely.
+        if !self.has_content && self.tables.last().is_some_and(Vec::is_empty) {
             self.tables.pop();
         }
 

@@ -267,4 +267,40 @@ mod tests {
         assert_eq!(sole_table(";"), None);
         assert_eq!(sole_table(""), None);
     }
+
+    fn statements_in(cql: &str) -> usize {
+        resolve(&lex::pieces(cql)).statements()
+    }
+
+    /// A stray word after a `;` is a second statement the resolver could not
+    /// follow, not an empty tail: `Verb::Unread` alone could not tell the
+    /// two apart, since a bare identifier reaches neither `keyword()` nor
+    /// `record()` either.
+    #[test]
+    fn a_stray_word_after_a_semicolon_is_a_second_statement_not_an_empty_tail() {
+        assert_eq!(sole_table("select * from a; notacommand"), None);
+        assert_eq!(statements_in("select * from a; notacommand"), 2);
+    }
+
+    #[test]
+    fn a_stray_close_paren_after_a_semicolon_is_a_second_statement_not_an_empty_tail() {
+        assert_eq!(sole_table("select * from a; )"), None);
+        assert_eq!(statements_in("select * from a; )"), 2);
+    }
+
+    #[test]
+    fn a_line_comment_after_a_semicolon_is_still_an_empty_tail() {
+        assert_eq!(
+            sole(sole_table("select * from a; -- a comment")),
+            Some((None, "a".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_block_comment_after_a_semicolon_is_still_an_empty_tail() {
+        assert_eq!(
+            sole(sole_table("select * from a;  /* c */")),
+            Some((None, "a".to_owned()))
+        );
+    }
 }
