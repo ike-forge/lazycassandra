@@ -11,8 +11,8 @@
 //! `DELETE`, `TRUNCATE`, `USE`, and `BEGIN … BATCH` over them — and its
 //! schema statements — `CREATE`/`ALTER`/`DROP` of `KEYSPACE` and `TABLE`,
 //! including `WITH` properties and column definitions. It also answers what
-//! a cursor sits on — [`context_at`] — which `highlight` and `suggest`
-//! start calling once tasks 6 and 8 land.
+//! a cursor sits on — [`context_at`] — which `suggest` calls to switch its
+//! candidates on the grammar position under the cursor.
 
 use super::lex::{Kind, Piece};
 
@@ -119,12 +119,8 @@ pub struct Context {
 ///
 /// Crate-internal like [`resolve`]: `Piece` is not part of the public API,
 /// so a caller outside `cql` has no scan to hand it and reaches this through
-/// `highlight` or `suggest` instead.
+/// `suggest` instead.
 #[must_use]
-#[allow(
-    dead_code,
-    reason = "context_at's first caller lands in task 6's highlight and task 8's suggest"
-)]
 pub(crate) fn context_at(pieces: &[Piece], offset: usize) -> Context {
     let analysis = resolve(pieces);
     let index = piece_at(pieces, offset);

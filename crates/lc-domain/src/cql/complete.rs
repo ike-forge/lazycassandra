@@ -6,8 +6,10 @@
 //! (design §5).
 
 use super::keywords::KEYWORDS;
+use super::lex::pieces;
+use super::resolve::{Context, Expect, Name, context_at};
 use crate::editor::Editor;
-use crate::model::Schema;
+use crate::model::{Schema, Table};
 
 /// The most candidates ever offered at once.
 ///
@@ -125,9 +127,18 @@ pub fn suggest(
         return None;
     }
 
-    let candidates = match qualifier {
-        Some(qualifier) => tables_of(schema, qualifier, prefix),
-        None => unqualified(schema, keyspace, prefix),
+    let text = editor.text();
+    let context = context_at(&pieces(&text), offset_of(editor));
+
+    let candidates = match (qualifier, context.expects) {
+        (Some(qualifier), Expect::Column) => {
+            columns_of(schema, &qualified(&context, qualifier), prefix)
+        }
+        (Some(qualifier), _) => tables_of(schema, qualifier, prefix),
+        (None, Expect::Column) => columns(schema, &context, keyspace, prefix),
+        (None, Expect::Table) => names_first(schema, keyspace, prefix),
+        (None, Expect::Keyspace) => keyspaces(schema, prefix),
+        (None, _) => unqualified(schema, keyspace, prefix),
     };
 
     // A list whose only offers are the word already typed adds nothing, and a
@@ -188,6 +199,129 @@ fn tables_of(schema: Option<&Schema>, keyspace: &str, prefix: &str) -> Vec<Candi
         .collect()
 }
 
+/// Tables of the keyspace in scope, then keyspaces, then keywords: what
+/// `Expect::Table` wants (design §6) — a name before the grammar that happens
+/// to share its prefix.
+fn names_first(schema: Option<&Schema>, keyspace: Option<&str>, prefix: &str) -> Vec<Candidate> {
+    let tables = keyspace
+        .into_iter()
+        .flat_map(|keyspace| tables_of(schema, keyspace, prefix));
+
+    let keywords = KEYWORDS
+        .iter()
+        .filter(|keyword| matches(keyword, prefix))
+        .map(|keyword| Candidate::plain(*keyword, CandidateKind::Keyword));
+
+    tables
+        .chain(keyspaces(schema, prefix))
+        .chain(keywords)
+        .take(MOST)
+        .collect()
+}
+
+/// Keyspaces alone: what `Expect::Keyspace` wants (design §6) — `USE` takes
+/// nothing else.
+fn keyspaces(schema: Option<&Schema>, prefix: &str) -> Vec<Candidate> {
+    schema
+        .into_iter()
+        .flat_map(|schema| schema.keyspaces.keys())
+        .filter(|name| matches(name, prefix))
+        .map(|name| Candidate::plain(name.clone(), CandidateKind::Keyspace))
+        .take(MOST)
+        .collect()
+}
+
+/// The columns a select list can name, offered from the one table in scope
+/// or, where the statement names none or several, from every table there is
+/// (design §6).
+fn columns(
+    schema: Option<&Schema>,
+    context: &Context,
+    keyspace: Option<&str>,
+    prefix: &str,
+) -> Vec<Candidate> {
+    match context.tables.as_slice() {
+        [table] => columns_of(schema, &resolved(table, keyspace), prefix),
+        _ => every_column(schema, prefix),
+    }
+}
+
+/// A table's columns in the order vision.md §2 reads them: partition,
+/// clustering, static, regular — the physical layout, not the alphabet.
+fn columns_of(schema: Option<&Schema>, table: &Name, prefix: &str) -> Vec<Candidate> {
+    let Some(found) = lookup(schema, table) else {
+        return Vec::new();
+    };
+
+    column_names(found)
+        .filter(|name| matches(name, prefix))
+        .map(|name| Candidate::plain(name, CandidateKind::Column))
+        .take(MOST)
+        .collect()
+}
+
+/// Every column of every table, labelled by where it lives.
+///
+/// Offered where the statement names no table yet: the qualifier tells two
+/// `id` columns apart, and accepting still types the bare name, because a
+/// dotted column is not CQL (design §6).
+fn every_column(schema: Option<&Schema>, prefix: &str) -> Vec<Candidate> {
+    schema
+        .into_iter()
+        .flat_map(|schema| schema.keyspaces.values())
+        .flat_map(|keyspace| keyspace.tables.values().map(move |table| (keyspace, table)))
+        .flat_map(|(keyspace, table)| {
+            column_names(table).map(move |name| (keyspace.name.clone(), table.name.clone(), name))
+        })
+        .filter(|(_, _, name)| matches(name, prefix))
+        .map(|(keyspace, table, name)| Candidate {
+            label: format!("{keyspace}.{table}.{name}"),
+            text: name,
+            kind: CandidateKind::Column,
+        })
+        .take(MOST)
+        .collect()
+}
+
+fn column_names(table: &Table) -> impl Iterator<Item = String> + '_ {
+    table.columns().map(|column| column.name.clone())
+}
+
+/// `table` with a missing keyspace filled from the panel's visible one — what
+/// makes a bare `FROM orders` completable at all (design §5.2).
+fn resolved(table: &Name, keyspace: Option<&str>) -> Name {
+    Name {
+        keyspace: table
+            .keyspace
+            .clone()
+            .or_else(|| keyspace.map(str::to_owned)),
+        table: table.table.clone(),
+    }
+}
+
+fn lookup<'schema>(schema: Option<&'schema Schema>, table: &Name) -> Option<&'schema Table> {
+    schema?
+        .keyspaces
+        .get(table.keyspace.as_deref()?)?
+        .tables
+        .get(&table.table)
+}
+
+/// The qualifier before a column prefix, resolved against the tables the
+/// statement already names: `orders.` after `FROM shop.orders` means
+/// `shop.orders`, not a keyspace called `orders` (design §6).
+fn qualified(context: &Context, qualifier: &str) -> Name {
+    context
+        .tables
+        .iter()
+        .find(|table| table.table.eq_ignore_ascii_case(qualifier))
+        .cloned()
+        .unwrap_or_else(|| Name {
+            keyspace: None,
+            table: qualifier.to_owned(),
+        })
+}
+
 /// Case-insensitively, because CQL folds an unquoted name and because a user
 /// typing `se` for `SELECT` is not saying anything about case (design §5.1).
 fn matches(candidate: &str, prefix: &str) -> bool {
@@ -218,6 +352,24 @@ fn word_before(editor: &Editor) -> String {
         .collect()
 }
 
+/// The cursor as a character offset into the buffer's text, which is what
+/// `context_at` is indexed by.
+///
+/// Characters, not bytes: a multi-byte character before the cursor must not
+/// shift where the resolver thinks the cursor sits.
+fn offset_of(editor: &Editor) -> usize {
+    let cursor = editor.cursor();
+    let before: usize = editor
+        .lines()
+        .iter()
+        .take(cursor.line)
+        // The newline each line is followed by is a character of the text.
+        .map(|line| line.chars().count() + 1)
+        .sum();
+
+    before + cursor.column
+}
+
 fn is_name(character: char) -> bool {
     character.is_alphanumeric() || character == '_' || character == '.'
 }
@@ -237,6 +389,7 @@ fn split(word: &str) -> (Option<&str>, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{ClusteringColumn, ClusteringOrder, Column, PrimaryKey};
     use crate::tree::tests_support::schema_of;
 
     fn typed(text: &str) -> Editor {
@@ -245,11 +398,59 @@ mod tests {
         editor
     }
 
+    fn column(name: &str, cql_type: &str) -> Column {
+        Column {
+            name: name.to_owned(),
+            cql_type: cql_type.to_owned(),
+        }
+    }
+
+    /// `shop.orders` given real physical layout — a partition key, a
+    /// clustering column, a static column and a regular column, each named
+    /// so no other table's fixture columns share its first letter, which is
+    /// what keeps a one-character prefix pointing at `orders` alone in the
+    /// tests below. Every other table keeps a single-column partition key of
+    /// its own so the fixture stays a real schema, not a name list.
     fn schema() -> Schema {
-        schema_of(&[
+        let mut schema = schema_of(&[
             ("shop", &["orders", "order_items", "customers"]),
             ("secrets", &["keys"]),
-        ])
+        ]);
+
+        let orders = schema
+            .keyspaces
+            .get_mut("shop")
+            .and_then(|keyspace| keyspace.tables.get_mut("orders"))
+            .expect("orders is in the fixture");
+
+        orders.primary_key = PrimaryKey {
+            partition: vec![column("id", "uuid")],
+            clustering: vec![ClusteringColumn {
+                column: column("line", "int"),
+                order: ClusteringOrder::Ascending,
+            }],
+        };
+        orders.static_columns = vec![column("region", "text")];
+        orders.regular_columns = vec![column("total", "decimal")];
+
+        for (keyspace, table, key) in [
+            ("shop", "order_items", "sku"),
+            ("shop", "customers", "email"),
+            ("secrets", "keys", "fingerprint"),
+        ] {
+            let table = schema
+                .keyspaces
+                .get_mut(keyspace)
+                .and_then(|keyspace| keyspace.tables.get_mut(table))
+                .expect("fixture table");
+
+            table.primary_key = PrimaryKey {
+                partition: vec![column(key, "text")],
+                clustering: Vec::new(),
+            };
+        }
+
+        schema
     }
 
     fn offers(text: &str, keyspace: Option<&str>) -> Vec<String> {
@@ -397,5 +598,126 @@ mod tests {
         let most = offers("s", Some("shop")).len();
 
         assert!(most <= MOST, "{most} candidates would not fit a popup");
+    }
+
+    #[test]
+    fn a_select_list_over_one_table_offers_that_tables_columns_in_physical_order() {
+        let schema = schema();
+
+        // The cursor is at the end of the buffer in `typed`; place it after `i`.
+        let mut editor = typed("SELECT i FROM shop.orders");
+        for _ in 0.." FROM shop.orders".len() {
+            editor.left();
+        }
+        let completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
+
+        assert!(
+            completion
+                .candidates()
+                .iter()
+                .all(|candidate| candidate.kind == CandidateKind::Column),
+            "a select list over a known table wants columns, not keywords"
+        );
+        assert_eq!(
+            completion.candidates().first().map(|c| c.text.as_str()),
+            Some("id"),
+            "partition first, then clustering, then static, then regular"
+        );
+    }
+
+    #[test]
+    fn a_select_list_with_no_table_offers_every_column_qualified() {
+        let schema = schema();
+        let mut editor = typed("SELECT i");
+        let completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
+        let column = completion
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.kind == CandidateKind::Column)
+            .expect("columns are offered with no table in scope");
+
+        assert_eq!(column.label, "shop.orders.id", "the label says which table");
+        assert_eq!(column.text, "id", "accepting types CQL, not the label");
+
+        completion.accept(&mut editor);
+        assert_eq!(editor.text(), "SELECT id");
+    }
+
+    #[test]
+    fn more_than_one_table_in_scope_offers_every_column_qualified_too() {
+        let schema = schema();
+        let text = "SELECT t FROM shop.orders, shop.order_items";
+        let suffix = " FROM shop.orders, shop.order_items";
+        let mut editor = typed(text);
+        for _ in 0..suffix.len() {
+            editor.left();
+        }
+        let completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
+
+        let column = completion
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.kind == CandidateKind::Column)
+            .expect("columns are offered with more than one table in scope");
+
+        assert_eq!(
+            column.label, "shop.orders.total",
+            "more than one table in scope is treated as none"
+        );
+    }
+
+    #[test]
+    fn a_cursor_after_from_offers_names_before_keywords() {
+        let schema = schema();
+        let completion =
+            suggest(&typed("SELECT * FROM ord"), Some(&schema), Some("shop")).expect("offers");
+
+        assert_eq!(
+            completion.candidates().first().map(|c| c.kind),
+            Some(CandidateKind::Table),
+            "a FROM clause wants a table, and a keyword starting with `ord` is noise there"
+        );
+    }
+
+    #[test]
+    fn a_cursor_after_use_offers_keyspaces_only() {
+        let schema = schema();
+        let completion = suggest(&typed("USE sh"), Some(&schema), None).expect("offers");
+
+        assert!(
+            completion
+                .candidates()
+                .iter()
+                .all(|candidate| candidate.kind == CandidateKind::Keyspace)
+        );
+    }
+
+    #[test]
+    fn a_statement_the_resolver_does_not_follow_still_offers_what_it_always_did() {
+        let schema = schema();
+        let completion = suggest(&typed("GRANT sel"), Some(&schema), Some("shop")).expect("offers");
+
+        assert_eq!(
+            completion.candidates().first().map(|c| c.kind),
+            Some(CandidateKind::Keyword)
+        );
+    }
+
+    #[test]
+    fn a_qualified_word_in_column_position_offers_that_tables_columns() {
+        let schema = schema();
+        let text = "SELECT orders.t FROM shop.orders";
+        let suffix = " FROM shop.orders";
+        let mut editor = typed(text);
+        for _ in 0..suffix.len() {
+            editor.left();
+        }
+        let completion = suggest(&editor, Some(&schema), None).expect("offers");
+
+        assert_eq!(
+            completion.candidates().first().map(|c| c.text.as_str()),
+            Some("total"),
+            "`orders.` in a column position offers that table's own columns"
+        );
     }
 }

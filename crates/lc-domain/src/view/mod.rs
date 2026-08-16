@@ -533,7 +533,7 @@ mod tests {
     use crate::config::{Config, CustomTheme};
     use crate::contents::{Subject, TableRef};
     use crate::export::{ExportForm, Fetched, Format, Scope, Stop};
-    use crate::model::{ConnId, DbError, JobId, Page, QueryId};
+    use crate::model::{ConnId, DbError, JobId, Key, Page, QueryId};
     use crate::state::{Cursor, ExportJob, Message, Overlay};
     use crate::theme::{BuiltIn, Ours, Ported, ThemeName};
     use crate::update::init;
@@ -583,6 +583,37 @@ mod tests {
                 completion: None,
             },
             "an untouched buffer is one empty line with the cursor on it"
+        );
+    }
+
+    #[test]
+    fn a_column_offered_with_no_table_in_scope_draws_its_label_but_types_its_bare_name() {
+        let mut state = tabled(&[("shop", &["orders"])]);
+        state.queries.replace("SELECT i");
+        let completion = crate::cql::suggest(state.queries.buffer(), state.schema(), None);
+        state.queries.offer(completion);
+
+        let PanelBody::Editor { completion, .. } = &body(&state, Panel::Queries) else {
+            panic!("the Queries panel is always an editor");
+        };
+        let row = completion
+            .as_ref()
+            .expect("offers")
+            .rows
+            .first()
+            .expect("shop.orders.id is offered");
+
+        assert_eq!(
+            row.text, "shop.orders.id",
+            "the popup row draws the label, not the bare column name"
+        );
+
+        state.queries.edit(Key::Tab, 0);
+
+        assert_eq!(
+            state.queries.text(),
+            "SELECT id",
+            "accepting types the bare column name, not the label"
         );
     }
 

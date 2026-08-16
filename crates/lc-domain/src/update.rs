@@ -10125,12 +10125,15 @@ mod tests {
         fn an_unqualified_table_comes_from_the_keyspace_the_tree_is_on() {
             // `browsing_tables` leaves the Tables cursor on `shop`, which is
             // what makes a bare `orders` completable at all (design §5.2).
+            // A `FROM` clause wants a table, so the name the tree is
+            // standing on outranks a keyword that happens to share its
+            // prefix (design §6).
             let state = editing("SELECT * FROM ord");
 
             assert_eq!(
                 offered(&state),
-                vec!["ORDER".to_owned(), "orders".to_owned()],
-                "grammar first, then the name the tree is standing on"
+                vec!["orders".to_owned(), "ORDER".to_owned()],
+                "a table position wants a name before it wants grammar"
             );
         }
 
