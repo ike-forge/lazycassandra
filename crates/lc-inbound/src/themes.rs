@@ -7,8 +7,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
+use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState};
 
+use lc_domain::search::Search;
 use lc_domain::style::Token;
 
 use crate::theme::Theme;
@@ -45,7 +48,13 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
     usize::from(area.height - 2)
 }
 
-pub(crate) fn render(frame: &mut Frame, labels: &[String], selected: usize, theme: Theme) {
+pub(crate) fn render(
+    frame: &mut Frame,
+    labels: &[String],
+    selected: usize,
+    search: Option<&Search>,
+    theme: Theme,
+) {
     let Some(area) = rect(frame.area(), labels.len()) else {
         return;
     };
@@ -65,7 +74,14 @@ pub(crate) fn render(frame: &mut Frame, labels: &[String], selected: usize, them
 
     let items: Vec<ListItem> = labels
         .iter()
-        .map(|label| ListItem::new(label.clone()))
+        .map(|label| {
+            ListItem::new(Line::from(crate::highlight::spans(
+                label,
+                search,
+                Style::default(),
+                theme,
+            )))
+        })
         .collect();
     let mut state = ListState::default().with_selected(Some(selected));
 
@@ -107,6 +123,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor,
             restored: choice.clone(),
+            sift: None,
         });
 
         terminal
@@ -144,6 +161,36 @@ mod tests {
         );
     }
 
+    /// Design §7: the picker marks the matched span in a label.
+    #[test]
+    fn a_matched_span_is_marked_in_a_label() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
+        let choice = ThemeChoice::default();
+        let search = Search::new("quill");
+        let labels: Vec<String> = BuiltIn::ALL
+            .iter()
+            .map(|built_in| built_in.label().to_owned())
+            .collect();
+
+        terminal
+            .draw(|frame| render(frame, &labels, 0, search.as_ref(), Theme::of(&choice)))
+            .expect("a frame");
+
+        let matched = Theme::of(&choice)
+            .style(Token::Match)
+            .fg
+            .expect("a mark spends a colour");
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .any(|cell| cell.fg == matched),
+            "the label that matched carries the mark"
+        );
+    }
+
     #[test]
     fn the_cursor_row_is_a_bar_of_the_flavours_own_surface() {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
@@ -158,6 +205,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor,
             restored: choice.clone(),
+            sift: None,
         });
 
         terminal

@@ -131,6 +131,10 @@ const PALETTE_GLOBAL: &[Binding] = &[
         keys: &[Stroke::key(Key::Char('q'))],
         action: "quit",
     },
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
 ];
 
 /// What the bar names while the diagnostics overlay is up. `esc` is the only
@@ -147,10 +151,16 @@ const DIAGNOSTICS_GLOBAL: &[Binding] = &[Binding {
 /// because that is what the press does — the cursor writes `State.theme` on
 /// every step (themes design §6). The one bar that still names `j`/`k`: what
 /// it teaches is the side effect, not the motion.
-pub(crate) const THEMES: &[Binding] = &[Binding {
-    keys: &[Stroke::key(Key::Char('j')), Stroke::key(Key::Char('k'))],
-    action: "preview",
-}];
+pub(crate) const THEMES: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('j')), Stroke::key(Key::Char('k'))],
+        action: "preview",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+];
 
 /// The two ways out are named apart, because they differ in what they leave
 /// behind: `⏎` keeps the previewed theme and `esc` puts back the one the
@@ -206,6 +216,16 @@ pub(crate) fn bar(state: &State) -> HintBar {
         .export
         .as_ref()
         .map(|job| format!("exporting {} rows…", job.rows()));
+
+    // An overlay with a prompt up is a panel that takes text, and the two
+    // ways out are the prompt's two (overlay search design §8).
+    if sifting(state) {
+        return HintBar {
+            panel: Vec::new(),
+            global: SEARCH_GLOBAL.iter().map(rendered).collect(),
+            export,
+        };
+    }
 
     // No panel group: moving — by a row, by a screen, or to an end — is
     // assumed rather than taught, in here as in every panel bar
@@ -296,6 +316,15 @@ pub(crate) fn bar(state: &State) -> HintBar {
         panel,
         global,
         export,
+    }
+}
+
+/// Whether an overlay has a live search over its list.
+fn sifting(state: &State) -> bool {
+    match &state.overlay {
+        Some(Overlay::Commands(panel)) => panel.sift().is_some(),
+        Some(Overlay::Themes { sift, .. }) => sift.is_some(),
+        _ => false,
     }
 }
 
@@ -555,7 +584,56 @@ mod tests {
         assert_eq!(bar.global[0].action, "run");
         assert_eq!(bar.global[1].keys, "?/esc");
         assert_eq!(bar.global[1].action, "close");
-        assert_eq!(bar.global.last().expect("q is last").action, "quit");
+        assert_eq!(bar.global[2].keys, "q");
+        assert_eq!(bar.global[2].action, "quit");
+        assert_eq!(bar.global.last().expect("/ is last").action, "search");
+    }
+
+    /// Design §8: the overlays name the key that searches them.
+    #[test]
+    fn the_overlay_bars_name_the_search_key() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
+
+        let bar = bar(&state);
+
+        assert!(
+            bar.global.iter().any(|hint| hint.action == "search"),
+            "the palette's bar names /"
+        );
+    }
+
+    /// Design §8: a live sift shows the prompt's own bar — the two ways out
+    /// are the same two, and `q quit` goes with it, because `q` is text now.
+    #[test]
+    fn a_live_sift_shows_the_prompts_bar() {
+        let mut state = State::default();
+        let mut panel = CommandsPanel::opened();
+        panel.open_sift();
+        state.overlay = Some(Overlay::Commands(panel));
+
+        let bar = bar(&state);
+        let actions: Vec<&str> = bar.global.iter().map(|hint| hint.action).collect();
+
+        assert_eq!(actions, ["apply", "cancel"]);
+    }
+
+    /// Design §8: the picker's own live sift collapses its bar the same way
+    /// the palette's does — `sifting()`'s `Themes` arm, not only its
+    /// `Commands` one.
+    #[test]
+    fn a_live_sift_over_the_picker_shows_the_prompts_bar() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Themes {
+            cursor: Cursor::default(),
+            restored: ThemeChoice::default(),
+            sift: Some(crate::search::Sift::opened(0)),
+        });
+
+        let bar = bar(&state);
+        let actions: Vec<&str> = bar.global.iter().map(|hint| hint.action).collect();
+
+        assert_eq!(actions, ["apply", "cancel"]);
     }
 
     #[test]
@@ -564,6 +642,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor: Cursor::default(),
             restored: ThemeChoice::default(),
+            sift: None,
         });
 
         let bar = bar(&state);
@@ -573,7 +652,7 @@ mod tests {
                 .iter()
                 .map(|hint| (hint.keys.as_str(), hint.action))
                 .collect::<Vec<_>>(),
-            [("j/k", "preview")],
+            [("j/k", "preview"), ("/", "search")],
             "the focused panel responds to nothing while the picker is up"
         );
         assert_eq!(

@@ -29,7 +29,7 @@ use crate::contents::SelectionMode;
 use crate::ddl::DdlTab;
 use crate::export::{Confirm, Format, Scope, Stop};
 use crate::model::DbError;
-use crate::search::Direction;
+use crate::search::{Direction, Search, Sift};
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
 use crate::theme::{BuiltIn, ThemeChoice};
@@ -77,6 +77,7 @@ pub enum OverlayView {
     Commands {
         rows: Vec<CommandRow>,
         selected: usize,
+        sift: Option<SiftView>,
     },
     /// Carries only the query: `Prompt::target` is what the renderer needs to
     /// find the panel it is drawn against, but that panel is already
@@ -90,6 +91,7 @@ pub enum OverlayView {
     Themes {
         labels: Vec<String>,
         selected: usize,
+        sift: Option<SiftView>,
     },
     /// The config diagnostics' rows and where its cursor is.
     Diagnostics {
@@ -147,12 +149,32 @@ pub struct ExportView {
     pub confirm: Option<Confirm>,
 }
 
+/// A live overlay search, as a renderer needs it.
+///
+/// The term as typed is what the prompt draws — including a query too short
+/// to match on, which `search` reports as `None`. The search itself is what
+/// the rows are split against, the same thing `PanelView::search` carries
+/// (overlay search design §7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiftView {
+    pub query: String,
+    pub search: Option<Search>,
+}
+
+fn sift_view(sift: &Sift) -> SiftView {
+    SiftView {
+        query: sift.query().to_owned(),
+        search: sift.search(),
+    }
+}
+
 fn overlay(state: &State) -> Option<OverlayView> {
     match state.overlay.as_ref()? {
         Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
         Overlay::Commands(panel) => Some(OverlayView::Commands {
             rows: commands::rows(),
             selected: panel.selected(),
+            sift: panel.sift().map(sift_view),
         }),
         Overlay::Diagnostics(panel) => Some(OverlayView::Diagnostics {
             rows: panel.rows().iter().map(row).collect(),
@@ -167,7 +189,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
         Overlay::Search(prompt) => Some(OverlayView::Search {
             query: prompt.query().to_owned(),
         }),
-        Overlay::Themes { cursor, .. } => Some(OverlayView::Themes {
+        Overlay::Themes { cursor, sift, .. } => Some(OverlayView::Themes {
             labels: BuiltIn::ALL
                 .iter()
                 .map(|built_in| built_in.label().to_owned())
@@ -180,6 +202,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
                 )
                 .collect(),
             selected: cursor.index(),
+            sift: sift.as_ref().map(sift_view),
         }),
         Overlay::Export(form) => Some(OverlayView::Export(Box::new(ExportView {
             title: form.title(),
@@ -619,8 +642,59 @@ mod tests {
             Some(OverlayView::Commands {
                 rows: crate::commands::rows(),
                 selected: 1,
+                sift: None,
             })
         );
+    }
+
+    /// Overlay search design §7: the renderer is told the term as typed, for
+    /// the prompt, and what it means, for the mark.
+    #[test]
+    fn an_overlay_carries_its_sift_to_the_renderer() {
+        let mut state = State::default();
+        let mut panel = CommandsPanel::opened();
+        panel.open_sift();
+        panel.push('q');
+        state.overlay = Some(Overlay::Commands(panel));
+
+        let Some(OverlayView::Commands { sift, .. }) = view_model(&state).overlay else {
+            panic!("an open palette");
+        };
+        let sift = sift.expect("a live sift");
+
+        assert_eq!(sift.query, "q");
+        assert!(sift.search.expect("a term").matches("quit"));
+    }
+
+    #[test]
+    fn an_overlay_with_no_sift_carries_none() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
+
+        let Some(OverlayView::Commands { sift, .. }) = view_model(&state).overlay else {
+            panic!("an open palette");
+        };
+
+        assert!(sift.is_none());
+    }
+
+    /// Overlay search design §7: a query too short to match on is still a
+    /// live sift — the prompt still has something to draw — and `sift_view`
+    /// reports that as `search: None` rather than folding it into "no sift".
+    #[test]
+    fn a_sift_open_on_an_empty_query_carries_no_search() {
+        let mut state = State::default();
+        let mut panel = CommandsPanel::opened();
+        panel.open_sift();
+        state.overlay = Some(Overlay::Commands(panel));
+
+        let Some(OverlayView::Commands { sift, .. }) = view_model(&state).overlay else {
+            panic!("an open palette");
+        };
+        let sift = sift.expect("a live sift, even with nothing typed");
+
+        assert_eq!(sift.query, "");
+        assert!(sift.search.is_none());
     }
 
     #[test]
@@ -636,6 +710,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor,
             restored: ThemeChoice::default(),
+            sift: None,
         });
 
         assert_eq!(
@@ -646,6 +721,7 @@ mod tests {
                     .map(|built_in| built_in.label().to_owned())
                     .collect(),
                 selected: index,
+                sift: None,
             })
         );
     }
@@ -665,6 +741,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor: Cursor::default(),
             restored: ThemeChoice::default(),
+            sift: None,
         });
 
         let Some(OverlayView::Themes { labels, .. }) = view_model(&state).overlay else {
