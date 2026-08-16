@@ -18,7 +18,7 @@ use crate::queries::QueriesPanel;
 use crate::search::{Prompt, Search, Searched, Sift};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
-use crate::tree::TablesPanel;
+use crate::tree::{Node, TablesPanel};
 use crate::update::Source;
 use crate::view::hints::{Binding, Stroke};
 
@@ -1263,6 +1263,22 @@ impl State {
             }) => Some(schema),
             _ => None,
         }
+    }
+
+    /// The keyspace the tree cursor is on, which is the one on screen.
+    ///
+    /// The single answer to "which keyspace is the user looking at": the
+    /// editor completes an unqualified name against it (`update::complete`)
+    /// and the grid reads a typed statement's unqualified table against it
+    /// (`view::contents`), and two derivations of one rule would be two
+    /// things to keep in step (cql semantics design §7).
+    #[must_use]
+    pub fn visible_keyspace(&self) -> Option<String> {
+        let schema = self.schema()?;
+
+        self.tables.selected(schema).map(|node| match node {
+            Node::Keyspace { keyspace, .. } | Node::Table { keyspace, .. } => keyspace.name.clone(),
+        })
     }
 
     /// The tree's state and the schema it is a tree of.

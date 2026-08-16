@@ -10,7 +10,6 @@ use crate::model::{CqlValue, Schema};
 use crate::search::Search;
 use crate::state::{Panel, Ranges, State};
 use crate::style::{Segment, Token};
-use crate::tree::Node;
 
 use super::{PanelBody, failure, waiting};
 
@@ -242,21 +241,11 @@ fn grid_table(state: &State, subject: &Subject) -> Option<TableRef> {
             let name = crate::cql::sole_table(cql)?;
 
             Some(TableRef {
-                keyspace: name.keyspace.clone().or_else(|| visible_keyspace(state))?,
+                keyspace: name.keyspace.clone().or_else(|| state.visible_keyspace())?,
                 table: name.table.clone(),
             })
         }
     }
-}
-
-/// The keyspace an unqualified name in a typed statement should be read
-/// against: the one the tree cursor sits on, mirroring `update.rs::complete`.
-fn visible_keyspace(state: &State) -> Option<String> {
-    let schema = state.schema()?;
-
-    state.tables.selected(schema).map(|node| match node {
-        Node::Keyspace { keyspace, .. } | Node::Table { keyspace, .. } => keyspace.name.clone(),
-    })
 }
 
 #[cfg(test)]

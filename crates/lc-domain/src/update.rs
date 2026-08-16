@@ -965,14 +965,8 @@ fn edit(state: &mut State, key: Key) -> bool {
 /// already saying which keyspace the user is looking at
 /// (query editor design §5.2).
 fn complete(state: &mut State) {
-    let schema = state.schema();
-    let keyspace = schema
-        .and_then(|schema| state.tables.selected(schema))
-        .map(|node| match node {
-            Node::Keyspace { keyspace, .. } | Node::Table { keyspace, .. } => keyspace.name.clone(),
-        });
-
-    let completion = cql::suggest(state.queries.buffer(), schema, keyspace.as_deref());
+    let keyspace = state.visible_keyspace();
+    let completion = cql::suggest(state.queries.buffer(), state.schema(), keyspace.as_deref());
     state.queries.offer(completion);
 }
 
