@@ -2445,16 +2445,19 @@ fn run(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     }
 
+    state.focus_on(Panel::Contents);
     submit_into_contents(state, Subject::Typed(cql.to_owned()), stmt)
 }
 
 /// Puts `stmt`'s result in the Contents panel, cancelling whatever it was
 /// waiting on. One grid, one outstanding query, whichever way it was asked for.
 ///
-/// Focus is deliberately not touched here. Reading from the tree moves it
-/// ([`read`]); `ctrl-r` does not, because the user is composing in a panel
-/// that takes text and pulling focus out of it would turn their next
-/// keystrokes into bindings (docs/superpowers/specs/2026-08-10-table-display-design.md §1).
+/// Focus is deliberately not touched here: both callers move it themselves —
+/// reading from the tree ([`read`]) and `ctrl-r` alike land the user on the
+/// rows they asked for. The Queries panel collapses to the query it holds
+/// when focus leaves it, so the grid gets the room the editor was using
+/// (docs/superpowers/specs/2026-08-16-cql-semantics-design.md §8, which
+/// supersedes table display design §1).
 fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) -> Vec<Effect> {
     let mut effects = Vec::new();
 
@@ -3729,7 +3732,11 @@ mod tests {
         seat_on(&mut state, "run the buffer");
         let effects = press(&mut state, Key::Enter);
 
-        assert_eq!(state.focus(), Panel::Queries);
+        assert_eq!(
+            state.focus(),
+            Panel::Contents,
+            "a run is a read, and a read lands where the rows do"
+        );
         assert!(
             effects
                 .iter()
@@ -9067,6 +9074,19 @@ mod tests {
                 },
                 Effect::RecordHistory(Box::new(Statement::typed("SELECT * FROM shop.orders"))),
             ]
+        );
+    }
+
+    #[test]
+    fn running_the_buffer_lands_focus_on_the_grid_it_filled() {
+        let mut state = editing("SELECT * FROM shop.orders");
+
+        run_query(&mut state);
+
+        assert_eq!(
+            state.focus(),
+            Panel::Contents,
+            "a run is a read, and a read lands where the rows do"
         );
     }
 
