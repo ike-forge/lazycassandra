@@ -1421,13 +1421,17 @@ fn theme_at_picker_index(config: &Config, index: usize) -> Option<ThemeChoice> {
 }
 
 /// The picker's rows in picker order: the built-ins, then the config's own.
-fn theme_labels(state: &State) -> Vec<String> {
+///
+/// The one builder for this order, shared with [`crate::view`]'s
+/// `OverlayView::Themes`: the search's whole correctness claim is that
+/// `theme_labels[i]` is the label the renderer draws at row `i`, so the two
+/// cannot be allowed to drift into separate copies (review, item 2).
+pub(crate) fn theme_labels(config: &Config) -> Vec<String> {
     BuiltIn::ALL
         .iter()
         .map(|built_in| built_in.label().to_owned())
         .chain(
-            state
-                .config
+            config
                 .themes
                 .iter()
                 .map(|theme| theme.name.as_str().to_owned()),
@@ -1454,14 +1458,15 @@ fn seat_from(labels: &[String], search: &Search, origin: usize) -> Option<usize>
 /// Refused over a live prompt too, which no unmodified key needs to say: the
 /// ctrl layer is dispatched above every overlay, so this is the one opener a
 /// prompt cannot swallow, and replacing one would strand the panel under a
-/// half-typed query with nothing left holding the search it had. Refused the
-/// same way over a picker's own live sift, for the same reason.
+/// half-typed query with nothing left holding the search it had.
+///
+/// A picker's own live sift needs no matching guard here: `ctrl_key` already
+/// refuses every ctrl chord over any open overlay, `Overlay::Themes { .. }`
+/// included, before this function is ever called, so a sift up inside the
+/// picker is covered by that blanket refusal, not this one.
 fn open_themes(state: &mut State) {
     let last = BuiltIn::ALL.len() + state.config.themes.len();
-    let busy = matches!(
-        state.overlay,
-        Some(Overlay::Search(_) | Overlay::Themes { sift: Some(_), .. })
-    );
+    let busy = matches!(state.overlay, Some(Overlay::Search(_)));
     if last > state.geometry.theme_rows() || busy {
         return;
     }
@@ -1509,7 +1514,7 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     let last = BuiltIn::ALL.len() + state.config.themes.len();
     let height = state.geometry.command_rows();
-    let Some(Overlay::Themes { cursor, .. }) = &mut state.overlay else {
+    let Some(Overlay::Themes { cursor, sift, .. }) = &mut state.overlay else {
         return Vec::new();
     };
 
@@ -1520,11 +1525,7 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::PageUp => cursor.page_up(height),
         Key::Home => cursor.to_start(),
         Key::End => cursor.to_end(last),
-        Key::Char('/') => {
-            if let Some(Overlay::Themes { cursor, sift, .. }) = &mut state.overlay {
-                *sift = Some(Sift::opened(cursor.index()));
-            }
-        }
+        Key::Char('/') => *sift = Some(Sift::opened(cursor.index())),
         _ => {}
     }
 
@@ -1556,7 +1557,7 @@ fn themes_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
         return Vec::new();
     }
 
-    let labels = theme_labels(state);
+    let labels = theme_labels(&state.config);
     let Some(Overlay::Themes { cursor, sift, .. }) = &mut state.overlay else {
         return Vec::new();
     };
@@ -3319,6 +3320,22 @@ mod tests {
         assert_eq!(theme_picker(&state), Some(label_index("Quill dark")));
     }
 
+    /// Design §10: `q` quits the moment a sift closes — the letter goes back
+    /// to meaning what it means everywhere else once the prompt that was
+    /// swallowing it is gone.
+    #[test]
+    fn q_quits_once_the_pickers_sift_has_closed() {
+        let mut state = measured(&["a"]);
+        press_binding(&mut state, KeyPress::ctrl(Key::Char('t')));
+
+        press(&mut state, Key::Char('/'));
+        type_into(&mut state, "quill");
+        press(&mut state, Key::Enter);
+        press(&mut state, Key::Char('q'));
+
+        assert!(state.should_quit);
+    }
+
     /// Design §1: `Esc` puts the cursor back where the prompt opened — and
     /// the preview with it; a second `Esc` closes the picker.
     #[test]
@@ -3339,10 +3356,12 @@ mod tests {
         assert!(state.overlay.is_none());
     }
 
-    /// Design §5: `ctrl-t` already refuses to open over a live prompt, so
-    /// that a chord cannot strand a half-typed query; a sift is one.
+    /// Design §5: `ctrl-t` already refuses to open over any live overlay,
+    /// `ctrl_key`'s blanket refusal for `Overlay::Themes { .. }` included, so
+    /// a chord over a picker holding a live sift never reaches `open_themes`
+    /// at all — the sift and its query are left exactly as they were.
     #[test]
-    fn ctrl_t_is_refused_over_a_live_sift() {
+    fn ctrl_t_over_a_live_sift_is_refused_by_ctrl_keys_overlay_guard() {
         let mut state = measured(&["a"]);
         press_binding(&mut state, KeyPress::ctrl(Key::Char('t')));
         press(&mut state, Key::Char('/'));
