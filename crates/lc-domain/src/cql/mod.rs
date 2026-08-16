@@ -9,9 +9,11 @@ mod complete;
 mod format;
 mod keywords;
 mod lex;
+mod resolve;
 
 pub use complete::{Candidate, CandidateKind, Completion, suggest};
 pub use format::format;
+pub use resolve::{Analysis, Expect, Name, Role};
 
 use crate::style::{Segment, Token};
 use lex::Kind;
