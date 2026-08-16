@@ -650,7 +650,7 @@ mod tests {
     use lc_domain::ddl::DdlTab;
     use lc_domain::grid::{BAR, COLUMN_SPACING};
     use lc_domain::model::{
-        ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
+        ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Key, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Statement, Table, TableOptions,
     };
     use lc_domain::pointer::Click;
@@ -4085,11 +4085,12 @@ mod tests {
         let mut state = State::default();
         state.focus_on(focus);
         for character in text.chars() {
-            if character == '\n' {
-                state.queries.insert_newline();
+            let key = if character == '\n' {
+                Key::Enter
             } else {
-                state.queries.insert(character);
-            }
+                Key::Char(character)
+            };
+            state.queries.edit(key, 1);
         }
         state
     }
@@ -4148,6 +4149,62 @@ mod tests {
             "one column past the six typed"
         );
         assert_eq!(cursor.y, CONTENT_ROW);
+    }
+
+    /// `text` typed into a focused Queries panel, with the offers standing
+    /// against whatever word it ends on.
+    fn completing(text: &str) -> State {
+        let mut state = with_query(text, Panel::Queries);
+        let completion = lc_domain::cql::suggest(state.queries.buffer(), None, None);
+        state.queries.offer(completion);
+        state
+    }
+
+    #[test]
+    fn the_buffer_is_painted_by_what_its_words_mean() {
+        let (buffer, _) = drawn_with_cursor(80, 24, &with_query("SELECT id", Panel::Queries));
+
+        let keyword = buffer[(INNER_LEFT, CONTENT_ROW)].fg;
+        let name = buffer[(INNER_LEFT + 7, CONTENT_ROW)].fg;
+
+        assert_eq!(
+            row(&buffer, CONTENT_ROW).trim_end().chars().nth(21),
+            Some('S'),
+            "the assertion below is reading the two cells it means to"
+        );
+        assert_ne!(
+            keyword, name,
+            "a keyword and a column name are two meanings and two colours"
+        );
+    }
+
+    #[test]
+    fn the_completion_popup_hangs_off_the_cursor() {
+        let (buffer, _) = drawn_with_cursor(80, 24, &completing("se"));
+
+        let rows: Vec<String> = (0..24).map(|y| row(&buffer, y)).collect();
+        let offered = rows
+            .iter()
+            .position(|line| line.contains("SELECT"))
+            .expect("the popup names what it is offering");
+
+        assert!(
+            offered < usize::from(CONTENT_ROW),
+            "the panel is on the frame's bottom edge, so the popup opens upwards"
+        );
+    }
+
+    #[test]
+    fn an_unfocused_editor_draws_no_popup() {
+        let mut state = completing("se");
+        state.focus_on(Panel::Tables);
+
+        let (buffer, _) = drawn_with_cursor(80, 24, &state);
+
+        assert!(
+            (0..24).all(|y| !row(&buffer, y).contains("SELECT")),
+            "a popup over a panel that is not taking keys would be offering into nothing"
+        );
     }
 
     #[test]

@@ -212,6 +212,23 @@ const QUERIES: &[Command] = &[
         Run::In(Panel::Queries),
     ),
     Command::new(
+        &[KeyPress::ctrl(Key::Char('f'))],
+        "format the buffer",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[
+            KeyPress::ctrl(Key::Char('n')),
+            KeyPress::ctrl(Key::Char('p')),
+        ],
+        "walk the completions",
+        Run::In(Panel::Queries),
+    ),
+    // Inert for the reason the export form's rows are: `tab` accepts a
+    // completion only while one is being offered, and moves focus every other
+    // frame. A palette that pressed it would move focus (design §5.5).
+    Command::new(&[KeyPress::new(Key::Tab)], "accept completion", Run::Inert),
+    Command::new(
         &[KeyPress::new(Key::Enter)],
         "split the line",
         Run::In(Panel::Queries),
@@ -460,9 +477,9 @@ mod tests {
     /// The widest row `MIN_W` in the renderer is derived from
     /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §5): a
     /// thirteen-column key gutter, two columns of gap, and the longest action.
-    /// No row fills the gutter today — `pgdn/ctrl-d` is the widest — and the
-    /// renderer's `MIN_W` is derived from the constant rather than from the
-    /// catalogue, so the two stay pinned to each other.
+    /// `ctrl-n/ctrl-p` fills the gutter exactly, and the renderer's `MIN_W` is
+    /// derived from the constant rather than from the catalogue, so the two
+    /// stay pinned to each other.
     const WIDEST_KEYS: usize = 13;
     const WIDEST_ACTION: usize = 20;
 
@@ -878,7 +895,10 @@ mod tests {
             group("Queries")
                 .commands
                 .iter()
-                .all(|command| command.run == Run::In(Panel::Queries))
+                .filter(|command| command.binding.keys != [KeyPress::new(Key::Tab)])
+                .all(|command| command.run == Run::In(Panel::Queries)),
+            "every row but the completion's, which is inert for the reason the \
+             export form's rows are"
         );
     }
 

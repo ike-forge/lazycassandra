@@ -15,8 +15,13 @@ selection with yank to the clipboard, a visual range over any of the three
 list panels, and `ctrl-e` over a loaded Contents grid opens a form that writes
 the fetched rows or the whole table to a CSV or JSON file — the one path in
 the program that pages a statement past its first round trip (§5,
-`execute_paged`).
-**Last updated:** 2026-08-15
+`execute_paged`). The Queries buffer is now a CQL editor rather than a text
+box: `cql/` scans the buffer once and three readers share that scan —
+highlighting into the `Token` path §6 has carried unused since the themes
+slice, a `ctrl-f` that lays a statement out, and a completion popup over CQL's
+keywords and the cluster's own keyspaces and tables
+(docs/superpowers/specs/2026-08-16-query-editor-design.md).
+**Last updated:** 2026-08-16
 
 ---
 

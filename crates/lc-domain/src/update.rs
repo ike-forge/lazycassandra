@@ -7,12 +7,14 @@
 use crate::commands::{CommandsPanel, Run};
 use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
+use crate::cql;
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::ports::ExportError;
 use crate::posture::Posture;
+use crate::queries::Refresh;
 use crate::search::{Direction, Origin, Prompt, Searched};
 use crate::state::{
     ConnectionState, Cursor, DiagnosticsPanel, ExportJob, Flash, Geometry, Message, Overlay, Panel,
@@ -836,29 +838,64 @@ fn show_tab(state: &mut State, panel: Panel, tab: usize) {
 
 /// Offers `key` to the focused panel's buffer, answering whether it was text.
 ///
-/// Exhaustive over [`Key`], so a new key has to decide whether an editor
-/// claims it rather than defaulting into one side.
+/// The exhaustive match over [`Key`] lives on [`QueriesPanel`], which is what
+/// holds the popup the two-key exceptions turn on; what is left here is the
+/// half only `update` can do, which is offering against the schema
+/// (query editor design §5.4).
 fn edit(state: &mut State, key: Key) -> bool {
     let height = state.geometry.height(Panel::Queries);
-    let editor = &mut state.queries;
+    let Some(refresh) = state.queries.edit(key, height) else {
+        return false;
+    };
 
-    match key {
-        Key::Char(character) => editor.insert(character),
-        Key::Backspace => editor.backspace(),
-        Key::Delete => editor.delete(),
-        Key::Left => editor.left(),
-        Key::Right => editor.right(),
-        Key::Up => editor.up(),
-        Key::Down => editor.down(),
-        Key::Home => editor.line_start(),
-        Key::End => editor.line_end(),
-        Key::PageUp => editor.page_up(height),
-        Key::PageDown => editor.page_down(height),
-        Key::Enter => editor.insert_newline(),
-        Key::Escape | Key::Tab | Key::BackTab | Key::Insert | Key::F(_) => return false,
+    match refresh {
+        Refresh::Recompute => complete(state),
+        Refresh::Close => {}
     }
 
     true
+}
+
+/// Offers the schema's own vocabulary against the word under the cursor.
+///
+/// The keyspace is the one the Tables panel is showing, which is what makes an
+/// unqualified table name completable at all — the panel beside the editor is
+/// already saying which keyspace the user is looking at
+/// (query editor design §5.2).
+fn complete(state: &mut State) {
+    let schema = state.schema();
+    let keyspace = schema
+        .and_then(|schema| state.tables.selected(schema))
+        .map(|node| match node {
+            Node::Keyspace { keyspace, .. } | Node::Table { keyspace, .. } => keyspace.name.clone(),
+        });
+
+    let completion = cql::suggest(state.queries.buffer(), schema, keyspace.as_deref());
+    state.queries.offer(completion);
+}
+
+/// `ctrl-f` lays the buffer out, and does nothing anywhere else: the panel
+/// takes text, so the action has no unmodified key available — the shape
+/// `ctrl-r` and `ctrl-e` already have (query editor design §4.3).
+fn format_buffer(state: &mut State) {
+    if state.focus() != Panel::Queries {
+        return;
+    }
+
+    state.queries.format();
+}
+
+/// `ctrl-n` and `ctrl-p` walk the popup, and raise one where none is up: a
+/// user who wants to see what is on offer should not have to type a character
+/// they will then delete (query editor design §5.5).
+fn walk_completion(state: &mut State, forwards: bool) {
+    if state.focus() != Panel::Queries {
+        return;
+    }
+
+    if !state.queries.step(forwards) {
+        complete(state);
+    }
 }
 
 /// The way a message overlay is installed. Every site goes through here —
@@ -1407,6 +1444,18 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
             Vec::new()
         }
         Key::Char('e') => ctrl_e(state),
+        Key::Char('f') => {
+            format_buffer(state);
+            Vec::new()
+        }
+        Key::Char('n') => {
+            walk_completion(state, true);
+            Vec::new()
+        }
+        Key::Char('p') => {
+            walk_completion(state, false);
+            Vec::new()
+        }
         _ => Vec::new(),
     }
 }
@@ -7448,7 +7497,7 @@ mod tests {
         // sitting exactly there (`delete_at_the_end_of_the_buffer_does_nothing`
         // in editor.rs), and `End` from the end is a no-op. Off by one, `Home`,
         // `End`, and `Delete` all have somewhere to move from.
-        editor.queries.left();
+        editor.queries.edit(Key::Left, 1);
         editor
     }
 
@@ -9259,5 +9308,183 @@ mod tests {
         open_form(&mut state);
 
         assert!(state.overlay.is_none());
+    }
+
+    /// The query editor slice: formatting, highlighting and completion
+    /// (docs/superpowers/specs/2026-08-16-query-editor-design.md).
+    mod editor {
+        use super::*;
+
+        fn ctrl(character: char) -> KeyPress {
+            KeyPress::ctrl(Key::Char(character))
+        }
+
+        fn offered(state: &State) -> Vec<String> {
+            state
+                .queries
+                .completion()
+                .map(|completion| {
+                    completion
+                        .candidates()
+                        .iter()
+                        .map(|candidate| candidate.text.clone())
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+
+        #[test]
+        fn ctrl_f_lays_the_buffer_out() {
+            let mut state = editing("select * from shop.orders where id = 7");
+
+            press_binding(&mut state, ctrl('f'));
+
+            assert_eq!(
+                state.queries.text(),
+                "SELECT *\nFROM shop.orders\nWHERE id = 7"
+            );
+        }
+
+        #[test]
+        fn ctrl_f_does_nothing_outside_queries() {
+            let mut state = editing("select * from shop.orders");
+            state.focus_on(Panel::Tables);
+
+            press_binding(&mut state, ctrl('f'));
+
+            assert_eq!(
+                state.queries.text(),
+                "select * from shop.orders",
+                "the chord is the Queries member of the layer and inert elsewhere"
+            );
+        }
+
+        #[test]
+        fn typing_a_prefix_offers_the_keyword_it_starts() {
+            let mut state = editing("se");
+
+            assert_eq!(offered(&state).first().map(String::as_str), Some("SELECT"));
+
+            press(&mut state, Key::Char('l'));
+            assert_eq!(offered(&state).first().map(String::as_str), Some("SELECT"));
+        }
+
+        #[test]
+        fn a_qualified_prefix_offers_that_keyspaces_tables() {
+            let state = editing("SELECT * FROM shop.o");
+
+            assert_eq!(offered(&state), vec!["orders".to_owned()]);
+        }
+
+        #[test]
+        fn an_unqualified_table_comes_from_the_keyspace_the_tree_is_on() {
+            // `browsing_tables` leaves the Tables cursor on `shop`, which is
+            // what makes a bare `orders` completable at all (design §5.2).
+            let state = editing("SELECT * FROM ord");
+
+            assert_eq!(
+                offered(&state),
+                vec!["ORDER".to_owned(), "orders".to_owned()],
+                "grammar first, then the name the tree is standing on"
+            );
+        }
+
+        #[test]
+        fn tab_accepts_what_is_offered_rather_than_moving_focus() {
+            let mut state = editing("SELECT * FROM shop.o");
+
+            press(&mut state, Key::Tab);
+
+            assert_eq!(state.queries.text(), "SELECT * FROM shop.orders");
+            assert_eq!(state.focus(), Panel::Queries, "focus stayed put");
+        }
+
+        #[test]
+        fn tab_still_moves_focus_when_nothing_is_being_offered() {
+            let mut state = editing("SELECT * FROM shop.orders");
+
+            press(&mut state, Key::Tab);
+
+            assert_eq!(state.focus(), Panel::Tables);
+        }
+
+        #[test]
+        fn escape_takes_the_popup_down_before_it_leaves_the_editor() {
+            let mut state = editing("SELECT * FROM shop.o");
+
+            press(&mut state, Key::Escape);
+            assert!(state.queries.completion().is_none());
+            assert_eq!(
+                state.focus(),
+                Panel::Queries,
+                "the panel is still the way in"
+            );
+
+            press(&mut state, Key::Escape);
+            assert_eq!(
+                state.focus(),
+                Panel::Tables,
+                "and escape is still the way out"
+            );
+        }
+
+        #[test]
+        fn a_motion_takes_the_popup_down() {
+            let mut state = editing("SELECT * FROM shop.o");
+
+            press(&mut state, Key::Left);
+
+            assert!(state.queries.completion().is_none());
+        }
+
+        #[test]
+        fn ctrl_n_raises_a_popup_and_then_walks_it() {
+            let mut state = editing("SELECT * FROM s");
+            // A motion takes the popup down without moving off the word, so
+            // `ctrl-n` has something to raise against.
+            press(&mut state, Key::End);
+            assert!(state.queries.completion().is_none());
+
+            press_binding(&mut state, ctrl('n'));
+            let raised = state
+                .queries
+                .completion()
+                .expect("s reaches a keyword and a keyspace")
+                .selected();
+            assert_eq!(raised, 0);
+
+            press_binding(&mut state, ctrl('n'));
+            assert_eq!(
+                state.queries.completion().expect("still up").selected(),
+                1,
+                "the second press walks the list it raised"
+            );
+
+            press_binding(&mut state, ctrl('p'));
+            assert_eq!(state.queries.completion().expect("still up").selected(), 0);
+        }
+
+        #[test]
+        fn the_buffer_reaches_the_renderer_painted() {
+            let state = editing("SELECT id");
+
+            let crate::view::PanelBody::Editor { lines, .. } =
+                crate::view::view_model(&state).panels[3].body.clone()
+            else {
+                panic!("Queries draws an editor");
+            };
+
+            assert_eq!(
+                lines[0]
+                    .iter()
+                    .map(|segment| (segment.token, segment.text.clone()))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (Some(crate::style::Token::Keyword), "SELECT".to_owned()),
+                    (None, " ".to_owned()),
+                    (Some(crate::style::Token::Reference), "id".to_owned()),
+                ]
+            );
+        }
     }
 }

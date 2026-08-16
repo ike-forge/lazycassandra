@@ -70,12 +70,24 @@ From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-
   The panel is meant to grow with its content and its focus, which is a
   layout change with its own spec, not a tweak to the percentage.
 - The session log. architecture.md §4 calls this panel "statement entry and
-  session log"; only the first half exists. When it lands, `State.queries`
-  becomes a `QueriesPanel` holding both.
+  session log"; only the first half exists. `State.queries` is now a
+  `QueriesPanel` — completion got there before the log did
+  (docs/superpowers/specs/2026-08-16-query-editor-design.md §5.3) — so the log
+  has somewhere to live when it lands.
 - Undo and redo, selection, clipboard, and word motions. The buffer has none.
-- Schema-aware completion and syntax highlighting (vision.md §5.1). The
-  `Token` path of architecture.md §6 is already the right shape for the
-  second.
+- Column completion. Keyspaces, tables and keywords are offered
+  (docs/superpowers/specs/2026-08-16-query-editor-design.md §5.2); columns are in
+  `Schema` too, but offering them means knowing which table the cursor's clause
+  is in, which is a parser question.
+- A CQL parser, and what waits on it: running the statement under the cursor,
+  splitting a buffer on statement boundaries, and classifying a statement by
+  more than its first verb. `ctrl-f` lays the whole buffer out for the same
+  reason `ctrl-r` runs all of it.
+- Completion inside a quoted identifier. `"My` offers nothing — the word
+  scanner stops at the quote.
+- The formatter's layout is fixed: two-column indent, upper-case keywords, one
+  clause to a line. A preference needs a consumer in the configuration slice
+  (design §11), and there is none.
 - An overlay up over a focused Queries breaks two promises, both because
   "focus is the mode" (design §3) does not yet weigh `state.overlay`. First,
   the hint bar's `esc leave` is momentarily false: `escape` prioritises the

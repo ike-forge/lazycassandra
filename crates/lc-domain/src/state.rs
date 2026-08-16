@@ -11,10 +11,10 @@ use crate::commands::CommandsPanel;
 use crate::config::{Config, Diagnostic};
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
-use crate::editor::Editor;
 use crate::export::ExportForm;
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
+use crate::queries::QueriesPanel;
 use crate::search::{Prompt, Search, Searched};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
@@ -29,9 +29,9 @@ pub struct State {
     pub tables: TablesPanel,
     pub contents: ContentsPanel,
     pub ddl: DdlPanel,
-    /// The Queries panel's buffer. Not a `QueriesPanel`: the panel is the
-    /// editor until the session log arrives.
-    pub queries: Editor,
+    /// The Queries panel: its buffer, and whatever completion is being
+    /// offered into it (query editor design §5.4).
+    pub queries: QueriesPanel,
     /// What the last frame turned out to be, so a motion knows how far a page
     /// is and where the end is.
     pub geometry: Geometry,
@@ -412,6 +412,12 @@ const QUERIES_HINTS: &[Binding] = &[
     Binding {
         keys: &[KeyPress::ctrl(Key::Char('e'))],
         action: "edit",
+    },
+    // Greyed on a buffer already laid out, for the reason `ctrl-r` is greyed
+    // on an empty one (query editor design §4.3).
+    Binding {
+        keys: &[KeyPress::ctrl(Key::Char('f'))],
+        action: "format",
     },
     Binding {
         keys: &[KeyPress::new(Key::Enter)],

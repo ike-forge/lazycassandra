@@ -21,12 +21,18 @@ use lc_domain::grid::{BAR, COLUMN_SPACING, available, fitting};
 use lc_domain::search::Search;
 use lc_domain::state::{Ranges, Span};
 use lc_domain::style::Token;
-use lc_domain::view::{GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow};
+use lc_domain::style::{Segment, text};
+use lc_domain::view::{
+    CompletionView, GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span as TextSpan, Text};
-use ratatui::widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
+    Wrap,
+};
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
 use crate::hit::Band;
@@ -192,8 +198,22 @@ pub(crate) fn render(
                 selection,
             })
         }
-        PanelBody::Editor { lines, cursor } => Some(Body {
-            extent: editor(frame, area, lines, *cursor, focused),
+        PanelBody::Editor {
+            lines,
+            cursor,
+            completion,
+        } => Some(Body {
+            extent: editor(
+                frame,
+                area,
+                &EditorView {
+                    lines,
+                    cursor: *cursor,
+                    completion: completion.as_ref(),
+                },
+                focused,
+                theme,
+            ),
             columns: None,
             bands: Vec::new(),
             unit: Unit::Lines { rows: Vec::new() },
@@ -867,48 +887,132 @@ fn item(
     }
 }
 
+/// What the editor draws: its styled lines, its cursor, and whatever is being
+/// offered into it.
+pub(crate) struct EditorView<'a> {
+    pub(crate) lines: &'a [Vec<Segment>],
+    pub(crate) cursor: Position,
+    pub(crate) completion: Option<&'a CompletionView>,
+}
+
 /// One buffer line is one screen row: long lines scroll sideways rather than
 /// wrap, so the domain keeps counting its own lines and the cursor's own row
-/// is always on screen (design §5).
-fn editor(
-    frame: &mut Frame,
-    area: Rect,
-    lines: &[String],
-    cursor: Position,
-    focused: bool,
-) -> Extent {
+/// is always on screen (queries editor design §5).
+fn editor(frame: &mut Frame, area: Rect, view: &EditorView, focused: bool, theme: Theme) -> Extent {
     let height = usize::from(area.height);
     let width = usize::from(area.width);
 
-    let current = lines.get(cursor.line).map_or("", String::as_str);
-    let column = width_of(current, cursor.column);
+    let current = view.lines.get(view.cursor.line).map(|line| text(line));
+    let current = current.as_deref().unwrap_or_default();
+    let column = width_of(current, view.cursor.column);
 
-    let top = window(cursor.line, height);
+    let top = window(view.cursor.line, height);
     let left = left_edge(current, column, width);
 
-    let text = Text::from(
-        lines
+    let drawn = Text::from(
+        view.lines
             .iter()
             .skip(top)
             .take(height)
-            .map(|line| Line::raw(shifted(line, left)))
+            .map(|line| Line::from(shifted(line, left, theme)))
             .collect::<Vec<_>>(),
     );
 
-    frame.render_widget(Paragraph::new(text), area);
+    frame.render_widget(Paragraph::new(drawn), area);
+
+    let cell = (
+        area.x + narrowed(column - left),
+        area.y + narrowed(view.cursor.line - top),
+    );
 
     if focused {
-        frame.set_cursor_position((
-            area.x + narrowed(column - left),
-            area.y + narrowed(cursor.line - top),
-        ));
+        frame.set_cursor_position(cell);
+    }
+
+    // After the buffer and after the cursor: the popup is drawn over whatever
+    // it hangs across, which is the panels above it as often as the editor's
+    // own rows (query editor design §5.6).
+    if let Some(completion) = view.completion.filter(|_| focused) {
+        popup(frame, cell, completion, theme);
     }
 
     Extent {
         position: top,
-        total: lines.len(),
+        total: view.lines.len(),
         visible: height,
     }
+}
+
+/// Columns the popup spends on chrome: a border down each side.
+const POPUP_CHROME: u16 = 2;
+
+/// The tallest popup, in rows of offers. Past this the list is what the next
+/// character narrows, not what a taller box shows (query editor design §5.3).
+const POPUP_ROWS: u16 = 8;
+
+/// The offers, in a box hanging off the cursor.
+///
+/// Below the cursor where the frame has room and above it where it has not —
+/// the Queries panel sits on the bottom edge of the frame, so above is the
+/// usual answer and below is the exception (design §5.6).
+fn popup(frame: &mut Frame, cell: (u16, u16), completion: &CompletionView, theme: Theme) {
+    let frame_area = frame.area();
+    let widest = completion
+        .rows
+        .iter()
+        .map(|row| row.text.width())
+        .max()
+        .unwrap_or_default();
+
+    let rows = narrowed(completion.rows.len()).min(POPUP_ROWS);
+    let width = narrowed(widest)
+        .saturating_add(POPUP_CHROME)
+        .min(frame_area.width);
+    let height = rows.saturating_add(POPUP_CHROME);
+    if rows == 0 || width <= POPUP_CHROME || height > frame_area.height {
+        return;
+    }
+
+    let (cursor_x, cursor_y) = cell;
+    let below = cursor_y.saturating_add(1);
+    let y = if below.saturating_add(height) <= frame_area.bottom() {
+        below
+    } else {
+        cursor_y.saturating_sub(height)
+    };
+    let x = cursor_x.min(frame_area.right().saturating_sub(width));
+    let area = Rect::new(x, y, width, height);
+
+    // The first row on screen is the selected one once the selection has
+    // walked past what fits: the same window arithmetic the buffer itself
+    // scrolls by.
+    let first = window(completion.selected, usize::from(rows));
+    let items: Vec<ListItem> = completion
+        .rows
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(usize::from(rows))
+        .map(|(index, row)| {
+            let style = if index == completion.selected {
+                theme.style(Token::Selected)
+            } else {
+                theme.style(row.token)
+            };
+
+            ListItem::new(Line::from(TextSpan::styled(row.text.clone(), style)))
+        })
+        .collect();
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        List::new(items).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(theme.style(Token::Faint)),
+        ),
+        area,
+    );
 }
 
 /// The smallest offset that brings `index` into a window of `span` rows or
@@ -949,20 +1053,38 @@ fn width_of(line: &str, chars: usize) -> usize {
         .sum()
 }
 
-/// `line` with its first `columns` terminal columns scrolled off to the left.
-fn shifted(line: &str, columns: usize) -> String {
+/// `line` with its first `columns` terminal columns scrolled off to the left,
+/// as the spans the meanings in it are drawn with.
+///
+/// The offset is applied to the whole line rather than per segment, so a
+/// segment scrolled off entirely contributes nothing and the one straddling
+/// the offset contributes its tail.
+fn shifted(line: &[Segment], columns: usize, theme: Theme) -> Vec<TextSpan<'static>> {
     let mut used = 0;
-    let mut out = String::new();
+    let mut spans = Vec::with_capacity(line.len());
 
-    for character in line.chars() {
-        if used >= columns {
-            out.push(character);
-        } else {
-            used += character.width().unwrap_or(0);
+    for segment in line {
+        let mut out = String::new();
+
+        for character in segment.text.chars() {
+            if used >= columns {
+                out.push(character);
+            } else {
+                used += character.width().unwrap_or(0);
+            }
         }
+
+        if out.is_empty() {
+            continue;
+        }
+
+        let style = segment
+            .token
+            .map_or_else(Style::default, |token| theme.style(token));
+        spans.push(TextSpan::styled(out, style));
     }
 
-    out
+    spans
 }
 
 /// Both callers pass a value already bounded by an area dimension, so the

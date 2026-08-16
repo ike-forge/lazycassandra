@@ -152,6 +152,14 @@ const SEARCH_GLOBAL: &[Binding] = &[
     },
 ];
 
+/// Named only while a popup is up, which is the only frame in which it is
+/// true: `tab` moves focus every other one, and the global hint that says so
+/// is dropped for exactly these frames (query editor design §5.5).
+const COMPLETE: Binding = Binding {
+    keys: &[KeyPress::new(Key::Tab)],
+    action: "complete",
+};
+
 /// `esc` is named only where pressing it unconditionally does something
 /// (hint bar design §3). With a search applied, it clears one — which is
 /// what keeps clearing discoverable (panel search design §5.3).
@@ -225,10 +233,15 @@ pub(crate) fn bar(state: &State) -> HintBar {
     // not, so the bar drops the promise rather than make it (design §5.1).
     // Matched by key rather than sliced off the front, so a reorder of
     // `GLOBAL` cannot silently drop the wrong hint instead.
+    // `tab` moves focus in every frame but one: with a completion popup up it
+    // accepts what is selected, so the global hint would be a lie exactly
+    // where the panel hint is true (query editor design §5.5).
+    let completing = state.queries.completion().is_some() && state.focus().takes_text();
     let fits = state.geometry.command_rows() > 0;
     let mut global: Vec<Hint> = GLOBAL
         .iter()
         .filter(|binding| fits || !binding.keys.contains(&KeyPress::new(Key::Char('?'))))
+        .filter(|binding| !completing || !binding.keys.contains(&KeyPress::new(Key::Tab)))
         .map(rendered)
         .collect();
     if !state.focus().takes_text() {
@@ -244,6 +257,10 @@ pub(crate) fn bar(state: &State) -> HintBar {
             ..rendered(binding)
         })
         .collect();
+    if completing {
+        panel.insert(0, rendered(&COMPLETE));
+    }
+
     let target = Searched::of(state.focus()).filter(|target| state.search(*target).is_some());
     if let Some(target) = target {
         panel.push(Hint {
@@ -285,6 +302,9 @@ fn selected(state: &State) -> bool {
 /// first frame the user sees. Matched by press rather than by action, for the
 /// same reason `?` is above.
 ///
+/// `ctrl-f` is greyed on the same rule, against a buffer the formatter would
+/// leave alone — which an empty one is (query editor design §4.3).
+///
 /// `ctrl-e` over Contents is refused the same way, on an empty grid, and on a
 /// frame with no room to draw the form — the same promise `?` keeps above
 /// (export design §1).
@@ -292,6 +312,14 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
     let runs = binding.keys == [KeyPress::ctrl(Key::Char('r'))];
     if runs && state.queries.text().trim().is_empty() {
         return Liveness::Inert;
+    }
+
+    let formats = binding.keys == [KeyPress::ctrl(Key::Char('f'))];
+    if formats {
+        let text = state.queries.text();
+        if crate::cql::format(&text) == text {
+            return Liveness::Inert;
+        }
     }
 
     let exports = binding.action == "export";
@@ -749,11 +777,12 @@ mod tests {
         let mut state = fits();
         state.focus_on(Panel::Queries);
         for character in text.chars() {
-            if character == '\n' {
-                state.queries.insert_newline();
+            let key = if character == '\n' {
+                Key::Enter
             } else {
-                state.queries.insert(character);
-            }
+                Key::Char(character)
+            };
+            state.queries.edit(key, 1);
         }
         bar(&state)
     }
@@ -809,7 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_but_the_run_hint_is_ever_inert() {
+    fn nothing_but_a_hint_that_would_do_nothing_is_ever_inert() {
         for panel in Panel::ALL {
             let mut state = fits();
             state.focus_on(panel);
@@ -819,6 +848,7 @@ mod tests {
                 assert!(
                     hint.liveness == Liveness::Live
                         || hint.action == "run"
+                        || hint.action == "format"
                         || hint.action == "export",
                     "{panel:?}'s '{} {}' is inert and nothing says why",
                     hint.keys,

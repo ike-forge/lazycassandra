@@ -32,7 +32,7 @@ panel that takes text (§2).
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
 | `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's search, or leave the editor for Tables — first hit wins (§2). |
-| `Tab` | Focus the next panel — Tables, DDL, Table contents, Queries — wrapping. |
+| `Tab`³ | Focus the next panel — Tables, DDL, Table contents, Queries — wrapping. |
 | `Shift-Tab` | Focus the previous panel. |
 | `1`¹ | Focus Tables. |
 | `2`¹ | Focus DDL. Pressed again, its next tab. |
@@ -62,6 +62,9 @@ on the mode rather than fixed to the panel:
 
 See [yank design](specs/2026-08-13-yank-design.md) §2 and
 [yank selection modes](specs/2026-08-13-yank-selection-modes-design.md) §1.
+
+³ Except in Queries with a completion popup up, where it accepts the selected
+candidate. The Queries subsection below is where that is argued.
 
 Each panel's title opens with the key that reaches it — `[1]-Tables`,
 `[2]-Table DDL - Table columns`, `[3]-Table contents`, `[4]-Queries` — so the
@@ -464,20 +467,37 @@ character and not a binding. What it does not claim keeps its global meaning.
 |---|---|
 | `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. A buffer that is empty or all whitespace runs nothing, and the bar greys the hint out while that is so — §2. |
 | `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
-| any printable key | Insert it. `q`, `t`, `j` and the rest are text here. |
+| `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
+| `ctrl-n` / `ctrl-p` | The next / previous completion. With no popup up, raise one against the word under the cursor. |
+| `Tab`³ | Accept the selected completion — **only** while a popup is up. With none up, it moves focus, as everywhere else. |
+| any printable key | Insert it, and offer completions against the word it lands in. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
 | `←` `→` `↑` `↓` | Move the cursor. `←`/`→` wrap between lines. |
 | `Home` / `End` | To the start / end of the **line**. |
 | `PageUp` / `PageDown`, `ctrl-u` / `ctrl-d` | Up / down one panel height. |
-| `Esc` | Leave the editor for Tables. |
+| `Esc`³ | Take the completion popup down; with none up, leave the editor for Tables. |
 
-`Tab` and `Shift-Tab` still move focus. Nothing else global survives inside
-the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
+³ The two keys the completion popup claims, and it claims them only while it
+is drawn. Both are exceptions to §2's *the same key means the same thing in
+every panel*, taken for the reason `Home` and `End` already diverge here: it is
+what the key does in every editor the audience has met. Neither is invisible —
+the popup is on screen with a row selected, and the bar swaps `tab panel` for
+`tab complete` in exactly the frames the swap is true. `Esc`'s second press
+still leaves the panel, so its hint stays true either way.
+
+Typing raises the popup automatically. It offers CQL's keywords first, then
+the keyspaces, then the tables of the keyspace the Tables panel's cursor is on
+— and after a `keyspace.`, that keyspace's tables and nothing else. A keyword
+is accepted upper case; a name is accepted exactly as the cluster spells it.
+
+`Tab` and `Shift-Tab` still move focus, except as ³ says. Nothing else global
+survives inside the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
 it is the ctrl layer's Queries member and does nothing outside this panel,
 and neither does `ctrl-e`, which opens the buffer in the user's editor
 ([external editor design](specs/2026-08-12-external-editor-design.md) §1).
-See [queries editor design](specs/2026-08-09-queries-editor-design.md).
+See [queries editor design](specs/2026-08-09-queries-editor-design.md) and
+[query editor design](specs/2026-08-16-query-editor-design.md).
 
 ---
 
@@ -548,17 +568,22 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has six members now. `ctrl-r` runs the Queries
-buffer, and `ctrl-e` opens that buffer in an external editor: the panel takes
-text, so every printable key there is a character and neither action has an
-unmodified key available
+for whatever is focused. The layer has nine members now. `ctrl-r` runs the Queries
+buffer, `ctrl-e` opens that buffer in an external editor, `ctrl-f` lays it
+out, and `ctrl-n`/`ctrl-p` walk the completion popup: the panel takes
+text, so every printable key there is a character and none of those actions has
+an unmodified key available
 ([query execution design](specs/2026-08-10-query-execution-design.md) §1,
 [external editor design](specs/2026-08-12-external-editor-design.md) §1).
 `ctrl-e` carries a second meaning too, over Table contents: it opens the
 export form, gated on focus exactly as `ctrl-r`'s one meaning already is —
 a chord is never a synonym for the plain key, and nothing in the rule says
 it may carry only one meaning of its own (export design §1). `ctrl-t` opens
-the theme picker, for the reason §1's picker subsection gives.
+the theme picker, for the reason §1's picker subsection gives. `ctrl-f`,
+`ctrl-n` and `ctrl-p` are Queries members exactly as `ctrl-r` is, gated on that
+panel and inert outside it; none of them shadows the plain `f`, `n` or `p`,
+and `n`/`N` still walk a search
+([query editor design](specs/2026-08-16-query-editor-design.md) §4.2, §5.5).
 `ctrl-d` and `ctrl-u` are the exception the rule can afford, and are described
 under §1's motion table: they delegate to the paging arm rather than carry a
 meaning of their own, so the layer still holds nothing that shadows a plain
@@ -613,6 +638,14 @@ stay reachable with `PageUp` and `PageDown`.
 A panel number (`1`–`4`) is a third exception: it moves focus in every panel
 that does not take text, and is text in the one panel that does. So are `[`
 and `]`. The rule's own enforcement test was renamed for this — §5.
+
+`Tab` and `Esc` under a completion popup are a fourth, and the only one
+conditional on something drawn rather than on which panel is focused: while the
+popup is up they accept the selected candidate and take the popup down, and in
+every other frame they mean what they mean everywhere. The condition is on
+screen — the popup itself — and the bar drops `tab panel` for exactly those
+frames rather than name something the next keystroke will not do
+([query editor design](specs/2026-08-16-query-editor-design.md) §5.4).
 
 **A binding must be visible.** vision.md §4, principle 1: discoverability is
 ambient. Each panel's title opens with the key that reaches it; the hint bar along
@@ -756,11 +789,13 @@ Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
 editor and the export form's path stop bind.
 
-Ctrl taken: `ctrl-r` in Queries, `ctrl-e` in two panels — Queries and Table
-contents (§1's export-form subsection) — `ctrl-t` everywhere, and
-`ctrl-d`/`ctrl-u` everywhere `PageDown`/`PageUp` do anything. The rest of
-the layer is free — including `r`, `e`, `t`, `d` and `u` as plain keys, which
-nothing binds. Alt is not a layer and nothing may claim from it.
+Ctrl taken: `ctrl-r`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
+two panels — Queries and Table contents (§1's export-form subsection) —
+`ctrl-t` everywhere, and `ctrl-d`/`ctrl-u` everywhere `PageDown`/`PageUp` do
+anything. The rest of the layer is free — including `r`, `e`, `t`, `d`, `u`,
+`f` and `p` as plain keys, which nothing binds. `n` is bound plain, to the next
+search match, and `ctrl-n` is a binding of its own rather than a synonym for
+it. Alt is not a layer and nothing may claim from it.
 
 Named keys the domain understands but nothing binds: `Insert` `F1`–`F12`.
 Anything crossterm reports outside that vocabulary is dropped at the edge and
@@ -987,6 +1022,16 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | No other bar names it | `no_other_bar_names_the_editor_binding` (`view/hints.rs`) |
 | `ctrl-e` opens the export form over a loaded grid, and does nothing over an empty one | `ctrl_e_over_a_loaded_contents_panel_opens_the_export_form`, `ctrl_e_does_nothing_over_an_empty_contents_panel` |
 | `ctrl-e` keeps its Queries meaning; the two are gated on focus | `ctrl_e_in_queries_still_opens_the_external_editor` |
+| `ctrl-f` lays the buffer out, and is inert outside Queries | `ctrl_f_lays_the_buffer_out`, `ctrl_f_does_nothing_outside_queries` |
+| Formatting is idempotent, reorders nothing and retypes no literal | the `cql/format.rs` tests |
+| The bar greys `ctrl-f format` on a buffer already laid out | `nothing_but_a_hint_that_would_do_nothing_is_ever_inert` (`view/hints.rs`) |
+| The buffer reaches the renderer painted by what its words mean | `the_buffer_reaches_the_renderer_painted`, the `cql/mod.rs` tests, `the_buffer_is_painted_by_what_its_words_mean` (`inbound/render.rs`) |
+| A prefix offers the keyword it starts, and a qualified one that keyspace's tables | `typing_a_prefix_offers_the_keyword_it_starts`, `a_qualified_prefix_offers_that_keyspaces_tables`, `an_unqualified_table_comes_from_the_keyspace_the_tree_is_on` |
+| `Tab` accepts a completion, and still moves focus without one | `tab_accepts_what_is_offered_rather_than_moving_focus`, `tab_still_moves_focus_when_nothing_is_being_offered` |
+| `Esc` takes the popup down before it leaves the editor | `escape_takes_the_popup_down_before_it_leaves_the_editor` |
+| A motion takes the popup down | `a_motion_takes_the_popup_down` |
+| `ctrl-n` raises a popup and then walks it | `ctrl_n_raises_a_popup_and_then_walks_it` |
+| The popup hangs off the cursor, and only for a focused editor | `the_completion_popup_hangs_off_the_cursor`, `an_unfocused_editor_draws_no_popup` (`inbound/render.rs`) |
 | `ctrl-e` is inert while an export is already running | `ctrl_e_is_inert_while_an_export_is_already_running` |
 | `ctrl-e` is inert where the frame cannot draw the form, and a frame that shrinks past it closes it | `ctrl_e_is_inert_where_the_frame_cannot_draw_the_form`, `a_frame_that_shrank_past_the_form_closes_it`, `fits_agrees_with_what_the_form_actually_draws` |
 | A second `ctrl-e`, and the picker's own opener, leave an open form alone | `a_second_ctrl_e_leaves_the_open_form_as_it_was`, `the_theme_picker_cannot_replace_an_open_export_form` |

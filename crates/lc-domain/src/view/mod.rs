@@ -26,6 +26,7 @@ pub use crate::editor::Position;
 use crate::commands::{self, CommandRow};
 use crate::config::Diagnostic;
 use crate::contents::SelectionMode;
+use crate::cql::{CandidateKind, Completion};
 use crate::ddl::DdlTab;
 use crate::export::{Confirm, Format, Scope, Stop};
 use crate::model::DbError;
@@ -195,6 +196,42 @@ fn overlay(state: &State) -> Option<OverlayView> {
     }
 }
 
+/// The completion popup, as a renderer needs it: rows and a cursor, the shape
+/// the palette and the theme picker already project into
+/// (query editor design §5.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionView {
+    pub rows: Vec<CompletionRow>,
+    pub selected: usize,
+}
+
+/// One offer. `token` is the meaning the renderer draws it with — the same
+/// contract [`TreeRow::token`] and [`PanelBody::Notice`] already carry, so the
+/// popup never has to decide what a keyspace looks like (architecture.md §6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionRow {
+    pub text: String,
+    pub token: Token,
+}
+
+fn completion(completion: &Completion) -> CompletionView {
+    CompletionView {
+        rows: completion
+            .candidates()
+            .iter()
+            .map(|candidate| CompletionRow {
+                text: candidate.text.clone(),
+                token: match candidate.kind {
+                    CandidateKind::Keyword => Token::Keyword,
+                    CandidateKind::Keyspace => Token::Keyspace,
+                    CandidateKind::Table => Token::Table,
+                },
+            })
+            .collect(),
+        selected: completion.selected(),
+    }
+}
+
 /// One panel, described without reference to how it is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanelView {
@@ -259,14 +296,23 @@ pub enum PanelBody {
         /// As [`PanelBody::Tree::flash`].
         flash: bool,
     },
-    /// A text buffer and where its cursor is.
+    /// A text buffer, where its cursor is, and what is being offered into it.
     ///
     /// Carries no offsets. The renderer derives both from the cursor and the
     /// area it has, the way it already does for a list's selection — so an
     /// editor scrolls without any state being stored for it (design §4).
+    ///
+    /// `lines` are styled rather than plain: the highlighter is the domain's,
+    /// like every other [`Token`] decision (architecture.md §6), and one
+    /// styled line per buffer line is what keeps the renderer counting the
+    /// same rows the cursor is counted in
+    /// (query editor design §3).
     Editor {
-        lines: Vec<String>,
+        lines: Vec<Vec<Segment>>,
         cursor: Position,
+        /// The completion popup, drawn beside the cursor. `None` is no popup,
+        /// which is most frames.
+        completion: Option<CompletionView>,
     },
     /// A result set: one header per column, one row per row.
     Grid {
@@ -401,8 +447,9 @@ fn body(state: &State, panel: Panel) -> PanelBody {
         Panel::Ddl => details::body(state),
         Panel::Contents => contents::body(state),
         Panel::Queries => PanelBody::Editor {
-            lines: state.queries.lines().to_vec(),
+            lines: crate::cql::highlight(&state.queries.text()),
             cursor: state.queries.cursor(),
+            completion: state.queries.completion().map(completion),
         },
     }
 }
@@ -517,8 +564,9 @@ mod tests {
         assert_eq!(
             view.panels[3].body,
             PanelBody::Editor {
-                lines: vec![String::new()],
+                lines: vec![Vec::new()],
                 cursor: Position::default(),
+                completion: None,
             },
             "an untouched buffer is one empty line with the cursor on it"
         );
