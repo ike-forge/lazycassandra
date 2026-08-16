@@ -102,7 +102,10 @@ impl Analysis {
     }
 
     /// How many statements the buffer holds — a `BEGIN BATCH` counts as one
-    /// per `;`-separated scope, not one for the batch as a whole.
+    /// per `;`-separated scope, not one for the batch as a whole, and a
+    /// trailing `;` with nothing typed after it does not open a statement of
+    /// its own: [`Machine::finish`] never lets that placeholder scope
+    /// survive into here.
     #[must_use]
     pub fn statements(&self) -> usize {
         self.tables.len()
@@ -452,6 +455,17 @@ impl Machine {
     fn finish(mut self, pieces: usize) -> Analysis {
         debug_assert_eq!(self.roles.len(), pieces);
         self.expects.push(self.expect);
+
+        // `end_statement` opens the next scope the moment it sees `;`, on
+        // the chance something follows it. Nothing ever did here — no
+        // keyword decided a verb for it, which is also why it named no
+        // table — so the buffer holds one statement fewer than one scope
+        // per `;` would suggest: a trailing `;` (whitespace after it
+        // included) must not make an ordinary `select … from t;` look like
+        // two statements and defeat `sole_table`'s one-statement guard.
+        if self.verb == Verb::Unread && self.tables.last().is_some_and(Vec::is_empty) {
+            self.tables.pop();
+        }
 
         Analysis {
             roles: self.roles,

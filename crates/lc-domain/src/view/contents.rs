@@ -599,6 +599,24 @@ mod tests {
         assert_eq!(columns[1].token, Some(Token::RegularColumn));
     }
 
+    /// An ordinary SQL habit — a trailing `;` — must not silently turn the
+    /// colouring off: `sole_table` treats the placeholder scope the `;`
+    /// opens as no statement of its own.
+    #[test]
+    fn a_trailing_semicolon_still_colours_the_grid() {
+        let state = showing_typed(
+            "select * from shop.orders;",
+            page_of(&["id", "total"], &[&[CqlValue::Int(1), CqlValue::Int(2)]]),
+        );
+
+        let PanelBody::Grid { columns, .. } = contents_body(&state) else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(columns[0].token, Some(Token::PartitionKey));
+        assert_eq!(columns[1].token, Some(Token::RegularColumn));
+    }
+
     /// An alias, an aggregate, or `writetime(x)` matches no column of the
     /// table the statement read — colouring it would claim it was that
     /// column, which the resolver alone cannot know (design §7).

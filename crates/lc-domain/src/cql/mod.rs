@@ -215,4 +215,56 @@ mod tests {
 
         assert!(tokens(&lines[0]).contains(&(Some(Token::Reference), "shop")));
     }
+
+    fn sole(name: Option<Name>) -> Option<(Option<String>, String)> {
+        name.map(|name| (name.keyspace, name.table))
+    }
+
+    /// A trailing `;` opens a scope on the chance something follows it
+    /// (`Machine::end_statement`), but nothing here ever does — that
+    /// placeholder must not count as a second statement and defeat the
+    /// one-statement guard below.
+    #[test]
+    fn a_trailing_semicolon_still_names_the_one_table() {
+        assert_eq!(
+            sole(sole_table("select * from shop.orders;")),
+            Some((Some("shop".to_owned()), "orders".to_owned()))
+        );
+    }
+
+    #[test]
+    fn whitespace_before_or_after_a_trailing_semicolon_still_names_the_one_table() {
+        assert_eq!(
+            sole(sole_table("select * from shop.orders ;")),
+            Some((Some("shop".to_owned()), "orders".to_owned())),
+            "whitespace before the semicolon"
+        );
+        assert_eq!(
+            sole(sole_table("select * from shop.orders;   ")),
+            Some((Some("shop".to_owned()), "orders".to_owned())),
+            "whitespace after the semicolon"
+        );
+    }
+
+    #[test]
+    fn two_statements_separated_by_a_semicolon_name_no_sole_table() {
+        assert_eq!(sole_table("select * from a; select * from b"), None);
+    }
+
+    #[test]
+    fn a_batch_names_no_sole_table() {
+        assert_eq!(
+            sole_table(
+                "begin batch insert into shop.orders (id) values (1); \
+                 insert into shop.customers (id) values (2); apply batch"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_lone_semicolon_or_an_empty_buffer_names_no_sole_table_and_does_not_panic() {
+        assert_eq!(sole_table(";"), None);
+        assert_eq!(sole_table(""), None);
+    }
 }
