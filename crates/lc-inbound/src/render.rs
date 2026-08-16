@@ -127,12 +127,19 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             None => heights[index] = usize::from(inner.height),
         }
 
+        // After the scrollbars, which run the length of the borders the
+        // loader sits on: a panel waiting on a page it is still scrolled
+        // across would otherwise have its scanner cut into by the track.
+        if let Some(line) = crate::loader::line(panel.activity, beneath)
+            && let Some(place) = crate::loader::placement(area)
+        {
+            frame.render_widget(line, place);
+        }
+
         hits[index] = PanelHit::new(panel.panel, area, inner, tabs, body.as_ref());
     }
 
-    let bar = rects.bar();
-    let (loader, hint_bar) = bar_split(bar);
-    frame.render_widget(crate::loader::line(view.activity, theme), loader);
+    let hint_bar = rects.bar();
     // The bar goes quiet with the panels: while a modal is up it is naming
     // keys the modal has already claimed, and the modal is listing them
     // itself.
@@ -171,32 +178,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 }
 
-/// The bottom row, split into the loader's cells and what the hint bar is
-/// left with.
-///
-/// The loader takes its width at every frame size rather than hiding on a
-/// narrow one: the bar already knows how to give up hints in value order, and
-/// trading a hint the user can read for one they cannot see is not a trade
-/// (design §4.4).
-fn bar_split(bar: Rect) -> (Rect, Rect) {
-    let taken = crate::loader::WIDTH + crate::loader::GAP;
-
-    (
-        Rect {
-            width: crate::loader::WIDTH,
-            ..bar
-        },
-        Rect {
-            x: bar.x + taken,
-            width: bar.width.saturating_sub(taken),
-            ..bar
-        },
-    )
-}
-
 /// `rect` split at `taken` columns from its left edge, clamped to what `rect`
-/// actually has — the shape `bar_split` uses for the loader, reused here for
-/// the query so a query wider than the bar cannot push the split past the
+/// actually has, so a query wider than the bar cannot push the split past the
 /// rect it is dividing.
 fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
     let taken = taken.min(rect.width);
@@ -668,7 +651,7 @@ mod tests {
     use lc_domain::grid::{BAR, COLUMN_SPACING};
     use lc_domain::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Keyspace, Page,
-        PrimaryKey, QueryId, Replication, Schema, Table, TableOptions,
+        PrimaryKey, QueryId, Replication, Schema, Statement, Table, TableOptions,
     };
     use lc_domain::pointer::Click;
     use lc_domain::posture::Posture;
@@ -849,13 +832,28 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open | / search | v select | tab panel | q quit",
-            "the loader takes the leading cells and the hints follow it"
+            " ⏎ open | / search | v select | tab panel | q quit",
+            "the whole row is the bar's: the loader draws on panel borders now"
         );
         assert!(
             !row(&buffer, 22).contains("q quit"),
             "the bar owns one row and no more"
         );
+    }
+
+    /// The bottom border of `panel`'s rect at 80x24, where its loader is
+    /// drawn.
+    fn bottom_border(buffer: &Buffer, panel: Panel) -> String {
+        let area = match layout(Rect::new(0, 0, 80, 24)) {
+            Shell::Panels(rects) => rects.get(panel),
+            Shell::TooSmall(_) => unreachable!("80x24 holds the panels"),
+        };
+
+        row(buffer, area.bottom() - 1)
+            .chars()
+            .skip(usize::from(area.x))
+            .take(usize::from(area.width))
+            .collect()
     }
 
     #[test]
@@ -868,10 +866,59 @@ mod tests {
 
         let working = draw_state(80, 24, &state);
 
+        assert!(
+            bottom_border(&resting, Panel::Tables)
+                .chars()
+                .all(|glyph| "╰─╯".contains(glyph)),
+            "an idle panel's border is border and nothing else"
+        );
         assert_ne!(
+            bottom_border(&resting, Panel::Tables),
+            bottom_border(&working, Panel::Tables),
+            "a connection attempt is the tree filling, and shows on its border"
+        );
+        assert_eq!(
             row(&resting, 23),
             row(&working, 23),
-            "a tick during a connection attempt has to show on the bar"
+            "and it is off the hint bar entirely"
+        );
+    }
+
+    #[test]
+    fn the_loader_marks_the_panel_the_wait_is_for() {
+        let mut state = State::default();
+        state.connection = ConnectionState::Connecting(ConnId::next());
+        state.loader.advance(true);
+
+        let buffer = draw_state(80, 24, &state);
+
+        for panel in Panel::ALL {
+            let border = bottom_border(&buffer, panel);
+            let quiet = border.chars().all(|glyph| "╰─╯".contains(glyph));
+
+            assert_eq!(
+                quiet,
+                panel != Panel::Tables,
+                "{panel:?} drew {border:?} while the schema was on its way"
+            );
+        }
+    }
+
+    #[test]
+    fn a_query_in_flight_shows_on_the_grid_it_will_fill() {
+        let mut state = State::default();
+        state
+            .in_flight
+            .insert(QueryId::next(), Statement::typed("select * from k.t"));
+        state.loader.advance(true);
+
+        let buffer = draw_state(80, 24, &state);
+
+        assert!(
+            !bottom_border(&buffer, Panel::Contents)
+                .chars()
+                .all(|glyph| "╰─╯".contains(glyph)),
+            "the grid is where a statement lands, whichever panel asked for it"
         );
     }
 
@@ -880,14 +927,9 @@ mod tests {
         // The sample design §7 shows, checked against what the renderer
         // actually draws rather than being correct by construction.
         //
-        // Sliced past the loader, which owns the head of every bar and is not
-        // what this test is about (visual polish design §4.4).
         let buffer = with_palette(80, 24);
-        let taken = usize::from(crate::loader::WIDTH + crate::loader::GAP);
-        let drawn = row(&buffer, 23);
-        let hints: String = drawn.chars().skip(taken).collect();
 
-        assert_eq!(hints.trim_end(), " ⏎ run | ?/esc close | q quit");
+        assert_eq!(row(&buffer, 23).trim_end(), " ⏎ run | ?/esc close | q quit");
     }
 
     #[test]
@@ -917,8 +959,8 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 11).trim_end(),
-            "■⬝⬝⬝⬝⬝⬝⬝  ⏎ open | tab panel | q quit",
-            "the cells the loader took come out of the hints, lowest value first"
+            " ⏎ open | / search | tab panel | q quit",
+            "the row the loader gave up goes back to the hints"
         );
     }
 
@@ -4227,12 +4269,11 @@ mod tests {
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
-        // Row 23 is the bar; column 11 is the hint bar's start (9, past the
-        // loader and its gap) plus the two cells of the prompt's empty query,
-        // `" /"`.
+        // Row 23 is the bar, which starts at column 0; column 2 is the two
+        // cells of the prompt's empty query, `" /"`.
         assert_eq!(
             cursor,
-            Some(ratatui::layout::Position::new(11, 23)),
+            Some(ratatui::layout::Position::new(2, 23)),
             "a prompt outranks focus exactly as a message or the palette does; \
              the cursor shown is the prompt's own, not the editor's"
         );
@@ -4385,13 +4426,12 @@ mod tests {
 
         let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
-        // The bar row is 23 at this size. The hint bar itself starts at
-        // column 9 — past the loader's 8 cells and `bar_split`'s 1-cell gap —
-        // and the query's leading space plus its two characters put the
-        // cursor 4 cells further on.
+        // The bar row is 23 at this size, and the bar owns it from column 0:
+        // the query's leading space, its `/` and its two characters put the
+        // cursor at column 4.
         assert_eq!(
             cursor,
-            Some(ratatui::layout::Position::new(13, 23)),
+            Some(ratatui::layout::Position::new(4, 23)),
             "one cell past the last character typed"
         );
     }

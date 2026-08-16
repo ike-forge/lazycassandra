@@ -2397,6 +2397,42 @@ mod tests {
         assert!(state.is_working());
     }
 
+    #[test]
+    fn each_wait_belongs_to_the_panel_it_will_fill() {
+        let mut state = connected(Posture::ReadOnly);
+
+        assert_eq!(
+            working_panels(&state),
+            vec![Panel::Tables],
+            "a schema still loading is the tree filling"
+        );
+
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema_of(&["shop"])),
+            },
+        );
+        state
+            .in_flight
+            .insert(QueryId::next(), statement(StatementKind::Read));
+
+        assert_eq!(
+            working_panels(&state),
+            vec![Panel::Contents],
+            "a statement lands in the grid, whichever panel asked for it"
+        );
+    }
+
+    fn working_panels(state: &State) -> Vec<Panel> {
+        Panel::ALL
+            .into_iter()
+            .filter(|&panel| state.is_working_in(panel))
+            .collect()
+    }
+
     fn current_conn(state: &State) -> ConnId {
         let ConnectionState::Connected(connection) = &state.connection else {
             panic!("the helper builds a connected state");

@@ -44,22 +44,22 @@ pub struct ViewModel {
     pub overlay: Option<OverlayView>,
     /// What the focused panel responds to, along the bottom of the frame.
     pub hints: HintBar,
-    /// Whether the tool is waiting on the cluster, and how far into the
-    /// loader's cycle that wait is.
-    pub activity: Activity,
     pub theme: ThemeChoice,
 }
 
-/// What the loader has to say.
+/// What one panel's loader has to say.
 ///
 /// An enum rather than a bare frame number the domain promises to zero: which
-/// of the two states the tool is in is the decision `update` is making, and
+/// of the two states a panel is in is the decision `update` is making, and
 /// the one `lc-app` reads to know whether a tick is worth anything
 /// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §4.2).
+///
+/// Carried per panel rather than once for the frame: a wait belongs to the
+/// content it will fill, and is drawn on that panel's own border, so a user
+/// waiting on a schema read and one waiting on a query are told which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
-    /// Nothing outstanding. Drawn at the start of the cycle, always the same
-    /// frame.
+    /// Nothing outstanding for this panel. Not drawn at all.
     Resting,
     Working {
         frame: usize,
@@ -208,6 +208,9 @@ pub struct PanelView {
     /// renderer splits each string it draws against it (search highlight
     /// design §3.1).
     pub search: Option<crate::search::Search>,
+    /// Whether this panel is waiting on the cluster, and how far into the
+    /// loader's cycle that wait is.
+    pub activity: Activity,
 }
 
 /// What a panel has to show.
@@ -317,17 +320,17 @@ pub fn view_model(state: &State) -> ViewModel {
             search: crate::search::Searched::of(panel)
                 .and_then(|target| state.search(target))
                 .cloned(),
+            activity: if state.is_working_in(panel) {
+                Activity::Working {
+                    frame: state.loader.frame(),
+                }
+            } else {
+                Activity::Resting
+            },
         }),
         focus: state.focus(),
         hints: hints::bar(state),
         overlay: overlay(state),
-        activity: if state.is_working() {
-            Activity::Working {
-                frame: state.loader.frame(),
-            }
-        } else {
-            Activity::Resting
-        },
         theme: state.theme.clone(),
     }
 }

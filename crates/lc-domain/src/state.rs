@@ -1265,14 +1265,30 @@ impl State {
     /// worth a repaint.
     #[must_use]
     pub fn is_working(&self) -> bool {
-        !self.in_flight.is_empty()
-            || match &self.connection {
+        Panel::ALL.iter().any(|&panel| self.is_working_in(panel))
+    }
+
+    /// Whether `panel` is the one waiting on the cluster.
+    ///
+    /// The wait is attributed to the panel whose content it will fill, because
+    /// that is where the loader is drawn: the tree is what a schema read
+    /// populates, and the grid is what every statement lands in — including
+    /// one submitted from Queries, which puts its result in Contents
+    /// (`submit_into_contents`). Ddl reads off a loaded schema and issues
+    /// nothing of its own, so it never waits.
+    #[must_use]
+    pub fn is_working_in(&self, panel: Panel) -> bool {
+        match panel {
+            Panel::Tables => match &self.connection {
                 ConnectionState::Connecting(_) => true,
                 ConnectionState::Connected(connection) => {
                     matches!(connection.schema, SchemaState::Loading)
                 }
                 ConnectionState::Disconnected | ConnectionState::Failed(_) => false,
-            }
+            },
+            Panel::Contents => !self.in_flight.is_empty(),
+            Panel::Ddl | Panel::Queries => false,
+        }
     }
 
     /// The search applied to `target`, if any.

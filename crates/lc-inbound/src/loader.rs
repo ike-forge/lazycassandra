@@ -1,4 +1,4 @@
-//! The hint bar's loader: whether the tool is waiting on the cluster.
+//! A panel's loader: whether that panel is waiting on the cluster.
 //!
 //! The widget's `tick` is an integer advance over a fixed cycle, so the phase
 //! can live in the domain and reach here as a frame number. That is what keeps
@@ -8,12 +8,14 @@
 
 use crate::theme::Theme;
 use lc_domain::view::Activity;
+use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui_opentui_loader::KittLoader;
 
-/// Cells the scanner occupies, and the gap before the first hint.
+/// Cells the scanner occupies, and the border it keeps between itself and the
+/// corner it is drawn beside.
 pub(crate) const WIDTH: u16 = 8;
-pub(crate) const GAP: u16 = 1;
+pub(crate) const INSET: u16 = 1;
 
 /// Frames before the cycle repeats: `WIDTH` out, `HOLD_END` at the right edge,
 /// `WIDTH - 1` back, `HOLD_START` at the left. The widget keeps its own frame
@@ -28,10 +30,34 @@ const HOLD_END: usize = 9;
 const INACTIVE: f64 = 0.25;
 const MIN_FADE: f64 = 0.55;
 
-/// The scanner at `activity`'s phase, `WIDTH` cells wide.
-pub(crate) fn line(activity: Activity, theme: Theme) -> Line<'static> {
+/// Where the scanner is drawn on `block`, the panel's bordered rect: the
+/// bottom border, `INSET` columns short of the corner, mirroring the search
+/// marker's alignment on the top one.
+///
+/// `None` when the border cannot hold the scanner, its inset and both
+/// corners. A panel too narrow to say *how* it is waiting says nothing rather
+/// than drawing half a scanner — the rule the title marker already follows
+/// (design §5.1).
+pub(crate) fn placement(block: Rect) -> Option<Rect> {
+    let spent = WIDTH + 2 * (1 + INSET);
+
+    (block.width >= spent && block.height >= 2).then(|| Rect {
+        x: block.right() - 1 - INSET - WIDTH,
+        y: block.bottom() - 1,
+        width: WIDTH,
+        height: 1,
+    })
+}
+
+/// The scanner at `activity`'s phase, `WIDTH` cells wide, or nothing at all
+/// when the panel is not waiting on anything.
+///
+/// A resting panel draws no loader rather than a still one: an animation
+/// frozen on a border reads as chrome the panel always has, and the whole
+/// point of moving it off the bar is that it names *which* panel is waiting.
+pub(crate) fn line(activity: Activity, theme: Theme) -> Option<Line<'static>> {
     let frame = match activity {
-        Activity::Resting => 0,
+        Activity::Resting => return None,
         Activity::Working { frame } => frame % PERIOD,
     };
 
@@ -51,38 +77,51 @@ pub(crate) fn line(activity: Activity, theme: Theme) -> Line<'static> {
         loader.tick();
     }
 
-    loader.into_line(usize::from(WIDTH))
+    Some(loader.into_line(usize::from(WIDTH)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn drawn(activity: Activity) -> Line<'static> {
+        line(activity, Theme::default()).expect("working frames draw a scanner")
+    }
+
     fn text(activity: Activity) -> String {
-        line(activity, Theme::default()).to_string()
+        drawn(activity).to_string()
     }
 
     #[test]
     fn the_cycle_is_the_length_the_domain_is_folded_into() {
-        let start = line(Activity::Working { frame: 0 }, Theme::default());
+        let start = drawn(Activity::Working { frame: 0 });
 
         assert_eq!(
-            line(Activity::Working { frame: PERIOD }, Theme::default()),
+            drawn(Activity::Working { frame: PERIOD }),
             start,
             "PERIOD has to be the widget's own cycle, or the fold jumps the animation"
         );
         assert_ne!(
-            line(Activity::Working { frame: PERIOD - 1 }, Theme::default()),
+            drawn(Activity::Working { frame: PERIOD - 1 }),
             start,
             "and it has to be the shortest such length"
         );
     }
 
     #[test]
-    fn resting_is_the_first_frame_of_the_cycle() {
+    fn a_resting_panel_draws_nothing() {
+        assert_eq!(line(Activity::Resting, Theme::default()), None);
+    }
+
+    #[test]
+    fn a_border_too_narrow_for_the_scanner_gives_it_no_room() {
+        let spent = WIDTH + 2 * (1 + INSET);
+
+        assert_eq!(placement(Rect::new(0, 0, spent - 1, 3)), None);
         assert_eq!(
-            line(Activity::Resting, Theme::default()),
-            line(Activity::Working { frame: 0 }, Theme::default())
+            placement(Rect::new(0, 0, spent, 3)),
+            Some(Rect::new(2, 2, WIDTH, 1)),
+            "the scanner sits on the bottom border, INSET short of the corner"
         );
     }
 
@@ -103,7 +142,7 @@ mod tests {
     fn head(activity: Activity) -> Option<usize> {
         let accent = Theme::default().palette().accent;
 
-        line(activity, Theme::default())
+        drawn(activity)
             .spans
             .iter()
             .position(|span| span.style.fg == Some(accent))
