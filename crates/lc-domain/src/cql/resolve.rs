@@ -8,10 +8,11 @@
 //! (docs/superpowers/specs/2026-08-16-cql-semantics-design.md §3).
 //!
 //! This covers CQL's data statements — `SELECT`, `INSERT`, `UPDATE`,
-//! `DELETE`, `TRUNCATE`, `USE`, and `BEGIN … BATCH` over them — and leaves
-//! the module's only caller its own tests: `complete.rs` starts calling
-//! [`resolve`] once task 5 adds `context_at`. `CREATE`/`ALTER`/`DROP` and
-//! `WITH` properties are task 4's.
+//! `DELETE`, `TRUNCATE`, `USE`, and `BEGIN … BATCH` over them — and its
+//! schema statements — `CREATE`/`ALTER`/`DROP` of `KEYSPACE` and `TABLE`,
+//! including `WITH` properties and column definitions. It leaves the
+//! module's only caller its own tests: `complete.rs` starts calling
+//! [`resolve`] once task 5 adds `context_at`.
 
 use super::lex::{Kind, Piece};
 
@@ -53,6 +54,12 @@ pub enum Expect {
     /// The name after `AS`, which stands for the selector it renames rather
     /// than for anything the schema holds.
     Alias,
+    /// Right after a column name inside a `CREATE`/`ALTER` table body, where
+    /// a column definition alternates name and type.
+    Type,
+    /// After `WITH`, where a name is a `CREATE`/`ALTER` option rather than a
+    /// column — `replication`, `durable_writes`, `comment`.
+    Property,
     /// A position that takes no name at all — inside `ALLOW FILTERING`, past
     /// the end of a statement the machine stopped following.
     Nothing,
@@ -116,6 +123,25 @@ pub(crate) fn resolve(pieces: &[Piece]) -> Analysis {
     machine.finish(pieces.len())
 }
 
+/// What a statement's opening keyword decided about the rest of it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "resolve's first in-crate caller lands in task 5's context_at"
+)]
+enum Verb {
+    #[default]
+    Unread,
+    /// `GRANT`, `LIST`, … — anything this module has no clause table for.
+    /// Every name in the statement is left with no role.
+    Uncovered,
+    /// `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `USE`.
+    Data,
+    /// `CREATE` or `ALTER`, whose table body alternates a column name and
+    /// its type.
+    Schema,
+}
+
 /// The clause the fold is inside, which is what an identifier's role is read
 /// off. One flat state rather than a state per statement kind: every clause
 /// that takes a column takes it the same way, and the verb only decides which
@@ -136,15 +162,16 @@ struct Machine {
     /// after each value and a `VALUES (1, 2)` list staying on `Value`; an
     /// alias reads it the same way once the aliased name is consumed.
     base: Expect,
-    /// Whether the statement's first keyword has been read yet. Distinct from
-    /// `covered`: once the verb is decided, a later keyword that happens to
-    /// share a spelling with a covered verb — `SELECT` as a permission name
-    /// in `GRANT SELECT ON …` — must not flip the statement's coverage.
-    verb_seen: bool,
-    /// Whether the statement's verb is one this module resolves. Meaningless
-    /// until `verb_seen` is `true`; stays `false` for the rest of a statement
-    /// whose verb this module does not cover, which leaves every name plain.
-    covered: bool,
+    /// What the statement's verb decided, fixed the moment the first keyword
+    /// is read: distinct from a fresh `Verb::Unread`, a later keyword that
+    /// happens to share a spelling with a verb — `SELECT` as a permission
+    /// name in `GRANT SELECT ON …` — must not re-decide it.
+    verb: Verb,
+    /// Whether the position is inside a column definition's name/type pair —
+    /// a `CREATE TABLE` body between its parentheses, or the single pair
+    /// after `ADD`. Read by `identifier` to flip `Expect::Column` to
+    /// `Expect::Type` once the name is consumed.
+    alternating: bool,
     depth: usize,
     roles: Vec<Option<Role>>,
     expects: Vec<Expect>,
@@ -213,26 +240,40 @@ impl Machine {
             return;
         }
 
-        if !self.verb_seen {
-            self.verb_seen = true;
-            self.covered = matches!(
-                word,
-                "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" | "USE"
-            );
+        if self.verb == Verb::Unread {
+            self.verb = match word {
+                "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" | "USE" | "DROP" => {
+                    Verb::Data
+                }
+                "CREATE" | "ALTER" => Verb::Schema,
+                _ => Verb::Uncovered,
+            };
         }
 
-        if !self.covered {
+        if self.verb == Verb::Uncovered {
             self.expect = Expect::Nothing;
             return;
         }
 
         self.expect = match word {
-            "FROM" | "INTO" | "UPDATE" | "TRUNCATE" => self.enter(Expect::Table),
-            "USE" => self.enter(Expect::Keyspace),
-            "SELECT" | "DELETE" | "WHERE" | "AND" | "IF" | "SET" | "BY" | "TOKEN" => {
+            "FROM" | "INTO" | "UPDATE" | "TRUNCATE" | "TABLE" => self.enter(Expect::Table),
+            "USE" | "KEYSPACE" | "SCHEMA" => self.enter(Expect::Keyspace),
+            "SELECT" | "DELETE" | "WHERE" | "AND" | "SET" | "BY" | "TOKEN" | "PRIMARY"
+            | "RENAME" | "DROP" => self.enter(Expect::Column),
+            "ADD" => {
+                self.alternating = true;
                 self.enter(Expect::Column)
             }
+            "WITH" => self.enter(Expect::Property),
             "VALUES" | "USING" | "LIMIT" | "IN" | "CONTAINS" => self.enter(Expect::Value),
+            // `IF` opens an `UPDATE`/`DELETE` condition list the same way
+            // `WHERE` does, unless a table or keyspace name is still
+            // outstanding — `DROP TABLE IF EXISTS …`, `CREATE … IF NOT
+            // EXISTS …` — in which case `IF [NOT] EXISTS` is a modifier on
+            // that pending name and must not steal its clause.
+            "IF" if !matches!(self.expect, Expect::Table | Expect::Keyspace) => {
+                self.enter(Expect::Column)
+            }
             // `AS` interrupts the clause it sits in rather than opening one
             // of its own, so it leaves `base` alone — `identifier` reads
             // `base` to resume that clause once the alias is consumed.
@@ -261,12 +302,21 @@ impl Machine {
                         }
                     } else if self.expect == Expect::Table {
                         // `INSERT INTO t (` opens the column list right after
-                        // the table, with no clause keyword in between.
+                        // the table, with no clause keyword in between; so
+                        // does `CREATE TABLE t (`, whose body alternates a
+                        // column name and its type rather than staying a
+                        // plain name list.
                         self.expect = self.enter(Expect::Column);
+                    }
+                    if self.verb == Verb::Schema {
+                        self.alternating = true;
                     }
                     self.depth += 1;
                 }
-                ')' => self.depth = self.depth.saturating_sub(1),
+                ')' => {
+                    self.depth = self.depth.saturating_sub(1);
+                    self.alternating = false;
+                }
                 ',' => self.expect = self.base,
                 ';' => self.end_statement(),
                 '=' | '<' | '>' | '!' => self.expect = Expect::Value,
@@ -308,7 +358,17 @@ impl Machine {
                 }
                 Some(Role::Table)
             }
-            Expect::Column => Some(Role::Column),
+            Expect::Column => {
+                if self.alternating {
+                    self.expect = Expect::Type;
+                }
+                Some(Role::Column)
+            }
+            Expect::Type => {
+                self.expect = Expect::Column;
+                Some(Role::Type)
+            }
+            Expect::Property => Some(Role::Property),
             Expect::Alias => {
                 // An alias only ever renames the one selector `AS` follows;
                 // the clause it interrupted resumes right after, the same
@@ -338,8 +398,8 @@ impl Machine {
         self.tables.push(Vec::new());
         self.expect = Expect::Keyword;
         self.base = Expect::Keyword;
-        self.verb_seen = false;
-        self.covered = false;
+        self.verb = Verb::Unread;
+        self.alternating = false;
         self.depth = 0;
         self.pending_keyspace = None;
         self.last_identifier = None;
@@ -717,14 +777,116 @@ mod tests {
     }
 
     #[test]
-    fn every_prefix_of_a_statement_resolves_without_panicking() {
-        let text = "SELECT id, total FROM shop.orders WHERE id = 7";
+    fn a_create_table_names_its_keyspace_table_columns_and_their_types() {
+        // `uuid` and `int` lex as `Kind::Keyword` (keywords.rs), so they
+        // never carry a role and `roles` skips them; the identifiers that
+        // remain are the keyspace, the table, and the two column names.
+        assert_eq!(
+            roles("CREATE TABLE shop.orders (id uuid, total int, PRIMARY KEY (id))"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("id".to_owned(), Some(Role::Column)),
+                ("total".to_owned(), Some(Role::Column)),
+                ("id".to_owned(), Some(Role::Column)),
+            ]
+        );
+    }
 
-        for cut in 0..=text.len() {
-            if !text.is_char_boundary(cut) {
-                continue;
+    #[test]
+    fn a_user_defined_type_in_a_column_definition_is_a_type() {
+        assert_eq!(
+            roles("CREATE TABLE t (id address)"),
+            vec![
+                ("t".to_owned(), Some(Role::Table)),
+                ("id".to_owned(), Some(Role::Column)),
+                ("address".to_owned(), Some(Role::Type)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_with_clause_names_options_rather_than_columns() {
+        assert_eq!(
+            roles("CREATE KEYSPACE shop WITH replication = {'class': 'SimpleStrategy'}"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("replication".to_owned(), Some(Role::Property)),
+            ]
+        );
+    }
+
+    #[test]
+    fn dropping_and_altering_name_what_they_act_on() {
+        assert_eq!(
+            roles("DROP TABLE IF EXISTS shop.orders"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+            ]
+        );
+        assert_eq!(
+            // `text` lexes as a keyword, so it carries no role; `note` is
+            // the only identifier `ADD` introduces.
+            roles("ALTER TABLE shop.orders ADD note text"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("note".to_owned(), Some(Role::Column)),
+            ]
+        );
+        assert_eq!(
+            roles("DROP KEYSPACE shop"),
+            vec![("shop".to_owned(), Some(Role::Keyspace))]
+        );
+    }
+
+    /// Statements lifted from the CQL grammar, one per clause position §3's
+    /// table names, covering every statement kind this module resolves.
+    const CORPUS: &[&str] = &[
+        "SELECT JSON DISTINCT id FROM t WHERE token(id) > 1 GROUP BY id ORDER BY id DESC LIMIT 10 ALLOW FILTERING",
+        "INSERT INTO t JSON '{\"id\": 1}' IF NOT EXISTS USING TTL 60",
+        "UPDATE t USING TTL 60 SET c = c + 1 WHERE id IN (1, 2) IF EXISTS",
+        "DELETE FROM t USING TIMESTAMP 1 WHERE id = 1 IF EXISTS",
+        "BEGIN UNLOGGED BATCH INSERT INTO t (id) VALUES (1); APPLY BATCH",
+        "CREATE KEYSPACE IF NOT EXISTS k WITH replication = {'class': 'SimpleStrategy'}",
+        "ALTER KEYSPACE k WITH durable_writes = true",
+        "CREATE TABLE IF NOT EXISTS k.t (id uuid PRIMARY KEY) WITH comment = 'x'",
+        "ALTER TABLE k.t DROP note",
+        "DROP TABLE IF EXISTS k.t",
+        "TRUNCATE TABLE k.t",
+        "USE k",
+    ];
+
+    #[test]
+    fn no_statement_in_the_grammar_puts_a_role_on_a_keyword_or_a_value() {
+        for text in CORPUS {
+            let scanned = pieces(text);
+            let analysis = resolve(&scanned);
+
+            for (index, piece) in scanned.iter().enumerate() {
+                if matches!(piece.kind, Kind::Keyword | Kind::Literal | Kind::Whitespace) {
+                    assert_eq!(
+                        analysis.role(index),
+                        None,
+                        "{text:?} gave {:?} a role",
+                        piece.text
+                    );
+                }
             }
-            let _ = resolve(&pieces(&text[..cut]));
+        }
+    }
+
+    #[test]
+    fn every_prefix_of_every_statement_in_the_grammar_resolves() {
+        // The buffer is half-typed far more often than it is finished; a
+        // resolver that panicked on a prefix would take the whole frame down.
+        for text in CORPUS {
+            for cut in 0..=text.len() {
+                if text.is_char_boundary(cut) {
+                    let _ = resolve(&pieces(&text[..cut]));
+                }
+            }
         }
     }
 }
