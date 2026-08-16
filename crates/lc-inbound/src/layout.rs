@@ -196,6 +196,8 @@ fn percent(total: u16, percent: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lc_domain::model::Key;
+    use lc_domain::{State, view_model};
 
     fn rects(width: u16, height: u16) -> PanelRects {
         panels(Rect::new(0, 0, width, height))
@@ -240,6 +242,33 @@ mod tests {
 
         assert_eq!(r.get(Panel::Contents), Rect::new(20, 0, 60, 21));
         assert_eq!(r.get(Panel::Queries), Rect::new(20, 21, 60, 2));
+    }
+
+    /// The unfocused, non-empty panel — the one state `queries_height` reads
+    /// the buffer for. Without this, returning `Closed` for every unfocused
+    /// panel would pass the whole suite.
+    #[test]
+    fn an_unfocused_queries_panel_hugs_the_buffer_it_holds() {
+        let mut state = State::default();
+        for key in [
+            Key::Char('a'),
+            Key::Enter,
+            Key::Char('b'),
+            Key::Enter,
+            Key::Char('c'),
+        ] {
+            state.queries.edit(key, 1);
+        }
+        state.focus_on(Panel::Contents);
+
+        let view = view_model(&state);
+
+        assert_eq!(queries_height(&view), QueriesHeight::Hug(3));
+        assert_eq!(
+            queries(80, 24, queries_height(&view)).height,
+            5,
+            "three buffer lines and the two borders around them"
+        );
     }
 
     #[test]
