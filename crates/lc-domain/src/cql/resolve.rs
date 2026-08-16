@@ -7,10 +7,11 @@
 //! by what the statement is doing with it
 //! (docs/superpowers/specs/2026-08-16-cql-semantics-design.md §3).
 //!
-//! This task covers `SELECT` alone and leaves the module's only caller its
-//! own tests: `complete.rs` starts calling [`resolve`] once task 5 adds
-//! `context_at`, which is also when the machine's coverage grows past a
-//! single statement kind.
+//! This covers CQL's data statements — `SELECT`, `INSERT`, `UPDATE`,
+//! `DELETE`, `TRUNCATE`, `USE`, and `BEGIN … BATCH` over them — and leaves
+//! the module's only caller its own tests: `complete.rs` starts calling
+//! [`resolve`] once task 5 adds `context_at`. `CREATE`/`ALTER`/`DROP` and
+//! `WITH` properties are task 4's.
 
 use super::lex::{Kind, Piece};
 
@@ -49,6 +50,9 @@ pub enum Expect {
     Table,
     Column,
     Value,
+    /// The name after `AS`, which stands for the selector it renames rather
+    /// than for anything the schema holds.
+    Alias,
     /// A position that takes no name at all — inside `ALLOW FILTERING`, past
     /// the end of a statement the machine stopped following.
     Nothing,
@@ -149,6 +153,12 @@ struct Machine {
     /// position back to back (`FROM shop orders`, `FROM shop AS x`) would
     /// read as one qualified name instead of staying separate.
     dot_before: bool,
+    /// The `roles` index of the identifier piece last seen, provided nothing
+    /// but whitespace or a comment has come since — the same carry rule as
+    /// `dot_before`. A `(` rewrites that piece's role to `Function` only
+    /// when this is `Some`, which is what keeps `count(id), max(id)` from
+    /// having the `(` after `max` walk back past the comma and relabel `id`.
+    last_identifier: Option<usize>,
 }
 
 #[allow(
@@ -178,10 +188,22 @@ impl Machine {
             Kind::Punctuation => piece.text == ".",
             Kind::Keyword | Kind::Literal | Kind::Identifier => false,
         };
+        self.last_identifier = match piece.kind {
+            Kind::Whitespace | Kind::Comment => self.last_identifier,
+            Kind::Identifier => Some(self.roles.len()),
+            Kind::Keyword | Kind::Punctuation | Kind::Literal => None,
+        };
         self.roles.push(role);
     }
 
     fn keyword(&mut self, word: &str) {
+        // A batch is a wrapper, not a statement: the words that open and
+        // close it change nothing, and the statements it nests are resolved
+        // exactly as they would be standalone.
+        if matches!(word, "BEGIN" | "BATCH" | "APPLY" | "UNLOGGED" | "COUNTER") {
+            return;
+        }
+
         if !self.verb_seen {
             self.verb_seen = true;
             self.covered = matches!(
@@ -198,12 +220,12 @@ impl Machine {
         self.expect = match word {
             "FROM" | "INTO" | "UPDATE" | "TRUNCATE" => Expect::Table,
             "USE" => Expect::Keyspace,
-            "SELECT" | "DELETE" | "WHERE" | "AND" | "IF" | "SET" | "BY" => Expect::Column,
-            "VALUES" | "USING" | "LIMIT" => Expect::Value,
-            // `AS` introduces an alias, which is a name this task does not
-            // yet give a role — but it must still stop the identifier that
-            // follows from being read as a second table.
-            "ALLOW" | "FILTERING" | "EXISTS" | "NOT" | "AS" => Expect::Nothing,
+            "SELECT" | "DELETE" | "WHERE" | "AND" | "IF" | "SET" | "BY" | "TOKEN" => Expect::Column,
+            "VALUES" | "USING" | "LIMIT" | "IN" | "CONTAINS" => Expect::Value,
+            "AS" => Expect::Alias,
+            // `ALLOW FILTERING`, `IF [NOT] EXISTS`, `DISTINCT`, `JSON`: none
+            // of these take a name, so they fall through unchanged like any
+            // other keyword this machine has no clause for.
             _ => self.expect,
         };
     }
@@ -211,7 +233,18 @@ impl Machine {
     fn punctuation(&mut self, text: &str) {
         for character in text.chars() {
             match character {
-                '(' => self.depth += 1,
+                '(' => {
+                    if self.expect == Expect::Column {
+                        if let Some(index) = self.last_identifier {
+                            self.roles[index] = Some(Role::Function);
+                        }
+                    } else if self.expect == Expect::Table {
+                        // `INSERT INTO t (` opens the column list right after
+                        // the table, with no clause keyword in between.
+                        self.expect = Expect::Column;
+                    }
+                    self.depth += 1;
+                }
                 ')' => self.depth = self.depth.saturating_sub(1),
                 ';' => self.end_statement(),
                 '=' | '<' | '>' | '!' => self.expect = Expect::Value,
@@ -254,6 +287,12 @@ impl Machine {
                 Some(Role::Table)
             }
             Expect::Column => Some(Role::Column),
+            Expect::Alias => {
+                // An alias only ever renames the one selector `AS` follows;
+                // the clause it interrupted resumes right after.
+                self.expect = Expect::Column;
+                Some(Role::Alias)
+            }
             Expect::Keyword | Expect::Value | Expect::Nothing => None,
         }
     }
@@ -279,6 +318,7 @@ impl Machine {
         self.covered = false;
         self.depth = 0;
         self.pending_keyspace = None;
+        self.last_identifier = None;
     }
 
     fn finish(mut self, pieces: usize) -> Analysis {
@@ -429,7 +469,7 @@ mod tests {
             roles("SELECT * FROM shop AS x"),
             vec![
                 ("shop".to_owned(), Some(Role::Table)),
-                ("x".to_owned(), None),
+                ("x".to_owned(), Some(Role::Alias)),
             ]
         );
 
@@ -484,6 +524,142 @@ mod tests {
                 assert_eq!(analysis.role(index), None, "{:?} is a value", piece.text);
             }
         }
+    }
+
+    #[test]
+    fn an_insert_names_its_table_and_its_column_list() {
+        assert_eq!(
+            roles("INSERT INTO shop.orders (id, total) VALUES (7, 'x')"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("id".to_owned(), Some(Role::Column)),
+                ("total".to_owned(), Some(Role::Column)),
+            ],
+            "the values are literals, and a value is never a name"
+        );
+    }
+
+    #[test]
+    fn an_update_names_its_table_then_its_assignments_and_conditions() {
+        assert_eq!(
+            roles("UPDATE shop.orders SET total = 3 WHERE id = 7 IF total = 2"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("total".to_owned(), Some(Role::Column)),
+                ("id".to_owned(), Some(Role::Column)),
+                ("total".to_owned(), Some(Role::Column)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_delete_names_the_columns_before_its_from() {
+        assert_eq!(
+            roles("DELETE total FROM shop.orders WHERE id = 7"),
+            vec![
+                ("total".to_owned(), Some(Role::Column)),
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("id".to_owned(), Some(Role::Column)),
+            ]
+        );
+    }
+
+    #[test]
+    fn truncate_takes_a_table_with_or_without_the_word_table() {
+        assert_eq!(
+            roles("TRUNCATE shop.orders"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table))
+            ]
+        );
+        assert_eq!(
+            roles("TRUNCATE TABLE shop.orders"),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table))
+            ]
+        );
+    }
+
+    #[test]
+    fn use_takes_a_keyspace_and_nothing_else() {
+        assert_eq!(
+            roles("USE shop"),
+            vec![("shop".to_owned(), Some(Role::Keyspace))]
+        );
+    }
+
+    #[test]
+    fn a_batch_resolves_each_statement_it_nests() {
+        assert_eq!(
+            roles(
+                "BEGIN BATCH \
+                 INSERT INTO shop.orders (id) VALUES (1); \
+                 UPDATE shop.customers SET name = 'a' WHERE id = 2; \
+                 APPLY BATCH"
+            ),
+            vec![
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("id".to_owned(), Some(Role::Column)),
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("customers".to_owned(), Some(Role::Table)),
+                ("name".to_owned(), Some(Role::Column)),
+                ("id".to_owned(), Some(Role::Column)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_select_list_alias_is_not_a_column() {
+        assert_eq!(
+            roles("SELECT id AS number FROM t"),
+            vec![
+                ("id".to_owned(), Some(Role::Column)),
+                ("number".to_owned(), Some(Role::Alias)),
+                ("t".to_owned(), Some(Role::Table)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_call_in_a_select_list_is_a_function_over_its_columns() {
+        assert_eq!(
+            roles("SELECT count(id), writetime(total) FROM t"),
+            vec![
+                ("count".to_owned(), Some(Role::Function)),
+                ("id".to_owned(), Some(Role::Column)),
+                ("writetime".to_owned(), Some(Role::Function)),
+                ("total".to_owned(), Some(Role::Column)),
+                ("t".to_owned(), Some(Role::Table)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_second_statement_starts_a_fresh_scope() {
+        let scanned = pieces("SELECT * FROM a; SELECT * FROM b");
+        let analysis = resolve(&scanned);
+        let last = scanned.len() - 1;
+
+        assert_eq!(
+            analysis.tables_at(0),
+            &[Name {
+                keyspace: None,
+                table: "a".to_owned()
+            }]
+        );
+        assert_eq!(
+            analysis.tables_at(last),
+            &[Name {
+                keyspace: None,
+                table: "b".to_owned()
+            }]
+        );
     }
 
     #[test]
