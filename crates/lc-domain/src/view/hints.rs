@@ -521,6 +521,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor: Cursor::default(),
             restored: ThemeChoice::default(),
+            sift: None,
         });
 
         let bar = bar(&state);

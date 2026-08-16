@@ -15,7 +15,7 @@ use crate::editor::Editor;
 use crate::export::ExportForm;
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::search::{Prompt, Search, Searched};
+use crate::search::{Prompt, Search, Searched, Sift};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
 use crate::tree::TablesPanel;
@@ -232,6 +232,10 @@ pub enum Overlay {
     Themes {
         cursor: Cursor,
         restored: ThemeChoice,
+        /// The live search over the list, while one is up. A field rather
+        /// than a sibling variant: a prompt and a picker must both be up
+        /// (overlay search design §4).
+        sift: Option<Sift>,
     },
     /// What the config files got wrong, drawn over the panels at startup.
     Diagnostics(DiagnosticsPanel),

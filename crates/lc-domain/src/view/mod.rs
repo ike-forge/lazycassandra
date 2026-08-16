@@ -633,6 +633,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor,
             restored: ThemeChoice::default(),
+            sift: None,
         });
 
         assert_eq!(
@@ -662,6 +663,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor: Cursor::default(),
             restored: ThemeChoice::default(),
+            sift: None,
         });
 
         let Some(OverlayView::Themes { labels, .. }) = view_model(&state).overlay else {

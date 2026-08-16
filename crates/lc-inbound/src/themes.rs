@@ -107,6 +107,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor,
             restored: choice.clone(),
+            sift: None,
         });
 
         terminal
@@ -158,6 +159,7 @@ mod tests {
         state.overlay = Some(Overlay::Themes {
             cursor,
             restored: choice.clone(),
+            sift: None,
         });
 
         terminal
