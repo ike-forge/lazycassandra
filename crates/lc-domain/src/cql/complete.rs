@@ -450,6 +450,28 @@ mod tests {
             };
         }
 
+        // A clustering column but no static or regular one, so the chain in
+        // `columns_of` is pinned against an empty *tail* and not only an
+        // empty middle.
+        let order_items = schema
+            .keyspaces
+            .get_mut("shop")
+            .and_then(|keyspace| keyspace.tables.get_mut("order_items"))
+            .expect("order_items is in the fixture");
+        order_items.primary_key.clustering = vec![ClusteringColumn {
+            column: column("created", "timestamp"),
+            order: ClusteringOrder::Ascending,
+        }];
+
+        // A static column but no clustering one, so the chain is pinned
+        // against an empty *middle* too.
+        let customers = schema
+            .keyspaces
+            .get_mut("shop")
+            .and_then(|keyspace| keyspace.tables.get_mut("customers"))
+            .expect("customers is in the fixture");
+        customers.static_columns = vec![column("verified", "boolean")];
+
         schema
     }
 
@@ -601,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn a_select_list_over_one_table_offers_that_tables_columns_in_physical_order() {
+    fn a_select_list_over_one_table_offers_only_that_tables_columns() {
         let schema = schema();
 
         // The cursor is at the end of the buffer in `typed`; place it after `i`.
@@ -621,7 +643,77 @@ mod tests {
         assert_eq!(
             completion.candidates().first().map(|c| c.text.as_str()),
             Some("id"),
-            "partition first, then clustering, then static, then regular"
+            "the fixture's only column starting with `i`"
+        );
+    }
+
+    #[test]
+    fn a_tables_columns_are_offered_in_physical_order() {
+        // `columns_of` directly, not `suggest`: an empty prefix matches
+        // every column, which is what it takes to observe all four in
+        // sequence rather than the single one a real prefix would leave.
+        let schema = schema();
+        let orders = Name {
+            keyspace: Some("shop".to_owned()),
+            table: "orders".to_owned(),
+        };
+
+        let names: Vec<String> = columns_of(Some(&schema), &orders, "")
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect();
+
+        assert_eq!(
+            names,
+            ["id", "line", "region", "total"],
+            "partition, then clustering, then static, then regular"
+        );
+    }
+
+    #[test]
+    fn an_empty_segment_of_the_physical_order_contributes_no_columns() {
+        let schema = schema();
+
+        let order_items = Name {
+            keyspace: Some("shop".to_owned()),
+            table: "order_items".to_owned(),
+        };
+        let names: Vec<String> = columns_of(Some(&schema), &order_items, "")
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect();
+        assert_eq!(
+            names,
+            ["sku", "created"],
+            "a clustering column with no static or regular one to chain in"
+        );
+
+        let customers = Name {
+            keyspace: Some("shop".to_owned()),
+            table: "customers".to_owned(),
+        };
+        let names: Vec<String> = columns_of(Some(&schema), &customers, "")
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect();
+        assert_eq!(
+            names,
+            ["email", "verified"],
+            "a static column with an empty clustering list ahead of it"
+        );
+
+        let keys = Name {
+            keyspace: Some("secrets".to_owned()),
+            table: "keys".to_owned(),
+        };
+        let names: Vec<String> = columns_of(Some(&schema), &keys, "")
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect();
+        assert_eq!(
+            names,
+            ["fingerprint"],
+            "clustering, static and regular all empty"
         );
     }
 
