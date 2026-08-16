@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, Scrol
 
 use crate::body::Extent;
 use crate::hit::{Band, FrameMap, PanelHit};
-use crate::layout::{Shell, layout};
+use crate::layout::{Shell, layout, queries_height};
 use crate::theme::Theme;
 
 /// Half a cell, flush with the panel's outer edge: the thumb marks a position
@@ -49,7 +49,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let command_rows = crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count());
     let theme_rows = crate::themes::visible_rows(frame.area());
     let export_fits = crate::export::fits(frame.area());
-    let rects = match layout(frame.area()) {
+    let rects = match layout(frame.area(), queries_height(view)) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
             crate::too_small::render(frame, area);
@@ -705,6 +705,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+    use crate::layout::QueriesHeight;
 
     fn held(anchor: usize, cursor: usize) -> Selection {
         let mut selection = Selection::default();
@@ -845,7 +846,8 @@ mod tests {
     #[test]
     fn the_four_panels_are_drawn_where_the_draft_puts_them() {
         // At 40x12 the sidebar sits on its 16-column floor, Tables takes 5
-        // rows to Ddl's 6, and Queries sits on its 3-row floor.
+        // rows to Ddl's 6, and Queries — unfocused and empty — is closed to
+        // its two borders.
         let buffer = draw(40, 12);
 
         assert_eq!(row(&buffer, 0), "╭── [1]-Tables ╮╭── [3]-Table contents ╮");
@@ -854,8 +856,8 @@ mod tests {
         // Nothing is selected, so the panel offers no Columns tab and the
         // strip is the one name.
         assert_eq!(row(&buffer, 5), "╭── [2]-DDL ───╮│                      │");
-        assert_eq!(row(&buffer, 7), "│              │╰──────────────────────╯");
-        assert_eq!(row(&buffer, 8), "│              │╭── [4]-Queries ───────╮");
+        assert_eq!(row(&buffer, 8), "│              │╰──────────────────────╯");
+        assert_eq!(row(&buffer, 9), "│              │╭── [4]-Queries ───────╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
@@ -877,7 +879,7 @@ mod tests {
     /// The bottom border of `panel`'s rect at 80x24, where its loader is
     /// drawn.
     fn bottom_border(buffer: &Buffer, panel: Panel) -> String {
-        let area = match layout(Rect::new(0, 0, 80, 24)) {
+        let area = match layout(Rect::new(0, 0, 80, 24), QueriesHeight::Closed) {
             Shell::Panels(rects) => rects.get(panel),
             Shell::TooSmall(_) => unreachable!("80x24 holds the panels"),
         };
@@ -1044,7 +1046,7 @@ mod tests {
         assert!(bold(0, 0), "Tables is focused");
         assert!(!bold(16, 0), "Contents is not");
         assert!(!bold(0, 5), "Ddl is not");
-        assert!(!bold(16, 8), "Queries is not");
+        assert!(!bold(16, 9), "Queries is not");
     }
 
     #[test]
@@ -1057,7 +1059,7 @@ mod tests {
         assert_eq!(focus_fg(0, 0), focus, "Tables' border is focus-coloured");
         assert_ne!(focus_fg(16, 0), focus, "Contents' is not");
         assert_ne!(focus_fg(0, 7), focus, "Ddl's is not");
-        assert_ne!(focus_fg(16, 8), focus, "Queries' is not");
+        assert_ne!(focus_fg(16, 9), focus, "Queries' is not");
     }
 
     #[test]
@@ -1091,7 +1093,7 @@ mod tests {
         assert!(bold(16, 0), "Contents is focused");
         assert!(!bold(0, 0), "Tables is not");
         assert!(!bold(0, 5), "Ddl is not");
-        assert!(!bold(16, 8), "Queries is not");
+        assert!(!bold(16, 9), "Queries is not");
     }
 
     #[test]
@@ -1109,7 +1111,7 @@ mod tests {
                 match panel {
                     Panel::Tables | Panel::Contents => 0,
                     Panel::Ddl => 5,
-                    Panel::Queries => 8,
+                    Panel::Queries => 9,
                 },
                 "{panel:?} is not titled {opening:?} where the draft puts it"
             );
@@ -3629,12 +3631,12 @@ mod tests {
 
         let geometry = geometry_of(60, 12, &state);
 
-        // The Contents panel is 8 rows tall at this size: 6 inside its
-        // border, two of which the header takes — the names and the blank
-        // line under them.
+        // The Contents panel is 9 rows tall at this size — Queries is closed
+        // below it — so 7 inside its border, two of which the header takes:
+        // the names and the blank line under them.
         assert_eq!(
             geometry.height(Panel::Contents),
-            4,
+            5,
             "a page motion must not count the header as a row it can land on"
         );
     }
@@ -4181,12 +4183,13 @@ mod tests {
         (backend.buffer().clone(), cursor)
     }
 
-    /// The Queries panel at 80x24 is `Rect { x: 20, y: 20, w: 60, h: 3 }`:
-    /// borders on rows 20 and 22, its one content row on 21, and its inner
-    /// left edge at column 21. Row 23 is split between the loader and the
-    /// hint bar (`bar_split`), which does not matter here: the loader sits at
-    /// the left and Queries starts at column 20.
-    const CONTENT_ROW: u16 = 21;
+    /// A focused Queries panel at 80x24 is `Rect { x: 20, y: 10, w: 60,
+    /// h: 13 }`: borders on rows 10 and 22, content rows 11 to 21, and its
+    /// inner left edge at column 21. Row 23 is split between the loader and
+    /// the hint bar (`bar_split`), which does not matter here: the loader
+    /// sits at the left and Queries starts at column 20.
+    const CONTENT_ROW: u16 = 11;
+    const LAST_CONTENT_ROW: u16 = 21;
     const INNER_LEFT: u16 = 21;
 
     #[test]
@@ -4195,7 +4198,7 @@ mod tests {
 
         assert!(
             row(&buffer, CONTENT_ROW).contains("SELECT * FROM t"),
-            "the buffer is on the panel's one content row: {:?}",
+            "the buffer is on the panel's first content row: {:?}",
             row(&buffer, CONTENT_ROW)
         );
     }
@@ -4247,16 +4250,41 @@ mod tests {
     fn the_completion_popup_hangs_off_the_cursor() {
         let (buffer, _) = drawn_with_cursor(80, 24, &completing("se"));
 
-        let rows: Vec<String> = (0..24).map(|y| row(&buffer, y)).collect();
-        let offered = rows
-            .iter()
-            .position(|line| line.contains("SELECT"))
-            .expect("the popup names what it is offering");
-
         assert!(
-            offered < usize::from(CONTENT_ROW),
-            "the panel is on the frame's bottom edge, so the popup opens upwards"
+            offered_row(&buffer) > usize::from(CONTENT_ROW),
+            "the cursor is at the top of an open panel, so the popup opens downwards"
         );
+    }
+
+    #[test]
+    fn the_completion_popup_opens_upwards_off_the_bottom_of_the_frame() {
+        // Eleven lines put the cursor on the panel's last content row, which
+        // is the frame's last row but the bar's.
+        let state = completing(&format!("{}se", "\n".repeat(11)));
+
+        let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
+
+        assert_eq!(
+            cursor.expect("a focused editor shows a cursor").y,
+            LAST_CONTENT_ROW
+        );
+        assert!(
+            offered_row(&buffer) < usize::from(LAST_CONTENT_ROW),
+            "there is no room beneath the cursor, so the popup opens upwards"
+        );
+    }
+
+    /// The row the popup drew its first offer on.
+    fn offered_row(buffer: &Buffer) -> usize {
+        (0..usize::from(buffer.area.height))
+            .find(|&y| {
+                row(
+                    buffer,
+                    u16::try_from(y).expect("a drawn row's index fits u16"),
+                )
+                .contains("SELECT")
+            })
+            .expect("the popup names what it is offering")
     }
 
     #[test]
@@ -4308,23 +4336,25 @@ mod tests {
 
     #[test]
     fn a_tall_buffer_scrolls_and_says_so() {
-        let state = with_query("one\ntwo\nthree\nfour", Panel::Queries);
+        // Fifteen lines to the focused panel's eleven content rows.
+        let lines: Vec<String> = (0..15).map(|line| format!("line{line}")).collect();
+        let state = with_query(&lines.join("\n"), Panel::Queries);
 
         let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
-        let drawn = row(&buffer, CONTENT_ROW);
+        let drawn = row(&buffer, LAST_CONTENT_ROW);
 
         assert!(
-            drawn.contains("four"),
-            "the cursor's line is the one drawn: {drawn:?}"
+            drawn.contains("line14"),
+            "the cursor's line is the last one drawn: {drawn:?}"
         );
         assert_eq!(
             cursor.expect("a focused editor shows a cursor").y,
-            CONTENT_ROW,
+            LAST_CONTENT_ROW,
             "the cursor's own row is on screen"
         );
         assert!(
-            drawn.ends_with(THUMB),
-            "four lines in a one-row panel grows the scrollbar: {drawn:?}"
+            (CONTENT_ROW..=LAST_CONTENT_ROW).any(|y| row(&buffer, y).ends_with(THUMB)),
+            "a buffer past the panel's rows grows a scrollbar"
         );
     }
 
