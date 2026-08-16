@@ -675,6 +675,25 @@ mod tests {
         assert!(sift.is_none());
     }
 
+    /// Overlay search design §7: a query too short to match on is still a
+    /// live sift — the prompt still has something to draw — and `sift_view`
+    /// reports that as `search: None` rather than folding it into "no sift".
+    #[test]
+    fn a_sift_open_on_an_empty_query_carries_no_search() {
+        let mut state = State::default();
+        let mut panel = CommandsPanel::opened();
+        panel.open_sift();
+        state.overlay = Some(Overlay::Commands(panel));
+
+        let Some(OverlayView::Commands { sift, .. }) = view_model(&state).overlay else {
+            panic!("an open palette");
+        };
+        let sift = sift.expect("a live sift, even with nothing typed");
+
+        assert_eq!(sift.query, "");
+        assert!(sift.search.is_none());
+    }
+
     #[test]
     fn an_open_picker_is_projected_as_every_theme_and_the_cursors_position() {
         let built_in = BuiltIn::Ported(Ported::CatppuccinMocha);

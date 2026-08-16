@@ -575,6 +575,24 @@ mod tests {
         assert_eq!(actions, ["apply", "cancel"]);
     }
 
+    /// Design §8: the picker's own live sift collapses its bar the same way
+    /// the palette's does — `sifting()`'s `Themes` arm, not only its
+    /// `Commands` one.
+    #[test]
+    fn a_live_sift_over_the_picker_shows_the_prompts_bar() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Themes {
+            cursor: Cursor::default(),
+            restored: ThemeChoice::default(),
+            sift: Some(crate::search::Sift::opened(0)),
+        });
+
+        let bar = bar(&state);
+        let actions: Vec<&str> = bar.global.iter().map(|hint| hint.action).collect();
+
+        assert_eq!(actions, ["apply", "cancel"]);
+    }
+
     #[test]
     fn the_bar_names_what_the_picker_responds_to() {
         let mut state = State::default();
