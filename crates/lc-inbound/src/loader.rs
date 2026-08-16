@@ -21,14 +21,24 @@ pub(crate) const INSET: u16 = 1;
 /// `WIDTH - 1` back, `HOLD_START` at the left. The widget keeps its own frame
 /// counter private, so `the_cycle_is_the_length_the_domain_is_folded_into`
 /// pins this rather than a comment claiming it.
-const PERIOD: usize = 54;
+const PERIOD: usize = 36;
 const TRAIL: usize = 6;
-const HOLD_START: usize = 30;
+/// The pause at the left edge, cut from the 30 frames the bar's loader held
+/// for: a scanner on a border spends that pause as its dimmest dots against
+/// border glyphs, and 1.2s of that per cycle reads as a spinner that has
+/// stopped rather than one that is breathing.
+const HOLD_START: usize = 12;
 const HOLD_END: usize = 9;
 /// Brightness of a dot the head has left behind, and the floor the held edges
 /// breathe down to.
-const INACTIVE: f64 = 0.25;
-const MIN_FADE: f64 = 0.55;
+///
+/// Both lifted off the bar's values (0.25 and 0.55): at those, a held dot came
+/// out at 0.14 of the accent — darker than the base the panel is painted on,
+/// so the loader's colour disappeared for the whole hold. The scanner has to
+/// stay recognisably the accent through every frame of its cycle, because on a
+/// border there is nothing else marking the cells as the loader's.
+const INACTIVE: f64 = 0.45;
+const MIN_FADE: f64 = 0.8;
 
 /// Where the scanner is drawn on `block`, the panel's bordered rect: the
 /// bottom border, `INSET` columns short of the corner, mirroring the search
@@ -83,6 +93,7 @@ pub(crate) fn line(activity: Activity, theme: Theme) -> Option<Line<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
 
     fn drawn(activity: Activity) -> Line<'static> {
         line(activity, Theme::default()).expect("working frames draw a scanner")
@@ -165,6 +176,41 @@ mod tests {
             Some(usize::from(WIDTH) - 2),
             "and turns around after holding there"
         );
+    }
+
+    /// The floor an idle dot has to keep, as a fraction of the accent: below
+    /// this the scanner's colour is gone and the cells read as border.
+    const VISIBLE: f64 = 0.3;
+
+    #[test]
+    fn an_idle_dot_stays_recognisably_the_accent_in_every_frame() {
+        let theme = Theme::default();
+        let Color::Rgb(accent, _, _) = theme.palette().accent else {
+            panic!("the default palette is spelled in rgb");
+        };
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a fraction of a u8 channel"
+        )]
+        let floor = (f64::from(accent) * VISIBLE) as u8;
+
+        for frame in 0..PERIOD {
+            for span in drawn(Activity::Working { frame }).spans {
+                if span.content != "⬝" {
+                    continue;
+                }
+
+                let Some(Color::Rgb(red, _, _)) = span.style.fg else {
+                    panic!("every cell is coloured");
+                };
+
+                assert!(
+                    red >= floor,
+                    "frame {frame} faded an idle dot to {red}, under the {floor} floor"
+                );
+            }
+        }
     }
 
     #[test]
