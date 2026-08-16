@@ -279,10 +279,16 @@ fn columns_of(schema: Option<&Schema>, table: &Name, prefix: &str) -> Vec<Candid
 /// Offered where the statement names no table yet: the qualifier tells two
 /// `id` columns apart, and accepting still types the bare name, because a
 /// dotted column is not CQL (design §6).
+///
+/// In [`Schema::keyspaces_in_display_order`], not the map's own order: the
+/// cluster's `system*` keyspaces sort early and hold enough tables between
+/// them to fill the `MOST` cap on their own, which would leave a user with
+/// none of their own columns offered — the same precedence the tree already
+/// draws them in (view/tables.rs).
 fn every_column(schema: Option<&Schema>, prefix: &str) -> Vec<Candidate> {
     schema
         .into_iter()
-        .flat_map(|schema| schema.keyspaces.values())
+        .flat_map(Schema::keyspaces_in_display_order)
         .flat_map(|keyspace| keyspace.tables.values().map(move |table| (keyspace, table)))
         .flat_map(|(keyspace, table)| {
             column_names(table).map(move |name| (keyspace.name.clone(), table.name.clone(), name))
@@ -748,6 +754,30 @@ mod tests {
             names,
             ["fingerprint"],
             "clustering, static and regular all empty"
+        );
+    }
+
+    #[test]
+    fn a_system_keyspaces_columns_never_crowd_out_the_users_own() {
+        // `system_auth` sorts before `zoo` and holds more tables than the
+        // popup has room for: in the map's own order it would take every
+        // slot and the user would see none of their own columns.
+        let mut names = Vec::new();
+        for index in 0..=MOST {
+            names.push(format!("t{index}"));
+        }
+        let system: Vec<&str> = names.iter().map(String::as_str).collect();
+        let schema = schema_of(&[("system_auth", &system), ("zoo", &["visits"])]);
+
+        let labels: Vec<String> = every_column(Some(&schema), "id")
+            .into_iter()
+            .map(|candidate| candidate.label)
+            .collect();
+
+        assert_eq!(
+            labels.first().map(String::as_str),
+            Some("zoo.visits.id"),
+            "a user's keyspace is offered before the cluster's own"
         );
     }
 
