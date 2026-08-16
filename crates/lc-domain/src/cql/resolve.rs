@@ -100,6 +100,13 @@ impl Analysis {
             .and_then(|statement| self.tables.get(*statement))
             .map_or(&[], Vec::as_slice)
     }
+
+    /// How many statements the buffer holds — a `BEGIN BATCH` counts as one
+    /// per `;`-separated scope, not one for the batch as a whole.
+    #[must_use]
+    pub fn statements(&self) -> usize {
+        self.tables.len()
+    }
 }
 
 /// What a name typed at a cursor would be, and what tables are in scope

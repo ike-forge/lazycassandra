@@ -19,6 +19,30 @@ use crate::style::{Segment, Token};
 use lex::Kind;
 use resolve::resolve;
 
+/// The one table `cql` names, for a caller that has CQL text and no pieces
+/// of its own — `view` must not reach into [`lex`], which is private to this
+/// module.
+///
+/// `None` where the buffer resolves to anything other than exactly one
+/// statement naming exactly one table: a `BEGIN BATCH` splits into one scope
+/// per `;`, so its first scope alone can name one table while the buffer as
+/// a whole names several, and a caller that only checked `tables_at(0)`
+/// would be fooled by it.
+#[must_use]
+pub fn sole_table(cql: &str) -> Option<Name> {
+    let scanned = lex::pieces(cql);
+    let analysis = resolve(&scanned);
+
+    if analysis.statements() != 1 {
+        return None;
+    }
+
+    match analysis.tables_at(0) {
+        [name] => Some(name.clone()),
+        _ => None,
+    }
+}
+
 /// `text` as one styled line per buffer line, in order.
 ///
 /// Exactly as many lines out as `text` has: a caller drawing them beside a

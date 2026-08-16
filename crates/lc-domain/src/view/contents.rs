@@ -10,6 +10,7 @@ use crate::model::{CqlValue, Schema};
 use crate::search::Search;
 use crate::state::{Panel, Ranges, State};
 use crate::style::{Segment, Token};
+use crate::tree::Node;
 
 use super::{PanelBody, failure, waiting};
 
@@ -125,10 +126,11 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         },
     };
 
+    let table = grid_table(state, subject);
     let tokens: Vec<Option<Token>> = page
         .columns
         .iter()
-        .map(|name| column_token(state.schema(), subject.table(), name))
+        .map(|name| column_token(state.schema(), table.as_ref(), name))
         .collect();
 
     PanelBody::Grid {
@@ -202,9 +204,11 @@ const fn key_token(column: Option<Token>) -> Option<Token> {
 /// exists to keep visible — here, in the grid being read, rather than a panel
 /// away.
 ///
-/// `None` for a typed statement: its columns can be a projection, an
-/// aggregate, or a join of nothing, and claiming a partition key among them
-/// would be a decoration the schema does not support.
+/// A typed statement gets the same treatment as one from the tree when the
+/// resolver can name exactly one table for it and the schema has that table.
+/// A column the table does not have — an alias, an aggregate, `writetime(x)`
+/// — stays plain, because colouring it would claim it was a column of that
+/// table (cql semantics design §7).
 fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str) -> Option<Token> {
     let table = table?;
     let found = schema
@@ -216,9 +220,43 @@ fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str)
         Some(Token::PartitionKey)
     } else if key.clustering.iter().any(|c| c.column.name == column) {
         Some(Token::ClusteringKey)
-    } else {
+    } else if found.static_columns.iter().any(|c| c.name == column)
+        || found.regular_columns.iter().any(|c| c.name == column)
+    {
         Some(Token::RegularColumn)
+    } else {
+        // Not a column of the table the statement read: an alias, an
+        // aggregate, or a projection. `RegularColumn` here would be a claim
+        // the schema does not support.
+        None
     }
+}
+
+/// The table a grid's rows came from: the one the tree asked for, or the one
+/// a typed statement names, qualified by the keyspace on screen where the
+/// statement did not qualify it.
+fn grid_table(state: &State, subject: &Subject) -> Option<TableRef> {
+    match subject {
+        Subject::Table(table) => Some(table.clone()),
+        Subject::Typed(cql) => {
+            let name = crate::cql::sole_table(cql)?;
+
+            Some(TableRef {
+                keyspace: name.keyspace.clone().or_else(|| visible_keyspace(state))?,
+                table: name.table.clone(),
+            })
+        }
+    }
+}
+
+/// The keyspace an unqualified name in a typed statement should be read
+/// against: the one the tree cursor sits on, mirroring `update.rs::complete`.
+fn visible_keyspace(state: &State) -> Option<String> {
+    let schema = state.schema()?;
+
+    state.tables.selected(schema).map(|node| match node {
+        Node::Keyspace { keyspace, .. } | Node::Table { keyspace, .. } => keyspace.name.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -266,6 +304,51 @@ mod tests {
         state
             .contents
             .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(query, page);
+        state
+    }
+
+    /// A state showing `page` for a hand-typed `cql`, against a schema whose
+    /// sole keyspace `shop` has `orders` (`id` partition key, `total`
+    /// regular column) and `customers` (`id` partition key). The tree
+    /// cursor's default index selects that one keyspace, standing in for
+    /// whichever one is on screen when the statement does not qualify its
+    /// table.
+    fn showing_typed(cql: &str, page: Page) -> State {
+        let mut state = tabled(&[("shop", &["orders", "customers"])]);
+        let mut schema = state.schema().cloned().expect("loaded");
+        let orders = schema
+            .keyspaces
+            .get_mut("shop")
+            .and_then(|keyspace| keyspace.tables.get_mut("orders"))
+            .expect("the builder made it");
+        orders.regular_columns = vec![Column {
+            name: "total".to_owned(),
+            cql_type: "int".to_owned(),
+        }];
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            posture: Posture::ReadOnly,
+            schema: SchemaState::Loaded(schema),
+        });
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Typed(cql.to_owned()));
+        state.contents.page_ready(query, page);
+        state
+    }
+
+    /// [`showing_typed`], but against a schema whose sole keyspace is
+    /// `keyspace` — the tree cursor's default index parks it on that
+    /// keyspace, which is what an unqualified table name in `cql` resolves
+    /// against.
+    fn showing_typed_in(keyspace: &str, cql: &str, page: Page) -> State {
+        let mut state = tabled(&[(keyspace, &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Typed(cql.to_owned()));
         state.contents.page_ready(query, page);
         state
     }
@@ -464,6 +547,10 @@ mod tests {
             },
             order: ClusteringOrder::Ascending,
         }];
+        table.regular_columns = vec![Column {
+            name: "total".to_owned(),
+            cql_type: "int".to_owned(),
+        }];
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
             posture: Posture::ReadOnly,
@@ -492,6 +579,93 @@ mod tests {
                 Some(Token::RegularColumn),
             ]
         );
+    }
+
+    /// The resolver names the one table a typed statement read, so its grid
+    /// gets the same key colours a tree-driven one does (cql semantics
+    /// design §7).
+    #[test]
+    fn a_typed_select_over_one_table_colours_its_key_columns() {
+        let state = showing_typed(
+            "select * from shop.orders",
+            page_of(&["id", "total"], &[&[CqlValue::Int(1), CqlValue::Int(2)]]),
+        );
+
+        let PanelBody::Grid { columns, .. } = contents_body(&state) else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(columns[0].token, Some(Token::PartitionKey));
+        assert_eq!(columns[1].token, Some(Token::RegularColumn));
+    }
+
+    /// An alias, an aggregate, or `writetime(x)` matches no column of the
+    /// table the statement read — colouring it would claim it was that
+    /// column, which the resolver alone cannot know (design §7).
+    #[test]
+    fn an_aliased_column_claims_nothing_about_the_table() {
+        let state = showing_typed(
+            "select id as number from shop.orders",
+            page_of(&["number"], &[&[CqlValue::Int(1)]]),
+        );
+
+        let PanelBody::Grid { columns, .. } = contents_body(&state) else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(
+            columns[0].token, None,
+            "`number` is not `id`, and colouring it would claim it was"
+        );
+    }
+
+    /// A batch splits into one scope per `;`; its first scope alone names
+    /// one table, but the buffer as a whole names two, so nothing is
+    /// coloured (design §7; `sole_table`'s one-statement guard).
+    #[test]
+    fn a_statement_naming_two_tables_colours_nothing() {
+        let state = showing_typed(
+            "begin batch insert into shop.orders (id) values (1); \
+             insert into shop.customers (id) values (2); apply batch",
+            page_of(&["id"], &[&[CqlValue::Int(1)]]),
+        );
+
+        let PanelBody::Grid { columns, .. } = contents_body(&state) else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(columns[0].token, None);
+    }
+
+    /// An unqualified table name in a typed statement is read against the
+    /// keyspace the tree cursor sits on, the way completion already does
+    /// (`update.rs::complete`).
+    #[test]
+    fn an_unqualified_typed_select_takes_the_keyspace_on_screen() {
+        let state = showing_typed_in(
+            "shop",
+            "select * from orders",
+            page_of(&["id"], &[&[CqlValue::Int(1)]]),
+        );
+
+        let PanelBody::Grid { columns, .. } = contents_body(&state) else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(columns[0].token, Some(Token::PartitionKey));
+    }
+
+    /// A statement naming no table at all — as opposed to one the resolver
+    /// could not pin down to exactly one — still claims nothing.
+    #[test]
+    fn a_typed_statement_naming_no_table_colours_nothing() {
+        let state = showing_typed("select 1", page_of(&["1"], &[&[CqlValue::Int(1)]]));
+
+        let PanelBody::Grid { columns, .. } = contents_body(&state) else {
+            panic!("a loaded page is a grid");
+        };
+
+        assert_eq!(columns[0].token, None);
     }
 
     #[test]

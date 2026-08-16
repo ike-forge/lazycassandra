@@ -4,7 +4,7 @@
 //! provides to await the port.
 
 use lc_domain::config::Config;
-use lc_domain::model::{ConnId, CqlValue, DbError, Key, KeyPress, Page, Row, Statement};
+use lc_domain::model::{Column, ConnId, CqlValue, DbError, Key, KeyPress, Page, Row, Statement};
 use lc_domain::posture::Posture;
 use lc_domain::state::Panel;
 use lc_domain::style::Token;
@@ -178,11 +178,17 @@ async fn on_a_table(cluster: &FakeCluster) -> State {
 
 #[tokio::test]
 async fn pressing_enter_on_a_table_fills_the_contents_panel() {
-    let cluster = FakeCluster::new(
-        tabled_schema_of(&[("shop", &["orders"])]),
-        Posture::ReadOnly,
-    )
-    .returning(customers());
+    let mut schema = tabled_schema_of(&[("shop", &["orders"])]);
+    schema
+        .keyspaces
+        .get_mut("shop")
+        .and_then(|keyspace| keyspace.tables.get_mut("orders"))
+        .expect("the fixture made it")
+        .regular_columns = vec![Column {
+        name: "email".to_owned(),
+        cql_type: "text".to_owned(),
+    }];
+    let cluster = FakeCluster::new(schema, Posture::ReadOnly).returning(customers());
     let mut state = on_a_table(&cluster).await;
 
     let effects = press(&mut state, Key::Enter);
