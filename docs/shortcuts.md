@@ -118,6 +118,7 @@ before the panel underneath is consulted (§2).
 | `⏎` | Close the palette and perform the selected command. |
 | `?` `Esc` | Close it. |
 | `q` | Quits, as everywhere else. |
+| `/` | Search the list: typing walks the cursor to the next matching row, marking the hit. `⏎` keeps the row, `Esc` puts it back. |
 | anything else | Inert. Nothing means "close" in one frame and something else in the next. |
 
 `⏎` presses the row's own first key, in the panel the row belongs to — it
@@ -125,6 +126,15 @@ focuses that panel first, whether or not the action that follows has anything
 to do. A row that means something only inside the export form is not pressed
 at all: it is drawn faint, and `⏎` on it closes the palette and stops
 ([palette execution design](superpowers/specs/2026-08-15-palette-execution-design.md) §8).
+
+`/` searches the action text alone — never the key column, never a group
+heading — and the cursor it walks only ever lands on a command, the same
+skip-the-heading rule `j`/`k` and paging already keep. A term matching
+nothing leaves the cursor where the prompt opened. The catalogue this table
+draws gained no row of its own for it: a row saying `/` searches the palette
+would be a row about the palette inside the palette, so the hint bar names
+the key instead — a mode names its own keys
+([overlay search design](specs/2026-08-16-overlay-search-design.md) §6, §8).
 
 ### The search prompt
 
@@ -198,6 +208,14 @@ was before config existed.
 | `Enter` | Closes, keeping whatever theme is set. |
 | `Esc` | Sets `State.theme` back to the theme the picker opened on, then closes. |
 | `q` | Quits, as everywhere else. The picker takes motion, not text, so it leaves `q` alone — the palette's rule (§2). |
+| `/` | Search the list: typing walks the cursor to the next matching row, marking the hit and previewing it. `⏎` keeps the theme, `Esc` puts it back. |
+
+Search here previews the same way motion already does: the cursor is what
+sets `State.theme`, so walking it with `/` walks the preview too. Once the
+prompt is up, `/` is text like every other printable key, the same rule that
+lets `q` and `?` type there instead of quitting or closing — see §2's rule
+below
+([overlay search design](specs/2026-08-16-overlay-search-design.md) §5).
 
 `Home`/`End` are deliberately inert here. The list is every theme there is and
 always shorter than the block drawing it, so a screen *is* the whole list:
@@ -718,6 +736,20 @@ by nothing the user presses — it opens itself at startup, if either config
 file had something to report, and is left with `Esc` alone. It takes motion
 the same as the palette and the picker, and it is the one overlay of the
 four where `q` does not quit: see its own subsection above.
+
+The palette and the picker each carry a `/` of their own now, and while
+either's is up the overlay it belongs to stops taking motion and takes text
+instead — the panel-that-takes-text rule, applied a second time, inside an
+overlay that already claimed every key once. Every printable key types
+itself there, `q` included, the same swap the search prompt already makes
+of the palette and the picker's own `q`-quits rule. The list under it never
+narrows — a cursor walks to the match instead, the same live-as-you-type
+preview the search prompt gives Tables, DDL and Table contents — and nothing
+of the search outlives the prompt: `⏎` keeps only the row the cursor found,
+`Esc` puts the cursor back where the prompt opened, and either way the query
+itself is gone once the prompt closes, with no highlight and no `n`/`N` left
+to walk
+([overlay search design](specs/2026-08-16-overlay-search-design.md) §2, §5, §6).
 
 **`Esc` resolves in one order, first hit wins.** An overlay up is dismissed
 first — a search prompt cancels, restoring the search and the cursor it found
