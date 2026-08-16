@@ -11,10 +11,6 @@
 //! own tests: `complete.rs` starts calling [`resolve`] once task 5 adds
 //! `context_at`, which is also when the machine's coverage grows past a
 //! single statement kind.
-#![allow(
-    dead_code,
-    reason = "resolve's first in-crate caller lands in task 5's context_at"
-)]
 
 use super::lex::{Kind, Piece};
 
@@ -100,6 +96,10 @@ impl Analysis {
 /// Crate-internal, like [`Piece`] itself: a caller outside `cql` has no scan
 /// to hand it, and reaches this through `highlight` or `suggest` instead.
 #[must_use]
+#[allow(
+    dead_code,
+    reason = "resolve's first in-crate caller lands in task 5's context_at"
+)]
 pub(crate) fn resolve(pieces: &[Piece]) -> Analysis {
     let mut machine = Machine {
         tables: vec![Vec::new()],
@@ -117,6 +117,10 @@ pub(crate) fn resolve(pieces: &[Piece]) -> Analysis {
 /// that takes a column takes it the same way, and the verb only decides which
 /// clause comes first.
 #[derive(Debug, Default)]
+#[allow(
+    dead_code,
+    reason = "resolve's first in-crate caller lands in task 5's context_at"
+)]
 struct Machine {
     expect: Expect,
     /// Whether the statement's first keyword has been read yet. Distinct from
@@ -138,8 +142,18 @@ struct Machine {
     /// name in table position is a table until a `.` proves it was a
     /// keyspace, at which point that earlier role is rewritten in place.
     pending_keyspace: Option<(usize, String)>,
+    /// Whether the piece immediately before the current one — no whitespace,
+    /// no comment, nothing skipped — was a `.`. The only thing that makes
+    /// `pending_keyspace` consumable: without it, two bare names in table
+    /// position back to back (`FROM shop orders`, `FROM shop AS x`) would
+    /// read as one qualified name instead of staying separate.
+    dot_before: bool,
 }
 
+#[allow(
+    dead_code,
+    reason = "resolve's first in-crate caller lands in task 5's context_at"
+)]
 impl Machine {
     fn step(&mut self, piece: &Piece) {
         self.expects.push(self.expect);
@@ -158,6 +172,7 @@ impl Machine {
             Kind::Identifier => self.identifier(&piece.text),
         };
 
+        self.dot_before = piece.kind == Kind::Punctuation && piece.text == ".";
         self.roles.push(role);
     }
 
@@ -180,7 +195,10 @@ impl Machine {
             "USE" => Expect::Keyspace,
             "SELECT" | "DELETE" | "WHERE" | "AND" | "IF" | "SET" | "BY" => Expect::Column,
             "VALUES" | "USING" | "LIMIT" => Expect::Value,
-            "ALLOW" | "FILTERING" | "EXISTS" | "NOT" => Expect::Nothing,
+            // `AS` introduces an alias, which is a name this task does not
+            // yet give a role — but it must still stop the identifier that
+            // follows from being read as a second table.
+            "ALLOW" | "FILTERING" | "EXISTS" | "NOT" | "AS" => Expect::Nothing,
             _ => self.expect,
         };
     }
@@ -193,13 +211,6 @@ impl Machine {
                 ';' => self.end_statement(),
                 '=' | '<' | '>' | '!' => self.expect = Expect::Value,
                 _ => {}
-            }
-
-            // `.` is the only punctuation that keeps a qualified name's
-            // keyspace half pending; every other character means whatever
-            // comes next starts a fresh name.
-            if character != '.' {
-                self.pending_keyspace = None;
             }
         }
     }
@@ -216,7 +227,13 @@ impl Machine {
                 Some(Role::Keyspace)
             }
             Expect::Table => {
-                if let Some((index, keyspace)) = self.pending_keyspace.take() {
+                // Only a `.` immediately before this identifier proves a
+                // pending keyspace was meant to qualify it; anything else —
+                // including a bare word right before, `FROM shop orders` —
+                // drops it rather than fusing two unrelated names.
+                let qualified = self.pending_keyspace.take().filter(|_| self.dot_before);
+
+                if let Some((index, keyspace)) = qualified {
                     self.roles[index] = Some(Role::Keyspace);
                     self.record(Name {
                         keyspace: Some(keyspace),
@@ -273,6 +290,10 @@ impl Machine {
 }
 
 /// CQL folds an unquoted name and keeps a quoted one exactly.
+#[allow(
+    dead_code,
+    reason = "resolve's first in-crate caller lands in task 5's context_at"
+)]
 fn fold(text: &str) -> String {
     match text
         .strip_prefix('"')
@@ -358,6 +379,45 @@ mod tests {
                 keyspace: Some("shop".to_owned()),
                 table: "Orders".to_owned()
             }]
+        );
+    }
+
+    #[test]
+    fn an_alias_does_not_fuse_with_the_table_before_it() {
+        assert_eq!(
+            roles("SELECT * FROM shop AS x"),
+            vec![
+                ("shop".to_owned(), Some(Role::Table)),
+                ("x".to_owned(), None),
+            ]
+        );
+
+        let scanned = pieces("SELECT * FROM shop AS x");
+        assert_eq!(
+            resolve(&scanned).tables_at(scanned.len() - 1),
+            &[Name {
+                keyspace: None,
+                table: "shop".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn two_bare_table_names_in_a_row_stay_separate() {
+        let scanned = pieces("SELECT * FROM shop orders");
+
+        assert_eq!(
+            resolve(&scanned).tables_at(scanned.len() - 1),
+            &[
+                Name {
+                    keyspace: None,
+                    table: "shop".to_owned()
+                },
+                Name {
+                    keyspace: None,
+                    table: "orders".to_owned()
+                }
+            ]
         );
     }
 
