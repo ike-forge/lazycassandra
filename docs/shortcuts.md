@@ -134,7 +134,7 @@ nothing leaves the cursor where the prompt opened. The catalogue this table
 draws gained no row of its own for it: a row saying `/` searches the palette
 would be a row about the palette inside the palette, so the hint bar names
 the key instead — a mode names its own keys
-([overlay search design](specs/2026-08-16-overlay-search-design.md) §6, §8).
+([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §6, §8).
 
 ### The search prompt
 
@@ -215,7 +215,7 @@ Search here previews the same way motion already does: the cursor is what
 sets `State.theme`, so walking it with `/` walks the preview too. A term
 matching nothing leaves the cursor, and so the preview, right where the
 prompt opened — see §2's rule below for the key itself
-([overlay search design](specs/2026-08-16-overlay-search-design.md) §5, §6).
+([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §5, §6).
 
 The ends are reachable here as they are in every other list. Paging does land
 on either end in one press — the list is every theme there is and always
@@ -768,21 +768,24 @@ of the search outlives the prompt: `⏎` keeps only the row the cursor found,
 `Esc` puts the cursor back where the prompt opened, and either way the query
 itself is gone once the prompt closes, with no highlight and no `n`/`N` left
 to walk
-([overlay search design](specs/2026-08-16-overlay-search-design.md) §2, §5, §6).
+([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §2, §5, §6).
 
-**`Esc` resolves in one order, first hit wins.** An overlay up is dismissed
-first — a search prompt cancels, restoring the search and the cursor it found
-applied when it opened; the palette just closes. Failing that, an extending
+**`Esc` resolves in one order, first hit wins.** A live sift inside an
+overlay comes off first, restoring the cursor to the row the prompt opened on
+and, in the picker, the theme it previewed with it — the overlay itself stays
+up. Failing that, an overlay up is dismissed — a search prompt cancels,
+restoring the search and the cursor it found applied when it opened; the
+palette just closes. Failing that, an extending
 range in the focused panel freezes, the way a second `v` would, so `Esc`
 never discards a range that is still growing. Failing that, the selection
 clears — every group at once, however many are held. Failing that, the
 focused panel's search, if it has one, clears. Failing that, Queries hands
 focus back to Tables. Failing all
-five, `Esc` does nothing. The first rung preserves
+six, `Esc` does nothing. The first rung preserves
 `escape_dismisses_the_overlay_before_it_leaves_the_editor`; extending it down
 the chain is what "the thing most recently put on screen comes off first"
 means once a panel can carry state of its own (panel search design §6, visual
-mode design §4).
+mode design §4, overlay search design §1).
 
 **No key without a test.** Every binding above is pinned by name in §5.
 

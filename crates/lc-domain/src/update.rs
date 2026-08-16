@@ -621,8 +621,9 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return palette_key(state, press.key);
     }
 
-    // The diagnostics overlay takes motion, not text, the same as the palette
-    // (design §9).
+    // The diagnostics overlay takes motion, not text — the same as the
+    // palette only when no sift is up, and diagnostics has none to raise
+    // (design §11).
     if matches!(state.overlay, Some(Overlay::Diagnostics(_))) {
         return diagnostics_key(state, press.key);
     }
@@ -1173,11 +1174,12 @@ fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `Esc` resolves in one order, first hit wins: the overlay; then freezing an
-/// extending range; then clearing a frozen range; then the focused panel's
-/// search; then leaving a panel that takes text (Queries hands focus back to
-/// Tables). One press does one of the five, never two — the thing most
-/// recently put on screen comes off first (panel search design §6).
+/// `Esc` resolves in one order, first hit wins: a live sift inside an
+/// overlay; then the overlay itself; then freezing an extending range; then
+/// clearing a frozen range; then the focused panel's search; then leaving a
+/// panel that takes text (Queries hands focus back to Tables). One press does
+/// one of the six, never two — the thing most recently put on screen comes
+/// off first (panel search design §6, overlay search design §1).
 fn escape(state: &mut State) {
     match state.overlay.take() {
         Some(Overlay::Search(prompt)) => {
