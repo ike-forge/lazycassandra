@@ -142,8 +142,9 @@ struct Machine {
     /// name in table position is a table until a `.` proves it was a
     /// keyspace, at which point that earlier role is rewritten in place.
     pending_keyspace: Option<(usize, String)>,
-    /// Whether the piece immediately before the current one — no whitespace,
-    /// no comment, nothing skipped — was a `.`. The only thing that makes
+    /// Whether a `.` is the last grammatically significant thing seen —
+    /// whitespace and comments don't count as breaking it, since CQL allows
+    /// either around the dot in a qualified name. The only thing that makes
     /// `pending_keyspace` consumable: without it, two bare names in table
     /// position back to back (`FROM shop orders`, `FROM shop AS x`) would
     /// read as one qualified name instead of staying separate.
@@ -172,7 +173,11 @@ impl Machine {
             Kind::Identifier => self.identifier(&piece.text),
         };
 
-        self.dot_before = piece.kind == Kind::Punctuation && piece.text == ".";
+        self.dot_before = match piece.kind {
+            Kind::Whitespace | Kind::Comment => self.dot_before,
+            Kind::Punctuation => piece.text == ".",
+            Kind::Keyword | Kind::Literal | Kind::Identifier => false,
+        };
         self.roles.push(role);
     }
 
@@ -382,8 +387,44 @@ mod tests {
         );
     }
 
+    /// The four shapes a `.` and its neighbours can take in table position,
+    /// pinned together so a fix for one cannot silently break another:
+    /// whitespace around a real dot still qualifies, but no dot at all —
+    /// whether the second word is an alias or just another bare name — never
+    /// fuses two names into one.
     #[test]
-    fn an_alias_does_not_fuse_with_the_table_before_it() {
+    fn only_a_real_dot_qualifies_a_table_whitespace_or_not() {
+        let qualified = |text: &str| {
+            let scanned = pieces(text);
+            resolve(&scanned).tables_at(scanned.len() - 1).to_vec()
+        };
+
+        assert_eq!(
+            qualified("SELECT * FROM shop.orders"),
+            vec![Name {
+                keyspace: Some("shop".to_owned()),
+                table: "orders".to_owned()
+            }],
+            "no space around the dot"
+        );
+
+        assert_eq!(
+            qualified("SELECT * FROM shop . orders"),
+            vec![Name {
+                keyspace: Some("shop".to_owned()),
+                table: "orders".to_owned()
+            }],
+            "CQL allows space around the dot"
+        );
+
+        assert_eq!(
+            qualified("SELECT * FROM shop AS x"),
+            vec![Name {
+                keyspace: None,
+                table: "shop".to_owned()
+            }],
+            "AS introduces an alias, not a second table"
+        );
         assert_eq!(
             roles("SELECT * FROM shop AS x"),
             vec![
@@ -392,23 +433,9 @@ mod tests {
             ]
         );
 
-        let scanned = pieces("SELECT * FROM shop AS x");
         assert_eq!(
-            resolve(&scanned).tables_at(scanned.len() - 1),
-            &[Name {
-                keyspace: None,
-                table: "shop".to_owned()
-            }]
-        );
-    }
-
-    #[test]
-    fn two_bare_table_names_in_a_row_stay_separate() {
-        let scanned = pieces("SELECT * FROM shop orders");
-
-        assert_eq!(
-            resolve(&scanned).tables_at(scanned.len() - 1),
-            &[
+            qualified("SELECT * FROM shop orders"),
+            vec![
                 Name {
                     keyspace: None,
                     table: "shop".to_owned()
@@ -417,7 +444,21 @@ mod tests {
                     keyspace: None,
                     table: "orders".to_owned()
                 }
-            ]
+            ],
+            "two bare names in a row are not fused"
+        );
+    }
+
+    #[test]
+    fn a_comment_between_the_dot_and_its_neighbour_still_qualifies() {
+        let scanned = pieces("SELECT * FROM shop /* c */ . orders");
+
+        assert_eq!(
+            resolve(&scanned).tables_at(scanned.len() - 1),
+            &[Name {
+                keyspace: Some("shop".to_owned()),
+                table: "orders".to_owned()
+            }]
         );
     }
 
