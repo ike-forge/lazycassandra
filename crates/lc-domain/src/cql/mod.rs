@@ -13,7 +13,7 @@ mod resolve;
 
 pub use complete::{Candidate, CandidateKind, Completion, suggest};
 pub use format::format;
-pub use resolve::{Analysis, Expect, Name, Role};
+pub use resolve::{Analysis, Context, Expect, Name, Role};
 
 use crate::style::{Segment, Token};
 use lex::Kind;

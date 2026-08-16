@@ -10,9 +10,9 @@
 //! This covers CQL's data statements — `SELECT`, `INSERT`, `UPDATE`,
 //! `DELETE`, `TRUNCATE`, `USE`, and `BEGIN … BATCH` over them — and its
 //! schema statements — `CREATE`/`ALTER`/`DROP` of `KEYSPACE` and `TABLE`,
-//! including `WITH` properties and column definitions. It leaves the
-//! module's only caller its own tests: `complete.rs` starts calling
-//! [`resolve`] once task 5 adds `context_at`.
+//! including `WITH` properties and column definitions. It also answers what
+//! a cursor sits on — [`context_at`] — which `highlight` and `suggest`
+//! start calling once tasks 6 and 8 land.
 
 use super::lex::{Kind, Piece};
 
@@ -102,15 +102,60 @@ impl Analysis {
     }
 }
 
+/// What a name typed at a cursor would be, and what tables are in scope
+/// there (design §5).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Context {
+    pub expects: Expect,
+    pub tables: Vec<Name>,
+}
+
+/// The context at `offset`, counted in characters from the start of the text
+/// `pieces` was scanned from.
+///
+/// A cursor inside an identifier takes that identifier's own expectation —
+/// the word being typed is the one being offered against. A cursor in
+/// whitespace takes the expectation the next name would carry.
+///
+/// Crate-internal like [`resolve`]: `Piece` is not part of the public API,
+/// so a caller outside `cql` has no scan to hand it and reaches this through
+/// `highlight` or `suggest` instead.
+#[must_use]
+#[allow(
+    dead_code,
+    reason = "context_at's first caller lands in task 6's highlight and task 8's suggest"
+)]
+pub(crate) fn context_at(pieces: &[Piece], offset: usize) -> Context {
+    let analysis = resolve(pieces);
+    let index = piece_at(pieces, offset);
+
+    Context {
+        expects: analysis.expects(index),
+        tables: analysis.tables_at(index.saturating_sub(1)).to_vec(),
+    }
+}
+
+/// The index of the piece `offset` falls inside, or one past the last piece
+/// where it is at the very end of the text.
+fn piece_at(pieces: &[Piece], offset: usize) -> usize {
+    let mut at = 0;
+
+    for (index, piece) in pieces.iter().enumerate() {
+        let len = piece.text.chars().count();
+        if offset < at + len {
+            return index;
+        }
+        at += len;
+    }
+
+    pieces.len()
+}
+
 /// `pieces` with every name given the meaning its position carries.
 ///
 /// Crate-internal, like [`Piece`] itself: a caller outside `cql` has no scan
 /// to hand it, and reaches this through `highlight` or `suggest` instead.
 #[must_use]
-#[allow(
-    dead_code,
-    reason = "resolve's first in-crate caller lands in task 5's context_at"
-)]
 pub(crate) fn resolve(pieces: &[Piece]) -> Analysis {
     let mut machine = Machine {
         tables: vec![Vec::new()],
@@ -125,10 +170,6 @@ pub(crate) fn resolve(pieces: &[Piece]) -> Analysis {
 
 /// What a statement's opening keyword decided about the rest of it.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "resolve's first in-crate caller lands in task 5's context_at"
-)]
 enum Verb {
     #[default]
     Unread,
@@ -147,10 +188,6 @@ enum Verb {
 /// that takes a column takes it the same way, and the verb only decides which
 /// clause comes first.
 #[derive(Debug, Default)]
-#[allow(
-    dead_code,
-    reason = "resolve's first in-crate caller lands in task 5's context_at"
-)]
 struct Machine {
     expect: Expect,
     /// The clause `expect` returns to once a value or an alias that
@@ -197,10 +234,6 @@ struct Machine {
     last_identifier: Option<usize>,
 }
 
-#[allow(
-    dead_code,
-    reason = "resolve's first in-crate caller lands in task 5's context_at"
-)]
 impl Machine {
     fn step(&mut self, piece: &Piece) {
         self.expects.push(self.expect);
@@ -427,10 +460,6 @@ impl Machine {
 }
 
 /// CQL folds an unquoted name and keeps a quoted one exactly.
-#[allow(
-    dead_code,
-    reason = "resolve's first in-crate caller lands in task 5's context_at"
-)]
 fn fold(text: &str) -> String {
     match text
         .strip_prefix('"')
@@ -932,6 +961,101 @@ mod tests {
                 if text.is_char_boundary(cut) {
                     let _ = resolve(&pieces(&text[..cut]));
                 }
+            }
+        }
+    }
+
+    /// The context at the `|` in `text`, which is removed before scanning.
+    fn context(text: &str) -> Context {
+        let offset = text.find('|').expect("a test marks its cursor");
+        let text = text.replace('|', "");
+
+        context_at(&pieces(&text), text[..offset].chars().count())
+    }
+
+    #[test]
+    fn a_cursor_in_a_select_list_expects_a_column_of_the_table_named_after_it() {
+        let at = context("SELECT id, na| FROM shop.orders");
+
+        assert_eq!(at.expects, Expect::Column);
+        assert_eq!(
+            at.tables,
+            vec![Name {
+                keyspace: Some("shop".to_owned()),
+                table: "orders".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_cursor_in_a_select_list_with_no_from_yet_has_no_tables() {
+        let at = context("SELECT co|");
+
+        assert_eq!(at.expects, Expect::Column);
+        assert!(at.tables.is_empty());
+    }
+
+    #[test]
+    fn a_cursor_after_from_expects_a_table() {
+        assert_eq!(context("SELECT * FROM |").expects, Expect::Table);
+        assert_eq!(context("SELECT * FROM ord|").expects, Expect::Table);
+    }
+
+    #[test]
+    fn a_cursor_after_use_expects_a_keyspace() {
+        assert_eq!(context("USE |").expects, Expect::Keyspace);
+    }
+
+    #[test]
+    fn a_cursor_in_an_insert_column_list_expects_a_column() {
+        let at = context("INSERT INTO shop.orders (i|");
+
+        assert_eq!(at.expects, Expect::Column);
+        assert_eq!(at.tables.len(), 1);
+    }
+
+    #[test]
+    fn a_cursor_after_set_expects_a_column() {
+        assert_eq!(context("UPDATE shop.orders SET |").expects, Expect::Column);
+    }
+
+    #[test]
+    fn a_cursor_at_the_start_of_the_buffer_expects_a_keyword() {
+        assert_eq!(context("|").expects, Expect::Keyword);
+        assert_eq!(context("sel|").expects, Expect::Keyword);
+    }
+
+    #[test]
+    fn a_cursor_past_a_value_expects_no_name() {
+        assert_eq!(
+            context("SELECT * FROM t WHERE id = |").expects,
+            Expect::Value
+        );
+    }
+
+    #[test]
+    fn a_cursor_right_after_a_semicolon_is_the_next_statements_fresh_scope() {
+        let at = context("SELECT * FROM a;| SELECT * FROM b");
+
+        assert_eq!(at.expects, Expect::Keyword);
+    }
+
+    #[test]
+    fn a_multi_byte_identifier_is_offset_in_characters_not_bytes() {
+        // "café" is 4 characters but 5 bytes; a byte offset landing between
+        // the 'é' and the space that follows would either panic slicing the
+        // buffer or land on the wrong piece.
+        let at = context("SELECT * FROM café|");
+
+        assert_eq!(at.expects, Expect::Table);
+    }
+
+    #[test]
+    fn every_offset_of_every_statement_in_the_grammar_has_a_context() {
+        for text in CORPUS {
+            let scanned = pieces(text);
+            for offset in 0..=text.chars().count() {
+                let _ = context_at(&scanned, offset);
             }
         }
     }
