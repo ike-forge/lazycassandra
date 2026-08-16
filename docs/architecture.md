@@ -16,11 +16,16 @@ list panels, and `ctrl-e` over a loaded Contents grid opens a form that writes
 the fetched rows or the whole table to a CSV or JSON file — the one path in
 the program that pages a statement past its first round trip (§5,
 `execute_paged`). The Queries buffer is now a CQL editor rather than a text
-box: `cql/` scans the buffer once and three readers share that scan —
+box: `cql/` scans the buffer once and readers share that scan —
 highlighting into the `Token` path §6 has carried unused since the themes
 slice, a `ctrl-f` that lays a statement out, and a completion popup over CQL's
 keywords and the cluster's own keyspaces and tables
-(docs/superpowers/specs/2026-08-16-query-editor-design.md).
+(docs/superpowers/specs/2026-08-16-query-editor-design.md). `cql/resolve.rs`
+adds a semantic pass over that scan — every identifier gets a role and every
+statement gets the tables it names — read by the highlighter, completion, and
+the grid, so a keyspace colours as a keyspace, completion offers columns, and
+a typed statement's key columns colour in the grid
+(docs/superpowers/specs/2026-08-16-cql-semantics-design.md).
 **Last updated:** 2026-08-16
 
 ---

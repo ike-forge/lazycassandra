@@ -75,10 +75,9 @@ From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-
   (docs/superpowers/specs/2026-08-16-query-editor-design.md §5.3) — so the log
   has somewhere to live when it lands.
 - Undo and redo, selection, clipboard, and word motions. The buffer has none.
-- Column completion. Keyspaces, tables and keywords are offered
-  (docs/superpowers/specs/2026-08-16-query-editor-design.md §5.2); columns are in
-  `Schema` too, but offering them means knowing which table the cursor's clause
-  is in, which is a parser question.
+- ~~Column completion.~~ Closed by
+  docs/superpowers/specs/2026-08-16-cql-semantics-design.md §6: the cursor's
+  context now says which table is in scope without a parser.
 - A CQL parser, and what waits on it: running the statement under the cursor,
   splitting a buffer on statement boundaries, and classifying a statement by
   more than its first verb. `ctrl-f` lays the whole buffer out for the same
