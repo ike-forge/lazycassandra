@@ -242,7 +242,6 @@ struct Machine {
     /// after `ADD`. Read by `identifier` to flip `Expect::Column` to
     /// `Expect::Type` once the name is consumed.
     alternating: bool,
-    depth: usize,
     roles: Vec<Option<Role>>,
     expects: Vec<Expect>,
     statement: Vec<usize>,
@@ -401,12 +400,8 @@ impl Machine {
                     if self.verb == Verb::Schema {
                         self.alternating = true;
                     }
-                    self.depth += 1;
                 }
-                ')' => {
-                    self.depth = self.depth.saturating_sub(1);
-                    self.alternating = false;
-                }
+                ')' => self.alternating = false,
                 ',' => self.expect = self.base,
                 ';' => self.end_statement(),
                 '=' | '<' | '>' | '!' => self.expect = Expect::Value,
@@ -491,7 +486,6 @@ impl Machine {
         self.base = Expect::Keyword;
         self.verb = Verb::Unread;
         self.alternating = false;
-        self.depth = 0;
         self.pending_keyspace = None;
         self.last_identifier = None;
         self.has_content = false;
