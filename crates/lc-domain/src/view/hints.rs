@@ -196,10 +196,11 @@ const SEARCH_GLOBAL: &[Binding] = &[
 ];
 
 /// Named only while a popup is up, which is the only frame in which it is
-/// true: `tab` moves focus every other one, and the global hint that says so
-/// is dropped for exactly these frames (query editor design §5.5).
+/// true: `tab` moves focus every other one, and `⏎` splits the line, and the
+/// hints that say so are dropped for exactly these frames
+/// (query editor design §5.5).
 const COMPLETE: Binding = Binding {
-    keys: &[Stroke::key(Key::Tab)],
+    keys: &[Stroke::key(Key::Tab), Stroke::key(Key::Enter)],
     action: "complete",
 };
 
@@ -301,10 +302,13 @@ pub(crate) fn bar(state: &State) -> HintBar {
         global.push(rendered(&QUIT));
     }
 
+    // `⏎ newline` is dropped for the frames `⏎` accepts instead, the same
+    // way the global `tab panel` hint is above: one key, one true hint.
     let mut panel: Vec<Hint> = state
         .focus()
         .hints()
         .iter()
+        .filter(|binding| !completing || !binding.keys.contains(&Stroke::key(Key::Enter)))
         .map(|binding| Hint {
             liveness: liveness(state, binding),
             ..rendered(binding)

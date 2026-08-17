@@ -5,9 +5,10 @@
 //! keyspaces and tables `Schema` already holds, alongside CQL's fixed grammar
 //! (design §5).
 
-use super::keywords::KEYWORDS;
-use super::lex::pieces;
+use super::keywords::{KEYWORDS, PROPERTIES, TYPES};
+use super::lex::{Kind, Piece, pieces};
 use super::resolve::{Context, Expect, Name, context_at};
+use super::templates::{TEMPLATES, Template};
 use crate::editor::Editor;
 use crate::model::{Schema, Table};
 
@@ -28,6 +29,28 @@ pub enum CandidateKind {
     Keyspace,
     Table,
     Column,
+    /// A whole statement's shape rather than one word of it.
+    Template,
+    /// An option name in a `WITH` clause — `replication`, `compaction`.
+    Property,
+}
+
+/// What accepting a candidate does beyond typing its text.
+///
+/// An enum rather than two optional fields: a caret and a `FROM` clause are
+/// alternatives, never both, and no candidate can be built holding one of each
+/// (conventions.md §1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Then {
+    /// The cursor lands after what was written, which is what a name wants.
+    Nothing,
+    /// The cursor steps back to this character offset into the text — a
+    /// template's first hole.
+    Caret(usize),
+    /// The statement names no table, so the one this column lives in is
+    /// written as a `FROM` clause at the end of it
+    /// (docs/superpowers/specs/2026-08-17-completion-ranking-design.md §4).
+    From(Name),
 }
 
 /// One offer.
@@ -35,12 +58,14 @@ pub enum CandidateKind {
 /// `label` is what the popup draws and `text` is what accepting types. They
 /// differ for a column offered with no table in scope, which is shown
 /// qualified so two `id` columns are told apart but typed bare, because
-/// `SELECT shop.orders.id` is not CQL (design §6).
+/// `SELECT shop.orders.id` is not CQL (design §6) — and for a template, whose
+/// label draws the holes its text leaves empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub text: String,
     pub label: String,
     pub kind: CandidateKind,
+    then: Then,
 }
 
 impl Candidate {
@@ -52,6 +77,16 @@ impl Candidate {
             label: text.clone(),
             text,
             kind,
+            then: Then::Nothing,
+        }
+    }
+
+    fn template(template: Template) -> Self {
+        Self {
+            text: template.text(),
+            label: template.label.to_owned(),
+            kind: CandidateKind::Template,
+            then: Then::Caret(template.caret()),
         }
     }
 }
@@ -67,6 +102,11 @@ pub struct Completion {
     selected: usize,
     /// Characters before the cursor that accepting replaces.
     replaced: usize,
+    /// Where the statement under the cursor ends, in characters from the start
+    /// of the buffer — where a [`Then::From`] clause is written. Measured
+    /// against the text the offers were made against, which is why accepting
+    /// writes there before it rewrites the word under the cursor.
+    statement_end: usize,
 }
 
 impl Completion {
@@ -99,12 +139,25 @@ impl Completion {
     /// lines, so the invariants `Editor` holds are held here too — there is no
     /// second way to change the buffer (design §5.4).
     pub fn accept(&self, editor: &mut Editor) {
+        let candidate = &self.candidates[self.selected];
+
+        // First, while `statement_end` still describes the text it was
+        // measured against: the word being rewritten is behind it, so the
+        // clause lands in the same place either way, and doing it second would
+        // mean tracking how much the rewrite moved everything after it.
+        if let Then::From(table) = &candidate.then {
+            editor.insert_at(self.statement_end, &format!(" FROM {}", qualify(table)));
+        }
+
         for _ in 0..self.replaced {
             editor.backspace();
         }
+        editor.write(&candidate.text);
 
-        for character in self.candidates[self.selected].text.chars() {
-            editor.insert(character);
+        if let Then::Caret(caret) = candidate.then {
+            for _ in caret..candidate.text.chars().count() {
+                editor.left();
+            }
         }
     }
 }
@@ -130,17 +183,35 @@ pub fn suggest(
     }
 
     let text = editor.text();
-    let context = context_at(&pieces(&text), offset_of(editor));
+    let scanned = pieces(&text);
+    let offset = editor.offset();
+    let context = context_at(&scanned, offset);
 
     let candidates = match (qualifier, context.expects) {
         (Some(qualifier), Expect::Column) => {
             columns_of(schema, &qualified(&context, qualifier), prefix)
         }
-        (Some(qualifier), _) => tables_of(schema, qualifier, prefix),
+        // A `keyspace.` reaches that keyspace's tables, and only where a name
+        // is what the position takes at all: `WHERE id = shop.` is a value,
+        // and the tables of `shop` are not one.
+        (Some(qualifier), Expect::Keyword | Expect::Table) => tables_of(schema, qualifier, prefix),
+        (Some(_), _) => Vec::new(),
         (None, Expect::Column) => columns(schema, &context, keyspace, prefix),
         (None, Expect::Table) => names_first(schema, keyspace, prefix),
         (None, Expect::Keyspace) => keyspaces(schema, prefix),
-        (None, _) => unqualified(schema, keyspace, prefix),
+        (None, Expect::Type) => types(prefix),
+        (None, Expect::Property) => properties(prefix),
+        // A value, an alias, and a statement the machine stopped following
+        // all take a name the schema has never heard of. Keywords survive
+        // because `LIMIT` and `ALLOW` come after a value and `GRANT SEL` is
+        // how a permission gets typed; a keyspace list there is noise.
+        (None, Expect::Alias | Expect::Value | Expect::Nothing) => {
+            keywords(prefix).take(MOST).collect()
+        }
+        (None, Expect::Keyword) => {
+            let start = at_statement_start(&scanned, offset - word.chars().count());
+            unqualified(schema, keyspace, prefix, start)
+        }
     };
 
     // A list whose only offers are the word already typed adds nothing, and a
@@ -160,31 +231,91 @@ pub fn suggest(
         candidates,
         selected: 0,
         replaced: prefix.chars().count(),
+        statement_end: statement_end(&scanned, offset),
     })
 }
 
-/// Keywords first, then the keyspaces, then the tables of the one on screen.
+/// Keywords first, then the statement shapes, then the keyspaces, then the
+/// tables of the one on screen.
 ///
 /// Grammar first because it is what the shortest prefix is most often
 /// reaching for — `se` is `SELECT` long before it is a table called `sessions`
 /// — and because a keyword is the same wherever the cursor is, while a name
 /// depends on a panel the user may not be looking at (design §5.2).
-fn unqualified(schema: Option<&Schema>, keyspace: Option<&str>, prefix: &str) -> Vec<Candidate> {
-    let keywords = keywords(prefix);
+fn unqualified(
+    schema: Option<&Schema>,
+    keyspace: Option<&str>,
+    prefix: &str,
+    at_start: bool,
+) -> Vec<Candidate> {
+    let templates = if at_start {
+        templates(prefix)
+    } else {
+        Vec::new()
+    };
 
-    let keyspaces = schema.into_iter().flat_map(|schema| {
-        schema
-            .keyspaces
-            .keys()
-            .filter(|name| matches(name, prefix))
-            .map(|name| Candidate::plain(name.clone(), CandidateKind::Keyspace))
-    });
-
+    let keyspaces = keyspaces(schema, prefix);
     let tables = keyspace
         .into_iter()
         .flat_map(|keyspace| tables_of(schema, keyspace, prefix));
 
-    keywords.chain(keyspaces).chain(tables).take(MOST).collect()
+    ahead(keywords(prefix), templates)
+        .into_iter()
+        .chain(keyspaces)
+        .chain(tables)
+        .take(MOST)
+        .collect()
+}
+
+/// `leading` first, but never so much of it that `trailing` cannot be seen.
+///
+/// The popup is a cap and not a scroll (design §5.3), so an unbounded first
+/// kind is a second kind the user has no way to reach: `a` alone matches
+/// twelve keywords, which would hide `ALTER TABLE <>` entirely. Half the
+/// popup is reserved, which is more than any trailing list here ever fills
+/// (completion ranking design §2.1).
+fn ahead(leading: impl Iterator<Item = Candidate>, trailing: Vec<Candidate>) -> Vec<Candidate> {
+    let room = MOST - trailing.len().min(MOST / 2);
+
+    leading.take(room).chain(trailing).take(MOST).collect()
+}
+
+/// The statement shapes a prefix opens, offered only where a statement begins.
+///
+/// A prefix that spells the whole opening keyword offers none: the user has
+/// typed the word the shape starts with, and a popup over a finished word is
+/// the papercut [`suggest`]'s own guard exists to prevent (design §5.1).
+fn templates(prefix: &str) -> Vec<Candidate> {
+    TEMPLATES
+        .iter()
+        .filter(|template| {
+            template.keyword().len() > prefix.len() && matches(template.keyword(), prefix)
+        })
+        .map(|template| Candidate::template(*template))
+        .collect()
+}
+
+/// The types a column definition takes, and nothing else: `INSERT` and `INTO`
+/// share a prefix with `INT` and are not types, and a position that accepts
+/// only a type should not offer them (completion ranking design §2).
+fn types(prefix: &str) -> Vec<Candidate> {
+    TYPES
+        .iter()
+        .filter(|word| matches(word, prefix))
+        .map(|word| Candidate::plain(*word, CandidateKind::Keyword))
+        .take(MOST)
+        .collect()
+}
+
+/// The options a `WITH` clause takes. Lower case, which is how Cassandra
+/// spells them and how `system_schema` stores them.
+fn properties(prefix: &str) -> Vec<Candidate> {
+    PROPERTIES
+        .iter()
+        .filter(|word| matches(word, prefix))
+        .map(|word| Candidate::plain(*word, CandidateKind::Property))
+        .take(MOST)
+        .collect()
 }
 
 fn tables_of(schema: Option<&Schema>, keyspace: &str, prefix: &str) -> Vec<Candidate> {
@@ -235,29 +366,34 @@ fn keyspaces(schema: Option<&Schema>, prefix: &str) -> Vec<Candidate> {
         .collect()
 }
 
-/// The columns a select list can name, offered from the one table in scope
-/// or, where the statement names none or several, from every table there is
-/// (design §6) — and then the keywords, which no column position may hide.
-///
-/// A select list and a `WHERE` list both stay `Expect::Column` until a
-/// keyword ends them, so keywords offered only elsewhere would make `FROM`
+/// The columns a select list can name, and the keywords no column position
+/// may hide: a select list and a `WHERE` list both stay `Expect::Column` until
+/// a keyword ends them, so keywords offered only elsewhere would make `FROM`
 /// and `LIMIT` untypeable through the popup.
+///
+/// Which of the two leads is the statement's to say. With one table in scope
+/// the grammar has already narrowed the columns to a handful that belong, and
+/// they lead. With none — or with several, which narrows nothing — the offer
+/// is every column in the cluster, and a keyword is the likelier thing a short
+/// prefix was reaching for: `SELECT up` is `UPDATE` before it is some table's
+/// `updated_at` (completion ranking design §2).
 fn columns(
     schema: Option<&Schema>,
     context: &Context,
     keyspace: Option<&str>,
     prefix: &str,
 ) -> Vec<Candidate> {
-    let columns = match context.tables.as_slice() {
-        [table] => columns_of(schema, &resolved(table, keyspace), prefix),
-        _ => every_column(schema, prefix),
-    };
-
-    columns
-        .into_iter()
-        .chain(keywords(prefix))
-        .take(MOST)
-        .collect()
+    match context.tables.as_slice() {
+        [table] => columns_of(schema, &resolved(table, keyspace), prefix)
+            .into_iter()
+            .chain(keywords(prefix))
+            .take(MOST)
+            .collect(),
+        tables => ahead(
+            keywords(prefix),
+            every_column(schema, prefix, tables.is_empty()),
+        ),
+    }
 }
 
 /// A table's columns in the order vision.md §2 reads them: partition,
@@ -280,12 +416,19 @@ fn columns_of(schema: Option<&Schema>, table: &Name, prefix: &str) -> Vec<Candid
 /// `id` columns apart, and accepting still types the bare name, because a
 /// dotted column is not CQL (design §6).
 ///
+/// `orphaned` says the statement names no table at all, in which case
+/// accepting also writes the `FROM` clause that puts the column in scope —
+/// the label already said which table it came from, and typing the name alone
+/// would leave a statement that cannot run. Where the statement names
+/// *several* tables it names the wrong one for this column but a `FROM` is not
+/// missing, so nothing is added (completion ranking design §4).
+///
 /// In [`Schema::keyspaces_in_display_order`], not the map's own order: the
 /// cluster's `system*` keyspaces sort early and hold enough tables between
 /// them to fill the `MOST` cap on their own, which would leave a user with
 /// none of their own columns offered — the same precedence the tree already
 /// draws them in (view/tables.rs).
-fn every_column(schema: Option<&Schema>, prefix: &str) -> Vec<Candidate> {
+fn every_column(schema: Option<&Schema>, prefix: &str, orphaned: bool) -> Vec<Candidate> {
     schema
         .into_iter()
         .flat_map(Schema::keyspaces_in_display_order)
@@ -298,9 +441,25 @@ fn every_column(schema: Option<&Schema>, prefix: &str) -> Vec<Candidate> {
             label: format!("{keyspace}.{table}.{name}"),
             text: name,
             kind: CandidateKind::Column,
+            then: if orphaned {
+                Then::From(Name {
+                    keyspace: Some(keyspace),
+                    table,
+                })
+            } else {
+                Then::Nothing
+            },
         })
         .take(MOST)
         .collect()
+}
+
+/// A table as CQL writes it, which is what a `FROM` clause takes.
+fn qualify(table: &Name) -> String {
+    match &table.keyspace {
+        Some(keyspace) => format!("{keyspace}.{}", table.table),
+        None => table.table.clone(),
+    }
 }
 
 fn column_names(table: &Table) -> impl Iterator<Item = String> + '_ {
@@ -372,22 +531,66 @@ fn word_before(editor: &Editor) -> String {
         .collect()
 }
 
-/// The cursor as a character offset into the buffer's text, which is what
-/// `context_at` is indexed by.
+/// Where the statement holding `offset` ends, in characters — at its `;`, or
+/// at the last thing typed in it, whichever comes first.
 ///
-/// Characters, not bytes: a multi-byte character before the cursor must not
-/// shift where the resolver thinks the cursor sits.
-fn offset_of(editor: &Editor) -> usize {
-    let cursor = editor.cursor();
-    let before: usize = editor
-        .lines()
-        .iter()
-        .take(cursor.line)
-        // The newline each line is followed by is a character of the text.
-        .map(|line| line.chars().count() + 1)
-        .sum();
+/// Never before `offset`, and never inside the trailing whitespace: a `FROM`
+/// clause written here has to land after the word being completed and up
+/// against the text rather than adrift of it.
+fn statement_end(scanned: &[Piece], offset: usize) -> usize {
+    let mut at = 0;
+    let mut end = offset;
 
-    before + cursor.column
+    for piece in scanned {
+        let after = at + piece.text.chars().count();
+
+        if after > offset {
+            match piece.kind {
+                Kind::Whitespace | Kind::Comment => {}
+                Kind::Punctuation => match piece.text.chars().position(|c| c == ';') {
+                    Some(index) => return end.max(at + index),
+                    None => end = after,
+                },
+                Kind::Keyword | Kind::Identifier | Kind::Literal => end = after,
+            }
+        }
+
+        at = after;
+    }
+
+    end
+}
+
+/// Whether nothing but whitespace and comments stands between the start of the
+/// statement and the word being completed.
+///
+/// What gates the templates: a shape replaces a whole statement, so it is only
+/// ever an offer where there is no statement yet (templates.rs).
+fn at_statement_start(scanned: &[Piece], word_start: usize) -> bool {
+    let mut fresh = true;
+    let mut at = 0;
+
+    for piece in scanned {
+        if at >= word_start {
+            break;
+        }
+
+        match piece.kind {
+            Kind::Whitespace | Kind::Comment => {}
+            // A `;` starts a statement over; anything beside it in the same
+            // run — `);` — was part of the one that ended.
+            Kind::Punctuation => {
+                for character in piece.text.chars() {
+                    fresh = character == ';';
+                }
+            }
+            Kind::Keyword | Kind::Identifier | Kind::Literal => fresh = false,
+        }
+
+        at += piece.text.chars().count();
+    }
+
+    fresh
 }
 
 fn is_name(character: char) -> bool {
@@ -769,7 +972,7 @@ mod tests {
         let system: Vec<&str> = names.iter().map(String::as_str).collect();
         let schema = schema_of(&[("system_auth", &system), ("zoo", &["visits"])]);
 
-        let labels: Vec<String> = every_column(Some(&schema), "id")
+        let labels: Vec<String> = every_column(Some(&schema), "id", true)
             .into_iter()
             .map(|candidate| candidate.label)
             .collect();
@@ -785,18 +988,22 @@ mod tests {
     fn a_select_list_with_no_table_offers_every_column_qualified() {
         let schema = schema();
         let mut editor = typed("SELECT i");
-        let completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
-        let column = completion
+        let mut completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
+        let at = completion
             .candidates()
             .iter()
-            .find(|candidate| candidate.kind == CandidateKind::Column)
+            .position(|candidate| candidate.kind == CandidateKind::Column)
             .expect("columns are offered with no table in scope");
+        let column = &completion.candidates()[at];
 
         assert_eq!(column.label, "shop.orders.id", "the label says which table");
         assert_eq!(column.text, "id", "accepting types CQL, not the label");
 
+        for _ in 0..at {
+            completion.next();
+        }
         completion.accept(&mut editor);
-        assert_eq!(editor.text(), "SELECT id");
+        assert_eq!(editor.text(), "SELECT id FROM shop.orders");
     }
 
     #[test]
@@ -820,6 +1027,231 @@ mod tests {
             column.label, "shop.orders.total",
             "more than one table in scope is treated as none"
         );
+    }
+
+    /// The papercut from the screenshot in the design's §6: `SELECT up` put
+    /// some table's `updated_at` above `UPDATE`, on the strength of a table
+    /// the statement had not named and the user had not looked at.
+    #[test]
+    fn a_select_list_with_no_table_leads_with_the_grammar() {
+        let schema = schema();
+        let completion = suggest(&typed("SELECT to"), Some(&schema), Some("shop")).expect("offers");
+
+        assert_eq!(
+            completion.candidates().first().map(|c| c.kind),
+            Some(CandidateKind::Keyword),
+            "with no table named, a keyword is the likelier reach"
+        );
+        assert!(
+            completion
+                .candidates()
+                .iter()
+                .any(|candidate| candidate.text == "total"),
+            "and the columns are still reachable behind it"
+        );
+    }
+
+    #[test]
+    fn accepting_a_column_with_no_table_in_scope_writes_the_clause_that_puts_it_in_scope() {
+        let schema = schema();
+        let mut editor = typed("SELECT to");
+        let mut completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
+        let at = completion
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.text == "total")
+            .expect("total is offered");
+
+        for _ in 0..at {
+            completion.next();
+        }
+        completion.accept(&mut editor);
+
+        assert_eq!(editor.text(), "SELECT total FROM shop.orders");
+        assert_eq!(
+            editor.cursor().column,
+            "SELECT total".chars().count(),
+            "the cursor stays on the select list, not on the clause it wrote"
+        );
+    }
+
+    /// The clause belongs to the statement the cursor is in, not to the end of
+    /// the buffer: written past a `;` it would land in the next statement.
+    #[test]
+    fn the_clause_lands_at_the_end_of_the_statement_the_cursor_is_in() {
+        let schema = schema();
+        let tail = "; TRUNCATE shop.customers";
+        let mut editor = typed(&format!("SELECT to{tail}"));
+        for _ in 0..tail.chars().count() {
+            editor.left();
+        }
+        let mut completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
+        let at = completion
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.text == "total")
+            .expect("total is offered");
+
+        for _ in 0..at {
+            completion.next();
+        }
+        completion.accept(&mut editor);
+
+        assert_eq!(
+            editor.text(),
+            "SELECT total FROM shop.orders; TRUNCATE shop.customers"
+        );
+    }
+
+    #[test]
+    fn more_than_one_table_in_scope_writes_no_clause_because_none_is_missing() {
+        let schema = schema();
+        let text = "SELECT to FROM shop.orders, shop.order_items";
+        let suffix = " FROM shop.orders, shop.order_items";
+        let mut editor = typed(text);
+        for _ in 0..suffix.chars().count() {
+            editor.left();
+        }
+        let mut completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
+        let at = completion
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.text == "total")
+            .expect("total is offered");
+
+        for _ in 0..at {
+            completion.next();
+        }
+        completion.accept(&mut editor);
+
+        assert_eq!(editor.text(), text.replace("SELECT to", "SELECT total"));
+    }
+
+    fn labels(text: &str, keyspace: Option<&str>) -> Vec<String> {
+        suggest(&typed(text), Some(&schema()), keyspace)
+            .map(|completion| {
+                completion
+                    .candidates()
+                    .iter()
+                    .map(|candidate| candidate.label.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_statement_start_offers_the_shapes_its_prefix_opens() {
+        assert!(labels("sel", Some("shop")).contains(&"SELECT <> FROM <>".to_owned()));
+        assert!(labels("upd", Some("shop")).contains(&"UPDATE <> SET <> WHERE <>".to_owned()));
+    }
+
+    /// A dozen keywords start with `a`, which is more than the popup holds:
+    /// without a reserved slot the one shape `a` opens would never be seen.
+    #[test]
+    fn keywords_never_crowd_the_shapes_out_of_the_popup() {
+        assert!(labels("a", Some("shop")).contains(&"ALTER TABLE <> ADD <> <>".to_owned()));
+    }
+
+    #[test]
+    fn a_shape_is_offered_only_where_there_is_no_statement_yet() {
+        assert!(
+            !labels("SELECT sel", Some("shop"))
+                .iter()
+                .any(|label| label.contains("<>")),
+            "a shape replaces a statement, and this one has begun"
+        );
+        assert!(
+            !labels("SELECT * FROM shop.orders; sel", Some("shop")).is_empty(),
+            "the statement after a `;` is a fresh one"
+        );
+        assert!(
+            labels("SELECT * FROM shop.orders; sel", Some("shop"))
+                .contains(&"SELECT <> FROM <>".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_prefix_spelling_the_whole_opening_keyword_offers_no_shape() {
+        assert!(
+            !labels("select", None)
+                .iter()
+                .any(|label| label.contains("<>")),
+            "the word is typed; a popup over a finished word is the papercut"
+        );
+    }
+
+    #[test]
+    fn accepting_a_shape_types_it_whole_and_lands_on_its_first_hole() {
+        let mut editor = typed("sel");
+        let mut completion = suggest(&editor, None, None).expect("offers");
+        let at = completion
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.kind == CandidateKind::Template)
+            .expect("the SELECT shape is offered");
+
+        for _ in 0..at {
+            completion.next();
+        }
+        completion.accept(&mut editor);
+
+        assert_eq!(editor.text(), "SELECT  FROM ;");
+        assert_eq!(
+            editor.cursor().column,
+            "SELECT ".chars().count(),
+            "the cursor waits where the select list goes"
+        );
+    }
+
+    #[test]
+    fn a_batch_shape_is_written_across_the_lines_it_needs() {
+        let mut editor = typed("beg");
+        let mut completion = suggest(&editor, None, None).expect("offers");
+        let at = completion
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.kind == CandidateKind::Template)
+            .expect("the BEGIN BATCH shape is offered");
+
+        for _ in 0..at {
+            completion.next();
+        }
+        completion.accept(&mut editor);
+
+        assert_eq!(editor.lines(), ["BEGIN BATCH", "", "APPLY BATCH;"]);
+        assert_eq!(
+            editor.cursor(),
+            crate::editor::Position { line: 1, column: 0 }
+        );
+    }
+
+    #[test]
+    fn a_value_position_offers_grammar_and_no_names() {
+        let offered = offers("SELECT * FROM shop.orders WHERE id = sh", Some("shop"));
+
+        assert!(
+            !offered.contains(&"shop".to_owned()),
+            "a keyspace is not a value"
+        );
+    }
+
+    #[test]
+    fn a_column_definition_offers_types_and_not_the_keywords_that_share_their_prefix() {
+        let offered = offers("CREATE TABLE shop.t (id in", Some("shop"));
+
+        assert!(offered.contains(&"INT".to_owned()));
+        assert!(offered.contains(&"INET".to_owned()));
+        assert!(
+            !offered.contains(&"INSERT".to_owned()) && !offered.contains(&"INTO".to_owned()),
+            "neither is a type, and this position takes nothing else"
+        );
+    }
+
+    #[test]
+    fn a_with_clause_offers_the_options_it_takes() {
+        let offered = offers("CREATE TABLE shop.t (id uuid) WITH comp", Some("shop"));
+
+        assert_eq!(offered, ["compaction".to_owned(), "compression".to_owned()]);
     }
 
     #[test]

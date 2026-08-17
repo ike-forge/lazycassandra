@@ -76,6 +76,60 @@ impl Editor {
         self.settle();
     }
 
+    /// Writes `text` at the cursor, `\n` splitting the line.
+    ///
+    /// What `insert` and `insert_newline` are between them, for a caller that
+    /// has a string rather than a keystroke.
+    pub fn write(&mut self, text: &str) {
+        for character in text.chars() {
+            if character == '\n' {
+                self.insert_newline();
+            } else {
+                self.insert(character);
+            }
+        }
+    }
+
+    /// Writes `text` at `offset` characters into the buffer, leaving the
+    /// cursor on the character it was already on.
+    ///
+    /// The one edit that writes somewhere other than the cursor: accepting a
+    /// column offered with no table in scope also writes the `FROM` clause
+    /// that makes it resolve, and that belongs at the end of the statement
+    /// (docs/superpowers/specs/2026-08-17-completion-ranking-design.md §4).
+    ///
+    /// `offset` is at or after the cursor — the only place a clause completing
+    /// the statement under it can go — which is what makes restoring the saved
+    /// cursor right rather than approximate: nothing was written before it to
+    /// shift it.
+    pub fn insert_at(&mut self, offset: usize, text: &str) {
+        debug_assert!(
+            offset >= self.offset(),
+            "an edit before the cursor moves it"
+        );
+
+        let cursor = self.cursor;
+        self.cursor = self.position_of(offset);
+        self.write(text);
+        self.cursor = cursor;
+        self.settle();
+    }
+
+    /// The cursor as a character offset into [`Self::text`].
+    ///
+    /// Characters, not bytes: a multi-byte character before the cursor must
+    /// not shift where a caller counting the buffer's text thinks it sits.
+    #[must_use]
+    pub fn offset(&self) -> usize {
+        self.lines
+            .iter()
+            .take(self.cursor.line)
+            // The newline each line is followed by is a character of the text.
+            .map(|line| line.chars().count() + 1)
+            .sum::<usize>()
+            + self.cursor.column
+    }
+
     /// Replaces the whole buffer, cursor at the end of it.
     ///
     /// Both invariants survive by construction: `split` on a `&str` always
@@ -203,6 +257,26 @@ impl Editor {
         self.cursor.column = self.desired_column.min(self.line_len());
     }
 
+    /// [`Self::offset`] read backwards, clamped to the end of the buffer so
+    /// an offset past it lands somewhere the cursor invariant allows.
+    fn position_of(&self, offset: usize) -> Position {
+        let mut left = offset;
+
+        for (line, text) in self.lines.iter().enumerate() {
+            let len = text.chars().count();
+            if left <= len {
+                return Position { line, column: left };
+            }
+            left -= len + 1;
+        }
+
+        // `lines` is never empty, so this is the end of a real line.
+        Position {
+            line: self.lines.len() - 1,
+            column: self.lines[self.lines.len() - 1].chars().count(),
+        }
+    }
+
     /// Characters on the cursor's line, which is also the largest column the
     /// cursor may hold on it.
     fn line_len(&self) -> usize {
@@ -248,6 +322,71 @@ mod tests {
             }
         }
         editor
+    }
+
+    #[test]
+    fn the_cursors_offset_counts_the_line_breaks_it_is_past() {
+        let mut editor = typed("one\ntwo");
+
+        assert_eq!(editor.offset(), "one\ntwo".chars().count());
+
+        editor.line_start();
+        assert_eq!(editor.offset(), "one\n".chars().count());
+    }
+
+    #[test]
+    fn an_offset_counts_characters_rather_than_bytes() {
+        let editor = typed("café");
+
+        assert_eq!(editor.offset(), 4, "four characters, five bytes");
+        assert_eq!(editor.position_of(4), Position { line: 0, column: 4 });
+    }
+
+    #[test]
+    fn writing_at_an_offset_leaves_the_cursor_where_it_was() {
+        let mut editor = typed("SELECT id");
+        let offset = editor.offset();
+
+        editor.insert_at(offset, " FROM shop.orders");
+
+        assert_eq!(editor.text(), "SELECT id FROM shop.orders");
+        assert_eq!(editor.cursor(), Position { line: 0, column: 9 });
+    }
+
+    #[test]
+    fn writing_at_an_offset_past_the_cursor_leaves_what_follows_it_alone() {
+        let mut editor = typed("SELECT id; TRUNCATE t");
+        at(&mut editor, 0, 9);
+
+        editor.insert_at(9, " FROM shop.orders");
+
+        assert_eq!(editor.text(), "SELECT id FROM shop.orders; TRUNCATE t");
+        assert_eq!(editor.cursor(), Position { line: 0, column: 9 });
+    }
+
+    #[test]
+    fn writing_at_an_offset_past_the_end_of_the_buffer_lands_at_its_end() {
+        let mut editor = typed("SELECT");
+
+        editor.insert_at(99, "!");
+
+        assert_eq!(editor.text(), "SELECT!");
+    }
+
+    #[test]
+    fn writing_a_string_splits_the_line_on_every_break_in_it() {
+        let mut editor = Editor::default();
+
+        editor.write("BEGIN BATCH\n\nAPPLY BATCH;");
+
+        assert_eq!(editor.lines(), ["BEGIN BATCH", "", "APPLY BATCH;"]);
+        assert_eq!(
+            editor.cursor(),
+            Position {
+                line: 2,
+                column: 12
+            }
+        );
     }
 
     /// Places the cursor directly, so these tests do not depend on motions.

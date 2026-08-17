@@ -235,10 +235,13 @@ fn completion(completion: &Completion) -> CompletionView {
             .map(|candidate| CompletionRow {
                 text: candidate.label.clone(),
                 token: match candidate.kind {
-                    CandidateKind::Keyword => Token::Keyword,
                     CandidateKind::Keyspace => Token::Keyspace,
                     CandidateKind::Table => Token::Table,
-                    CandidateKind::Column => Token::Reference,
+                    // A shape is grammar with holes in it, and a `WITH`
+                    // option is a name the schema holds — each drawn as the
+                    // thing it is one of.
+                    CandidateKind::Keyword | CandidateKind::Template => Token::Keyword,
+                    CandidateKind::Column | CandidateKind::Property => Token::Reference,
                 },
             })
             .collect(),
@@ -596,24 +599,23 @@ mod tests {
         let PanelBody::Editor { completion, .. } = &body(&state, Panel::Queries) else {
             panic!("the Queries panel is always an editor");
         };
-        let row = completion
+        let at = completion
             .as_ref()
             .expect("offers")
             .rows
-            .first()
-            .expect("shop.orders.id is offered");
+            .iter()
+            .position(|row| row.text == "shop.orders.id")
+            .expect("the popup row draws the label, not the bare column name");
 
-        assert_eq!(
-            row.text, "shop.orders.id",
-            "the popup row draws the label, not the bare column name"
-        );
-
+        for _ in 0..at {
+            state.queries.step(true);
+        }
         state.queries.edit(Key::Tab, 0);
 
         assert_eq!(
             state.queries.text(),
-            "SELECT id",
-            "accepting types the bare column name, not the label"
+            "SELECT id FROM shop.orders",
+            "accepting types the bare column name, and the clause that puts it in scope"
         );
     }
 

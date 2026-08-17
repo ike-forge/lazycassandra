@@ -25,8 +25,12 @@ adds a semantic pass over that scan — every identifier gets a role and every
 statement gets the tables it names — read by the highlighter, completion, and
 the grid, so a keyspace colours as a keyspace, completion offers columns, and
 a typed statement's key columns colour in the grid
-(docs/superpowers/specs/2026-08-16-cql-semantics-design.md).
-**Last updated:** 2026-08-16
+(docs/superpowers/specs/2026-08-16-cql-semantics-design.md). The popup ranks
+what it offers by what the grammar takes at the cursor, offers whole statement
+shapes where a statement begins, and writes the `FROM` clause a column offered
+without one implies
+(docs/superpowers/specs/2026-08-17-completion-ranking-design.md).
+**Last updated:** 2026-08-17
 
 ---
 

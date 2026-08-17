@@ -4256,6 +4256,21 @@ mod tests {
         );
     }
 
+    /// A shape is told from the keyword it opens with by the holes its label
+    /// draws, so the label has to survive the crossing into the popup
+    /// (completion ranking design §3).
+    #[test]
+    fn the_completion_popup_draws_a_statement_shape_with_its_holes() {
+        let (buffer, _) = drawn_with_cursor(80, 24, &completing("sel"));
+
+        let drawn: String = (0..buffer.area.height).map(|y| row(&buffer, y)).collect();
+
+        assert!(
+            drawn.contains("SELECT <> FROM <>"),
+            "the popup draws the shape rather than the skeleton it types"
+        );
+    }
+
     #[test]
     fn the_completion_popup_opens_upwards_off_the_bottom_of_the_frame() {
         // Eleven lines put the cursor on the panel's last content row, which

@@ -64,7 +64,8 @@ See [yank design](specs/2026-08-13-yank-design.md) §2 and
 [yank selection modes](specs/2026-08-13-yank-selection-modes-design.md) §1.
 
 ³ Except in Queries with a completion popup up, where it accepts the selected
-candidate. The Queries subsection below is where that is argued.
+candidate — as `⏎` does there too. The Queries subsection below is where that
+is argued.
 
 Each panel's title opens with the key that reaches it — `[1]-Tables`,
 `[2]-Table DDL - Table columns`, `[3]-Table contents`, `[4]-Queries` — so the
@@ -419,8 +420,8 @@ did. §1's `y` footnote table carries the row-by-row shape
 ### Tables panel
 
 Accepted anywhere, but a no-op unless Tables has focus — except in Queries,
-which takes text: there `Enter` inserts a newline. See the Queries subsection
-below.
+which takes text: there `Enter` inserts a newline, or accepts a completion
+while one is being offered. See the Queries subsection below.
 
 | Key | Action |
 |---|---|
@@ -504,7 +505,7 @@ character and not a binding. What it does not claim keeps its global meaning.
 | `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
 | `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
 | `ctrl-n` / `ctrl-p` | The next / previous completion. With no popup up, raise one against the word under the cursor. |
-| `Tab`³ | Accept the selected completion — **only** while a popup is up. With none up, it moves focus, as everywhere else. |
+| `Tab`³ / `Enter`³ | Accept the selected completion — **only** while a popup is up. With none up, `Tab` moves focus and `⏎` splits the line, as everywhere else. |
 | any printable key | Insert it, and offer completions against the word it lands in. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
@@ -513,18 +514,41 @@ character and not a binding. What it does not claim keeps its global meaning.
 | `PageUp` / `PageDown`, `ctrl-u` / `ctrl-d` | Up / down one panel height. |
 | `Esc`³ | Take the completion popup down; with none up, leave the editor for Tables. |
 
-³ The two keys the completion popup claims, and it claims them only while it
-is drawn. Both are exceptions to §2's *the same key means the same thing in
-every panel*, taken for the reason `Home` and `End` already diverge here: it is
-what the key does in every editor the audience has met. Neither is invisible —
-the popup is on screen with a row selected, and the bar swaps `tab panel` for
-`tab complete` in exactly the frames the swap is true. `Esc`'s second press
-still leaves the panel, so its hint stays true either way.
+³ The three keys the completion popup claims, and it claims them only while it
+is drawn. All three are exceptions to §2's *the same key means the same thing
+in every panel*, taken for the reason `Home` and `End` already diverge here: it
+is what the key does in every editor the audience has met. None is invisible —
+the popup is on screen with a row selected, and the bar swaps `tab panel` and
+`⏎ newline` for `tab ⏎ complete` in exactly the frames the swap is true.
+`Esc`'s second press still leaves the panel, so its hint stays true either way.
 
-Typing raises the popup automatically. It offers CQL's keywords first, then
-the keyspaces, then the tables of the keyspace the Tables panel's cursor is on
-— and after a `keyspace.`, that keyspace's tables and nothing else. A keyword
-is accepted upper case; a name is accepted exactly as the cluster spells it.
+Typing raises the popup automatically, and it goes down of its own accord the
+moment nothing matches. What it offers depends on what the grammar takes at
+the cursor: the grammar leads where it has narrowed something, and CQL's own
+words lead everywhere else.
+
+| Position | Offered, in order |
+|---|---|
+| The start of a statement | keywords, statement shapes, keyspaces, the visible keyspace's tables |
+| After `FROM`, `INTO`, `UPDATE`, `TRUNCATE`, `TABLE`, `ON` | the visible keyspace's tables, keyspaces, keywords |
+| After `USE`, `KEYSPACE` | keyspaces, and nothing else |
+| A column list over one named table | that table's columns, then keywords |
+| A column list naming no table | keywords, then every column, qualified by where it lives |
+| A column definition's type | CQL's type names, and nothing else |
+| After `WITH` | the `WITH` options, and nothing else |
+| A value, an alias, a statement the editor does not follow | keywords alone |
+| After a `keyspace.` | that keyspace's tables, and nothing else |
+
+A **statement shape** is a whole statement rather than one word of it, drawn
+with its holes marked — `SELECT <> FROM <>`, `CREATE TABLE <> (<> PRIMARY
+KEY)`. Accepting one types the skeleton, terminated with `;`, and leaves the
+cursor in the first hole. Nine are offered, and only where a statement begins.
+
+A keyword is accepted upper case; a name is accepted exactly as the cluster
+spells it. Accepting a **qualified column** — one offered where the statement
+names no table — also writes the `FROM` clause that puts it in scope, at the
+end of that statement, leaving the cursor on the select list. See
+[completion ranking design](specs/2026-08-17-completion-ranking-design.md).
 
 `Tab` and `Shift-Tab` still move focus, except as ³ says. Nothing else global
 survives inside the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
@@ -676,13 +700,15 @@ A panel number (`1`–`4`) is a third exception: it moves focus in every panel
 that does not take text, and is text in the one panel that does. So are `[`
 and `]`. The rule's own enforcement test was renamed for this — §5.
 
-`Tab` and `Esc` under a completion popup are a fourth, and the only one
-conditional on something drawn rather than on which panel is focused: while the
-popup is up they accept the selected candidate and take the popup down, and in
-every other frame they mean what they mean everywhere. The condition is on
-screen — the popup itself — and the bar drops `tab panel` for exactly those
-frames rather than name something the next keystroke will not do
-([query editor design](specs/2026-08-16-query-editor-design.md) §5.4).
+`Tab`, `Enter` and `Esc` under a completion popup are a fourth, and the only
+one conditional on something drawn rather than on which panel is focused: while
+the popup is up `Tab` and `⏎` accept the selected candidate and `Esc` takes the
+popup down, and in every other frame all three mean what they mean everywhere.
+The condition is on screen — the popup itself — and the bar drops `tab panel`
+and `⏎ newline` for exactly those frames rather than name something the next
+keystroke will not do
+([query editor design](specs/2026-08-16-query-editor-design.md) §5.4,
+[completion ranking design](specs/2026-08-17-completion-ranking-design.md) §5).
 
 **A binding must be visible.** vision.md §4, principle 1: discoverability is
 ambient. Each panel's title opens with the key that reaches it; the hint bar along
@@ -1089,6 +1115,10 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The buffer reaches the renderer painted by what its words mean | `the_buffer_reaches_the_renderer_painted`, the `cql/mod.rs` tests, `the_buffer_is_painted_by_what_its_words_mean` (`inbound/render.rs`) |
 | A prefix offers the keyword it starts, and a qualified one that keyspace's tables | `typing_a_prefix_offers_the_keyword_it_starts`, `a_qualified_prefix_offers_that_keyspaces_tables`, `an_unqualified_table_comes_from_the_keyspace_the_tree_is_on` |
 | `Tab` accepts a completion, and still moves focus without one | `tab_accepts_what_is_offered_rather_than_moving_focus`, `tab_still_moves_focus_when_nothing_is_being_offered` |
+| `⏎` accepts a completion, and still splits the line without one | `enter_accepts_what_is_offered_and_splits_the_line_without_a_popup` (`queries.rs`) |
+| The popup leads with the grammar where the grammar narrowed nothing | `a_select_list_with_no_table_leads_with_the_grammar`, `a_value_position_offers_grammar_and_no_names` (`cql/complete.rs`) |
+| A statement shape is offered where a statement begins, and typed whole | `a_statement_start_offers_the_shapes_its_prefix_opens`, `accepting_a_shape_types_it_whole_and_lands_on_its_first_hole` (`cql/complete.rs`) |
+| Accepting a qualified column writes the `FROM` that puts it in scope | `accepting_a_column_with_no_table_in_scope_writes_the_clause_that_puts_it_in_scope` (`cql/complete.rs`) |
 | `Esc` takes the popup down before it leaves the editor | `escape_takes_the_popup_down_before_it_leaves_the_editor` |
 | A motion takes the popup down | `a_motion_takes_the_popup_down` |
 | `ctrl-n` raises a popup and then walks it | `ctrl_n_raises_a_popup_and_then_walks_it` |

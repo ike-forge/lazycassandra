@@ -84,6 +84,13 @@ From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-
   reason `ctrl-r` runs all of it.
 - Completion inside a quoted identifier. `"My` offers nothing — the word
   scanner stops at the quote.
+- Stepping between a statement shape's holes. The caret lands in the first and
+  stays there; `Tab` is the accept key and cannot also be the next-hole key
+  while a popup may still be up
+  (docs/superpowers/specs/2026-08-17-completion-ranking-design.md §9).
+- `WITH` options are one list for keyspaces and tables alike. Telling
+  `durable_writes` from `gc_grace_seconds` needs the resolver to carry which
+  of the two the clause hangs off (completion ranking design §9).
 - The formatter's layout is fixed: two-column indent, upper-case keywords, one
   clause to a line. A preference needs a consumer in the configuration slice
   (design §11), and there is none.

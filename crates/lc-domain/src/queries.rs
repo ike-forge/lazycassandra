@@ -101,12 +101,18 @@ impl QueriesPanel {
     /// Exhaustive over [`Key`], so a new key has to decide whether an editor
     /// claims it rather than defaulting into one side.
     pub fn edit(&mut self, key: Key, height: usize) -> Option<Refresh> {
-        // Above the buffer: with a popup up, these two are the popup's
+        // Above the buffer: with a popup up, these three are the popup's
         // (design §5.5). Without one they are what they are everywhere else —
-        // `Tab` moves focus, `Esc` leaves the panel — so neither is claimed.
+        // `Tab` moves focus, `Enter` splits the line, `Esc` leaves the panel —
+        // so none of them is claimed.
+        //
+        // `Enter` beside `Tab` because both are what accepting is spelled as
+        // in the editors the audience has met, and because a shape's caret
+        // lands mid-statement, where the next thing wanted is a name and not
+        // a line break (completion ranking design §5).
         if let Some(completion) = self.completion.take() {
             match key {
-                Key::Tab => {
+                Key::Tab | Key::Enter => {
                     completion.accept(&mut self.buffer);
                     return Some(Refresh::Close);
                 }
@@ -196,6 +202,22 @@ mod tests {
 
         assert_eq!(panel.text(), "SELECT");
         assert!(panel.completion().is_none());
+    }
+
+    #[test]
+    fn enter_accepts_what_is_offered_and_splits_the_line_without_a_popup() {
+        let mut panel = typed("se");
+
+        assert_eq!(panel.edit(Key::Enter, 1), Some(Refresh::Close));
+        assert_eq!(panel.text(), "SELECT");
+        assert!(panel.completion().is_none());
+
+        assert_eq!(panel.edit(Key::Enter, 1), Some(Refresh::Recompute));
+        assert_eq!(
+            panel.text(),
+            "SELECT\n",
+            "with the popup down, enter is a line break again"
+        );
     }
 
     #[test]

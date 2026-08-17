@@ -225,10 +225,15 @@ const QUERIES: &[Command] = &[
         "walk the completions",
         Run::In(Panel::Queries),
     ),
-    // Inert for the reason the export form's rows are: `tab` accepts a
-    // completion only while one is being offered, and moves focus every other
-    // frame. A palette that pressed it would move focus (design §5.5).
-    Command::new(&[Stroke::key(Key::Tab)], "accept completion", Run::Inert),
+    // Inert for the reason the export form's rows are: `tab` and `⏎` accept a
+    // completion only while one is being offered, and mean what they mean
+    // everywhere else in every other frame. A palette that pressed either
+    // would move focus or split a line (design §5.5).
+    Command::new(
+        &[Stroke::key(Key::Tab), Stroke::key(Key::Enter)],
+        "accept completion",
+        Run::Inert,
+    ),
     Command::new(
         &[Stroke::key(Key::Enter)],
         "split the line",
@@ -975,7 +980,9 @@ mod tests {
             group("Queries")
                 .commands
                 .iter()
-                .filter(|command| command.binding.keys != [Stroke::key(Key::Tab)])
+                .filter(|command| {
+                    command.binding.keys != [Stroke::key(Key::Tab), Stroke::key(Key::Enter)]
+                })
                 .all(|command| command.run == Run::In(Panel::Queries)),
             "every row but the completion's, which is inert for the reason the \
              export form's rows are"

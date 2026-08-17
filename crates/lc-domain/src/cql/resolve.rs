@@ -169,15 +169,27 @@ pub(crate) fn context_at(pieces: &[Piece], offset: usize) -> Context {
 
 /// The index of the piece `offset` falls inside, or one past the last piece
 /// where it is at the very end of the text.
+///
+/// A cursor at the end of a word is still inside it: the word is the one being
+/// typed, and its own position is what it is offered against — `CREATE TABLE t
+/// (id in` is a type being typed, not the `IN` operator that word would be if
+/// it were finished. Every other piece ends where the cursor leaves it: a
+/// cursor just past a `;` belongs to the statement that `;` opened, not to the
+/// one it closed.
 fn piece_at(pieces: &[Piece], offset: usize) -> usize {
     let mut at = 0;
 
     for (index, piece) in pieces.iter().enumerate() {
-        let len = piece.text.chars().count();
-        if offset < at + len {
+        let end = at + piece.text.chars().count();
+        let inside = match piece.kind {
+            Kind::Keyword | Kind::Identifier => offset <= end,
+            Kind::Punctuation | Kind::Literal | Kind::Whitespace | Kind::Comment => offset < end,
+        };
+
+        if inside {
             return index;
         }
-        at += len;
+        at = end;
     }
 
     pieces.len()
@@ -211,9 +223,14 @@ enum Verb {
     Uncovered,
     /// `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `USE`.
     Data,
-    /// `CREATE` or `ALTER`, whose table body alternates a column name and
-    /// its type.
+    /// `CREATE` or `ALTER` of anything but a table — a keyspace, an index.
     Schema,
+    /// `CREATE` or `ALTER` `TABLE`, whose body alternates a column name and
+    /// its type. Told apart from [`Verb::Schema`] because a `(` means
+    /// something else in every other schema statement: `CREATE INDEX … ON t
+    /// (c)` takes a plain column name, and reading the word after one as a
+    /// type would colour a second column as one.
+    SchemaTable,
 }
 
 /// The clause the fold is inside, which is what an identifier's role is read
@@ -336,8 +353,14 @@ impl Machine {
             return;
         }
 
+        if word == "TABLE" && self.verb == Verb::Schema {
+            self.verb = Verb::SchemaTable;
+        }
+
         self.expect = match word {
-            "FROM" | "INTO" | "UPDATE" | "TRUNCATE" | "TABLE" => self.enter(Expect::Table),
+            // `ON` is what `CREATE INDEX … ON t (c)` names its table after;
+            // `GRANT … ON` never reaches here, since `GRANT` is uncovered.
+            "FROM" | "INTO" | "UPDATE" | "TRUNCATE" | "TABLE" | "ON" => self.enter(Expect::Table),
             "USE" | "KEYSPACE" | "SCHEMA" => self.enter(Expect::Keyspace),
             "SELECT" | "DELETE" | "WHERE" | "SET" | "BY" | "TOKEN" | "PRIMARY" | "RENAME"
             | "DROP" => self.enter(Expect::Column),
@@ -397,7 +420,7 @@ impl Machine {
                         // plain name list.
                         self.expect = self.enter(Expect::Column);
                     }
-                    if self.verb == Verb::Schema {
+                    if self.verb == Verb::SchemaTable {
                         self.alternating = true;
                     }
                 }
@@ -965,6 +988,34 @@ mod tests {
         );
     }
 
+    /// `ON` names the table an index is built over. Its column list is a list
+    /// of plain names, not the name/type pairs a `CREATE TABLE` body holds —
+    /// `alternating` is a table body's alone.
+    #[test]
+    fn a_create_index_names_the_table_it_is_built_over_and_the_column_it_covers() {
+        assert_eq!(
+            roles("CREATE INDEX orders_by_total ON shop.orders (total)"),
+            vec![
+                ("orders_by_total".to_owned(), None),
+                ("shop".to_owned(), Some(Role::Keyspace)),
+                ("orders".to_owned(), Some(Role::Table)),
+                ("total".to_owned(), Some(Role::Column)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_cursor_at_the_end_of_a_word_is_offered_against_that_words_position() {
+        // Without the word's own position, `in` is read as the finished `IN`
+        // operator and the cursor is told to expect a value.
+        assert_eq!(context("CREATE TABLE t (id in|").expects, Expect::Type);
+        assert_eq!(
+            context("SELECT * FROM t WHERE id in|").expects,
+            Expect::Column,
+            "the same half-typed word in a condition list is a column"
+        );
+    }
+
     #[test]
     fn a_where_clauses_and_still_yields_a_column() {
         assert_eq!(
@@ -993,6 +1044,7 @@ mod tests {
         "TRUNCATE TABLE k.t",
         "USE k",
         "CREATE TABLE t (id uuid) WITH comment = 'x' AND compaction = {'class': 'X'}",
+        "CREATE INDEX orders_by_total ON k.t (total)",
     ];
 
     #[test]

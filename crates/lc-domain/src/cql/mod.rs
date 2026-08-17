@@ -10,6 +10,7 @@ mod format;
 mod keywords;
 mod lex;
 mod resolve;
+mod templates;
 
 pub use complete::{Candidate, CandidateKind, Completion, suggest};
 pub use format::format;
