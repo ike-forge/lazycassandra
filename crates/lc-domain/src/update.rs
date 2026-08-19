@@ -2061,17 +2061,22 @@ fn start_export(state: &mut State) -> Vec<Effect> {
     let destination = PathBuf::from(form.path().text());
     let (conn, job, format) = (connection.id, JobId::next(), form.format());
 
-    // A `Fetched` scope writes rows already in memory and issues no statement
-    // (export design §3) — there is nothing to log.
-    if let Source::Whole(stmt) = &source {
-        logged(
-            state,
-            statement_subject(stmt),
-            Outcome::Pending {
-                trace: Trace::Export(job),
-            },
-        );
-    }
+    // Both scopes are something the session ran and both get an entry
+    // (design §8's `ExportFinished(Err)` row names no scope qualifier). A
+    // `Whole` export logs the statement it paged; a `Fetched` export writes
+    // rows already in memory and issues no statement (export design §3), so
+    // its subject records the act rather than quoting a query that never ran.
+    let subject = match &source {
+        Source::Whole(stmt) => statement_subject(stmt),
+        Source::Fetched { .. } => sentence("Exporting the fetched rows"),
+    };
+    logged(
+        state,
+        subject,
+        Outcome::Pending {
+            trace: Trace::Export(job),
+        },
+    );
 
     // Cloned rather than borrowed: the effect carries it out of the domain and
     // the job holds it against an `Exists` that has not come back yet.
@@ -10441,6 +10446,23 @@ mod tests {
         state
     }
 
+    /// The rows already in the grid, exported to `destination`, mid-flight —
+    /// `export_in_flight`'s `Source::Fetched` counterpart.
+    fn export_fetched_in_flight(destination: &str) -> State {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
+        if let Some(Overlay::Export(form)) = &mut state.overlay {
+            *form.path_mut() = crate::export::Line::new(destination.to_owned());
+        }
+        // Format, Path, Export.
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        state
+    }
+
     #[test]
     fn exporting_the_whole_table_asks_for_it_without_a_limit() {
         let mut state = contents_showing(ROW_LIMIT);
@@ -10639,6 +10661,108 @@ mod tests {
             .entries()
             .find(|entry| entry.subject().text().starts_with("SELECT"))
             .expect("the export entry");
+        assert!(
+            matches!(entry.outcome(), Outcome::Pending { trace: Trace::Export(id) } if *id == job),
+            "still waiting on the retry"
+        );
+    }
+
+    /// A `Fetched` export issues no statement, but it is still something the
+    /// session ran (design §8's `ExportFinished(Err)` row names no scope
+    /// qualifier) — it gets an entry too, a sentence rather than a quoted
+    /// query that never ran.
+    #[test]
+    fn a_fetched_export_lands_a_pending_entry_when_it_starts() {
+        let state = export_fetched_in_flight("/tmp/orders.csv");
+
+        let entry = state.log.entries().last().expect("an entry per effect");
+        assert!(
+            matches!(entry.subject(), LogSubject::Sentence(_)),
+            "no statement ran, so the subject is not one"
+        );
+        assert!(
+            matches!(
+                entry.outcome(),
+                Outcome::Pending {
+                    trace: Trace::Export(_)
+                }
+            ),
+            "waiting on the same trace a Whole export waits on"
+        );
+    }
+
+    #[test]
+    fn a_finished_fetched_export_completes_its_entry() {
+        let mut state = export_fetched_in_flight("/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+
+        let _effects = update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Ok(200),
+                took: Duration::from_millis(50),
+            },
+        );
+
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| matches!(entry.subject(), LogSubject::Sentence(_)))
+            .expect("the fetched export's entry");
+        let Outcome::Succeeded { detail, .. } = entry.outcome() else {
+            panic!("the export succeeded");
+        };
+        assert!(detail.contains("200"), "{detail}");
+        assert!(detail.contains("/tmp/orders.csv"), "{detail}");
+    }
+
+    #[test]
+    fn a_failed_fetched_export_completes_its_entry_as_failed() {
+        let mut state = export_fetched_in_flight("/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+
+        let _effects = update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Io("disk full".to_owned())),
+                took: Duration::ZERO,
+            },
+        );
+
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| matches!(entry.subject(), LogSubject::Sentence(_)))
+            .expect("the fetched export's entry");
+        let Outcome::Failed { detail } = entry.outcome() else {
+            panic!("the export failed");
+        };
+        assert!(detail.contains("disk full"), "{detail}");
+    }
+
+    /// Decision #4 holds for a `Fetched` export the same as it does for a
+    /// `Whole` one: `Exists` completes nothing.
+    #[test]
+    fn a_fetched_export_that_exists_leaves_its_entry_pending_for_the_retry() {
+        let mut state = export_fetched_in_flight("/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+
+        let _effects = update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+                took: Duration::ZERO,
+            },
+        );
+
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| matches!(entry.subject(), LogSubject::Sentence(_)))
+            .expect("the fetched export's entry");
         assert!(
             matches!(entry.outcome(), Outcome::Pending { trace: Trace::Export(id) } if *id == job),
             "still waiting on the retry"
