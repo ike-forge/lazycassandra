@@ -366,14 +366,11 @@ fn connect_failed(state: &mut State, conn: ConnId, error: DbError) -> Vec<Effect
             detail: error.to_string(),
         },
     );
-    raise(
-        state,
-        Message {
-            title: "Connection failed".to_owned(),
-            message: error.to_string(),
-            severity: Severity::Danger,
-        },
-    );
+    state.overlay = Some(Overlay::Fatal(Message {
+        title: "Connection failed".to_owned(),
+        message: error.to_string(),
+        severity: Severity::Danger,
+    }));
     state.connection = ConnectionState::Failed(error);
     state.mark_dirty();
     Vec::new()
@@ -394,14 +391,11 @@ fn schema_failed(state: &mut State, conn: ConnId, error: &DbError) -> Vec<Effect
                 detail: error.to_string(),
             },
         );
-        raise(
-            state,
-            Message {
-                title: "Schema unavailable".to_owned(),
-                message: error.to_string(),
-                severity: Severity::Danger,
-            },
-        );
+        state.overlay = Some(Overlay::Fatal(Message {
+            title: "Schema unavailable".to_owned(),
+            message: error.to_string(),
+            severity: Severity::Danger,
+        }));
         state.mark_dirty();
     }
     Vec::new()
@@ -661,6 +655,16 @@ enum Motion {
 fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     state.mark_dirty();
 
+    // Claimed before the prefix, before ctrl, before focus — nothing else
+    // about this press is consulted. The modal has no dismissal, only the
+    // one exit (query log design §7).
+    if let Some(Overlay::Fatal(_)) = state.overlay {
+        return match press.key {
+            Key::Escape | Key::Char('q') => quit(state),
+            _ => Vec::new(),
+        };
+    }
+
     // The prefix is spent by the very next press, whatever that press turns
     // out to be: `g` then `j` is a `j`, not a chord nobody bound. Taken here
     // rather than in the arm that reads it, so every path below — the ctrl
@@ -805,7 +809,11 @@ fn takes_text(state: &State) -> bool {
         // close the overlay type themselves instead.
         Some(Overlay::Commands(panel)) => panel.sift().is_some(),
         Some(Overlay::Themes { sift, .. }) => sift.is_some(),
-        Some(Overlay::Diagnostics(_)) => false,
+        // `Fatal` is unreachable here — `handle_key` claims every press for
+        // it before this is consulted — but written down anyway, rather than
+        // grouped with `Message`/`None`, because neither it nor `Diagnostics`
+        // has text of its own to type into.
+        Some(Overlay::Diagnostics(_) | Overlay::Fatal(_)) => false,
         Some(Overlay::Message(_)) | None => state.focus().takes_text(),
     }
 }
@@ -836,7 +844,8 @@ fn goto(state: &mut State, edge: Edge) {
             preview_theme(state);
         }
         Some(Overlay::Message(_)) | None => scroll(state, edge.motion()),
-        Some(Overlay::Search(_) | Overlay::Export(_)) => {}
+        // Unreachable, for `takes_text`'s reason: `Fatal` never reaches here.
+        Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_)) => {}
     }
 }
 
@@ -1360,6 +1369,14 @@ fn escape(state: &mut State) {
             | Overlay::Diagnostics(_)
             | Overlay::Export(_),
         ) => return,
+        // Not dismissable: `handle_key` claims `Esc` for `Fatal` before this
+        // function is reached, so the only caller left is a click routed
+        // through here by `handle_pointer`, which must not spend itself on
+        // ending the modal (query log design §7).
+        Some(fatal @ Overlay::Fatal(_)) => {
+            state.overlay = Some(fatal);
+            return;
+        }
         None => {}
     }
 
@@ -2107,8 +2124,9 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does;
-        // the form has nothing paged either, whichever stop it is on.
-        Some(Overlay::Search(_) | Overlay::Export(_)) => Vec::new(),
+        // the form has nothing paged either, whichever stop it is on. `Fatal`
+        // is unreachable here for `takes_text`'s reason.
+        Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_)) => Vec::new(),
         Some(Overlay::Message(_)) | None => {
             if state.focus().takes_text() {
                 edit(state, key);
@@ -2806,6 +2824,75 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_startup_connection_raises_a_modal_that_ends_the_process() {
+        let conn = ConnId::next();
+        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+
+        let _effects = update(
+            &mut state,
+            Msg::ConnectFailed {
+                conn,
+                error: DbError::Unreachable("no route to host".to_owned()),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert!(matches!(state.overlay, Some(Overlay::Fatal(_))));
+    }
+
+    #[test]
+    fn the_fatal_modal_quits_rather_than_dismissing() {
+        let conn = ConnId::next();
+        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let _effects = update(
+            &mut state,
+            Msg::ConnectFailed {
+                conn,
+                error: DbError::Timeout,
+                took: Duration::ZERO,
+            },
+        );
+
+        for key in [Key::Escape, Key::Char('q')] {
+            let mut state = state.clone();
+            let effects = press(&mut state, key);
+
+            assert!(
+                effects.contains(&Effect::Quit),
+                "{key:?} ends the process rather than revealing an application that never started"
+            );
+            assert!(
+                matches!(state.overlay, Some(Overlay::Fatal(_))),
+                "and does not dismiss"
+            );
+        }
+    }
+
+    // The config diagnostics describe a session that is not going to happen.
+    #[test]
+    fn a_fatal_modal_replaces_the_diagnostics_it_lands_on() {
+        let conn = ConnId::next();
+        let (mut state, _effects) = init(
+            conn,
+            Config::default(),
+            vec![diagnostic("boom")],
+            Stamp::default(),
+        );
+        assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
+
+        let _effects = update(
+            &mut state,
+            Msg::ConnectFailed {
+                conn,
+                error: DbError::Timeout,
+                took: Duration::ZERO,
+            },
+        );
+
+        assert!(matches!(state.overlay, Some(Overlay::Fatal(_))));
+    }
+
+    #[test]
     fn connecting_logs_the_schema_read_it_starts() {
         let conn = ConnId::next();
         let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
@@ -3347,7 +3434,7 @@ mod tests {
 
         assert!(effects.is_empty());
         assert!(matches!(state.connection, ConnectionState::Failed(_)));
-        let Some(Overlay::Message(overlay)) = state.overlay else {
+        let Some(Overlay::Fatal(overlay)) = state.overlay else {
             panic!("a failure is shown");
         };
         assert_eq!(overlay.severity, Severity::Danger);
@@ -3443,12 +3530,14 @@ mod tests {
             "the live prompt is previewing its own buffer, not the previous search"
         );
 
+        // Any message-driven overlay unwinds a live search the same way
+        // (`unwind_overlay`'s doc comment) — `EditorFailed` stands in
+        // because `SchemaFailed` now raises `Overlay::Fatal`, which has
+        // nothing to preserve (there is no application left to return to).
         update(
             &mut state,
-            Msg::SchemaFailed {
-                conn,
-                error: DbError::Invalid("unauthorized".to_owned()),
-                took: Duration::ZERO,
+            Msg::EditorFailed {
+                reason: "could not run hx: No such file or directory".to_owned(),
             },
         );
 
@@ -3512,7 +3601,8 @@ mod tests {
             | Overlay::Search(_)
             | Overlay::Themes { .. }
             | Overlay::Diagnostics(_)
-            | Overlay::Export(_) => None,
+            | Overlay::Export(_)
+            | Overlay::Fatal(_) => None,
         }
     }
 

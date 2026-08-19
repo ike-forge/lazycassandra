@@ -267,6 +267,15 @@ pub enum Overlay {
     /// rather than a sixth variant here, so "a confirmation with nothing
     /// behind it" cannot be written down (export design §7).
     Export(ExportForm),
+    /// A startup failure: the connection or the schema read, either of which
+    /// happens before there is an application to put a trail in. Its only
+    /// exit is `Effect::Quit`.
+    ///
+    /// A variant rather than a flag on [`Message`]: the type says "this modal
+    /// ends the process", so a future reconnect path has to choose it
+    /// deliberately rather than inherit fatality by accident
+    /// (query log design §7).
+    Fatal(Message),
 }
 
 /// The config diagnostics, and where the cursor is among them.

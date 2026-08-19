@@ -46,33 +46,33 @@ async fn connecting_and_describing_fills_the_tables_panel() {
 }
 
 #[tokio::test]
-async fn a_cluster_that_cannot_be_reached_raises_an_overlay() {
+async fn a_cluster_that_cannot_be_reached_raises_a_fatal_modal() {
     let cluster = FakeCluster::failing(DbError::Unreachable("no route to host".to_owned()));
     let conn = ConnId::next();
     let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
 
     run(&cluster, &mut state, effects).await;
 
-    let Some(OverlayView::Message(overlay)) = view_model(&state).overlay else {
-        panic!("the failure is shown");
+    let Some(OverlayView::Fatal(overlay)) = view_model(&state).overlay else {
+        panic!("the failure ends the process rather than starting a half-connected app");
     };
     assert!(overlay.message.contains("no route to host"));
     assert!(
-        matches!(&view_model(&state).panels[0].body, PanelBody::Notice { text, .. } if text.contains("no route to host")),
-        "the panel says it too, so dismissing the overlay does not erase the failure"
+        matches!(&view_model(&state).panels[0].body, PanelBody::Notice { text, token } if !text.contains("no route to host") && *token == Some(Token::Muted)),
+        "the modal owns the failure; the panel behind it is back to being about keyspaces"
     );
 }
 
 #[tokio::test]
-async fn a_cluster_that_connects_but_cannot_be_described_raises_an_overlay() {
+async fn a_cluster_that_connects_but_cannot_be_described_raises_a_fatal_modal() {
     let cluster = FakeCluster::failing_to_describe(DbError::Invalid("unauthorized".to_owned()));
     let conn = ConnId::next();
     let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
 
     run(&cluster, &mut state, effects).await;
 
-    let Some(OverlayView::Message(overlay)) = view_model(&state).overlay else {
-        panic!("the failure is shown");
+    let Some(OverlayView::Fatal(overlay)) = view_model(&state).overlay else {
+        panic!("the failure ends the process rather than starting a half-connected app");
     };
     assert_eq!(overlay.title, "Schema unavailable");
 }

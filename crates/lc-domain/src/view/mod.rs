@@ -102,6 +102,9 @@ pub enum OverlayView {
     /// Boxed: `OverlayView`'s other variants are small, and clippy's
     /// `large_enum_variant` is denied.
     Export(Box<ExportView>),
+    /// A startup failure with no dismissal, only `q`/`esc` ending the
+    /// process (query log design §7).
+    Fatal(Message),
 }
 
 /// One diagnostic as a renderer needs it: the location already formatted, so
@@ -206,6 +209,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
             stop: form.stop(),
             confirm: form.confirm(),
         }))),
+        Overlay::Fatal(message) => Some(OverlayView::Fatal(message.clone())),
     }
 }
 

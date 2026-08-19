@@ -165,7 +165,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 /// bar row after it (overlay search design §7).
 fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) {
     match &view.overlay {
-        Some(OverlayView::Message(message)) => crate::overlay::render(frame, message, theme),
+        Some(OverlayView::Message(message) | OverlayView::Fatal(message)) => {
+            crate::overlay::render(frame, message, theme);
+        }
         Some(OverlayView::Commands {
             rows,
             selected,
@@ -266,6 +268,7 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
     match overlay {
         Some(
             OverlayView::Message(_)
+            | OverlayView::Fatal(_)
             | OverlayView::Commands { .. }
             | OverlayView::Themes { .. }
             | OverlayView::Diagnostics { .. },
@@ -1644,10 +1647,20 @@ mod tests {
     #[test]
     fn a_failure_notice_is_drawn_in_the_danger_style_rather_than_dimmed() {
         let mut state = State::default();
-        state.connection = ConnectionState::Failed(DbError::Timeout);
+        // A startup failure (`ConnectionState`/`SchemaState::Failed`) is
+        // `Overlay::Fatal` now, and the panel behind it goes muted (query log
+        // design §7) — a table read refused after the app has started is
+        // what still owns a danger notice.
+        state.contents.refused(
+            Subject::Table(TableRef::new("shop", "orders")),
+            DbError::Timeout,
+        );
 
         let buffer = draw_state(40, 12, &state);
-        let cell = buffer.cell((1, 1)).expect("inside the panel");
+        let area = block_area(&buffer, "Table contents");
+        let cell = buffer
+            .cell((area.x + 1, area.y + 1))
+            .expect("inside the panel");
         let danger = Theme::default()
             .style(Token::Severity(Severity::Danger))
             .fg

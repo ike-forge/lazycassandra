@@ -5,7 +5,7 @@ use crate::state::{ConnectionState, Flash, Panel, SchemaState, State};
 use crate::style::Token;
 use crate::tree::{Node, TablesPanel};
 
-use super::{PanelBody, failure, waiting};
+use super::{PanelBody, waiting};
 
 /// One row of the Tables tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,12 +41,14 @@ impl RowKind {
 
 pub(super) fn body(state: &State) -> PanelBody {
     match &state.connection {
-        ConnectionState::Disconnected => waiting("Not connected"),
+        // `Failed` joins `Disconnected` here: the modal owns the failure and
+        // the trail owns the detail (query log design §7), so the panel goes
+        // back to being about keyspaces.
+        ConnectionState::Disconnected | ConnectionState::Failed(_) => waiting("Not connected"),
         ConnectionState::Connecting(_) => waiting("Connecting…"),
-        ConnectionState::Failed(error) => failure(error),
         ConnectionState::Connected(connection) => match &connection.schema {
-            SchemaState::Loading => waiting("Loading schema…"),
-            SchemaState::Failed(error) => failure(error),
+            // Schema `Failed` joins `Loading` here for the same reason.
+            SchemaState::Loading | SchemaState::Failed(_) => waiting("Loading schema…"),
             SchemaState::Loaded(schema) => tree(
                 &state.tables,
                 schema,
@@ -113,7 +115,7 @@ mod tests {
     use crate::model::{ConnId, DbError};
     use crate::posture::Posture;
     use crate::state::{Connection, ConnectionState, Ranges, SchemaState, State};
-    use crate::style::{Severity, Token};
+    use crate::style::Token;
 
     use crate::search::{Search, Searched};
 
@@ -153,19 +155,17 @@ mod tests {
         );
     }
 
+    // The panel is about keyspaces. The modal owns the failure and the trail
+    // owns the detail (query log design §7).
     #[test]
-    fn a_failure_is_readable_in_the_panel_and_not_only_in_the_overlay() {
+    fn a_failed_connection_does_not_spend_the_panel_on_its_error() {
         let body = tables_body(&state_with(ConnectionState::Failed(DbError::Timeout)));
 
         let PanelBody::Notice { text, token } = body else {
-            panic!("a failed connection has nothing to list");
+            panic!("a notice");
         };
-        assert!(text.contains("timed out"));
-        assert_eq!(
-            token,
-            Some(Token::Severity(Severity::Danger)),
-            "a failure must carry the danger token, not the muted one waiting states use"
-        );
+        assert!(!text.contains("timed out"), "{text}");
+        assert_eq!(token, Some(Token::Muted));
     }
 
     #[test]
@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn a_schema_that_failed_to_load_carries_the_danger_token() {
+    fn a_failed_schema_read_does_not_spend_the_panel_on_its_error() {
         let state = state_with(ConnectionState::Connected(Connection {
             id: ConnId::next(),
             posture: Posture::ReadOnly,
@@ -296,10 +296,10 @@ mod tests {
         }));
 
         let PanelBody::Notice { text, token } = tables_body(&state) else {
-            panic!("a failed schema has nothing to list");
+            panic!("a notice");
         };
-        assert!(text.contains("unauthorized"));
-        assert_eq!(token, Some(Token::Severity(Severity::Danger)));
+        assert!(!text.contains("unauthorized"), "{text}");
+        assert_eq!(token, Some(Token::Muted));
     }
 
     #[test]
