@@ -9,9 +9,9 @@ use crate::contents::{ContentsState, GridPage, SelectionMode, Subject, TableRef}
 use crate::model::{CqlValue, Schema};
 use crate::search::Search;
 use crate::state::{Panel, Ranges, State};
-use crate::style::{Segment, Token};
+use crate::style::{Segment, Severity, Token};
 
-use super::{PanelBody, failure, waiting};
+use super::{PanelBody, waiting};
 
 /// One column heading.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +94,12 @@ pub(super) fn body(state: &State) -> PanelBody {
         // the absence of one (vision.md §4, principle 1).
         ContentsState::Empty => waiting("Press Enter on a table"),
         ContentsState::Loading { .. } => waiting("Loading rows…"),
-        ContentsState::Failed { error, .. } => failure(error),
+        // The panel says its subject failed; the trail says why
+        // (query log design §8).
+        ContentsState::Failed { .. } => PanelBody::Notice {
+            text: "query failed — see [4]-Logs".to_owned(),
+            token: Some(Token::Severity(Severity::Danger)),
+        },
         ContentsState::Loaded { subject, page } => grid(state, subject, page),
     }
 }
@@ -256,7 +261,6 @@ mod tests {
     use crate::posture::Posture;
     use crate::search::{Search, Searched};
     use crate::state::{Connection, ConnectionState, SchemaState, State};
-    use crate::style::Severity;
 
     use super::super::tests_support::{panel_body, tabled};
     use super::super::view_model;
@@ -439,21 +443,29 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_failed_read_is_readable_in_the_panel() {
+    fn failed_state(error: DbError) -> State {
         let mut state = tabled(&[("shop", &["orders"])]);
         let query = QueryId::next();
         state
             .contents
             .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state.contents.failed(query, DbError::Timeout);
+        state.contents.failed(query, error);
+        state
+    }
 
-        let PanelBody::Notice { text, token } = contents_body(&state) else {
-            panic!("a failed read has no rows to list");
+    // The panel reports that its subject failed; the trail reports why
+    // (query log design §8).
+    #[test]
+    fn a_failed_read_points_at_the_trail_rather_than_quoting_the_error() {
+        let body = contents_body(&failed_state(DbError::Invalid(
+            "unconfigured column id".to_owned(),
+        )));
+
+        let PanelBody::Notice { text, .. } = body else {
+            panic!("a notice");
         };
-        assert!(text.contains("timed out"));
-        assert_eq!(token, Some(Token::Severity(Severity::Danger)));
-        assert_eq!(contents_title(&state), "Table contents — shop.orders");
+        assert!(!text.contains("unconfigured"), "{text}");
+        assert!(text.contains("[4]"), "{text}");
     }
 
     #[test]

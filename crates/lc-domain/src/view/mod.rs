@@ -29,7 +29,6 @@ use crate::contents::SelectionMode;
 use crate::cql::{CandidateKind, Completion};
 use crate::ddl::DdlTab;
 use crate::export::{Confirm, Format, Scope, Stop};
-use crate::model::DbError;
 use crate::search::{Direction, Search, Sift};
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
@@ -479,13 +478,6 @@ pub(crate) fn waiting(text: &str) -> PanelBody {
     PanelBody::Notice {
         text: text.to_owned(),
         token: Some(Token::Muted),
-    }
-}
-
-pub(crate) fn failure(error: &DbError) -> PanelBody {
-    PanelBody::Notice {
-        text: error.to_string(),
-        token: Some(Token::Severity(Severity::Danger)),
     }
 }
 

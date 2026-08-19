@@ -253,7 +253,9 @@ async fn a_table_that_cannot_be_read_says_so_in_the_panel_alone() {
 
     let view = view_model(&state);
     assert!(
-        matches!(&view.panels[2].body, PanelBody::Notice { text, .. } if text.contains("unauthorized")),
+        matches!(&view.panels[2].body, PanelBody::Notice { text, .. }
+            if !text.contains("unauthorized") && text.contains("[4]")),
+        "the panel points at the trail rather than quoting the error"
     );
     assert!(
         view.overlay.is_none(),

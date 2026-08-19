@@ -298,8 +298,15 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         // A result whose id is no longer in flight belongs to a cancelled
         // query, and applying it would resurrect a view the user left. The
         // panel applies the second gate: whether the result is *its* result.
-        Msg::PageReady { query, page, .. } => {
+        Msg::PageReady { query, page, took } => {
             if state.in_flight.remove(&query).is_some() {
+                state.log.complete(
+                    Trace::Query(query),
+                    Outcome::Succeeded {
+                        detail: format!("{} rows", page.rows.len()),
+                        took,
+                    },
+                );
                 state.contents.page_ready(query, *page);
                 state.mark_dirty();
             }
@@ -311,6 +318,12 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         // mistyped table is the warning noise vision.md §8 flags.
         Msg::Failed { query, error, .. } => {
             if state.in_flight.remove(&query).is_some() {
+                state.log.complete(
+                    Trace::Query(query),
+                    Outcome::Failed {
+                        detail: error.to_string(),
+                    },
+                );
                 state.contents.failed(query, error);
                 state.mark_dirty();
             }
@@ -472,9 +485,16 @@ fn editor_failed(state: &mut State, reason: String) -> Vec<Effect> {
 
 fn quit(state: &mut State) -> Vec<Effect> {
     state.should_quit = true;
-    let cancels = state.in_flight.keys().copied().map(Effect::Cancel);
+    let in_flight: Vec<QueryId> = state.in_flight.keys().copied().collect();
+    for query in &in_flight {
+        state.log.complete(Trace::Query(*query), Outcome::Cancelled);
+    }
 
-    cancels.chain(std::iter::once(Effect::Quit)).collect()
+    in_flight
+        .into_iter()
+        .map(Effect::Cancel)
+        .chain(std::iter::once(Effect::Quit))
+        .collect()
 }
 
 /// What the focused panel has under its cursor, as one line — which of the
@@ -1102,6 +1122,17 @@ fn logged(state: &mut State, subject: LogSubject, outcome: Outcome) {
 
 fn sentence(text: impl Into<String>) -> LogSubject {
     LogSubject::Sentence(text.into())
+}
+
+/// A statement as the trail draws it: one logical line, highlighted once.
+///
+/// Normalised before highlighting because `cql::highlight` returns a row per
+/// source line and a `ctrl-f`-formatted statement is many. What ran is the
+/// statement, not its indentation (query log design §3).
+fn statement_subject(stmt: &Statement) -> LogSubject {
+    let line = stmt.cql.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    LogSubject::Statement(cql::highlight(&line).into_iter().flatten().collect())
 }
 
 fn posture_label(posture: Posture) -> &'static str {
@@ -2586,6 +2617,9 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
     // the effect is still inert (architecture.md §3).
     if let Some(superseded) = state.contents.outstanding() {
         state.in_flight.remove(&superseded);
+        state
+            .log
+            .complete(Trace::Query(superseded), Outcome::Cancelled);
         effects.push(Effect::Cancel(superseded));
     }
 
@@ -2714,6 +2748,14 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
     let query = QueryId::next();
     state.in_flight.insert(query, stmt.clone());
     state.mark_dirty();
+
+    logged(
+        state,
+        statement_subject(&stmt),
+        Outcome::Pending {
+            trace: Trace::Query(query),
+        },
+    );
 
     Ok((
         query,
@@ -6010,6 +6052,126 @@ mod tests {
             ],
             next: None,
         }
+    }
+
+    fn statement_subject_from(cql: &str) -> LogSubject {
+        statement_subject(&Statement::typed(cql))
+    }
+
+    fn executed_query(effects: &[Effect]) -> QueryId {
+        effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::Execute { query, .. } => Some(*query),
+                _ => None,
+            })
+            .expect("an Execute effect carrying the query")
+    }
+
+    /// Cancels `query` via `Msg::Quit`, which completes every in-flight trace
+    /// without pushing an entry of its own — unlike superseding it with a
+    /// second read, which would leave the newer entry as the log's last one.
+    fn cancel(state: &mut State, query: QueryId) {
+        assert!(
+            state.in_flight.contains_key(&query),
+            "the query being cancelled is the one still in flight"
+        );
+        let _ = update(state, Msg::Quit);
+    }
+
+    // The trail records what ran. The table-open statement carries the LIMIT
+    // ROW_LIMIT appended, which is the surprise the trail exists to explain
+    // (query log design §6).
+    #[test]
+    fn opening_a_table_logs_the_statement_it_issued_limit_and_all() {
+        let mut state = read_shop_orders();
+
+        let _effects = press(&mut state, Key::Enter);
+
+        let entry = state.log.entries().last().expect("an entry per effect");
+        let text = entry.subject().text();
+        assert!(text.starts_with("SELECT"), "{text}");
+        assert!(text.contains(&format!("LIMIT {ROW_LIMIT}")), "{text}");
+        assert!(matches!(
+            entry.outcome(),
+            Outcome::Pending {
+                trace: Trace::Query(_)
+            }
+        ));
+    }
+
+    #[test]
+    fn a_statement_is_logged_as_one_line_however_it_was_laid_out() {
+        let mut state = State::default();
+
+        logged(
+            &mut state,
+            statement_subject_from("SELECT *\n  FROM ks.t\n  WHERE id = 1"),
+            Outcome::Cancelled,
+        );
+
+        assert_eq!(
+            state.log.entries().next().unwrap().subject().text(),
+            "SELECT * FROM ks.t WHERE id = 1"
+        );
+    }
+
+    #[test]
+    fn a_returned_page_completes_the_entry_with_its_row_count() {
+        let mut state = read_shop_orders();
+        let effects = press(&mut state, Key::Enter);
+        let query = executed_query(&effects);
+
+        let _effects = update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(page_of(3)),
+                took: Duration::from_millis(41),
+            },
+        );
+
+        let Outcome::Succeeded { detail, took } = state.log.entries().last().unwrap().outcome()
+        else {
+            panic!("the query succeeded");
+        };
+        assert!(detail.contains('3'), "{detail}");
+        assert_eq!(*took, Duration::from_millis(41));
+    }
+
+    #[test]
+    fn a_failed_query_leaves_its_reason_in_the_trail() {
+        let mut state = read_shop_orders();
+        let effects = press(&mut state, Key::Enter);
+        let query = executed_query(&effects);
+
+        let _effects = update(
+            &mut state,
+            Msg::Failed {
+                query,
+                error: DbError::Invalid("unconfigured column id".to_owned()),
+                took: Duration::ZERO,
+            },
+        );
+
+        let Outcome::Failed { detail } = state.log.entries().last().unwrap().outcome() else {
+            panic!("the query failed");
+        };
+        assert!(detail.contains("unconfigured column id"), "{detail}");
+    }
+
+    #[test]
+    fn a_cancelled_query_is_closed_out_rather_than_left_hanging() {
+        let mut state = read_shop_orders();
+        let effects = press(&mut state, Key::Enter);
+        let query = executed_query(&effects);
+
+        cancel(&mut state, query);
+
+        assert!(matches!(
+            state.log.entries().last().unwrap().outcome(),
+            Outcome::Cancelled
+        ));
     }
 
     #[test]
