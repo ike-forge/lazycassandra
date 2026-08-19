@@ -1079,10 +1079,6 @@ pub struct Geometry {
     heights: [usize; 4],
     ddl_lines: usize,
     ddl_selection: Span,
-    /// Lines the trail wraps to at this width, and the span of the row the
-    /// cursor is on. A function of the terminal size and the view model,
-    /// never of the offset they bound (architecture.md §3, query log design
-    /// §5.4).
     log_lines: usize,
     log_selection: Span,
     command_rows: usize,

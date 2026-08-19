@@ -145,10 +145,12 @@ impl Log {
         self.cursor.up();
     }
 
+    /// Moves to the first entry.
     pub const fn to_start(&mut self) {
         self.cursor.to_start();
     }
 
+    /// Moves to the last entry.
     pub fn to_end(&mut self) {
         self.cursor.to_end(self.entries.len());
     }

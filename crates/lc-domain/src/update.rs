@@ -1923,22 +1923,6 @@ fn scroll(state: &mut State, motion: Motion) {
         Motion::Start => cursor.to_start(),
         Motion::End => cursor.to_end(len),
     }
-
-    // The Logs viewport counts wrapped lines while its cursor counts entries,
-    // so it cannot follow the cursor by index the way Tables and Contents do
-    // — that mapping is the renderer's, reported back through `Msg::Measured`
-    // (design §5.4). `log_lines` is the trail's whole wrapped length, though,
-    // which unlike a per-row span does not depend on which entry the cursor
-    // just left, so jumping to either end of it needs no such round trip.
-    // `panel_cursor` only reached the Logs tab of Queries, so no further gate
-    // is needed here.
-    if panel == Panel::Queries {
-        match motion {
-            Motion::Start => state.log.scroll.to_start(),
-            Motion::End => state.log.scroll.to_end(state.geometry.log_lines(), height),
-            Motion::Down | Motion::Up | Motion::PageDown | Motion::PageUp => {}
-        }
-    }
 }
 
 /// The ctrl layer's whole key table (docs/shortcuts.md §2).
@@ -7741,23 +7725,50 @@ mod tests {
         )
     }
 
-    fn geometry_with_log(lines: usize, height: usize) -> Geometry {
-        Geometry::new([0, 0, 0, height], 0, 0).with_log(lines, Span { first: 0, lines: 0 })
+    fn geometry_with_log(lines: usize, height: usize, selection: Span) -> Geometry {
+        Geometry::new([0, 0, 0, height], 0, 0).with_log(lines, selection)
     }
 
+    // The Logs tab follows Ddl's own rule (design §5.4): `G` moves only the
+    // cursor, because the viewport counts wrapped lines the domain cannot
+    // map a row onto for itself. The viewport catches up only once the
+    // renderer reports back where the newly-selected entry landed.
     #[test]
-    fn the_trail_scrolls_by_the_lines_the_renderer_measured() {
+    fn end_reaches_the_last_entry_and_the_next_measurement_follows_it_into_view() {
         let mut state = on_the_trail();
         for index in 0..20 {
             state.log.push(log_entry(&index.to_string()));
         }
+        update(
+            &mut state,
+            Msg::Measured(geometry_with_log(40, 6, Span { first: 0, lines: 2 })),
+        );
 
-        update(&mut state, Msg::Measured(geometry_with_log(40, 6)));
         press(&mut state, Key::Char('G'));
 
-        assert!(
-            state.log.scroll.offset() > 0,
-            "the end of a forty-line document is not the top of it"
+        assert_eq!(state.log.cursor.index(), 19, "the last of twenty entries");
+        assert_eq!(
+            state.log.scroll.offset(),
+            0,
+            "the viewport has not moved: no measurement has reported where entry 19 landed"
+        );
+
+        update(
+            &mut state,
+            Msg::Measured(geometry_with_log(
+                40,
+                6,
+                Span {
+                    first: 38,
+                    lines: 2,
+                },
+            )),
+        );
+
+        assert_eq!(
+            state.log.scroll.offset(),
+            34,
+            "the row measured at lines 38..40 has to be on screen in a six-line panel"
         );
     }
 
