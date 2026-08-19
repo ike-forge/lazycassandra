@@ -29,9 +29,16 @@ pub(crate) fn run(
         Effect::Connect(conn) => {
             let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
             tokio::spawn(async move {
-                let msg = match cluster.connect(conn).await {
-                    Ok(posture) => Msg::Connected { conn, posture },
-                    Err(error) => Msg::ConnectFailed { conn, error },
+                let started = std::time::Instant::now();
+                let result = cluster.connect(conn).await;
+                let took = started.elapsed();
+                let msg = match result {
+                    Ok(posture) => Msg::Connected {
+                        conn,
+                        posture,
+                        took,
+                    },
+                    Err(error) => Msg::ConnectFailed { conn, error, took },
                 };
                 // A closed channel means the main loop has already ended.
                 let _sent = tx.send(msg.into());
@@ -41,12 +48,16 @@ pub(crate) fn run(
         Effect::LoadSchema(conn) => {
             let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
             tokio::spawn(async move {
-                let msg = match cluster.describe(conn).await {
+                let started = std::time::Instant::now();
+                let result = cluster.describe(conn).await;
+                let took = started.elapsed();
+                let msg = match result {
                     Ok(schema) => Msg::SchemaLoaded {
                         conn,
                         schema: Box::new(schema),
+                        took,
                     },
-                    Err(error) => Msg::SchemaFailed { conn, error },
+                    Err(error) => Msg::SchemaFailed { conn, error, took },
                 };
                 let _sent = tx.send(msg.into());
             });
@@ -61,12 +72,16 @@ pub(crate) fn run(
                 stmt.as_ref().clone(),
             );
             tokio::spawn(async move {
-                let msg = match cluster.execute(conn, &stmt).await {
+                let started = std::time::Instant::now();
+                let result = cluster.execute(conn, &stmt).await;
+                let took = started.elapsed();
+                let msg = match result {
                     Ok(page) => Msg::PageReady {
                         query,
                         page: Box::new(page),
+                        took,
                     },
-                    Err(error) => Msg::Failed { query, error },
+                    Err(error) => Msg::Failed { query, error, took },
                 };
                 let _sent = tx.send(msg.into());
             });

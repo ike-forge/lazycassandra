@@ -15,6 +15,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use lc_domain::export::{Encoder, Format};
 use lc_domain::model::{
@@ -92,23 +93,41 @@ pub(crate) async fn run_with_writer(
     while let Some(effect) = pending.pop_front() {
         let messages: Vec<Msg> = match effect {
             Effect::Connect(conn) => vec![match cluster.connect(conn).await {
-                Ok(posture) => Msg::Connected { conn, posture },
-                Err(error) => Msg::ConnectFailed { conn, error },
+                Ok(posture) => Msg::Connected {
+                    conn,
+                    posture,
+                    took: Duration::ZERO,
+                },
+                Err(error) => Msg::ConnectFailed {
+                    conn,
+                    error,
+                    took: Duration::ZERO,
+                },
             }],
             Effect::LoadSchema(conn) => vec![match cluster.describe(conn).await {
                 Ok(schema) => Msg::SchemaLoaded {
                     conn,
                     schema: Box::new(schema),
+                    took: Duration::ZERO,
                 },
-                Err(error) => Msg::SchemaFailed { conn, error },
+                Err(error) => Msg::SchemaFailed {
+                    conn,
+                    error,
+                    took: Duration::ZERO,
+                },
             }],
             Effect::Execute { conn, query, stmt } => {
                 vec![match cluster.execute(conn, &stmt).await {
                     Ok(page) => Msg::PageReady {
                         query,
                         page: Box::new(page),
+                        took: Duration::ZERO,
                     },
-                    Err(error) => Msg::Failed { query, error },
+                    Err(error) => Msg::Failed {
+                        query,
+                        error,
+                        took: Duration::ZERO,
+                    },
                 }]
             }
             Effect::Export {
@@ -163,6 +182,7 @@ async fn run_export(cluster: &dyn Cluster, writer: &dyn Writer, job: &Job) -> Ve
     messages.push(Msg::ExportFinished {
         job: job.id,
         result,
+        took: Duration::ZERO,
     });
     messages
 }

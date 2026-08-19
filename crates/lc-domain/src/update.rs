@@ -25,6 +25,7 @@ use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
 use crate::tree::Node;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// How many rows one look at a table brings back.
 ///
@@ -52,26 +53,39 @@ pub enum Msg {
     Connected {
         conn: ConnId,
         posture: Posture,
+        /// How long the call took, measured by the adapter around the real
+        /// call. The domain reads no clock (query log design §4).
+        took: Duration,
     },
     ConnectFailed {
         conn: ConnId,
         error: DbError,
+        /// As [`Msg::Connected::took`].
+        took: Duration,
     },
     SchemaFailed {
         conn: ConnId,
         error: DbError,
+        /// As [`Msg::Connected::took`].
+        took: Duration,
     },
     SchemaLoaded {
         conn: ConnId,
         schema: Box<Schema>,
+        /// As [`Msg::Connected::took`].
+        took: Duration,
     },
     PageReady {
         query: QueryId,
         page: Box<Page>,
+        /// As [`Msg::Connected::took`].
+        took: Duration,
     },
     Failed {
         query: QueryId,
         error: DbError,
+        /// As [`Msg::Connected::took`].
+        took: Duration,
     },
     /// The external editor exited cleanly; this is what it saved
     /// (docs/superpowers/specs/2026-08-12-external-editor-design.md §3).
@@ -90,6 +104,8 @@ pub enum Msg {
     ExportFinished {
         job: JobId,
         result: Result<usize, ExportError>,
+        /// As [`Msg::Connected::took`].
+        took: Duration,
     },
     Quit,
 }
@@ -259,7 +275,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::Measured(geometry) => measured(state, geometry),
 
-        Msg::Connected { conn, posture } => {
+        Msg::Connected { conn, posture, .. } => {
             if !state.connection.is_current(conn) {
                 return Vec::new();
             }
@@ -272,7 +288,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             vec![Effect::LoadSchema(conn)]
         }
 
-        Msg::ConnectFailed { conn, error } => {
+        Msg::ConnectFailed { conn, error, .. } => {
             if !state.connection.is_current(conn) {
                 return Vec::new();
             }
@@ -289,7 +305,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             Vec::new()
         }
 
-        Msg::SchemaFailed { conn, error } => {
+        Msg::SchemaFailed { conn, error, .. } => {
             let applied = match &mut state.connection {
                 ConnectionState::Connected(connection) if connection.id == conn => {
                     connection.schema = SchemaState::Failed(error.clone());
@@ -311,7 +327,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             Vec::new()
         }
 
-        Msg::SchemaLoaded { conn, schema } => {
+        Msg::SchemaLoaded { conn, schema, .. } => {
             let applied = match &mut state.connection {
                 ConnectionState::Connected(connection) if connection.id == conn => {
                     connection.schema = SchemaState::Loaded(*schema);
@@ -330,7 +346,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         // A result whose id is no longer in flight belongs to a cancelled
         // query, and applying it would resurrect a view the user left. The
         // panel applies the second gate: whether the result is *its* result.
-        Msg::PageReady { query, page } => {
+        Msg::PageReady { query, page, .. } => {
             if state.in_flight.remove(&query).is_some() {
                 state.contents.page_ready(query, *page);
                 state.mark_dirty();
@@ -341,7 +357,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         // No overlay, unlike `SchemaFailed`: a schema failure disables the
         // application, a failed browse disables one panel, and an overlay per
         // mistyped table is the warning noise vision.md §8 flags.
-        Msg::Failed { query, error } => {
+        Msg::Failed { query, error, .. } => {
             if state.in_flight.remove(&query).is_some() {
                 state.contents.failed(query, error);
                 state.mark_dirty();
@@ -355,7 +371,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::ExportProgress { job, rows } => export_progress(state, job, rows),
 
-        Msg::ExportFinished { job, result } => finish_export(state, job, result),
+        Msg::ExportFinished { job, result, .. } => finish_export(state, job, result),
 
         Msg::Quit => quit(state),
     }
@@ -2703,6 +2719,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(schema_of(&["shop"])),
+                took: Duration::ZERO,
             },
         );
         state.dirty = false;
@@ -2725,6 +2742,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(schema_of(&["shop"])),
+                took: Duration::ZERO,
             },
         );
         assert!(
@@ -2755,6 +2773,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(schema_of(&["shop"])),
+                took: Duration::ZERO,
             },
         );
         state
@@ -2871,6 +2890,7 @@ mod tests {
             Msg::Failed {
                 query: cancelled,
                 error: DbError::Timeout,
+                took: Duration::ZERO,
             },
         );
 
@@ -2915,6 +2935,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn: ConnId::next(),
                 schema: Box::new(Schema::default()),
+                took: Duration::ZERO,
             },
         );
 
@@ -3083,6 +3104,7 @@ mod tests {
             Msg::Connected {
                 conn,
                 posture: Posture::ReadOnly,
+                took: Duration::ZERO,
             },
         );
 
@@ -3104,6 +3126,7 @@ mod tests {
             Msg::Connected {
                 conn: ConnId::next(),
                 posture: Posture::ReadOnly,
+                took: Duration::ZERO,
             },
         );
 
@@ -3124,6 +3147,7 @@ mod tests {
             Msg::ConnectFailed {
                 conn,
                 error: DbError::Unreachable("no route".to_owned()),
+                took: Duration::ZERO,
             },
         );
 
@@ -3150,6 +3174,7 @@ mod tests {
             Msg::ConnectFailed {
                 conn: ConnId::next(),
                 error: DbError::Timeout,
+                took: Duration::ZERO,
             },
         );
 
@@ -3167,6 +3192,7 @@ mod tests {
             Msg::SchemaFailed {
                 conn,
                 error: DbError::Invalid("unauthorized".to_owned()),
+                took: Duration::ZERO,
             },
         );
 
@@ -3186,6 +3212,7 @@ mod tests {
             Msg::SchemaFailed {
                 conn: ConnId::next(),
                 error: DbError::Invalid("unauthorized".to_owned()),
+                took: Duration::ZERO,
             },
         );
 
@@ -3208,6 +3235,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(tabled_schema(&[("shop", &["orders"])])),
+                took: Duration::ZERO,
             },
         );
         state.apply_search(Searched::Tables, Search::new("shop"));
@@ -3226,6 +3254,7 @@ mod tests {
             Msg::SchemaFailed {
                 conn,
                 error: DbError::Invalid("unauthorized".to_owned()),
+                took: Duration::ZERO,
             },
         );
 
@@ -3248,6 +3277,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(schema_of(keyspaces)),
+                took: Duration::ZERO,
             },
         );
         state
@@ -4791,6 +4821,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(schema_of(&["shop", "typezoo"])),
+                took: Duration::ZERO,
             },
         );
 
@@ -4818,6 +4849,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(tabled_schema(keyspaces)),
+                took: Duration::ZERO,
             },
         );
         state
@@ -5845,10 +5877,28 @@ mod tests {
             Msg::PageReady {
                 query,
                 page: Box::new(page_of(3)),
+                took: Duration::ZERO,
             },
         );
 
         assert_eq!(state.contents.row_count(), 3);
+    }
+
+    // The domain reads no clock; a duration is a value the adapter measured
+    // around the real call and handed in (query log design §4).
+    #[test]
+    fn a_result_carries_how_long_it_took() {
+        let msg = Msg::PageReady {
+            query: QueryId::next(),
+            page: Box::new(page_of(0)),
+            took: Duration::from_millis(41),
+        };
+
+        let Msg::PageReady { took, .. } = msg else {
+            panic!("constructed a PageReady");
+        };
+
+        assert_eq!(took, Duration::from_millis(41));
     }
 
     #[test]
@@ -5867,6 +5917,7 @@ mod tests {
                     }],
                     next: None,
                 }),
+                took: Duration::ZERO,
             },
         );
 
@@ -6233,6 +6284,7 @@ mod tests {
                     }],
                     next: None,
                 }),
+                took: Duration::ZERO,
             },
         );
 
@@ -6258,6 +6310,7 @@ mod tests {
                     rows: Vec::new(),
                     next: None,
                 }),
+                took: Duration::ZERO,
             },
         );
         state.contents.mode = SelectionMode::Column;
@@ -6283,6 +6336,7 @@ mod tests {
                     }],
                     next: None,
                 }),
+                took: Duration::ZERO,
             },
         );
         state.contents.mode = SelectionMode::Column;
@@ -6313,6 +6367,7 @@ mod tests {
                     }],
                     next: None,
                 }),
+                took: Duration::ZERO,
             },
         );
 
@@ -6626,6 +6681,7 @@ mod tests {
             Msg::PageReady {
                 query: first,
                 page: Box::new(page_of(3)),
+                took: Duration::ZERO,
             },
         );
 
@@ -6647,6 +6703,7 @@ mod tests {
             Msg::Failed {
                 query,
                 error: DbError::Timeout,
+                took: Duration::ZERO,
             },
         );
 
@@ -6670,6 +6727,7 @@ mod tests {
             Msg::PageReady {
                 query,
                 page: Box::new(page_of(4)),
+                took: Duration::ZERO,
             },
         );
         let tree_row = state.tables.cursor.index();
@@ -6696,6 +6754,7 @@ mod tests {
             Msg::PageReady {
                 query,
                 page: Box::new(page_of(2)),
+                took: Duration::ZERO,
             },
         );
 
@@ -6802,6 +6861,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(tabled_schema(&[("shop", &["a"])])),
+                took: Duration::ZERO,
             },
         );
 
@@ -6988,6 +7048,7 @@ mod tests {
             Msg::PageReady {
                 query,
                 page: Box::new(page_of(30)),
+                took: Duration::ZERO,
             },
         );
         state.focus_on(Panel::Contents);
@@ -7223,6 +7284,7 @@ mod tests {
             Msg::SchemaLoaded {
                 conn,
                 schema: Box::new(schema),
+                took: Duration::ZERO,
             },
         );
 
@@ -7276,6 +7338,7 @@ mod tests {
                         ],
                         next: None,
                     }),
+                    took: Duration::ZERO,
                 },
             );
             state.contents.cursor.go_to(5, 20);
@@ -8212,6 +8275,7 @@ mod tests {
             Msg::PageReady {
                 query,
                 page: Box::new(page_of(3)),
+                took: Duration::ZERO,
             },
         );
         // The one fixture `ctrl-e` opens the form from: a loaded grid on a
@@ -9192,6 +9256,7 @@ mod tests {
             Msg::PageReady {
                 query,
                 page: Box::new(page_of(3)),
+                took: Duration::ZERO,
             },
         );
 
@@ -9915,6 +9980,7 @@ mod tests {
             Msg::ExportFinished {
                 job: *job,
                 result: Ok(41_203),
+                took: Duration::ZERO,
             },
         );
 
@@ -9940,6 +10006,7 @@ mod tests {
             Msg::ExportFinished {
                 job: *job,
                 result: Err(ExportError::Io("disk full".to_owned())),
+                took: Duration::ZERO,
             },
         );
 
@@ -9965,6 +10032,7 @@ mod tests {
             Msg::ExportFinished {
                 job: *job,
                 result: Err(ExportError::Exists),
+                took: Duration::ZERO,
             },
         );
 
@@ -10000,6 +10068,7 @@ mod tests {
             Msg::ExportFinished {
                 job,
                 result: Err(ExportError::Exists),
+                took: Duration::ZERO,
             },
         );
 
@@ -10019,6 +10088,7 @@ mod tests {
             Msg::ExportFinished {
                 job: *job,
                 result: Err(ExportError::Exists),
+                took: Duration::ZERO,
             },
         );
 
@@ -10067,6 +10137,7 @@ mod tests {
             Msg::ExportFinished {
                 job,
                 result: Err(ExportError::Exists),
+                took: Duration::ZERO,
             },
         );
         let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -10103,6 +10174,7 @@ mod tests {
             Msg::ExportFinished {
                 job,
                 result: Err(ExportError::Exists),
+                took: Duration::ZERO,
             },
         );
         let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -10122,6 +10194,7 @@ mod tests {
             Msg::ExportFinished {
                 job: *job,
                 result: Err(ExportError::Exists),
+                took: Duration::ZERO,
             },
         );
 

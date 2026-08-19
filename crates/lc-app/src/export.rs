@@ -40,8 +40,17 @@ pub(crate) fn spawn(
 
     tokio::spawn(async move {
         let id = job.id;
+        let started = std::time::Instant::now();
         let result = run(&tx, cluster.as_ref(), writer.as_ref(), job).await;
-        let _sent = tx.send(Msg::ExportFinished { job: id, result }.into());
+        let took = started.elapsed();
+        let _sent = tx.send(
+            Msg::ExportFinished {
+                job: id,
+                result,
+                took,
+            }
+            .into(),
+        );
     });
 }
 
