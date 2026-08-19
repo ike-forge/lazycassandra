@@ -468,6 +468,24 @@ const QUERIES_HINTS: &[Binding] = &[
     },
 ];
 
+/// The Logs tab's own bar, once its trail is drawn rather than the CQL
+/// buffer beside it (query log design §5.1). It is read-only and takes no
+/// text, so it advertises like the other list panels — `/` and `v`, not
+/// `⏎`/`esc`, neither of which does anything here: `Enter` only reaches
+/// `activate`, which is gated to Tables, and `Esc` leaves nothing, because
+/// the tab is not the panel that `takes_text` (docs/shortcuts.md's Logs
+/// subsection).
+const LOGS_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('v'))],
+        action: "select",
+    },
+];
+
 impl Panel {
     /// Every panel, in column order.
     pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
@@ -1321,6 +1339,22 @@ impl State {
     #[must_use]
     pub fn takes_text(&self) -> bool {
         self.focus() == Panel::Queries && self.queries.tab() == QueriesTab::Cql
+    }
+
+    /// What the focused panel responds to this frame.
+    ///
+    /// A question about `State` rather than about `Panel`, for the same
+    /// reason `takes_text` moved here: the Queries panel's bindings depend on
+    /// which tab is drawn, and `Panel::hints` cannot see that (query log
+    /// design §5.1). Every other panel answers exactly what `Panel::hints`
+    /// already did.
+    #[must_use]
+    pub fn hints(&self) -> &'static [Binding] {
+        if self.focus() == Panel::Queries && self.queries.tab() == QueriesTab::Logs {
+            LOGS_HINTS
+        } else {
+            self.focus().hints()
+        }
     }
 
     /// Posture of the current connection, or the safe default when there is

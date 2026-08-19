@@ -306,7 +306,6 @@ pub(crate) fn bar(state: &State) -> HintBar {
     // `⏎ newline` is dropped for the frames `⏎` accepts instead, the same
     // way the global `tab panel` hint is above: one key, one true hint.
     let mut panel: Vec<Hint> = state
-        .focus()
         .hints()
         .iter()
         .filter(|binding| !completing || !binding.keys.contains(&Stroke::key(Key::Enter)))
@@ -561,6 +560,41 @@ mod tests {
                 "{panel:?} would draw a group with nothing in it"
             );
         }
+    }
+
+    // I2: the Logs tab is read-only and takes no text, so its bar must not
+    // carry the Cql tab's editor bindings — `⏎ newline` types nothing there
+    // and `esc leave` leaves nothing, since `takes_text` is false on this
+    // tab (query log design §5.1) — and it must carry what the tab actually
+    // does, the same `/`/`v` the other list panels advertise.
+    #[test]
+    fn the_logs_tabs_bar_advertises_a_list_not_an_editor() {
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
+        state.queries.show(crate::queries::QueriesTab::Logs);
+
+        let bar = bar(&state);
+
+        assert!(
+            bar.panel.iter().all(|hint| hint.action != "newline"),
+            "⏎ types nothing on the Logs tab: {:?}",
+            bar.panel
+        );
+        assert!(
+            bar.panel.iter().all(|hint| hint.action != "leave"),
+            "esc leaves nothing on the Logs tab, unlike Cql's: {:?}",
+            bar.panel
+        );
+        assert!(
+            bar.panel.iter().any(|hint| hint.action == "search"),
+            "/ search is genuinely bound here: {:?}",
+            bar.panel
+        );
+        assert!(
+            bar.panel.iter().any(|hint| hint.action == "select"),
+            "v select is genuinely bound here: {:?}",
+            bar.panel
+        );
     }
 
     #[test]
