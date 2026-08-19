@@ -47,8 +47,13 @@ pub(super) fn body(state: &State) -> PanelBody {
         ConnectionState::Disconnected | ConnectionState::Failed(_) => waiting("Not connected"),
         ConnectionState::Connecting(_) => waiting("Connecting…"),
         ConnectionState::Connected(connection) => match &connection.schema {
-            // Schema `Failed` joins `Loading` here for the same reason.
-            SchemaState::Loading | SchemaState::Failed(_) => waiting("Loading schema…"),
+            SchemaState::Loading => waiting("Loading schema…"),
+            // The read is over and it failed — "Loading schema…" would claim
+            // it is still in progress, which is affirmatively false rather
+            // than the neutral empty state the panel owes here, the same way
+            // `ConnectionState::Failed` joins `Disconnected` on "Not
+            // connected" above (final review M3).
+            SchemaState::Failed(_) => waiting("No schema"),
             SchemaState::Loaded(schema) => tree(
                 &state.tables,
                 schema,
@@ -300,6 +305,10 @@ mod tests {
         };
         assert!(!text.contains("unauthorized"), "{text}");
         assert_eq!(token, Some(Token::Muted));
+        // The read is over; a schema that failed to load is not one that is
+        // still loading — "Loading schema…" would be affirmatively false,
+        // not the neutral empty state the panel owes (final review M3).
+        assert_ne!(text, "Loading schema…", "{text}");
     }
 
     #[test]
