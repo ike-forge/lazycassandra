@@ -1284,10 +1284,34 @@ impl State {
             // The panel's unfocused height is a function of its buffer
             // (layout.rs), so an unfocused Logs tab would be sized by
             // something it is not drawing (query log design §5.2).
-            Panel::Queries => self.queries.show(QueriesTab::Cql),
+            Panel::Queries => self.show_queries_tab(QueriesTab::Cql),
         }
 
         self.focus = panel;
+    }
+
+    /// Draws `tab` on the Queries panel, dropping what only makes sense while
+    /// the Logs tab is the one being drawn.
+    ///
+    /// The one chokepoint for leaving the Logs tab, whether that is
+    /// `focus_on` reverting it or `Tab`/`BackTab` walking the panel's own
+    /// strip past it: a search left applied would keep the hint bar
+    /// advertising `n`/`esc clear` while the Cql buffer takes text, and
+    /// `escape` would spend a press clearing it instead of leaving the
+    /// buffer — a lie the same rule that governs every other hint exists to
+    /// prevent (`view/hints.rs`'s own "a bar that lies is worse than no
+    /// bar"). A held selection is the same problem `focus_on`'s doc comment
+    /// already states for every other panel: it says what the next `y`
+    /// answers, and a trail the ring has moved on from by the time Logs is
+    /// shown again is not what a stale selection still names (query log
+    /// design §5.1, §5.2).
+    pub(crate) fn show_queries_tab(&mut self, tab: QueriesTab) {
+        if self.queries.tab() == QueriesTab::Logs && tab != QueriesTab::Logs {
+            self.log.set_search(None);
+            self.log.selection.clear();
+        }
+
+        self.queries.show(tab);
     }
 
     /// Whether the focused panel is taking text this frame.

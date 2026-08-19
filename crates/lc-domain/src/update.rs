@@ -1147,7 +1147,7 @@ impl Landing {
             Self::Contents => state.focus_on(Panel::Contents),
             Self::Queries(tab) => {
                 state.focus_on(Panel::Queries);
-                state.queries.show(tab);
+                state.show_queries_tab(tab);
             }
         }
     }
@@ -6557,6 +6557,89 @@ mod tests {
                 "{name} left Tables holding a selection"
             );
         }
+    }
+
+    #[test]
+    fn switching_away_from_the_trail_clears_its_selection_by_every_route() {
+        // Mirrors `switching_panels_clears_the_selection_of_the_panel_left_behind`,
+        // which only drives Tables through this matrix — the trail's
+        // selection lives on `state.log`, not on a panel struct `focus_on`'s
+        // match already walks, so it needs its own coverage (fix round 1,
+        // finding 1). `shift-tab` from the Logs tab lands on Cql without
+        // ever leaving the Queries panel, which is `show_queries_tab`'s path
+        // rather than `focus_on`'s.
+        let routes: Vec<Route> = vec![
+            (
+                "tab",
+                Box::new(|state: &mut State| drop(press(state, Key::Tab))),
+            ),
+            (
+                "shift-tab",
+                Box::new(|state: &mut State| drop(press(state, Key::BackTab))),
+            ),
+            (
+                "1",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('1')))),
+            ),
+            (
+                "2",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('2')))),
+            ),
+            (
+                "3",
+                Box::new(|state: &mut State| drop(press(state, Key::Char('3')))),
+            ),
+        ];
+
+        for (name, route) in routes {
+            let mut state = trail_of(&["SELECT one", "SELECT two"]);
+            press(&mut state, Key::Char('v'));
+
+            route(&mut state);
+
+            if state.focus() == Panel::Queries && state.queries.tab() == QueriesTab::Logs {
+                continue;
+            }
+
+            assert!(
+                !state.log.selection.is_active(),
+                "{name} left the trail holding a selection"
+            );
+        }
+    }
+
+    #[test]
+    fn the_trails_search_does_not_survive_a_switch_to_the_cql_tab() {
+        // Finding 2 (fix round 1): the trail's search must not outlive the
+        // Logs tab being drawn, or a stray search left applied would keep
+        // the hint bar advertising `n`/`esc clear` while the Cql buffer
+        // takes text, and would cost an `Esc` press to something invisible
+        // instead of leaving the buffer.
+        let mut state = trail_of(&["SELECT one", "DELETE two"]);
+        search_for(&mut state, "DELETE");
+        press(&mut state, Key::Enter);
+        assert!(
+            state.search(Searched::Queries).is_some(),
+            "the search committed"
+        );
+
+        press(&mut state, Key::BackTab);
+
+        assert_eq!(
+            state.queries.tab(),
+            QueriesTab::Cql,
+            "landed on the buffer without leaving the panel"
+        );
+        assert_eq!(
+            state.search(Searched::Queries),
+            None,
+            "a stray search survived onto the Cql tab"
+        );
+        let bar = crate::view::hints::bar(&state);
+        assert!(
+            !bar.panel.iter().any(|hint| hint.action == "next match"),
+            "the hint bar still offered n while the buffer takes text"
+        );
     }
 
     #[test]
