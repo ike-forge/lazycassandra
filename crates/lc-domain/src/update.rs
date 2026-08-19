@@ -181,6 +181,24 @@ pub fn init(
     let mut state = State::default();
     state.now = now;
     state.theme = config.theme.clone();
+
+    // Read before the move into the overlay below, so the trail carries these
+    // ahead of the connection entry — the order things happened in
+    // (query log design §8).
+    for diagnostic in &diagnostics {
+        state.log.push(Entry::new(
+            now,
+            sentence(format!(
+                "{}: {}",
+                crate::view::location(diagnostic),
+                diagnostic.message
+            )),
+            Outcome::Rejected {
+                reason: "dropped from the configuration".to_owned(),
+            },
+        ));
+    }
+
     state.overlay =
         (!diagnostics.is_empty()).then(|| Overlay::Diagnostics(DiagnosticsPanel::new(diagnostics)));
     state.config = config;
@@ -336,7 +354,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::ExportProgress { job, rows } => export_progress(state, job, rows),
 
-        Msg::ExportFinished { job, result, .. } => finish_export(state, job, result),
+        Msg::ExportFinished { job, result, took } => finish_export(state, job, result, took),
 
         Msg::Quit => quit(state),
     }
@@ -471,6 +489,13 @@ fn editor_closed(state: &mut State, buffer: &str) -> Vec<Effect> {
 }
 
 fn editor_failed(state: &mut State, reason: String) -> Vec<Effect> {
+    logged(
+        state,
+        sentence("Opening the external editor"),
+        Outcome::Failed {
+            detail: reason.clone(),
+        },
+    );
     raise(
         state,
         Message {
@@ -2036,6 +2061,18 @@ fn start_export(state: &mut State) -> Vec<Effect> {
     let destination = PathBuf::from(form.path().text());
     let (conn, job, format) = (connection.id, JobId::next(), form.format());
 
+    // A `Fetched` scope writes rows already in memory and issues no statement
+    // (export design §3) — there is nothing to log.
+    if let Source::Whole(stmt) = &source {
+        logged(
+            state,
+            statement_subject(stmt),
+            Outcome::Pending {
+                trace: Trace::Export(job),
+            },
+        );
+    }
+
     // Cloned rather than borrowed: the effect carries it out of the domain and
     // the job holds it against an `Exists` that has not come back yet.
     state.export = Some(ExportJob::started(
@@ -2106,8 +2143,14 @@ fn export_progress(state: &mut State, job: JobId, rows: usize) -> Vec<Effect> {
 }
 
 /// An export ended. `Exists` is the one outcome that is a question rather than
-/// a result: it reopens the form with its confirmation up (design §7).
-fn finish_export(state: &mut State, job: JobId, result: Result<usize, ExportError>) -> Vec<Effect> {
+/// a result: it reopens the form with its confirmation up (design §7), and the
+/// trail's entry stays pending for the retry that follows.
+fn finish_export(
+    state: &mut State,
+    job: JobId,
+    result: Result<usize, ExportError>,
+    took: Duration,
+) -> Vec<Effect> {
     if state.export.as_ref().map(ExportJob::id) != Some(job) {
         return Vec::new();
     }
@@ -2118,28 +2161,45 @@ fn finish_export(state: &mut State, job: JobId, result: Result<usize, ExportErro
     state.dirty = true;
 
     match result {
-        Ok(rows) => raise(
-            state,
-            Message {
-                title: "Exported".to_owned(),
-                message: format!("wrote {rows} rows to {}", finished.destination().display()),
-                severity: Severity::Info,
-            },
-        ),
+        Ok(rows) => {
+            state.log.complete(
+                Trace::Export(job),
+                Outcome::Succeeded {
+                    detail: format!("{rows} rows to {}", finished.destination().display()),
+                    took,
+                },
+            );
+            raise(
+                state,
+                Message {
+                    title: "Exported".to_owned(),
+                    message: format!("wrote {rows} rows to {}", finished.destination().display()),
+                    severity: Severity::Info,
+                },
+            );
+        }
         Err(ExportError::Exists) => {
             let (mut form, source) = finished.into_parts();
             form.ask(Pending::Overwrite(Box::new(source)));
             unwind_overlay(state);
             state.overlay = Some(Overlay::Export(form));
         }
-        Err(error) => raise(
-            state,
-            Message {
-                title: "Export failed".to_owned(),
-                message: error.to_string(),
-                severity: Severity::Danger,
-            },
-        ),
+        Err(error) => {
+            state.log.complete(
+                Trace::Export(job),
+                Outcome::Failed {
+                    detail: error.to_string(),
+                },
+            );
+            raise(
+                state,
+                Message {
+                    title: "Export failed".to_owned(),
+                    message: error.to_string(),
+                    severity: Severity::Danger,
+                },
+            );
+        }
     }
 
     Vec::new()
@@ -2738,6 +2798,13 @@ fn tree_rows(state: &State) -> usize {
 /// to run it on. Nothing is recorded and no effect is emitted.
 pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect>), DbError> {
     if stmt.mutates() && !state.posture().permits_mutation() {
+        logged(
+            state,
+            statement_subject(&stmt),
+            Outcome::Rejected {
+                reason: DbError::ReadOnly.to_string(),
+            },
+        );
         return Err(DbError::ReadOnly);
     }
 
@@ -2932,6 +2999,35 @@ mod tests {
         );
 
         assert!(matches!(state.overlay, Some(Overlay::Fatal(_))));
+    }
+
+    #[test]
+    fn what_the_config_got_wrong_is_in_the_trail_as_well_as_the_modal() {
+        let (state, _effects) = init(
+            ConnId::next(),
+            Config::default(),
+            vec![diagnostic("boom")],
+            Stamp::default(),
+        );
+
+        assert!(
+            state.log.entries().any(|entry| matches!(
+                entry.outcome(),
+                Outcome::Failed { .. } | Outcome::Rejected { .. }
+            )),
+            "a diagnostic reaches the trail"
+        );
+        assert!(
+            matches!(state.overlay, Some(Overlay::Diagnostics(_))),
+            "the modal is unchanged"
+        );
+        assert!(
+            matches!(
+                state.log.entries().next().unwrap().outcome(),
+                Outcome::Rejected { .. }
+            ),
+            "the diagnostic precedes the connection entry — the order things happened"
+        );
     }
 
     #[test]
@@ -4942,6 +5038,29 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    /// The modal stays — the user is waiting on it right now — and gets a
+    /// mirror in the trail alongside it (query log design §8).
+    #[test]
+    fn an_editor_that_would_not_run_leaves_its_reason_in_the_trail() {
+        let mut state = State::default();
+
+        let _effects = update(
+            &mut state,
+            Msg::EditorFailed {
+                reason: "no $EDITOR set".to_owned(),
+            },
+        );
+
+        assert!(
+            matches!(state.overlay, Some(Overlay::Message(_))),
+            "the modal stays"
+        );
+        let Outcome::Failed { detail } = state.log.entries().last().unwrap().outcome() else {
+            panic!("the editor failed");
+        };
+        assert!(detail.contains("no $EDITOR set"), "{detail}");
     }
 
     /// A state focused on Queries with `text` typed into it, `\n` meaning
@@ -9678,6 +9797,26 @@ mod tests {
         );
     }
 
+    // Rejected in update, so no effect was ever issued — the entry is born
+    // complete (query log design §3, §3.1).
+    #[test]
+    fn a_statement_refused_by_the_posture_says_so_in_the_trail() {
+        let mut state = editing("DELETE FROM store.orders WHERE id = 7");
+
+        let effects = run_query(&mut state);
+
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Execute { .. })),
+            "a read-only connection issues nothing"
+        );
+        let Outcome::Rejected { reason } = state.log.entries().last().unwrap().outcome() else {
+            panic!("the statement was rejected");
+        };
+        assert!(reason.contains("read-only"), "{reason}");
+    }
+
     #[test]
     fn running_the_buffer_lands_focus_on_the_grid_it_filled() {
         let mut state = editing("SELECT * FROM shop.orders");
@@ -10287,6 +10426,21 @@ mod tests {
         handle_key(state, KeyPress::new(Key::Char(' ')))
     }
 
+    /// A typed statement, exported to `destination`, mid-flight.
+    fn export_in_flight(cql: &str, destination: &str) -> State {
+        let mut state = contents_showing_typed(cql);
+        open_form(&mut state);
+        if let Some(Overlay::Export(form)) = &mut state.overlay {
+            *form.path_mut() = crate::export::Line::new(destination.to_owned());
+        }
+        // Scope, Format, Path, Export.
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        state
+    }
+
     #[test]
     fn exporting_the_whole_table_asks_for_it_without_a_limit() {
         let mut state = contents_showing(ROW_LIMIT);
@@ -10431,6 +10585,64 @@ mod tests {
         assert_eq!(message.severity, Severity::Info);
         assert!(message.message.contains("41203"));
         assert!(message.message.contains("shop.orders.csv"));
+    }
+
+    #[test]
+    fn a_finished_export_records_the_exact_statement_and_where_it_went() {
+        let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+
+        let _effects = update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Ok(18_420),
+                took: Duration::from_millis(1_400),
+            },
+        );
+
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| entry.subject().text().starts_with("SELECT"))
+            .expect("the export entry");
+        assert!(
+            !entry.subject().text().contains("LIMIT"),
+            "an export pages the unbounded statement (export design §6.2)"
+        );
+        let Outcome::Succeeded { detail, .. } = entry.outcome() else {
+            panic!("the export succeeded");
+        };
+        assert!(detail.contains("18420"), "{detail}");
+        assert!(detail.contains("/tmp/orders.csv"), "{detail}");
+    }
+
+    /// `ExportError::Exists` puts the form back for a retry rather than
+    /// ending the job, so the entry stays pending — closed by whatever the
+    /// retry's own outcome is (export design §7).
+    #[test]
+    fn an_export_that_exists_leaves_its_entry_pending_for_the_retry() {
+        let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+
+        let _effects = update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+                took: Duration::ZERO,
+            },
+        );
+
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| entry.subject().text().starts_with("SELECT"))
+            .expect("the export entry");
+        assert!(
+            matches!(entry.outcome(), Outcome::Pending { trace: Trace::Export(id) } if *id == job),
+            "still waiting on the retry"
+        );
     }
 
     #[test]

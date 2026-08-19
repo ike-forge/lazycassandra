@@ -115,8 +115,12 @@ pub struct DiagnosticRow {
     pub message: String,
 }
 
-fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
-    let location = diagnostic.span.map_or_else(
+/// A diagnostic's origin, formatted — so the renderer never has to know how a
+/// span is spelled, and the trail's mirror never has to spell it twice
+/// (query log design §12).
+#[must_use]
+pub fn location(diagnostic: &Diagnostic) -> String {
+    diagnostic.span.map_or_else(
         || diagnostic.origin.as_str().to_owned(),
         |span| {
             format!(
@@ -126,10 +130,12 @@ fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
                 span.column
             )
         },
-    );
+    )
+}
 
+fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
     DiagnosticRow {
-        location,
+        location: location(diagnostic),
         severity: diagnostic.severity,
         message: diagnostic.message.clone(),
     }
