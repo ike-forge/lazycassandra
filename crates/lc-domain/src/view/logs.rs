@@ -10,6 +10,13 @@ use crate::state::State;
 use crate::style::{Segment, Severity, Token};
 use crate::view::PanelBody;
 
+/// The pending outcome's text, before `lc-inbound` animates its leading
+/// glyph frame by frame (design §6). Exposed rather than a private literal
+/// so the renderer can find the row to animate without a second, drifting
+/// copy of this string — the domain still carries no frame counter of its
+/// own; this is only the sentinel it draws in place of one.
+pub const RUNNING: &str = "⋯ running";
+
 /// One entry as a renderer needs it: the time already formatted, so the
 /// renderer never has to know how a [`Stamp`](crate::clock::Stamp) is spelled.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +85,7 @@ fn outcome(outcome: &Outcome) -> Vec<Segment> {
     let token = Token::Severity(outcome.severity());
 
     let text = match outcome {
-        Outcome::Pending { .. } => "⋯ running".to_owned(),
+        Outcome::Pending { .. } => RUNNING.to_owned(),
         Outcome::Succeeded { detail, took } => format!("→ {detail}, {}", elapsed(*took)),
         Outcome::Failed { detail } => format!("✗ {detail}"),
         Outcome::Cancelled => "⊘ cancelled".to_owned(),

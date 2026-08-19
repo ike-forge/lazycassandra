@@ -18,7 +18,7 @@ pub use crate::style::Segment;
 pub use contents::{GridCell, GridColumn};
 pub use details::{ColumnKind, DetailRow, Details, Group, Heading, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness, Stroke};
-pub use logs::LogRow;
+pub use logs::{LogRow, RUNNING};
 pub use tables::{RowKind, TreeRow};
 use title::TabSpec;
 pub use title::{PanelTitle, TAB_SEPARATOR, Tab};

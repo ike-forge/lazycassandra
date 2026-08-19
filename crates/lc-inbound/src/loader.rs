@@ -90,6 +90,17 @@ pub(crate) fn line(activity: Activity, theme: Theme) -> Option<Line<'static>> {
     Some(loader.into_line(usize::from(WIDTH)))
 }
 
+/// The glyphs a pending entry's outcome spins through in the Logs trail, one
+/// per frame — the same "an integer frame becomes a drawn thing, statelessly"
+/// idiom [`line`]'s scanner already turns `Activity::Working` into, applied
+/// to a single inline glyph rather than a bar (query log design §6).
+const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// The glyph a pending row draws at `frame`.
+pub(crate) fn spin(frame: usize) -> char {
+    SPIN[frame % SPIN.len()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +231,15 @@ mod tests {
             .collect();
 
         assert!(frames.iter().any(|frame| frame != &frames[0]));
+    }
+
+    #[test]
+    fn the_spinner_glyph_changes_with_the_frame_and_wraps() {
+        assert_ne!(spin(0), spin(1), "consecutive frames must draw differently");
+        assert_eq!(
+            spin(0),
+            spin(SPIN.len()),
+            "the cycle repeats after every glyph is spent"
+        );
     }
 }

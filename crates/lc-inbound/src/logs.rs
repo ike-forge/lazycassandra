@@ -11,7 +11,7 @@ use lc_domain::grid::BAR;
 use lc_domain::search::Search;
 use lc_domain::state::Span;
 use lc_domain::style::{Segment, Token};
-use lc_domain::view::LogRow;
+use lc_domain::view::{Activity, LogRow, RUNNING};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -38,6 +38,10 @@ pub(crate) struct Laid {
 }
 
 /// The view model's Log body, as the renderer reads it.
+///
+/// `activity` is the Queries panel's own — never a frame the domain carries
+/// on a `LogRow`, which stays a plain projection (design §6) — so a pending
+/// entry's outcome can spin without the domain ever counting a frame.
 #[derive(Clone, Copy)]
 pub(crate) struct LogsView<'a> {
     pub(crate) rows: &'a [LogRow],
@@ -45,6 +49,7 @@ pub(crate) struct LogsView<'a> {
     pub(crate) offset: usize,
     pub(crate) marked: &'a Marked,
     pub(crate) search: Option<&'a Search>,
+    pub(crate) activity: Activity,
 }
 
 pub(crate) fn render(
@@ -59,6 +64,7 @@ pub(crate) fn render(
         offset,
         marked,
         search,
+        activity,
     } = *view;
 
     let laid = lay_out(
@@ -67,6 +73,7 @@ pub(crate) fn render(
         marked,
         usize::from(area.width),
         search,
+        activity,
         theme,
     );
     let total = laid.lines.len();
@@ -98,6 +105,7 @@ pub(crate) fn lay_out(
     marked: &Marked,
     width: usize,
     search: Option<&Search>,
+    activity: Activity,
     theme: Theme,
 ) -> Laid {
     let content = width.saturating_sub(usize::from(BAR));
@@ -106,7 +114,7 @@ pub(crate) fn lay_out(
     let mut selection = Span::default();
 
     for (index, row) in rows.iter().enumerate() {
-        let mut drawn = entry_lines(row, content, search, theme);
+        let mut drawn = entry_lines(row, content, search, activity, theme);
 
         if marked.holds(index) {
             let band = theme.style(marked.band);
@@ -140,11 +148,14 @@ pub(crate) fn lay_out(
 /// One entry's lines: its subject wrapped from [`STAMP_W`], its time
 /// overwriting the blank the wrap opened with, then its outcome wrapped the
 /// same way — skipped entirely where `outcome` is empty, which is the
-/// dropped-count row (query log design §6).
+/// dropped-count row (query log design §6). The outcome's leading glyph
+/// spins first, while it is still segments — wrapping afterwards would have
+/// to find it again inside already-split characters.
 fn entry_lines(
     row: &LogRow,
     width: usize,
     search: Option<&Search>,
+    activity: Activity,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let indent = usize::from(STAMP_W);
@@ -156,13 +167,35 @@ fn entry_lines(
         *first = stamped(std::mem::take(first), at, theme);
     }
 
-    let outcome = crate::wrap::wrap(&chars_of(&row.outcome, theme), width, indent);
+    let animated = animated_outcome(&row.outcome, activity);
+    let outcome = crate::wrap::wrap(&chars_of(&animated, theme), width, indent);
 
     subject
         .into_iter()
         .chain(outcome)
         .map(|chars| styled(chars, search, theme))
         .collect()
+}
+
+/// `outcome`, unless it is the trail's pending sentinel ([`RUNNING`]) and
+/// `activity` says the panel is still waiting — in which case its leading
+/// glyph is swapped for [`crate::loader::spin`]'s glyph at the current
+/// frame, the one thing about a pending row this renderer draws
+/// differently frame to frame (query log design §6). A resting or finished
+/// panel — including a pending row left over from a frame the completion
+/// has not yet reached — draws the sentinel exactly as the domain wrote it.
+fn animated_outcome(outcome: &[Segment], activity: Activity) -> Vec<Segment> {
+    if let Activity::Working { frame } = activity
+        && let [segment] = outcome
+        && segment.text == RUNNING
+    {
+        return vec![Segment {
+            text: format!("{} running", crate::loader::spin(frame)),
+            token: segment.token,
+        }];
+    }
+
+    outcome.to_vec()
 }
 
 /// `segments`, flattened to one character per element, each carrying the
@@ -247,6 +280,10 @@ mod tests {
     }
 
     fn drawn(rows: &[LogRow], width: u16, height: u16) -> String {
+        drawn_at(rows, width, height, Activity::Resting)
+    }
+
+    fn drawn_at(rows: &[LogRow], width: u16, height: u16, activity: Activity) -> String {
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("the test backend starts");
         terminal
@@ -261,6 +298,7 @@ mod tests {
                         offset: 0,
                         marked: &Marked::new(Ranges::default(), false),
                         search: None,
+                        activity,
                     },
                     Theme::of(&ThemeChoice::Ours(Ours::DefaultDark)),
                 );
@@ -312,17 +350,42 @@ mod tests {
     #[test]
     fn a_pending_entry_is_drawn_as_still_running() {
         let drawn = drawn(
-            &[row(
-                "14:02:14",
-                "Reading schema",
-                "⋯ running",
-                Severity::Info,
-            )],
+            &[row("14:02:14", "Reading schema", RUNNING, Severity::Info)],
             60,
             6,
         );
 
         assert!(drawn.contains("running"), "{drawn}");
+    }
+
+    // Design §6: the pending outcome animates from the panel's own
+    // `Activity`, not a static glyph — a hung query and a fast one must not
+    // look identical.
+    #[test]
+    fn a_pending_entrys_glyph_spins_with_the_frame() {
+        let pending = [row("14:02:14", "Reading schema", RUNNING, Severity::Info)];
+
+        let first = drawn_at(&pending, 60, 6, Activity::Working { frame: 0 });
+        let second = drawn_at(&pending, 60, 6, Activity::Working { frame: 1 });
+
+        assert_ne!(
+            first, second,
+            "the outcome row must draw differently across frames"
+        );
+    }
+
+    #[test]
+    fn a_resting_panel_draws_the_pending_sentinel_unanimated() {
+        let pending = [row("14:02:14", "Reading schema", RUNNING, Severity::Info)];
+
+        let first = drawn_at(&pending, 60, 6, Activity::Resting);
+        let second = drawn_at(&pending, 60, 6, Activity::Resting);
+
+        assert_eq!(
+            first, second,
+            "with nothing outstanding there is no frame to animate from"
+        );
+        assert!(first.contains(RUNNING), "{first}");
     }
 
     #[test]

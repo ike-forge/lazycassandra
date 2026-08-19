@@ -105,6 +105,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             &panel.body,
             panel.search.as_ref(),
             focused,
+            panel.activity,
             beneath,
         );
 

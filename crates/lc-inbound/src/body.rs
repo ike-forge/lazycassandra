@@ -23,7 +23,7 @@ use lc_domain::state::{Ranges, Span};
 use lc_domain::style::Token;
 use lc_domain::style::{Segment, text};
 use lc_domain::view::{
-    CompletionView, GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow,
+    Activity, CompletionView, GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
@@ -161,6 +161,7 @@ pub(crate) fn render(
     body: &PanelBody,
     search: Option<&Search>,
     focused: bool,
+    activity: Activity,
     theme: Theme,
 ) -> Option<Body> {
     let area = chrome.inner;
@@ -185,6 +186,7 @@ pub(crate) fn render(
                 offset: *offset,
                 marked: &marked,
                 search,
+                activity,
             };
             Some(log(frame, area, &view, theme))
         }
