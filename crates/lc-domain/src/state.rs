@@ -13,6 +13,7 @@ use crate::config::{Config, Diagnostic};
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::export::ExportForm;
+use crate::log::Log;
 use crate::model::{ConnId, DbError, JobId, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::queries::QueriesPanel;
@@ -33,6 +34,9 @@ pub struct State {
     /// The Queries panel: its buffer, and whatever completion is being
     /// offered into it (query editor design §5.4).
     pub queries: QueriesPanel,
+    /// The Logs tab: a bounded trail of what the session issued and what came
+    /// back (query log design §3).
+    pub log: Log,
     /// What the last frame turned out to be, so a motion knows how far a page
     /// is and where the end is.
     pub geometry: Geometry,

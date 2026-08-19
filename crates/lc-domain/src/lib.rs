@@ -13,6 +13,7 @@ pub mod ddl;
 pub mod editor;
 pub mod export;
 pub mod grid;
+pub mod log;
 pub mod model;
 pub mod pointer;
 pub mod ports;
