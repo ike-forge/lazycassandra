@@ -307,8 +307,8 @@ Queries moves the cursor through its buffer.
 
 | Key | Action |
 |---|---|
-| `j` / `↓` | Down one row (in Queries, `↓` only — `j` is text). |
-| `k` / `↑` | Up one (in Queries, `↑` only — `k` is text). |
+| `j` / `↓` | Down one row (in Queries, `↓` only — `j` is text; with a completion popup up, the next candidate). |
+| `k` / `↑` | Up one (in Queries, `↑` only — `k` is text; with a popup up, the previous candidate). |
 | `l` / `→` | Right one column in Contents; unfold the selected keyspace in Tables. |
 | `h` / `←` | Left one column in Contents; fold it in Tables, stepping out from a table row first. |
 | `PageDown` / `ctrl-d` | Down one panel height. |
@@ -505,22 +505,28 @@ character and not a binding. What it does not claim keeps its global meaning.
 | `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
 | `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
 | `ctrl-n` / `ctrl-p` | The next / previous completion. With no popup up, raise one against the word under the cursor. |
+| `↓`³ / `↑`³ | The next / previous completion — **only** while a popup is up, and the same step `ctrl-n`/`ctrl-p` take. With none up, they move the cursor, as everywhere else. |
 | `Tab`³ / `Enter`³ | Accept the selected completion — **only** while a popup is up. With none up, `Tab` moves focus and `⏎` splits the line, as everywhere else. |
 | any printable key | Insert it, and offer completions against the word it lands in. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
-| `←` `→` `↑` `↓` | Move the cursor. `←`/`→` wrap between lines. |
+| `←` `→` `↑` `↓` | Move the cursor. `←`/`→` wrap between lines, and stay motions under a popup — which is what takes it down. |
 | `Home` / `End` | To the start / end of the **line**. |
 | `PageUp` / `PageDown`, `ctrl-u` / `ctrl-d` | Up / down one panel height. |
 | `Esc`³ | Take the completion popup down; with none up, leave the editor for Tables. |
 
-³ The three keys the completion popup claims, and it claims them only while it
-is drawn. All three are exceptions to §2's *the same key means the same thing
+³ The five keys the completion popup claims, and it claims them only while it
+is drawn. All five are exceptions to §2's *the same key means the same thing
 in every panel*, taken for the reason `Home` and `End` already diverge here: it
 is what the key does in every editor the audience has met. None is invisible —
 the popup is on screen with a row selected, and the bar swaps `tab panel` and
 `⏎ newline` for `tab ⏎ complete` in exactly the frames the swap is true.
 `Esc`'s second press still leaves the panel, so its hint stays true either way.
+The arrows need no swap of their own: a list with a row selected is what a
+reader already presses them in, and *down one row* is what the palette calls
+them under `Navigate` — the popup is the row list this frame is driving, which
+is §2's *each panel resolves a motion in its own vocabulary* rather than a
+sixth meaning to advertise.
 
 Typing raises the popup automatically, and it goes down of its own accord the
 moment nothing matches. What it offers depends on what the grammar takes at
@@ -704,6 +710,9 @@ and `]`. The rule's own enforcement test was renamed for this — §5.
 one conditional on something drawn rather than on which panel is focused: while
 the popup is up `Tab` and `⏎` accept the selected candidate and `Esc` takes the
 popup down, and in every other frame all three mean what they mean everywhere.
+`↑`/`↓` join them there — they walk the popup while one is up and move the
+cursor otherwise — and are the mildest of the five: what they move is still the
+row list on screen.
 The condition is on screen — the popup itself — and the bar drops `tab panel`
 and `⏎ newline` for exactly those frames rather than name something the next
 keystroke will not do
@@ -1122,6 +1131,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `Esc` takes the popup down before it leaves the editor | `escape_takes_the_popup_down_before_it_leaves_the_editor` |
 | A motion takes the popup down | `a_motion_takes_the_popup_down` |
 | `ctrl-n` raises a popup and then walks it | `ctrl_n_raises_a_popup_and_then_walks_it` |
+| `↑`/`↓` walk the popup while one is up, and move the cursor without one | `the_arrows_walk_the_popup_while_one_is_up`, `the_arrows_walk_the_popup_rather_than_the_buffer`, `walking_the_popup_leaves_the_cursor_where_it_is`, `an_arrow_with_no_popup_up_is_a_motion_again` (`queries.rs`) |
 | The popup hangs off the cursor, and only for a focused editor | `the_completion_popup_hangs_off_the_cursor`, `an_unfocused_editor_draws_no_popup` (`inbound/render.rs`) |
 | `ctrl-e` is inert while an export is already running | `ctrl_e_is_inert_while_an_export_is_already_running` |
 | `ctrl-e` is inert where the frame cannot draw the form, and a frame that shrinks past it closes it | `ctrl_e_is_inert_where_the_frame_cannot_draw_the_form`, `a_frame_that_shrank_past_the_form_closes_it`, `fits_agrees_with_what_the_form_actually_draws` |

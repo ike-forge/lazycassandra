@@ -952,7 +952,7 @@ fn edit(state: &mut State, key: Key) -> bool {
 
     match refresh {
         Refresh::Recompute => complete(state),
-        Refresh::Close => {}
+        Refresh::Close | Refresh::Hold => {}
     }
 
     true
@@ -10177,6 +10177,28 @@ mod tests {
             press(&mut state, Key::Left);
 
             assert!(state.queries.completion().is_none());
+        }
+
+        #[test]
+        fn the_arrows_walk_the_popup_while_one_is_up() {
+            let mut state = editing("SELECT * FROM s");
+
+            press(&mut state, Key::Down);
+            assert_eq!(
+                state.queries.completion().expect("still up").selected(),
+                1,
+                "the popup takes the key the cursor would otherwise have"
+            );
+
+            press(&mut state, Key::Up);
+            assert_eq!(state.queries.completion().expect("still up").selected(), 0);
+
+            press(&mut state, Key::Left);
+            assert!(
+                state.queries.completion().is_none(),
+                "a horizontal arrow is still a motion, and a motion still \
+                 takes the popup down"
+            );
         }
 
         #[test]

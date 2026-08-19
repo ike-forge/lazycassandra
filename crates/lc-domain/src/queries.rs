@@ -20,6 +20,9 @@ pub enum Refresh {
     /// The cursor left the word the offers were made against, so they no
     /// longer describe anything on screen.
     Close,
+    /// The press moved the popup and nothing else. The offers stand, and they
+    /// still describe the word they were made against.
+    Hold,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -101,15 +104,19 @@ impl QueriesPanel {
     /// Exhaustive over [`Key`], so a new key has to decide whether an editor
     /// claims it rather than defaulting into one side.
     pub fn edit(&mut self, key: Key, height: usize) -> Option<Refresh> {
-        // Above the buffer: with a popup up, these three are the popup's
+        // Above the buffer: with a popup up, these five are the popup's
         // (design §5.5). Without one they are what they are everywhere else —
-        // `Tab` moves focus, `Enter` splits the line, `Esc` leaves the panel —
-        // so none of them is claimed.
+        // `Tab` moves focus, `Enter` splits the line, `Esc` leaves the panel,
+        // `↑`/`↓` move the cursor — so none of them is claimed.
         //
         // `Enter` beside `Tab` because both are what accepting is spelled as
         // in the editors the audience has met, and because a shape's caret
         // lands mid-statement, where the next thing wanted is a name and not
         // a line break (completion ranking design §5).
+        //
+        // The vertical arrows walk the list for the same reason, and only the
+        // vertical ones: `←`/`→` stay motions, which is what takes the popup
+        // down.
         if let Some(completion) = self.completion.take() {
             match key {
                 Key::Tab | Key::Enter => {
@@ -117,6 +124,11 @@ impl QueriesPanel {
                     return Some(Refresh::Close);
                 }
                 Key::Escape => return Some(Refresh::Close),
+                Key::Up | Key::Down => {
+                    self.completion = Some(completion);
+                    self.step(key == Key::Down);
+                    return Some(Refresh::Hold);
+                }
                 _ => self.completion = Some(completion),
             }
         }
@@ -248,6 +260,41 @@ mod tests {
         assert_eq!(panel.edit(Key::Left, 1), Some(Refresh::Close));
 
         assert!(panel.completion().is_none());
+    }
+
+    #[test]
+    fn the_arrows_walk_the_popup_rather_than_the_buffer() {
+        let mut panel = typed("s");
+
+        assert_eq!(panel.edit(Key::Down, 1), Some(Refresh::Hold));
+        assert_eq!(panel.completion().expect("still up").selected(), 1);
+
+        assert_eq!(panel.edit(Key::Up, 1), Some(Refresh::Hold));
+        assert_eq!(panel.completion().expect("still up").selected(), 0);
+    }
+
+    #[test]
+    fn walking_the_popup_leaves_the_cursor_where_it_is() {
+        let mut panel = QueriesPanel::default();
+        panel.replace("SELECT *\nFROM shop.");
+        assert_eq!(panel.edit(Key::Char('o'), 1), Some(Refresh::Recompute));
+        panel.offer(suggest(panel.buffer(), Some(&schema()), Some("shop")));
+        let cursor = panel.cursor();
+
+        assert_eq!(panel.edit(Key::Up, 1), Some(Refresh::Hold));
+
+        assert_eq!(panel.cursor(), cursor, "the buffer never saw the key");
+        assert!(panel.completion().is_some());
+    }
+
+    #[test]
+    fn an_arrow_with_no_popup_up_is_a_motion_again() {
+        let mut panel = QueriesPanel::default();
+        panel.replace("SELECT *\nFROM shop.orders");
+
+        assert_eq!(panel.edit(Key::Up, 1), Some(Refresh::Close));
+
+        assert_eq!(panel.cursor().line, 0);
     }
 
     #[test]
