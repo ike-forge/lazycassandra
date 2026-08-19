@@ -6,7 +6,7 @@
 //! (architecture.md §11).
 
 use crate::grid::ColumnScroll;
-use crate::model::{DbError, KeyspaceKind, Page, QueryId};
+use crate::model::{KeyspaceKind, Page, QueryId};
 use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
 use crate::style::{Segment, Token};
@@ -87,7 +87,6 @@ pub enum ContentsState {
     },
     Failed {
         subject: Subject,
-        error: DbError,
     },
 }
 
@@ -302,8 +301,8 @@ impl ContentsPanel {
 
     /// Records a request that never became a query, because the domain
     /// refused it before it could.
-    pub fn refused(&mut self, subject: Subject, error: DbError) {
-        self.state = ContentsState::Failed { subject, error };
+    pub fn refused(&mut self, subject: Subject) {
+        self.state = ContentsState::Failed { subject };
         self.cursor = Cursor::default();
         self.column = Cursor::default();
         self.scroll = Scroll::default();
@@ -313,12 +312,12 @@ impl ContentsPanel {
     }
 
     /// Records a failure, if it belongs to the query being waited on.
-    pub fn failed(&mut self, query: QueryId, error: DbError) {
+    pub fn failed(&mut self, query: QueryId) {
         let Some(subject) = self.awaited(query) else {
             return;
         };
 
-        self.state = ContentsState::Failed { subject, error };
+        self.state = ContentsState::Failed { subject };
     }
 
     /// The rows on screen, for a cursor that must not run past them.
@@ -354,7 +353,7 @@ impl ContentsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{CqlValue, DbError, Row};
+    use crate::model::{CqlValue, Row};
 
     fn page(rows: i64) -> Page {
         Page {
@@ -484,7 +483,7 @@ mod tests {
     #[test]
     fn a_failed_panel_has_no_page_to_search() {
         let (mut panel, query) = loading();
-        panel.failed(query, DbError::Timeout);
+        panel.failed(query);
         panel.set_search(Search::new("ali"));
 
         assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
@@ -576,20 +575,19 @@ mod tests {
     fn a_failure_for_the_outstanding_query_is_recorded_against_its_table() {
         let (mut panel, query) = loading();
 
-        panel.failed(query, DbError::Timeout);
+        panel.failed(query);
 
-        let ContentsState::Failed { subject, error } = panel.state() else {
+        let ContentsState::Failed { subject } = panel.state() else {
             panic!("the failure is showing");
         };
         assert_eq!(subject.label(), "shop.orders");
-        assert_eq!(*error, DbError::Timeout);
     }
 
     #[test]
     fn a_failure_for_another_query_is_ignored() {
         let (mut panel, query) = loading();
 
-        panel.failed(QueryId::next(), DbError::Timeout);
+        panel.failed(QueryId::next());
 
         assert_eq!(panel.outstanding(), Some(query));
     }
@@ -623,16 +621,12 @@ mod tests {
     fn a_refused_request_shows_against_the_table_it_was_about() {
         let mut panel = ContentsPanel::default();
 
-        panel.refused(
-            Subject::Table(TableRef::new("shop", "orders")),
-            DbError::ReadOnly,
-        );
+        panel.refused(Subject::Table(TableRef::new("shop", "orders")));
 
-        let ContentsState::Failed { subject, error } = panel.state() else {
+        let ContentsState::Failed { subject } = panel.state() else {
             panic!("the refusal is showing");
         };
         assert_eq!(subject.label(), "shop.orders");
-        assert_eq!(*error, DbError::ReadOnly);
         assert_eq!(
             panel.outstanding(),
             None,
@@ -666,10 +660,7 @@ mod tests {
         panel.scroll.follow(40, 5);
         panel.cursor.go_to(40, 60);
 
-        panel.refused(
-            Subject::Table(TableRef::new("shop", "orders")),
-            DbError::ReadOnly,
-        );
+        panel.refused(Subject::Table(TableRef::new("shop", "orders")));
 
         assert_eq!(panel.scroll.offset(), 0);
         assert_eq!(panel.cursor.index(), 0);
@@ -769,10 +760,7 @@ mod tests {
         panel.page_ready(query, wide_page(4));
         panel.column.go_to(3, 4);
 
-        panel.refused(
-            Subject::Table(TableRef::new("shop", "carts")),
-            DbError::Unreachable("no".to_owned()),
-        );
+        panel.refused(Subject::Table(TableRef::new("shop", "carts")));
 
         assert_eq!(panel.column.index(), 0);
         assert_eq!(panel.column_scroll.first(), 0);

@@ -686,7 +686,7 @@ mod tests {
     use lc_domain::ddl::DdlTab;
     use lc_domain::grid::{BAR, COLUMN_SPACING};
     use lc_domain::model::{
-        ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, DbError, Key, Keyspace, Page,
+        ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, Key, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Statement, Table, TableOptions,
     };
     use lc_domain::pointer::Click;
@@ -1651,10 +1651,9 @@ mod tests {
         // `Overlay::Fatal` now, and the panel behind it goes muted (query log
         // design §7) — a table read refused after the app has started is
         // what still owns a danger notice.
-        state.contents.refused(
-            Subject::Table(TableRef::new("shop", "orders")),
-            DbError::Timeout,
-        );
+        state
+            .contents
+            .refused(Subject::Table(TableRef::new("shop", "orders")));
 
         let buffer = draw_state(40, 12, &state);
         let area = block_area(&buffer, "Table contents");

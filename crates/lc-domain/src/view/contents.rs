@@ -256,7 +256,7 @@ fn grid_table(state: &State, subject: &Subject) -> Option<TableRef> {
 #[cfg(test)]
 mod tests {
     use crate::model::{
-        ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Page, QueryId, Row, Schema,
+        ClusteringColumn, ClusteringOrder, Column, ConnId, Page, QueryId, Row, Schema,
     };
     use crate::posture::Posture;
     use crate::search::{Search, Searched};
@@ -443,29 +443,25 @@ mod tests {
         );
     }
 
-    fn failed_state(error: DbError) -> State {
+    fn failed_state() -> State {
         let mut state = tabled(&[("shop", &["orders"])]);
         let query = QueryId::next();
         state
             .contents
             .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state.contents.failed(query, error);
+        state.contents.failed(query);
         state
     }
 
     // The panel reports that its subject failed; the trail reports why
-    // (query log design §8).
+    // (query log design §8). `ContentsState::Failed` no longer carries the
+    // error at all, so there is nothing left for this notice to quote.
     #[test]
     fn a_failed_read_points_at_the_trail_rather_than_quoting_the_error() {
-        let body = contents_body(&failed_state(DbError::Invalid(
-            "unconfigured column id".to_owned(),
-        )));
-
-        let PanelBody::Notice { text, .. } = body else {
+        let PanelBody::Notice { text, .. } = contents_body(&failed_state()) else {
             panic!("a notice");
         };
-        assert!(!text.contains("unconfigured"), "{text}");
-        assert!(text.contains("[4]"), "{text}");
+        assert_eq!(text, "query failed — see [4]-Logs");
     }
 
     #[test]

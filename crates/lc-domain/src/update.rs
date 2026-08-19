@@ -324,7 +324,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                         detail: error.to_string(),
                     },
                 );
-                state.contents.failed(query, error);
+                state.contents.failed(query);
                 state.mark_dirty();
             }
             Vec::new()
@@ -1126,13 +1126,13 @@ fn sentence(text: impl Into<String>) -> LogSubject {
 
 /// A statement as the trail draws it: one logical line, highlighted once.
 ///
-/// Normalised before highlighting because `cql::highlight` returns a row per
-/// source line and a `ctrl-f`-formatted statement is many. What ran is the
-/// statement, not its indentation (query log design §3).
+/// `cql::issued` works from the lexer's tokens rather than the raw text, so
+/// whitespace collapses only between tokens — never inside a string literal
+/// — and a comment is dropped rather than swallowing the clause that
+/// followed it. What ran is the statement, not its indentation (query log
+/// design §3, §6).
 fn statement_subject(stmt: &Statement) -> LogSubject {
-    let line = stmt.cql.split_whitespace().collect::<Vec<_>>().join(" ");
-
-    LogSubject::Statement(cql::highlight(&line).into_iter().flatten().collect())
+    LogSubject::Statement(cql::issued(&stmt.cql))
 }
 
 fn posture_label(posture: Posture) -> &'static str {
@@ -2628,7 +2628,7 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
             state.contents.requested(query, subject);
             effects.extend(submitted);
         }
-        Err(error) => state.contents.refused(subject, error),
+        Err(_) => state.contents.refused(subject),
     }
 
     effects
@@ -9812,13 +9812,7 @@ mod tests {
 
         assert!(effects.is_empty());
         assert!(
-            matches!(
-                state.contents.state(),
-                ContentsState::Failed {
-                    error: DbError::ReadOnly,
-                    ..
-                }
-            ),
+            matches!(state.contents.state(), ContentsState::Failed { .. }),
             "the posture gate refuses it and the panel says so"
         );
     }

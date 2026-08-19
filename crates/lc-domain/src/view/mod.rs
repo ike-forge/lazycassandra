@@ -533,7 +533,7 @@ mod tests {
     use crate::config::{Config, CustomTheme};
     use crate::contents::{Subject, TableRef};
     use crate::export::{ExportForm, Fetched, Format, Scope, Stop};
-    use crate::model::{ConnId, DbError, JobId, Key, Page, QueryId};
+    use crate::model::{ConnId, JobId, Key, Page, QueryId};
     use crate::state::{Cursor, ExportJob, Message, Overlay};
     use crate::theme::{BuiltIn, Ours, Ported, ThemeName};
     use crate::update::init;
@@ -834,7 +834,7 @@ mod tests {
         loaded.contents.page_ready(query, Page::default());
 
         let mut failed = loading.clone();
-        failed.contents.failed(query, DbError::Timeout);
+        failed.contents.failed(query);
 
         vec![State::default(), loading, loaded, failed]
     }

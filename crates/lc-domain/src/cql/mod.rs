@@ -76,6 +76,43 @@ pub fn highlight(text: &str) -> Vec<Vec<Segment>> {
     lines
 }
 
+/// `text` as the trail logs it: one line, highlighted once.
+///
+/// Collapses whitespace between tokens to a single space and drops comments
+/// — but never touches the inside of a token, so a string literal spanning
+/// several source lines, or holding a run of spaces, survives byte for byte.
+/// Working from the lexer's pieces rather than the raw text is what makes
+/// that possible: a comment or a run of whitespace is a token in its own
+/// right here, never a substring of one that carries meaning
+/// (query log design §3, §6).
+#[must_use]
+pub fn issued(text: &str) -> Vec<Segment> {
+    let scanned = lex::pieces(text);
+    let analysis = resolve(&scanned);
+    let mut line = Vec::new();
+    let mut pending_space = false;
+
+    for (index, piece) in scanned.iter().enumerate() {
+        if matches!(piece.kind, Kind::Whitespace | Kind::Comment) {
+            pending_space = pending_space || !line.is_empty();
+            continue;
+        }
+
+        if pending_space {
+            push(&mut line, " ", None);
+            pending_space = false;
+        }
+
+        push(
+            &mut line,
+            &piece.text,
+            token(piece.kind, analysis.role(index)),
+        );
+    }
+
+    line
+}
+
 /// Adjacent runs of one meaning are drawn as one span. The renderer splits
 /// what it draws again — against a search term, and against the horizontal
 /// offset — and every extra seam is another place that split has to land.
@@ -181,6 +218,20 @@ mod tests {
     #[test]
     fn a_trailing_newline_leaves_an_empty_last_line() {
         assert_eq!(highlight("SELECT\n").len(), 2);
+    }
+
+    #[test]
+    fn issuing_a_statement_collapses_whitespace_between_tokens_but_not_inside_a_literal() {
+        let issued = issued("INSERT INTO t (v)\n  VALUES ('a  b')");
+
+        assert_eq!(text(&issued), "INSERT INTO t (v) VALUES ('a  b')");
+    }
+
+    #[test]
+    fn issuing_a_statement_drops_a_comment_but_keeps_the_clause_it_stood_before() {
+        let issued = issued("SELECT * FROM t -- get orders\nWHERE id = 1");
+
+        assert_eq!(text(&issued), "SELECT * FROM t WHERE id = 1");
     }
 
     #[test]
