@@ -1300,8 +1300,9 @@ fn raise(state: &mut State, message: Message) {
     state.overlay = Some(Overlay::Message(message));
 }
 
-/// Puts back whatever the overlay on screen was previewing, so a replacement
-/// can be installed over it without stranding the frame in it.
+/// Puts back whatever the overlay on screen was previewing, and completes
+/// whatever it was leaving pending, so a replacement can be installed over
+/// it without stranding either (final review, I4 follow-up).
 ///
 /// Every message-driven overlay replacement goes through here: [`raise`], and
 /// the `Exists` arm of [`finish_export`], which puts the export form back over
@@ -1315,6 +1316,7 @@ fn unwind_overlay(state: &mut State) {
         state.apply_search(target, previous);
         restore_origin(state, target, origin);
     }
+    cancel_pending_export(state);
     restore_theme(state);
 }
 
@@ -1327,6 +1329,39 @@ fn unwind_overlay(state: &mut State) {
 fn restore_theme(state: &mut State) {
     if let Some(Overlay::Themes { restored, .. }) = &state.overlay {
         state.theme = restored.clone();
+    }
+}
+
+/// Completes the current overlay's pending export trail entry as
+/// `Cancelled`, if it is an `Overlay::Export` confirmation with one.
+/// Otherwise a no-op.
+///
+/// The one place that reads a confirmation's `JobId` before the overlay
+/// carrying it is dropped or replaced, so a fourth site cannot silently
+/// leave the trace pending the way three already did (final review, I4
+/// follow-up). An orphaned pending entry is not merely a stale row any
+/// more: `is_working_in(Panel::Queries)` (`state.rs`) is now true for any
+/// pending entry, so a trace nothing will ever complete keeps
+/// `State::is_working` true forever, and the app never goes idle again
+/// (`tick` keeps advancing the loader and marking every frame dirty).
+///
+/// Called from the same four places dropping or replacing the overlay
+/// while it might be this confirmation: [`escape`] (the click-dismiss
+/// path — keyboard `Esc` while the form is up is claimed by
+/// [`export_key`] first and never reaches `escape`), the resize-shrink
+/// close in [`measured`], [`confirm_key`]'s own `Esc` arm, and here in
+/// [`unwind_overlay`], which covers every message-driven replacement
+/// ([`raise`]'s callers) including the one that reaches it: `editor_failed`,
+/// if an `Exists` confirmation lands on the trail while the external
+/// editor is suspending the terminal and `Msg::EditorFailed` is what
+/// resumes it.
+fn cancel_pending_export(state: &mut State) {
+    let job = match &state.overlay {
+        Some(Overlay::Export(form)) => form.pending().map(Pending::job),
+        _ => None,
+    };
+    if let Some(job) = job {
+        state.log.complete(Trace::Export(job), Outcome::Cancelled);
     }
 }
 
@@ -1509,6 +1544,11 @@ fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
 /// one of the six, never two — the thing most recently put on screen comes
 /// off first (panel search design §6, overlay search design §1).
 fn escape(state: &mut State) {
+    // Read before the `take()` below empties it: a click is the one path
+    // that reaches `Overlay::Export`'s arm here rather than `export_key`,
+    // which claims keyboard `Esc` itself (final review, I4 follow-up).
+    cancel_pending_export(state);
+
     match state.overlay.take() {
         Some(Overlay::Search(prompt)) => {
             state.apply_search(prompt.target(), prompt.previous().cloned());
@@ -2266,17 +2306,13 @@ fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char(' ') | Key::Enter => start_export(state),
         Key::Escape => {
-            let mut abandoned = None;
+            // Read before `dismiss()` drops the source it was asking about:
+            // nothing else will ever complete this trace once the question
+            // is gone (final review I4, and its I4-follow-up choke point,
+            // `cancel_pending_export`).
+            cancel_pending_export(state);
             if let Some(Overlay::Export(form)) = &mut state.overlay {
-                abandoned = form.pending().map(Pending::job);
                 form.dismiss();
-            }
-            // Nothing else will ever complete this trace: the source it was
-            // asking about is dropped with the question, so the trail's
-            // entry must not be left `⋯ running` for a retry that is now
-            // never coming (final review I4).
-            if let Some(job) = abandoned {
-                state.log.complete(Trace::Export(job), Outcome::Cancelled);
             }
             Vec::new()
         }
@@ -2661,6 +2697,7 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     // own to answer for — between the two thresholds the panels draw, the form
     // does not, and it would still be capturing every key.
     if !geometry.export_fits() && matches!(state.overlay, Some(Overlay::Export(_))) {
+        cancel_pending_export(state);
         state.overlay = None;
         state.mark_dirty();
     }
@@ -11447,6 +11484,70 @@ mod tests {
 
         handle_key(&mut state, KeyPress::new(Key::Escape));
 
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| entry.subject().text().starts_with("SELECT"))
+            .expect("the export entry");
+        assert_eq!(*entry.outcome(), Outcome::Cancelled);
+    }
+
+    /// A click is modal-dismissing (`handle_pointer` routes it to `escape`)
+    /// and reaches `Overlay::Export`'s arm there, unlike keyboard `Esc`,
+    /// which `export_key` claims first — the path re-review found still
+    /// dropped the confirmation's `Pending` on the floor (final review, I4
+    /// follow-up).
+    #[test]
+    fn a_click_dismissing_the_overwrite_confirmation_cancels_the_pending_entry() {
+        let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+                took: Duration::ZERO,
+            },
+        );
+
+        point(&mut state, Pointer::Click(Click::Panel(Panel::Tables)));
+
+        assert!(
+            state.overlay.is_none(),
+            "the click spends itself dismissing it"
+        );
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| entry.subject().text().starts_with("SELECT"))
+            .expect("the export entry");
+        assert_eq!(*entry.outcome(), Outcome::Cancelled);
+    }
+
+    /// A resize past the form's own threshold closes it outright
+    /// (`a_frame_that_shrank_past_the_form_closes_it` covers the plain
+    /// form); this is the same close while a confirmation is up, which the
+    /// re-review found left the trace pending forever (final review, I4
+    /// follow-up).
+    #[test]
+    fn a_resize_that_closes_the_overwrite_confirmation_cancels_the_pending_entry() {
+        let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+                took: Duration::ZERO,
+            },
+        );
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 14).with_export_fits(false)),
+        );
+
+        assert!(state.overlay.is_none(), "the form still does not fit");
         let entry = state
             .log
             .entries()

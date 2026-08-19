@@ -646,6 +646,46 @@ mod tests {
         );
     }
 
+    // The direction I1's own test never checked: nothing had asserted the
+    // panel goes back to `Resting` once a pending entry completes, so a
+    // trace nothing ever completes (final review's I4 follow-up Critical —
+    // an abandoned export confirmation, dropped by a click or a resize
+    // without cancelling its entry) kept `is_working_in(Panel::Queries)`
+    // true forever and this test would have caught it directly.
+    #[test]
+    fn the_queries_panel_rests_again_once_its_last_pending_entry_completes() {
+        let mut state = loaded(&["shop"]);
+        let query = QueryId::next();
+        state.log.push(crate::log::Entry::new(
+            Stamp::default(),
+            crate::log::Subject::Sentence("SELECT".to_owned()),
+            crate::log::Outcome::Pending {
+                trace: crate::log::Trace::Query(query),
+            },
+        ));
+        assert_eq!(
+            view_model(&state).panels[3].activity,
+            Activity::Working {
+                frame: state.loader.frame()
+            },
+            "sanity: it started out working"
+        );
+
+        state.log.complete(
+            crate::log::Trace::Query(query),
+            crate::log::Outcome::Succeeded {
+                detail: "1 row".to_owned(),
+                took: std::time::Duration::from_millis(1),
+            },
+        );
+
+        assert_eq!(
+            view_model(&state).panels[3].activity,
+            Activity::Resting,
+            "nothing is pending any more, so nothing should still be animating"
+        );
+    }
+
     #[test]
     fn a_column_offered_with_no_table_in_scope_draws_its_label_but_types_its_bare_name() {
         let mut state = tabled(&[("shop", &["orders"])]);
