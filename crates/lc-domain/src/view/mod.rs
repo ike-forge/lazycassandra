@@ -624,6 +624,29 @@ mod tests {
     }
 
     #[test]
+    fn the_queries_panel_animates_while_the_trail_holds_a_pending_entry() {
+        let mut state = loaded(&["shop"]);
+        state.log.push(crate::log::Entry::new(
+            Stamp::default(),
+            crate::log::Subject::Sentence("SELECT".to_owned()),
+            crate::log::Outcome::Pending {
+                trace: crate::log::Trace::Query(QueryId::next()),
+            },
+        ));
+
+        let view = view_model(&state);
+
+        assert_eq!(
+            view.panels[3].activity,
+            Activity::Working {
+                frame: state.loader.frame()
+            },
+            "a pending entry is exactly what the ⋯ running animation exists to distinguish \
+             from a fast one"
+        );
+    }
+
+    #[test]
     fn a_column_offered_with_no_table_in_scope_draws_its_label_but_types_its_bare_name() {
         let mut state = tabled(&[("shop", &["orders"])]);
         state.queries.replace("SELECT i");

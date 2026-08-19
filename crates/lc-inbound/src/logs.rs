@@ -190,12 +190,26 @@ fn animated_outcome(outcome: &[Segment], activity: Activity) -> Vec<Segment> {
         && segment.text == RUNNING
     {
         return vec![Segment {
-            text: format!("{} running", crate::loader::spin(frame)),
+            text: format!("{}{}", crate::loader::spin(frame), running_tail()),
             token: segment.token,
         }];
     }
 
     outcome.to_vec()
+}
+
+/// [`RUNNING`] past its first character — the part the spinner glyph
+/// overwrites, and the part it never replaces. Derived rather than a second
+/// `" running"` literal: once the animated string is actually drawn, its
+/// char count matching `RUNNING`'s is what keeps `Geometry::log_lines` a
+/// function of the terminal size and the view model alone, never of the
+/// frame (architecture.md §3) — a second literal could drift from `RUNNING`
+/// and nothing would catch it until the wrap count started oscillating.
+fn running_tail() -> &'static str {
+    match RUNNING.char_indices().nth(1) {
+        Some((at, _)) => &RUNNING[at..],
+        None => "",
+    }
 }
 
 /// `segments`, flattened to one character per element, each carrying the
@@ -386,6 +400,31 @@ mod tests {
             "with nothing outstanding there is no frame to animate from"
         );
         assert!(first.contains(RUNNING), "{first}");
+    }
+
+    // Geometry::log_lines is a function of the terminal size and the view
+    // model alone (architecture.md §3): if the animated string's width
+    // varied per frame, the wrap count would too, and a frame-dependent
+    // value would cross into `Geometry`. `spin()` returning one char is what
+    // keeps this true — verify it holds across the whole cycle, not just
+    // frame 0.
+    #[test]
+    fn the_animated_pending_outcome_is_always_the_same_char_count_as_the_sentinel() {
+        let pending = Segment::styled(RUNNING, Token::Severity(Severity::Info));
+
+        for frame in 0..10 {
+            let animated =
+                animated_outcome(std::slice::from_ref(&pending), Activity::Working { frame });
+            let [animated] = animated.as_slice() else {
+                panic!("one segment in, one segment out");
+            };
+
+            assert_eq!(
+                animated.text.chars().count(),
+                RUNNING.chars().count(),
+                "frame {frame}: {animated:?}"
+            );
+        }
     }
 
     #[test]

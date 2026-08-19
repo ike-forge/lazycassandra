@@ -13,7 +13,7 @@ use crate::config::{Config, Diagnostic};
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
 use crate::export::ExportForm;
-use crate::log::Log;
+use crate::log::{Log, Outcome};
 use crate::model::{ConnId, DbError, JobId, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
 use crate::queries::{QueriesPanel, QueriesTab};
@@ -1410,6 +1410,11 @@ impl State {
     /// one submitted from Queries, which puts its result in Contents
     /// (`submit_into_contents`). Ddl reads off a loaded schema and issues
     /// nothing of its own, so it never waits.
+    ///
+    /// Queries waits on its own trail rather than on `in_flight`: a connect
+    /// or a schema read is a pending entry too, and the Logs tab's `⋯
+    /// running` animation exists to distinguish a hung wait from a fast one
+    /// (query log design §6), not only for a query the panel itself issued.
     #[must_use]
     pub fn is_working_in(&self, panel: Panel) -> bool {
         match panel {
@@ -1421,7 +1426,11 @@ impl State {
                 ConnectionState::Disconnected | ConnectionState::Failed(_) => false,
             },
             Panel::Contents => !self.in_flight.is_empty(),
-            Panel::Ddl | Panel::Queries => false,
+            Panel::Queries => self
+                .log
+                .entries()
+                .any(|entry| matches!(entry.outcome(), Outcome::Pending { .. })),
+            Panel::Ddl => false,
         }
     }
 
