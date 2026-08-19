@@ -16,10 +16,12 @@ key does something, it does it there.
 
 Reachable from every panel that does not take text, in every connection
 state. `Esc`, `Tab` and `Shift-Tab` are the exceptions that really are
-unconditional; the ten marked rows are text instead, inside the one panel
-that takes text — see the Queries subsection below. `ctrl-t` is unmarked
-because a chord is not text anywhere: the ctrl layer is dispatched above the
-panel that takes text (§2).
+unconditional; the ten marked rows are text instead, on the one tab that
+takes text — Queries' Cql tab, argued in that subsection below. Its Logs tab
+takes no text at all, so most of the marked rows reach it exactly as
+written; the footnote below says which few still do not, and why. `ctrl-t`
+is unmarked because a chord is not text anywhere: the ctrl layer is
+dispatched above the panel that takes text (§2).
 
 | Key | Action |
 |---|---|
@@ -42,8 +44,14 @@ panel that takes text (§2).
 | `]`¹ | The focused panel's next tab. |
 | `[`¹ | Its previous tab. |
 
-¹ Not reachable from Queries. A panel that takes text claims every printable
-key before this table is consulted, so these type themselves there instead.
+¹ Not reachable from the Cql tab: a panel that takes text claims every
+printable key before this table is consulted, so these type themselves
+there instead. The Logs tab is not that panel — it takes no text, so `q`,
+`?`, `/`, `n`, `N`, `y`, `v` and `1`–`3` all reach it exactly as this table
+says. `4`, `]` and `[` are the three exceptions even there, inert on the
+Logs tab too, but not as text: `4` has no strip left to walk once the tab
+cycle belongs to `Tab`/`Shift-Tab` alone (see the paragraph below), and
+`]`/`[` walk nothing for the same reason.
 
 ² "One CSV line" holds for DDL's two tabs, and for two of Table contents'
 three selection modes. Tables is the exception it always was, with a bare
@@ -109,7 +117,9 @@ those keys yet learns from the repetition that the number pressed again goes
 somewhere — which is how the tabs are found without reading this file
 (vision.md §4, principle 1). `]` and `[` do the same walk forwards and
 backwards from the focused panel, for a hand that learnt them in lazygit; on
-a panel with one tab, or in Queries where they are text, they do nothing.
+a panel with one tab they do nothing, and so do they anywhere in Queries —
+text on the Cql tab, and simply unanswered on the Logs tab, since the walk
+answers to DDL alone, the same reason a repeated `4` goes nowhere there.
 
 Arriving at the tab already drawn costs nothing: `2` from another panel is how
 focus comes back to whichever DDL tab was up, and it leaves the cursor on the
@@ -752,8 +762,11 @@ is what they do in every text editor a user has met. The document's ends
 stay reachable with `PageUp` and `PageDown`.
 
 A panel number (`1`–`4`) is a third exception: it moves focus in every panel
-that does not take text, and is text in the one panel that does. So are `[`
-and `]`. The rule's own enforcement test was renamed for this — §5.
+that does not take text, and is text on the one tab that does — Queries'
+Cql tab, not the panel whole. So are `[` and `]`. Queries' Logs tab takes
+none of them as text, but `4`, `[` and `]` still do nothing there, for a
+different reason §1's tabs discussion gives. The rule's own enforcement
+test was renamed for this — §5.
 
 `Tab`, `Enter` and `Esc` under a completion popup are a fourth, and the only
 one conditional on something drawn rather than on which panel is focused: while
