@@ -2814,6 +2814,18 @@ fn run(state: &mut State) -> Vec<Effect> {
     // confirmation the condition on these running at all, and the flow that
     // asks for it is unbuilt. This call site becomes the prompt (design §5).
     if stmt.kind.is_destructive() {
+        // Logged before the modal, not instead of it: the modal is gone the
+        // moment it is dismissed, and the trail is where the reason survives
+        // (query log design §1, §8).
+        logged(
+            state,
+            statement_subject(&stmt),
+            Outcome::Rejected {
+                reason: "dropping and truncating wait on a typed confirmation, which is not \
+                         built yet"
+                    .to_owned(),
+            },
+        );
         raise(
             state,
             Message {
@@ -2853,12 +2865,26 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
         effects.push(Effect::Cancel(superseded));
     }
 
+    // Logged here rather than inside `submit`, so every refusal the panel
+    // notices — the posture guard and the no-connection guard alike — gets
+    // an entry by construction: one arm, not one call per refusal path to
+    // remember (query log design §8).
+    let log_subject = statement_subject(&stmt);
     match submit(state, stmt) {
         Ok((query, submitted)) => {
             state.contents.requested(query, subject);
             effects.extend(submitted);
         }
-        Err(_) => state.contents.refused(subject),
+        Err(error) => {
+            logged(
+                state,
+                log_subject,
+                Outcome::Rejected {
+                    reason: error.to_string(),
+                },
+            );
+            state.contents.refused(subject);
+        }
     }
 
     effects
@@ -2965,16 +2991,12 @@ fn tree_rows(state: &State) -> usize {
 ///
 /// [`DbError::ReadOnly`] if the statement mutates and the connection's posture
 /// does not permit it, and [`DbError::Unreachable`] if there is no connection
-/// to run it on. Nothing is recorded and no effect is emitted.
+/// to run it on. Neither is logged here — `submit_into_contents`, the one
+/// caller, logs every refusal it sees in its `Err` arm, so this function
+/// stays the single place that decides whether a statement runs and leaves
+/// the trail to the caller that owns it.
 pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect>), DbError> {
     if stmt.mutates() && !state.posture().permits_mutation() {
-        logged(
-            state,
-            statement_subject(&stmt),
-            Outcome::Rejected {
-                reason: DbError::ReadOnly.to_string(),
-            },
-        );
         return Err(DbError::ReadOnly);
     }
 
@@ -10441,6 +10463,65 @@ mod tests {
             panic!("the statement was rejected");
         };
         assert!(reason.contains("read-only"), "{reason}");
+    }
+
+    // The posture guard logs exactly once. Restructuring the logging into
+    // `submit_into_contents`'s `Err` arm must not leave `submit` still
+    // logging its own posture rejection too (I3).
+    #[test]
+    fn a_statement_refused_by_the_posture_logs_exactly_one_entry() {
+        let mut state = editing("DELETE FROM store.orders WHERE id = 7");
+        let before = state.log.len();
+
+        run_query(&mut state);
+
+        assert_eq!(
+            state.log.len(),
+            before + 1,
+            "one refusal, one entry — not one from `submit` and a second from its caller"
+        );
+    }
+
+    // I3: before `Msg::Connected` lands, a read-only statement is not caught
+    // by the mutation guard, so it fell through to `conn_id()` returning
+    // `None` — a refusal `submit_into_contents` noticed (`refused` puts
+    // "query failed — see [4]-Logs" in Table contents) but never logged. The
+    // panel sent the user to a record that did not exist.
+    #[test]
+    fn a_statement_refused_for_want_of_a_connection_says_so_in_the_trail() {
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
+        type_into(&mut state, "SELECT * FROM shop.orders");
+        let before = state.log.len();
+
+        let effects = run_query(&mut state);
+
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::Execute { .. })),
+            "there is no connection to run it on"
+        );
+        assert_eq!(state.log.len(), before + 1, "the refusal is not silent");
+        let Outcome::Rejected { reason } = state.log.entries().last().unwrap().outcome() else {
+            panic!("the statement was refused for want of a connection");
+        };
+        assert!(reason.contains("not connected"), "{reason}");
+    }
+
+    // M8: the one remaining refusal that left no trace — `run`'s
+    // destructive-statement guard raises a modal `esc` destroys on dismissal
+    // (query log design §1), and used to log nothing behind it.
+    #[test]
+    fn a_destructive_statement_refused_by_run_says_so_in_the_trail() {
+        let mut state = editing("DROP TABLE shop.orders");
+
+        run_query(&mut state);
+
+        let Outcome::Rejected { reason } = state.log.entries().last().unwrap().outcome() else {
+            panic!("the destructive statement was refused");
+        };
+        assert!(reason.contains("not built yet"), "{reason}");
     }
 
     #[test]
