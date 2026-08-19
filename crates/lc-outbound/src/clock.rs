@@ -8,12 +8,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lc_domain::clock::Stamp;
 
-/// The current local time of day.
+/// The current time of day, in UTC. No local offset is applied.
 ///
-/// Derived from the Unix epoch and the `TZ` offset rather than through a
-/// calendar crate: the domain's dependency list is the one being protected,
-/// but adding a civil-time library here to compute three integers is not
-/// worth the tree either.
+/// Derived from the Unix epoch rather than through a calendar crate: the
+/// domain's dependency list is the one being protected, but adding a
+/// civil-time library here to compute three integers is not worth the tree
+/// either.
 #[must_use]
 pub fn now() -> Stamp {
     let seconds = SystemTime::now()
