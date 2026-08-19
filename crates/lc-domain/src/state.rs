@@ -747,6 +747,26 @@ impl Ranges {
             }
         }
     }
+
+    /// Every group moved `by` rows later, keeping their width and their
+    /// order.
+    ///
+    /// For a projection whose rows do not start where the ranges' own
+    /// indices do — the trail's dropped-count row is one such prefix — so
+    /// the shift lives in one place a caller cannot apply to only one of a
+    /// pair of related values (query log design §6).
+    #[must_use]
+    pub fn shifted(&self, by: usize) -> Self {
+        Self(
+            self.0
+                .iter()
+                .map(|group| Range {
+                    first: group.first + by,
+                    last: group.last + by,
+                })
+                .collect(),
+        )
+    }
 }
 
 /// The rows a panel has selected, as groups, and whether the cursor is still
@@ -2237,5 +2257,22 @@ mod tests {
         ranges.clamp_to(0);
 
         assert!(ranges.is_empty(), "an empty list selects nothing");
+    }
+
+    #[test]
+    fn shifting_moves_every_group_by_the_same_amount() {
+        let mut ranges = Ranges::default();
+        ranges.insert(Range::new(0, 1));
+        ranges.insert(Range::new(4, 6));
+
+        assert_eq!(
+            ranges.shifted(1).groups().collect::<Vec<_>>(),
+            vec![Range::new(1, 2), Range::new(5, 7)]
+        );
+        assert_eq!(
+            ranges.shifted(0),
+            ranges,
+            "no shift leaves the groups exactly as they were"
+        );
     }
 }

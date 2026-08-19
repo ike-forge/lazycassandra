@@ -45,14 +45,15 @@ pub(crate) fn log_body(state: &State) -> PanelBody {
 
     let rows = dropped.into_iter().chain(log.entries().map(row)).collect();
 
+    // The cursor and the selection both index entries, but a dropped-count
+    // row is prepended to `rows` once the ring has evicted — every row
+    // index handed to the renderer has to move past it together, or one
+    // shifts and the other silently does not.
     PanelBody::Log {
         rows,
-        // The cursor indexes entries, but a dropped-count row is prepended
-        // to `rows` once the ring has evicted — without the shift every
-        // selection would point one row too early.
         selected: log.cursor.index() + leading,
         offset: log.scroll.offset(),
-        ranges: log.selection.ranges(log.cursor.index()),
+        ranges: log.selection.ranges(log.cursor.index()).shifted(leading),
         flash: false,
     }
 }
@@ -104,6 +105,7 @@ mod tests {
     use crate::log::{LOG_CAPACITY, Log, Trace};
     use crate::model::QueryId;
     use crate::queries::QueriesTab;
+    use crate::state::{Range, Ranges};
 
     fn state_with(log: Log) -> State {
         let mut state = State::default();
@@ -224,6 +226,35 @@ mod tests {
             "3",
             "the cursor names the oldest surviving entry, one row past the \
              dropped-count row"
+        );
+    }
+
+    // `ranges` is entry-indexed exactly as `selected` is, and a
+    // half-applied fix — shifting one and not the other — would be silent
+    // until Task 12 lit a yank's afterglow from it.
+    #[test]
+    fn a_held_range_accounts_for_the_row_the_drop_count_added() {
+        let mut log = Log::default();
+        for index in 0..LOG_CAPACITY + 3 {
+            log.push(Entry::new(
+                Stamp::default(),
+                Subject::Sentence(index.to_string()),
+                Outcome::Cancelled,
+            ));
+        }
+        // Entries 0..=2, the oldest three survivors, hold subjects "3","4","5".
+        log.selection.start(0);
+        log.selection.stop(2);
+
+        let PanelBody::Log { ranges, .. } = log_body(&state_with(log)) else {
+            panic!("a log body");
+        };
+
+        assert_eq!(
+            ranges,
+            Ranges::of(Range::new(1, 3)),
+            "the held entries sit one row past the dropped-count row, same as \
+             the cursor does"
         );
     }
 }
