@@ -791,7 +791,14 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
     // said the CQL editor would have to break.
-    if state.focus().takes_text() && edit(state, press.key) {
+    //
+    // The one key the editor still gives up: its own panel number. Arrived
+    // at, that key means "come here"; pressed again it means "walk the
+    // strip" the same way `2` does on DDL, and text swallowing it would
+    // leave the trail unreachable by key from inside the buffer
+    // (docs/shortcuts.md §4).
+    let own_number = press.key == Key::Char(state.focus().number());
+    if state.takes_text() && !own_number && edit(state, press.key) {
         return Vec::new();
     }
 
@@ -859,7 +866,7 @@ fn takes_text(state: &State) -> bool {
         // grouped with `Message`/`None`, because neither it nor `Diagnostics`
         // has text of its own to type into.
         Some(Overlay::Diagnostics(_) | Overlay::Fatal(_)) => false,
-        Some(Overlay::Message(_)) | None => state.focus().takes_text(),
+        Some(Overlay::Message(_)) | None => state.takes_text(),
     }
 }
 
@@ -1044,20 +1051,29 @@ fn focus_by_number(state: &mut State, key: char) {
 /// Steps the focused panel's strip one tab in `step`, wrapping.
 ///
 /// A tab the strip does not draw is not a place to arrive at: on a keyspace
-/// the DDL panel offers one tab, and walking stays on it.
+/// the DDL panel offers one tab, and walking stays on it. The Queries panel
+/// always offers both of its tabs, so it has no such filter to apply.
 fn walk_tab(state: &mut State, step: Step) {
-    if state.focus() != Panel::Ddl {
-        return;
-    }
+    match state.focus() {
+        Panel::Ddl => {
+            let shown = state.ddl.tab();
+            let candidate = match step {
+                Step::Forward => shown.next(),
+                Step::Back => shown.previous(),
+            };
 
-    let shown = state.ddl.tab();
-    let candidate = match step {
-        Step::Forward => shown.next(),
-        Step::Back => shown.previous(),
-    };
-
-    if crate::view::ddl_tabs(state).contains(&candidate) {
-        state.ddl.show(candidate);
+            if crate::view::ddl_tabs(state).contains(&candidate) {
+                state.ddl.show(candidate);
+            }
+        }
+        Panel::Queries => {
+            let shown = state.queries.tab();
+            state.queries.show(match step {
+                Step::Forward => shown.next(),
+                Step::Back => shown.previous(),
+            });
+        }
+        Panel::Tables | Panel::Contents => {}
     }
 }
 
@@ -1449,7 +1465,7 @@ fn escape(state: &mut State) {
         return;
     }
 
-    if state.focus().takes_text() {
+    if state.takes_text() {
         state.focus_on(Panel::default());
     }
 }
@@ -2224,7 +2240,7 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         // is unreachable here for `takes_text`'s reason.
         Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_)) => Vec::new(),
         Some(Overlay::Message(_)) | None => {
-            if state.focus().takes_text() {
+            if state.takes_text() {
                 edit(state, key);
             } else if matches!(key, Key::PageDown) {
                 scroll(state, Motion::PageDown);
@@ -2852,6 +2868,7 @@ mod tests {
     use crate::ddl::DdlTab;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
+    use crate::queries::QueriesTab;
     use crate::search::{Prompt, Search, Searched};
     use crate::state::{Connection, FLASH_TICKS, Range, Span};
     use crate::theme::{Ours, Ported};
@@ -4885,6 +4902,55 @@ mod tests {
         assert_eq!(effects, vec![Effect::Quit]);
     }
 
+    #[test]
+    fn the_queries_number_pressed_again_walks_to_the_trail() {
+        let mut state = State::default();
+
+        press(&mut state, Key::Char('4'));
+        assert_eq!(state.focus(), Panel::Queries);
+        assert_eq!(state.queries.tab(), QueriesTab::Cql);
+
+        press(&mut state, Key::Char('4'));
+        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+    }
+
+    // The panel's unfocused height is a function of its buffer (layout.rs), so an
+    // unfocused Logs tab would show one thing and be as tall as another
+    // (query log design §5.2).
+    #[test]
+    fn leaving_the_panel_puts_the_buffer_back() {
+        let mut state = State::default();
+        press(&mut state, Key::Char('4'));
+        press(&mut state, Key::Char('4'));
+        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+
+        press(&mut state, Key::Char('1'));
+
+        assert_eq!(state.queries.tab(), QueriesTab::Cql);
+    }
+
+    #[test]
+    fn the_trail_takes_no_text() {
+        let mut state = State::default();
+        press(&mut state, Key::Char('4'));
+        press(&mut state, Key::Char('4'));
+
+        press(&mut state, Key::Char('x'));
+
+        assert_eq!(state.queries.text(), "", "the buffer is untouched");
+    }
+
+    #[test]
+    fn q_quits_from_the_trail() {
+        let mut state = State::default();
+        press(&mut state, Key::Char('4'));
+        press(&mut state, Key::Char('4'));
+
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(effects.contains(&Effect::Quit));
+    }
+
     fn ctrl(state: &mut State, key: Key) -> Vec<Effect> {
         update(state, Msg::Input(KeyPress::ctrl(key)))
     }
@@ -5844,9 +5910,21 @@ mod tests {
         assert_eq!(state.focus(), Panel::Contents);
     }
 
+    /// Whether a freshly-focused `panel` takes text — the panels a press
+    /// cannot reach from, now that it depends on the Queries tab rather than
+    /// on the panel alone.
+    fn does_not_take_text(panel: Panel) -> bool {
+        let mut state = State::default();
+        state.focus_on(panel);
+        !state.takes_text()
+    }
+
     #[test]
     fn a_number_focuses_its_panel_from_any_panel_that_does_not_take_text() {
-        for from in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
+        for from in Panel::ALL
+            .into_iter()
+            .filter(|panel| does_not_take_text(*panel))
+        {
             for to in Panel::ALL.into_iter().filter(|panel| *panel != from) {
                 let mut state = State::default();
                 state.focus_on(from);
@@ -5865,7 +5943,10 @@ mod tests {
 
     #[test]
     fn a_repeated_number_keeps_focus_and_walks_the_panels_tabs() {
-        for panel in Panel::ALL.into_iter().filter(|panel| !panel.takes_text()) {
+        for panel in Panel::ALL
+            .into_iter()
+            .filter(|panel| does_not_take_text(*panel))
+        {
             // A table has to be selected, or the DDL strip draws one tab and
             // there is nothing to walk to.
             let mut state = browsing_a_table();
@@ -5946,7 +6027,13 @@ mod tests {
 
     #[test]
     fn a_number_is_text_in_a_panel_that_takes_text() {
-        for to in Panel::ALL {
+        // Not `4`: Queries' own number is the one digit that still means
+        // "walk the strip" from inside the buffer that takes text
+        // (docs/shortcuts.md §4).
+        for to in Panel::ALL
+            .into_iter()
+            .filter(|panel| *panel != Panel::Queries)
+        {
             let mut state = State::default();
             state.focus_on(Panel::Queries);
 
@@ -7985,7 +8072,8 @@ mod tests {
         // depends on more than focus (design §5.1) — the sweep is over what
         // the bar actually shows for this state, which is what it promises.
         for panel in Panel::ALL {
-            let shown: Vec<&str> = crate::view::hints::bar(&populated(panel))
+            let state = populated(panel);
+            let shown: Vec<&str> = crate::view::hints::bar(&state)
                 .global
                 .iter()
                 .map(|hint| hint.action)
@@ -7997,7 +8085,7 @@ mod tests {
             // sweep asks the bar what it is showing.
             let claimed = crate::view::hints::GLOBAL
                 .iter()
-                .chain((!panel.takes_text()).then_some(&crate::view::hints::QUIT));
+                .chain((!state.takes_text()).then_some(&crate::view::hints::QUIT));
 
             for binding in claimed {
                 if !shown.contains(&binding.action) {

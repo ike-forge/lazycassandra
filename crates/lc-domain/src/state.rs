@@ -16,7 +16,7 @@ use crate::export::ExportForm;
 use crate::log::Log;
 use crate::model::{ConnId, DbError, JobId, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::queries::QueriesPanel;
+use crate::queries::{QueriesPanel, QueriesTab};
 use crate::search::{Prompt, Search, Searched, Sift};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
@@ -515,18 +515,6 @@ impl Panel {
     #[must_use]
     pub fn from_number(key: char) -> Option<Self> {
         Self::ALL.into_iter().find(|panel| panel.number() == key)
-    }
-
-    /// Whether letters typed at this panel are text rather than bindings.
-    ///
-    /// Focus is the mode (design §3). Exhaustive for the reason [`Panel::hints`]
-    /// is: a fifth panel cannot compile without saying which it is.
-    #[must_use]
-    pub const fn takes_text(self) -> bool {
-        match self {
-            Self::Tables | Self::Ddl | Self::Contents => false,
-            Self::Queries => true,
-        }
     }
 
     /// What this panel responds to.
@@ -1242,10 +1230,22 @@ impl State {
                 self.contents.rows.clear();
                 self.contents.columns.clear();
             }
-            Panel::Queries => {}
+            // The panel's unfocused height is a function of its buffer
+            // (layout.rs), so an unfocused Logs tab would be sized by
+            // something it is not drawing (query log design §5.2).
+            Panel::Queries => self.queries.show(QueriesTab::Cql),
         }
 
         self.focus = panel;
+    }
+
+    /// Whether the focused panel is taking text this frame.
+    ///
+    /// A question about `State` rather than about `Panel`: the Queries panel
+    /// takes text only while its CQL tab is drawn (query log design §5.1).
+    #[must_use]
+    pub fn takes_text(&self) -> bool {
+        self.focus() == Panel::Queries && self.queries.tab() == QueriesTab::Cql
     }
 
     /// Posture of the current connection, or the safe default when there is

@@ -290,7 +290,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
     // `tab` moves focus in every frame but one: with a completion popup up it
     // accepts what is selected, so the global hint would be a lie exactly
     // where the panel hint is true (query editor design §5.5).
-    let completing = state.queries.completion().is_some() && state.focus().takes_text();
+    let completing = state.queries.completion().is_some() && state.takes_text();
     let fits = state.geometry.command_rows() > 0;
     let mut global: Vec<Hint> = GLOBAL
         .iter()
@@ -298,7 +298,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         .filter(|binding| !completing || !binding.keys.contains(&Stroke::key(Key::Tab)))
         .map(rendered)
         .collect();
-    if !state.focus().takes_text() {
+    if !state.takes_text() {
         global.push(rendered(&QUIT));
     }
 

@@ -25,10 +25,62 @@ pub enum Refresh {
     Hold,
 }
 
+/// Which of the panel's two tabs is drawn.
+///
+/// An enum rather than a `bool`: the tabs differ in what they hold, not in a
+/// flag (conventions.md §1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum QueriesTab {
+    /// The CQL buffer.
+    #[default]
+    Cql,
+    /// The trail of what the session issued (query log design §5).
+    Logs,
+}
+
+impl QueriesTab {
+    /// The tabs in the order the title strip draws them.
+    pub const ALL: [Self; 2] = [Self::Cql, Self::Logs];
+
+    /// The next tab in [`QueriesTab::ALL`], wrapping.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Cql => Self::Logs,
+            Self::Logs => Self::Cql,
+        }
+    }
+
+    /// The previous tab in [`QueriesTab::ALL`], wrapping.
+    #[must_use]
+    pub const fn previous(self) -> Self {
+        match self {
+            Self::Cql => Self::Logs,
+            Self::Logs => Self::Cql,
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Cql => "Queries",
+            Self::Logs => "Logs",
+        }
+    }
+
+    /// Both names are short enough that there is nothing left to drop.
+    #[must_use]
+    pub const fn short_label(self) -> &'static str {
+        self.label()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueriesPanel {
     buffer: Editor,
     completion: Option<Completion>,
+    /// The tab the panel is showing.
+    tab: QueriesTab,
 }
 
 impl QueriesPanel {
@@ -36,6 +88,18 @@ impl QueriesPanel {
     #[must_use]
     pub fn lines(&self) -> &[String] {
         self.buffer.lines()
+    }
+
+    /// The tab the panel is showing.
+    #[must_use]
+    pub const fn tab(&self) -> QueriesTab {
+        self.tab
+    }
+
+    /// Draws `tab`. Arriving at the tab already drawn is not a change: `4` is
+    /// how focus comes back to the panel.
+    pub fn show(&mut self, tab: QueriesTab) {
+        self.tab = tab;
     }
 
     #[must_use]
@@ -180,6 +244,27 @@ mod tests {
 
     fn schema() -> Schema {
         schema_of(&[("shop", &["orders"])])
+    }
+
+    #[test]
+    fn a_panel_opens_on_the_buffer_rather_than_the_trail() {
+        assert_eq!(QueriesPanel::default().tab(), QueriesTab::Cql);
+    }
+
+    #[test]
+    fn walking_the_tabs_wraps_and_stepping_back_undoes_it() {
+        for tab in QueriesTab::ALL {
+            assert_eq!(tab.next().previous(), tab);
+        }
+    }
+
+    #[test]
+    fn showing_a_tab_draws_it() {
+        let mut panel = QueriesPanel::default();
+
+        panel.show(QueriesTab::Logs);
+
+        assert_eq!(panel.tab(), QueriesTab::Logs);
     }
 
     /// Types `text`, offering against the schema after each character — the

@@ -29,6 +29,7 @@ use crate::contents::SelectionMode;
 use crate::cql::{CandidateKind, Completion};
 use crate::ddl::DdlTab;
 use crate::export::{Confirm, Format, Scope, Stop};
+use crate::queries::QueriesTab;
 use crate::search::{Direction, Search, Sift};
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
@@ -463,7 +464,19 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
             PanelTitle::tabbed(number, &specs)
         }
         Panel::Contents => PanelTitle::styled(number, contents::title(state)),
-        Panel::Queries => single("Queries".to_owned()),
+        Panel::Queries => {
+            let tab = state.queries.tab();
+            let specs: Vec<TabSpec> = QueriesTab::ALL
+                .iter()
+                .map(|candidate| TabSpec {
+                    label: candidate.label(),
+                    short: candidate.short_label(),
+                    active: *candidate == tab,
+                })
+                .collect();
+
+            PanelTitle::tabbed(number, &specs)
+        }
     }
 }
 
@@ -563,7 +576,7 @@ mod tests {
                 "[1]-Tables",
                 "[2]-DDL",
                 "[3]-Table contents",
-                "[4]-Queries"
+                "[4]-Queries - Logs"
             ]
             .map(str::to_owned)
         );

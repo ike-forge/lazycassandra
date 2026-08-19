@@ -860,7 +860,7 @@ mod tests {
         // strip is the one name.
         assert_eq!(row(&buffer, 5), "╭── [2]-DDL ───╮│                      │");
         assert_eq!(row(&buffer, 8), "│              │╰──────────────────────╯");
-        assert_eq!(row(&buffer, 9), "│              │╭── [4]-Queries ───────╮");
+        assert_eq!(row(&buffer, 9), "│              │╭── [4]-Queries - Logs ╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
