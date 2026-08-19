@@ -191,7 +191,14 @@ There is exactly one place state changes.
   than orphaning the task. Late results for a cancelled `QueryId` are dropped in
   `update`.
 - **Rendering**: redraw on state change or tick, not per event. A dirty flag on
-  `State` avoids repainting on every keypress in a held-down `j`.
+  `State` avoids repainting on every keypress in a held-down `j`, and the loop
+  applies **every message the channel is already holding before it draws**. A
+  key repeats faster than a frame is painted, so one frame per press falls
+  behind: the presses queue, and a three-second hold keeps moving for two
+  seconds after release. Batched, they cost one frame between them. A pointer
+  gesture is the one message that cannot join a batch — it is resolved against
+  the hit map of the frame it happened in — so it is carried to the loop's next
+  turn instead.
 
 ### Why this pays off
 

@@ -122,6 +122,35 @@ fn resolve(incoming: Incoming, map: &FrameMap) -> Option<Msg> {
     }
 }
 
+/// The next message already waiting, where the frame this batch will draw may
+/// be the one that shows it — architecture.md §3's *redraw on state change,
+/// not per event*.
+///
+/// A held key repeats faster than a frame is painted, so a loop that draws
+/// once per press falls behind and keeps moving after the key is released: the
+/// events are queued, and nothing about being late makes them cheaper. Applied
+/// as a batch they cost one frame between them, and the cursor is where the
+/// user let go.
+///
+/// A gesture is the one thing that cannot join a batch. It is resolved against
+/// [`FrameMap`], which describes the frame it happened in and not the one the
+/// messages ahead of it have earned, so it is carried to the loop's next turn
+/// — after the draw that makes the map true again
+/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
+fn queued(
+    rx: &mut mpsc::UnboundedReceiver<Incoming>,
+    carried: &mut Option<Incoming>,
+) -> Option<Incoming> {
+    match rx.try_recv() {
+        Ok(incoming @ Incoming::Msg(_)) => Some(incoming),
+        Ok(gesture) => {
+            *carried = Some(gesture);
+            None
+        }
+        Err(_) => None,
+    }
+}
+
 async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let suspension = input::Suspension::default();
@@ -153,23 +182,44 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
     report(&tx, &mut measured, rendered.geometry);
     state.dirty = false;
 
-    while let Some(incoming) = rx.recv().await {
-        let Some(msg) = resolve(incoming, &map) else {
-            continue;
+    // What the last batch took off the channel and could not apply against the
+    // frame it was drawing. `None` on every turn but the one after a gesture
+    // arrived mid-batch.
+    let mut carried: Option<Incoming> = None;
+
+    loop {
+        let incoming = if let Some(incoming) = carried.take() {
+            incoming
+        } else if let Some(incoming) = rx.recv().await {
+            incoming
+        } else {
+            break;
         };
 
-        for effect in update(&mut state, msg) {
-            // The one effect that is not a task: the child owns the terminal,
-            // so nothing else may draw while it holds it. Its outcome comes
-            // back through the same channel every other effect returns through
-            // (external editor design §4).
-            if let Effect::OpenEditor { buffer } = &effect {
-                let outcome = editor::open(&mut terminal, capture, &suspension, buffer)?;
-                let _sent = tx.send(outcome.into());
-                continue;
+        let mut batch = Some(incoming);
+        while let Some(incoming) = batch {
+            if let Some(msg) = resolve(incoming, &map) {
+                for effect in update(&mut state, msg) {
+                    // The one effect that is not a task: the child owns the
+                    // terminal, so nothing else may draw while it holds it.
+                    // Its outcome comes back through the same channel every
+                    // other effect returns through (external editor design
+                    // §4).
+                    if let Effect::OpenEditor { buffer } = &effect {
+                        let outcome = editor::open(&mut terminal, capture, &suspension, buffer)?;
+                        let _sent = tx.send(outcome.into());
+                        continue;
+                    }
+
+                    effects::run(&tx, &cluster, &writer, &effect);
+                }
             }
 
-            effects::run(&tx, &cluster, &writer, &effect);
+            if state.should_quit {
+                break;
+            }
+
+            batch = queued(&mut rx, &mut carried);
         }
 
         if state.should_quit {
@@ -185,4 +235,74 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    use super::*;
+
+    fn gesture() -> Incoming {
+        Incoming::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn a_batch_takes_every_message_the_channel_is_already_holding() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        for _ in 0..3 {
+            let _sent = tx.send(Msg::Tick.into());
+        }
+        let mut carried = None;
+
+        for _ in 0..3 {
+            assert!(
+                matches!(
+                    queued(&mut rx, &mut carried),
+                    Some(Incoming::Msg(Msg::Tick))
+                ),
+                "a queued message is applied before the frame, not after it"
+            );
+        }
+
+        assert!(
+            queued(&mut rx, &mut carried).is_none(),
+            "and then the batch ends"
+        );
+        assert!(carried.is_none());
+    }
+
+    /// The frame a gesture is resolved against is the one it happened in. A
+    /// batch that applied it behind three keystrokes would resolve it against
+    /// a map those keystrokes have already made false.
+    #[test]
+    fn a_gesture_ends_the_batch_and_waits_for_the_frame_it_earned() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _sent = tx.send(gesture());
+        let _also_sent = tx.send(Msg::Tick.into());
+        let mut carried = None;
+
+        assert!(
+            queued(&mut rx, &mut carried).is_none(),
+            "the batch stops here"
+        );
+        assert!(
+            matches!(carried, Some(Incoming::Mouse(_))),
+            "and the gesture is held for the next turn rather than dropped"
+        );
+    }
+
+    #[test]
+    fn an_empty_channel_ends_the_batch_without_carrying_anything() {
+        let (_tx, mut rx) = mpsc::unbounded_channel::<Incoming>();
+        let mut carried = None;
+
+        assert!(queued(&mut rx, &mut carried).is_none());
+        assert!(carried.is_none());
+    }
 }
