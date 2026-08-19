@@ -44,6 +44,11 @@ pub enum CandidateKind {
 enum Then {
     /// The cursor lands after what was written, which is what a name wants.
     Nothing,
+    /// A space is written after the text, unless the cursor is already sitting
+    /// on one. What a grammar word wants: no CQL statement ends on a keyword,
+    /// so the space is a keystroke the user would spend next either way
+    /// (completion ranking design §5.1).
+    Space,
     /// The cursor steps back to this character offset into the text — a
     /// template's first hole.
     Caret(usize),
@@ -78,6 +83,15 @@ impl Candidate {
             text,
             kind,
             then: Then::Nothing,
+        }
+    }
+
+    /// A grammar word, which accepting follows with the space the word after
+    /// it needs.
+    fn keyword(text: &'static str) -> Self {
+        Self {
+            then: Then::Space,
+            ..Self::plain(text, CandidateKind::Keyword)
         }
     }
 
@@ -154,10 +168,14 @@ impl Completion {
         }
         editor.write(&candidate.text);
 
-        if let Then::Caret(caret) = candidate.then {
-            for _ in caret..candidate.text.chars().count() {
-                editor.left();
+        match &candidate.then {
+            Then::Caret(caret) => {
+                for _ in *caret..candidate.text.chars().count() {
+                    editor.left();
+                }
             }
+            Then::Space if !on_space(editor) => editor.write(" "),
+            Then::Nothing | Then::Space | Then::From(_) => {}
         }
     }
 }
@@ -351,7 +369,20 @@ fn keywords(prefix: &str) -> impl Iterator<Item = Candidate> + '_ {
     KEYWORDS
         .iter()
         .filter(move |keyword| matches(keyword, prefix))
-        .map(|keyword| Candidate::plain(*keyword, CandidateKind::Keyword))
+        .map(|keyword| Candidate::keyword(keyword))
+}
+
+/// Whether the cursor sits on a space already, in which case a keyword's own
+/// would double it: `se| * FROM t` completes to `SELECT * FROM t` and not to
+/// `SELECT  * FROM t`.
+fn on_space(editor: &Editor) -> bool {
+    let cursor = editor.cursor();
+
+    editor
+        .lines()
+        .get(cursor.line)
+        .and_then(|line| line.chars().nth(cursor.column))
+        .is_some_and(|character| character == ' ')
 }
 
 /// Keyspaces alone: what `Expect::Keyspace` wants (design §6) — `USE` takes
@@ -804,7 +835,49 @@ mod tests {
 
         completion.accept(&mut editor);
 
-        assert_eq!(editor.text(), "SELECT");
+        assert_eq!(editor.text(), "SELECT ");
+    }
+
+    #[test]
+    fn accepting_a_keyword_writes_the_space_the_word_after_it_needs() {
+        let mut editor = typed("SELECT * fr");
+        let completion = suggest(&editor, Some(&schema()), Some("shop")).expect("FROM matches");
+
+        completion.accept(&mut editor);
+
+        assert_eq!(editor.text(), "SELECT * FROM ");
+        assert_eq!(
+            editor.cursor().column,
+            "SELECT * FROM ".chars().count(),
+            "the cursor lands past the space, on the word the clause wants next"
+        );
+    }
+
+    #[test]
+    fn a_keyword_accepted_before_a_space_does_not_write_a_second_one() {
+        let mut editor = typed("se * FROM t");
+        editor.line_start();
+        editor.right();
+        editor.right();
+        let completion = suggest(&editor, None, None).expect("SELECT matches");
+
+        completion.accept(&mut editor);
+
+        assert_eq!(editor.text(), "SELECT * FROM t");
+    }
+
+    #[test]
+    fn accepting_a_type_writes_no_space() {
+        let mut editor = typed("CREATE TABLE shop.t (id uui");
+        let completion = suggest(&editor, Some(&schema()), Some("shop")).expect("uuid matches");
+
+        completion.accept(&mut editor);
+
+        assert_eq!(
+            editor.text(),
+            "CREATE TABLE shop.t (id UUID",
+            "a comma or a bracket comes after a type, not another word"
+        );
     }
 
     #[test]

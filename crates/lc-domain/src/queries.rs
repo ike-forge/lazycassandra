@@ -212,7 +212,7 @@ mod tests {
 
         assert_eq!(panel.edit(Key::Tab, 1), Some(Refresh::Close));
 
-        assert_eq!(panel.text(), "SELECT");
+        assert_eq!(panel.text(), "SELECT ");
         assert!(panel.completion().is_none());
     }
 
@@ -221,13 +221,13 @@ mod tests {
         let mut panel = typed("se");
 
         assert_eq!(panel.edit(Key::Enter, 1), Some(Refresh::Close));
-        assert_eq!(panel.text(), "SELECT");
+        assert_eq!(panel.text(), "SELECT ");
         assert!(panel.completion().is_none());
 
         assert_eq!(panel.edit(Key::Enter, 1), Some(Refresh::Recompute));
         assert_eq!(
             panel.text(),
-            "SELECT\n",
+            "SELECT \n",
             "with the popup down, enter is a line break again"
         );
     }

@@ -506,7 +506,7 @@ character and not a binding. What it does not claim keeps its global meaning.
 | `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
 | `ctrl-n` / `ctrl-p` | The next / previous completion. With no popup up, raise one against the word under the cursor. |
 | `↓`³ / `↑`³ | The next / previous completion — **only** while a popup is up, and the same step `ctrl-n`/`ctrl-p` take. With none up, they move the cursor, as everywhere else. |
-| `Tab`³ / `Enter`³ | Accept the selected completion — **only** while a popup is up. With none up, `Tab` moves focus and `⏎` splits the line, as everywhere else. |
+| `Tab`³ / `Enter`³ | Accept the selected completion — **only** while a popup is up. A keyword lands with the space the word after it needs, unless the cursor is already on one; a name, a type and a statement shape land as they are drawn. With no popup up, `Tab` moves focus and `⏎` splits the line, as everywhere else. |
 | any printable key | Insert it, and offer completions against the word it lands in. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | Split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
@@ -1127,6 +1127,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `⏎` accepts a completion, and still splits the line without one | `enter_accepts_what_is_offered_and_splits_the_line_without_a_popup` (`queries.rs`) |
 | The popup leads with the grammar where the grammar narrowed nothing | `a_select_list_with_no_table_leads_with_the_grammar`, `a_value_position_offers_grammar_and_no_names` (`cql/complete.rs`) |
 | A statement shape is offered where a statement begins, and typed whole | `a_statement_start_offers_the_shapes_its_prefix_opens`, `accepting_a_shape_types_it_whole_and_lands_on_its_first_hole` (`cql/complete.rs`) |
+| A keyword lands with a space, a type without one, and a space already there is not doubled | `accepting_a_keyword_writes_the_space_the_word_after_it_needs`, `accepting_a_type_writes_no_space`, `a_keyword_accepted_before_a_space_does_not_write_a_second_one` (`cql/complete.rs`) |
 | Accepting a qualified column writes the `FROM` that puts it in scope | `accepting_a_column_with_no_table_in_scope_writes_the_clause_that_puts_it_in_scope` (`cql/complete.rs`) |
 | `Esc` takes the popup down before it leaves the editor | `escape_takes_the_popup_down_before_it_leaves_the_editor` |
 | A motion takes the popup down | `a_motion_takes_the_popup_down` |
