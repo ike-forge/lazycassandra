@@ -142,7 +142,8 @@ pub(crate) fn render(
     }
 
     match body {
-        PanelBody::Blank => None,
+        // `Log` is drawn by lc-inbound in a later pass (query log design §6).
+        PanelBody::Blank | PanelBody::Log { .. } => None,
         PanelBody::Notice { text, token } => {
             notice(frame, area, text, *token, theme);
             None

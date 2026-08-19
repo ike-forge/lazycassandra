@@ -10,6 +10,7 @@
 mod contents;
 mod details;
 pub(crate) mod hints;
+mod logs;
 mod tables;
 mod title;
 
@@ -17,6 +18,7 @@ pub use crate::style::Segment;
 pub use contents::{GridCell, GridColumn};
 pub use details::{ColumnKind, DetailRow, Details, Group, Heading, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness, Stroke};
+pub use logs::LogRow;
 pub use tables::{RowKind, TreeRow};
 use title::TabSpec;
 pub use title::{PanelTitle, TAB_SEPARATOR, Tab};
@@ -371,6 +373,19 @@ pub enum PanelBody {
         /// selection, as [`PanelBody::Tree::flash`].
         flash: bool,
     },
+    /// The trail, one entry per row, each drawn on two lines
+    /// (query log design §6).
+    Log {
+        rows: Vec<LogRow>,
+        /// As [`PanelBody::Tree::selected`].
+        selected: usize,
+        /// As [`PanelBody::Tree::offset`].
+        offset: usize,
+        /// As [`PanelBody::Tree::ranges`].
+        ranges: Ranges,
+        /// As [`PanelBody::Tree::flash`].
+        flash: bool,
+    },
 }
 
 /// A yank's afterglow over `panel`, if that is where the last one was lit.
@@ -485,10 +500,13 @@ fn body(state: &State, panel: Panel) -> PanelBody {
         Panel::Tables => tables::body(state),
         Panel::Ddl => details::body(state),
         Panel::Contents => contents::body(state),
-        Panel::Queries => PanelBody::Editor {
-            lines: crate::cql::highlight(&state.queries.text()),
-            cursor: state.queries.cursor(),
-            completion: state.queries.completion().map(completion),
+        Panel::Queries => match state.queries.tab() {
+            QueriesTab::Cql => PanelBody::Editor {
+                lines: crate::cql::highlight(&state.queries.text()),
+                cursor: state.queries.cursor(),
+                completion: state.queries.completion().map(completion),
+            },
+            QueriesTab::Logs => logs::log_body(state),
         },
     }
 }
