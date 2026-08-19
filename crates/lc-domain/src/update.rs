@@ -9,6 +9,7 @@ use crate::commands::{CommandsPanel, Run};
 use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::cql;
+use crate::ddl::DdlTab;
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
 use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
@@ -16,7 +17,7 @@ use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Sc
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::ports::ExportError;
 use crate::posture::Posture;
-use crate::queries::Refresh;
+use crate::queries::{QueriesTab, Refresh};
 use crate::search::{Direction, Origin, Prompt, Search, Searched, Sift};
 use crate::state::{
     ConnectionState, Cursor, DiagnosticsPanel, ExportJob, Flash, Geometry, Message, Overlay, Panel,
@@ -790,15 +791,10 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     // Focus is the mode. A panel that takes text claims every printable key
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
-    // said the CQL editor would have to break.
-    //
-    // The one key the editor still gives up: its own panel number. Arrived
-    // at, that key means "come here"; pressed again it means "walk the
-    // strip" the same way `2` does on DDL, and text swallowing it would
-    // leave the trail unreachable by key from inside the buffer
-    // (docs/shortcuts.md §4).
-    let own_number = press.key == Key::Char(state.focus().number());
-    if state.takes_text() && !own_number && edit(state, press.key) {
+    // said the CQL editor would have to break — no key is carved out of it,
+    // its own number included: `WHERE id = 4` has to be typeable from inside
+    // the buffer that takes text (docs/shortcuts.md §2).
+    if state.takes_text() && edit(state, press.key) {
         return Vec::new();
     }
 
@@ -806,8 +802,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('q') => return quit(state),
         Key::Char('?') => open_palette(state),
         Key::Escape => escape(state),
-        Key::Tab => state.focus_on(state.focus().next()),
-        Key::BackTab => state.focus_on(state.focus().previous()),
+        Key::Tab => walk_landing(state, Step::Forward),
+        Key::BackTab => walk_landing(state, Step::Back),
         Key::Char('j') | Key::Down => scroll(state, Motion::Down),
         Key::Char('k') | Key::Up => scroll(state, Motion::Up),
         Key::PageDown => scroll(state, Motion::PageDown),
@@ -1022,7 +1018,8 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
     }
 }
 
-/// Which way [`walk_tab`] steps through a panel's strip.
+/// Which way [`walk_tab`] steps through a panel's strip, or [`walk_landing`]
+/// through the `Tab` cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
     Forward,
@@ -1051,30 +1048,100 @@ fn focus_by_number(state: &mut State, key: char) {
 /// Steps the focused panel's strip one tab in `step`, wrapping.
 ///
 /// A tab the strip does not draw is not a place to arrive at: on a keyspace
-/// the DDL panel offers one tab, and walking stays on it. The Queries panel
-/// always offers both of its tabs, so it has no such filter to apply.
+/// the DDL panel offers one tab, and walking stays on it. Queries has no
+/// strip a key can reach this way: `4` is text once its CQL tab has focus,
+/// the same as any other digit, and the Logs tab is reached only by walking
+/// `Tab`/`BackTab`'s cycle of stops (see [`Landing`]).
 fn walk_tab(state: &mut State, step: Step) {
-    match state.focus() {
-        Panel::Ddl => {
-            let shown = state.ddl.tab();
-            let candidate = match step {
-                Step::Forward => shown.next(),
-                Step::Back => shown.previous(),
-            };
+    if state.focus() != Panel::Ddl {
+        return;
+    }
 
-            if crate::view::ddl_tabs(state).contains(&candidate) {
-                state.ddl.show(candidate);
+    let shown = state.ddl.tab();
+    let candidate = match step {
+        Step::Forward => shown.next(),
+        Step::Back => shown.previous(),
+    };
+
+    if crate::view::ddl_tabs(state).contains(&candidate) {
+        state.ddl.show(candidate);
+    }
+}
+
+/// One stop in the `Tab`/`BackTab` cycle: a panel, and — where it has more
+/// than one — the tab it lands on.
+///
+/// Every `(panel, tab)` pair a strip can draw is a stop, DDL's two and
+/// Queries' two included, so the trail is reachable without spending a
+/// panel's own number on it — the number stays text where the CQL buffer is
+/// what has focus (docs/shortcuts.md §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Landing {
+    Tables,
+    Ddl(DdlTab),
+    Contents,
+    Queries(QueriesTab),
+}
+
+impl Landing {
+    /// Every stop the cycle can be at right now, in the order it visits them.
+    ///
+    /// Built fresh rather than cached: DDL's strip depends on what the
+    /// Tables cursor is on, so a keyspace's single tab is one stop here and a
+    /// table's two are two, the same distinction [`walk_tab`] draws for `2`.
+    fn all(state: &State) -> Vec<Self> {
+        std::iter::once(Self::Tables)
+            .chain(crate::view::ddl_tabs(state).iter().copied().map(Self::Ddl))
+            .chain(std::iter::once(Self::Contents))
+            .chain(QueriesTab::ALL.into_iter().map(Self::Queries))
+            .collect()
+    }
+
+    /// The stop the frame is sitting on right now.
+    fn current(state: &State) -> Self {
+        match state.focus() {
+            Panel::Tables => Self::Tables,
+            Panel::Ddl => Self::Ddl(state.ddl.tab()),
+            Panel::Contents => Self::Contents,
+            Panel::Queries => Self::Queries(state.queries.tab()),
+        }
+    }
+
+    /// Focuses the panel this stop names and draws the tab it names, in one
+    /// move.
+    ///
+    /// Both, even where the panel already has focus: [`State::focus_on`]
+    /// reverts the Queries tab to `Cql` the moment focus leaves it, so a
+    /// landing on `Queries(Logs)` reached only by focusing and never told
+    /// which tab to draw would be undone by its own arrival.
+    fn arrive(self, state: &mut State) {
+        match self {
+            Self::Tables => state.focus_on(Panel::Tables),
+            Self::Ddl(tab) => {
+                state.focus_on(Panel::Ddl);
+                state.ddl.show(tab);
+            }
+            Self::Contents => state.focus_on(Panel::Contents),
+            Self::Queries(tab) => {
+                state.focus_on(Panel::Queries);
+                state.queries.show(tab);
             }
         }
-        Panel::Queries => {
-            let shown = state.queries.tab();
-            state.queries.show(match step {
-                Step::Forward => shown.next(),
-                Step::Back => shown.previous(),
-            });
-        }
-        Panel::Tables | Panel::Contents => {}
     }
+}
+
+/// Steps `Tab`/`BackTab` to the next or previous [`Landing`], wrapping.
+fn walk_landing(state: &mut State, step: Step) {
+    let stops = Landing::all(state);
+    let current = Landing::current(state);
+    let index = stops.iter().position(|stop| *stop == current).unwrap_or(0);
+
+    let next = match step {
+        Step::Forward => (index + 1) % stops.len(),
+        Step::Back => (index + stops.len() - 1) % stops.len(),
+    };
+
+    stops[next].arrive(state);
 }
 
 /// Draws the `tab`th tab of the strip `panel` last drew. `click_at` has
@@ -2865,10 +2932,8 @@ mod tests {
     use crate::commands::{CATALOGUE, CommandsPanel, Run};
     use crate::config::{Config, Diagnostic, Icons, Origin, Span as ConfigSpan};
     use crate::contents::{ContentsState, SelectionMode};
-    use crate::ddl::DdlTab;
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
-    use crate::queries::QueriesTab;
     use crate::search::{Prompt, Search, Searched};
     use crate::state::{Connection, FLASH_TICKS, Range, Span};
     use crate::theme::{Ours, Ported};
@@ -4902,16 +4967,15 @@ mod tests {
         assert_eq!(effects, vec![Effect::Quit]);
     }
 
-    #[test]
-    fn the_queries_number_pressed_again_walks_to_the_trail() {
+    /// Puts the panel straight on the Logs tab without walking a key
+    /// sequence to it: what these tests are covering is the Logs tab itself,
+    /// not the cycle that reaches it (that is `Tab`'s job, covered
+    /// separately).
+    fn on_the_trail() -> State {
         let mut state = State::default();
-
-        press(&mut state, Key::Char('4'));
-        assert_eq!(state.focus(), Panel::Queries);
-        assert_eq!(state.queries.tab(), QueriesTab::Cql);
-
-        press(&mut state, Key::Char('4'));
-        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+        state.focus_on(Panel::Queries);
+        state.queries.show(QueriesTab::Logs);
+        state
     }
 
     // The panel's unfocused height is a function of its buffer (layout.rs), so an
@@ -4919,21 +4983,17 @@ mod tests {
     // (query log design §5.2).
     #[test]
     fn leaving_the_panel_puts_the_buffer_back() {
-        let mut state = State::default();
-        press(&mut state, Key::Char('4'));
-        press(&mut state, Key::Char('4'));
-        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+        let mut state = on_the_trail();
 
         press(&mut state, Key::Char('1'));
 
+        assert_eq!(state.focus(), Panel::Tables);
         assert_eq!(state.queries.tab(), QueriesTab::Cql);
     }
 
     #[test]
     fn the_trail_takes_no_text() {
-        let mut state = State::default();
-        press(&mut state, Key::Char('4'));
-        press(&mut state, Key::Char('4'));
+        let mut state = on_the_trail();
 
         press(&mut state, Key::Char('x'));
 
@@ -4942,13 +5002,127 @@ mod tests {
 
     #[test]
     fn q_quits_from_the_trail() {
-        let mut state = State::default();
-        press(&mut state, Key::Char('4'));
-        press(&mut state, Key::Char('4'));
+        let mut state = on_the_trail();
 
         let effects = press(&mut state, Key::Char('q'));
 
         assert!(effects.contains(&Effect::Quit));
+    }
+
+    /// The regression `Tab`'s cycle exists to prevent: the panel's own
+    /// number is not carved out of what the CQL buffer takes as text, or
+    /// `WHERE id = 4` could not be typed from inside it.
+    #[test]
+    fn a_number_typed_into_the_focused_cql_buffer_inserts_the_digit() {
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
+
+        press(&mut state, Key::Char('4'));
+
+        assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
+        assert_eq!(state.queries.text(), "4");
+    }
+
+    #[test]
+    fn tab_from_queries_cql_lands_on_queries_logs() {
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
+        assert_eq!(state.queries.tab(), QueriesTab::Cql);
+
+        press(&mut state, Key::Tab);
+
+        assert_eq!(
+            state.focus(),
+            Panel::Queries,
+            "the cycle has not left the panel yet"
+        );
+        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+    }
+
+    #[test]
+    fn tab_from_queries_logs_lands_on_tables_and_reverts_to_cql() {
+        let mut state = on_the_trail();
+
+        press(&mut state, Key::Tab);
+
+        assert_eq!(state.focus(), Panel::Tables);
+        assert_eq!(
+            state.queries.tab(),
+            QueriesTab::Cql,
+            "leaving the panel still reverts its tab"
+        );
+    }
+
+    #[test]
+    fn shift_tab_from_tables_lands_on_queries_logs() {
+        let mut state = State::default();
+
+        press(&mut state, Key::BackTab);
+
+        assert_eq!(
+            state.focus(),
+            Panel::Queries,
+            "stepping back from the first stop wraps to the last"
+        );
+        assert_eq!(
+            state.queries.tab(),
+            QueriesTab::Logs,
+            "arrival sets the tab explicitly, or focus_on's revert of the \
+             panel it just left would undo it"
+        );
+    }
+
+    #[test]
+    fn tab_steps_ddls_two_tabs_as_separate_stops() {
+        let mut state = browsing_a_table();
+        state.focus_on(Panel::Ddl);
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl);
+
+        press(&mut state, Key::Tab);
+
+        assert_eq!(
+            state.focus(),
+            Panel::Ddl,
+            "the cycle has not left the panel yet"
+        );
+        assert_eq!(state.ddl.tab(), DdlTab::Columns);
+    }
+
+    #[test]
+    fn a_full_forward_cycle_returns_to_where_it_started() {
+        let mut state = browsing_a_table();
+        state.focus_on(Panel::Tables);
+        let stops = Landing::all(&state).len();
+
+        for _ in 0..stops {
+            press(&mut state, Key::Tab);
+        }
+
+        assert_eq!(state.focus(), Panel::Tables);
+        assert_eq!(
+            state.queries.tab(),
+            QueriesTab::Cql,
+            "the cycle passed through Queries and came out the other side"
+        );
+    }
+
+    #[test]
+    fn shift_tab_undoes_tab_from_every_stop() {
+        let state = browsing_a_table();
+
+        for stop in Landing::all(&state) {
+            let mut probe = state.clone();
+            stop.arrive(&mut probe);
+
+            press(&mut probe, Key::Tab);
+            press(&mut probe, Key::BackTab);
+
+            assert_eq!(
+                Landing::current(&probe),
+                stop,
+                "{stop:?} did not return to itself"
+            );
+        }
     }
 
     fn ctrl(state: &mut State, key: Key) -> Vec<Effect> {
@@ -5254,7 +5428,12 @@ mod tests {
 
         press(&mut state, Key::Tab);
 
-        assert_eq!(state.focus(), Panel::Tables, "Queries wraps to Tables");
+        assert_eq!(
+            state.focus(),
+            Panel::Queries,
+            "Queries' own second stop, not yet the next panel"
+        );
+        assert_eq!(state.queries.tab(), QueriesTab::Logs, "not typed as text");
         assert_eq!(state.queries.text(), "SELECT");
     }
 
@@ -5884,29 +6063,47 @@ mod tests {
     }
 
     #[test]
-    fn tab_walks_the_panels_in_number_order_and_wraps() {
+    fn tab_walks_every_stop_in_order_and_wraps() {
+        // A keyspace with no tables, so DDL offers its one tab and the
+        // stops are exactly the ones docs/shortcuts.md §4 lists: Tables,
+        // Ddl, Contents, Queries/Cql, Queries/Logs.
         let mut state = browsing(&["a"]);
 
-        for expected in Panel::ALL.into_iter().skip(1).chain([Panel::ALL[0]]) {
-            press(&mut state, Key::Tab);
-            assert_eq!(state.focus(), expected);
-        }
+        press(&mut state, Key::Tab);
+        assert_eq!(state.focus(), Panel::Ddl);
+
+        press(&mut state, Key::Tab);
+        assert_eq!(state.focus(), Panel::Contents);
+
+        press(&mut state, Key::Tab);
+        assert_eq!(state.focus(), Panel::Queries);
+        assert_eq!(state.queries.tab(), QueriesTab::Cql);
+
+        press(&mut state, Key::Tab);
+        assert_eq!(state.focus(), Panel::Queries, "Queries' own second stop");
+        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+
+        press(&mut state, Key::Tab);
+        assert_eq!(state.focus(), Panel::Tables, "the cycle wraps");
     }
 
     #[test]
-    fn shift_tab_walks_them_the_other_way() {
+    fn shift_tab_walks_the_same_stops_the_other_way() {
         let mut state = browsing(&["a"]);
 
         press(&mut state, Key::BackTab);
-
         assert_eq!(
             state.focus(),
             Panel::Queries,
-            "stepping back from the first wraps"
+            "stepping back from the first stop wraps to the last"
         );
+        assert_eq!(state.queries.tab(), QueriesTab::Logs);
 
         press(&mut state, Key::BackTab);
+        assert_eq!(state.focus(), Panel::Queries);
+        assert_eq!(state.queries.tab(), QueriesTab::Cql);
 
+        press(&mut state, Key::BackTab);
         assert_eq!(state.focus(), Panel::Contents);
     }
 
@@ -6027,13 +6224,7 @@ mod tests {
 
     #[test]
     fn a_number_is_text_in_a_panel_that_takes_text() {
-        // Not `4`: Queries' own number is the one digit that still means
-        // "walk the strip" from inside the buffer that takes text
-        // (docs/shortcuts.md §4).
-        for to in Panel::ALL
-            .into_iter()
-            .filter(|panel| *panel != Panel::Queries)
-        {
+        for to in Panel::ALL {
             let mut state = State::default();
             state.focus_on(Panel::Queries);
 
@@ -11176,12 +11367,17 @@ mod tests {
         }
 
         #[test]
-        fn tab_still_moves_focus_when_nothing_is_being_offered() {
+        fn tab_still_walks_the_cycle_when_nothing_is_being_offered() {
             let mut state = editing("SELECT * FROM shop.orders");
 
             press(&mut state, Key::Tab);
 
-            assert_eq!(state.focus(), Panel::Tables);
+            assert_eq!(
+                state.focus(),
+                Panel::Queries,
+                "Queries' own second stop, not yet the next panel"
+            );
+            assert_eq!(state.queries.tab(), QueriesTab::Logs);
         }
 
         #[test]
