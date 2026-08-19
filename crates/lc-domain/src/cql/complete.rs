@@ -5,7 +5,7 @@
 //! keyspaces and tables `Schema` already holds, alongside CQL's fixed grammar
 //! (design §5).
 
-use super::keywords::{KEYWORDS, PROPERTIES, TYPES};
+use super::keywords::{COLUMN_WORDS, KEYWORDS, PROPERTIES, TYPES};
 use super::lex::{Kind, Piece, pieces};
 use super::resolve::{Context, Expect, Name, context_at};
 use super::templates::{TEMPLATES, Template};
@@ -397,34 +397,37 @@ fn keyspaces(schema: Option<&Schema>, prefix: &str) -> Vec<Candidate> {
         .collect()
 }
 
-/// The columns a select list can name, and the keywords no column position
-/// may hide: a select list and a `WHERE` list both stay `Expect::Column` until
-/// a keyword ends them, so keywords offered only elsewhere would make `FROM`
-/// and `LIMIT` untypeable through the popup.
+/// The columns a column position can name, then the words that end or
+/// continue the list holding them.
 ///
-/// Which of the two leads is the statement's to say. With one table in scope
-/// the grammar has already narrowed the columns to a handful that belong, and
-/// they lead. With none — or with several, which narrows nothing — the offer
-/// is every column in the cluster, and a keyword is the likelier thing a short
-/// prefix was reaching for: `SELECT up` is `UPDATE` before it is some table's
-/// `updated_at` (completion ranking design §2).
+/// Columns lead wherever the position takes one, whether the statement has
+/// narrowed them to a table's own or left them the cluster's: a select list is
+/// a list of columns before it is anything else, and the grammar reachable
+/// behind them is [`COLUMN_WORDS`] and not the whole table — `SELECT up` was
+/// only ever `UPDATE` because the popup offered a word a select list cannot
+/// hold (completion ranking design §2, §2.2).
 fn columns(
     schema: Option<&Schema>,
     context: &Context,
     keyspace: Option<&str>,
     prefix: &str,
 ) -> Vec<Candidate> {
-    match context.tables.as_slice() {
-        [table] => columns_of(schema, &resolved(table, keyspace), prefix)
-            .into_iter()
-            .chain(keywords(prefix))
-            .take(MOST)
-            .collect(),
-        tables => ahead(
-            keywords(prefix),
-            every_column(schema, prefix, tables.is_empty()),
-        ),
-    }
+    let columns = match context.tables.as_slice() {
+        [table] => columns_of(schema, &resolved(table, keyspace), prefix),
+        tables => every_column(schema, prefix, tables.is_empty()),
+    };
+
+    ahead(columns.into_iter(), column_words(prefix).collect())
+}
+
+/// The grammar a column list can hold, which is a third of what the buffer's
+/// other positions offer: the words that continue or end a list of columns,
+/// and nothing a select list, a `WHERE` or a table body could not take.
+fn column_words(prefix: &str) -> impl Iterator<Item = Candidate> + '_ {
+    COLUMN_WORDS
+        .iter()
+        .filter(move |keyword| matches(keyword, prefix))
+        .map(|keyword| Candidate::keyword(keyword))
 }
 
 /// A table's columns in the order vision.md §2 reads them: partition,
@@ -1106,21 +1109,47 @@ mod tests {
     /// some table's `updated_at` above `UPDATE`, on the strength of a table
     /// the statement had not named and the user had not looked at.
     #[test]
-    fn a_select_list_with_no_table_leads_with_the_grammar() {
+    fn a_select_list_leads_with_the_columns_even_where_it_names_no_table() {
         let schema = schema();
         let completion = suggest(&typed("SELECT to"), Some(&schema), Some("shop")).expect("offers");
 
         assert_eq!(
             completion.candidates().first().map(|c| c.kind),
-            Some(CandidateKind::Keyword),
-            "with no table named, a keyword is the likelier reach"
+            Some(CandidateKind::Column),
+            "a select list is a list of columns before it is anything else"
         );
         assert!(
             completion
                 .candidates()
                 .iter()
-                .any(|candidate| candidate.text == "total"),
-            "and the columns are still reachable behind it"
+                .any(|candidate| candidate.text == "TO"),
+            "and the grammar is still reachable behind them"
+        );
+    }
+
+    #[test]
+    fn a_column_position_offers_no_keyword_it_could_not_take() {
+        let offered = offers("SELECT de", Some("shop"));
+
+        for impossible in ["DECIMAL", "DELETE", "DESCRIBE"] {
+            assert!(
+                !offered.contains(&impossible.to_owned()),
+                "{impossible} cannot appear in a select list"
+            );
+        }
+        assert!(
+            offered.contains(&"DESC".to_owned()),
+            "the word an ORDER BY takes is one the position does take"
+        );
+    }
+
+    #[test]
+    fn a_value_position_still_offers_the_whole_grammar() {
+        assert!(
+            offers("SELECT * FROM shop.orders WHERE id = de", Some("shop"))
+                .contains(&"DELETE".to_owned()),
+            "only a column list is narrowed; a value takes the words the \
+             statement machine stopped following"
         );
     }
 

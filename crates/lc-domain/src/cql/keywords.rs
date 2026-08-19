@@ -169,6 +169,62 @@ pub(crate) const TYPES: &[&str] = &[
     "VARINT",
 ];
 
+/// The grammar a column position can take, sorted, and a subset of
+/// [`KEYWORDS`].
+///
+/// A select list, a `WHERE` list, a `SET` list and a table body all stay
+/// `Expect::Column` until a keyword ends them, so the popup there has to offer
+/// the words that continue or end one. It should offer nothing else: `SELECT
+/// de` reaching `DECIMAL`, `DELETE` and `DESCRIBE` is the defect
+/// [`crate::cql::complete`]'s type list already avoids by offering types
+/// alone — a position that cannot take a word should not offer it
+/// (completion ranking design §2.2).
+///
+/// The union over every clause that holds a column, not one set per clause:
+/// `ASC` belongs to an `ORDER BY` and `VALUES` to an `INSERT`, and telling
+/// them apart needs a resolver that carries which clause a column list is in.
+/// The union is what the four positions share today, and it is already a third
+/// of the table.
+pub(crate) const COLUMN_WORDS: &[&str] = &[
+    "ADD",
+    "ALLOW",
+    "AND",
+    "AS",
+    "ASC",
+    "BY",
+    "CLUSTERING",
+    "CONTAINS",
+    "DESC",
+    "DISTINCT",
+    "DROP",
+    "ENTRIES",
+    "EXISTS",
+    "FILTERING",
+    "FROM",
+    "GROUP",
+    "IF",
+    "IN",
+    "IS",
+    "JSON",
+    "KEY",
+    "KEYS",
+    "LIMIT",
+    "NOT",
+    "ORDER",
+    "PARTITION",
+    "PER",
+    "PRIMARY",
+    "RENAME",
+    "SET",
+    "STATIC",
+    "TIMESTAMP",
+    "TO",
+    "USING",
+    "VALUES",
+    "WHERE",
+    "WITH",
+];
+
 /// The options a `WITH` clause takes, sorted, in the lower case Cassandra
 /// spells them and stores them in `system_schema`.
 ///
@@ -224,7 +280,7 @@ mod tests {
 
     #[test]
     fn the_tables_are_sorted_so_a_lookup_can_bisect() {
-        for table in [KEYWORDS, VALUE_WORDS, TYPES, PROPERTIES] {
+        for table in [KEYWORDS, COLUMN_WORDS, VALUE_WORDS, TYPES, PROPERTIES] {
             let mut sorted = table.to_vec();
             sorted.sort_unstable();
             assert_eq!(table, sorted, "the table is walked and bisected in order");
@@ -250,6 +306,16 @@ mod tests {
             assert!(
                 is_keyword(word),
                 "{word} is offered as a type and must still highlight as one"
+            );
+        }
+    }
+
+    #[test]
+    fn every_word_a_column_position_takes_is_grammar_everywhere() {
+        for word in COLUMN_WORDS {
+            assert!(
+                is_keyword(word),
+                "{word} is offered in a column list and must still highlight as grammar"
             );
         }
     }
