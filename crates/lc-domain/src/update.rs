@@ -2173,6 +2173,11 @@ fn start_export(state: &mut State) -> Vec<Effect> {
     };
 
     let overwrite = form.confirm() == Some(Confirm::Overwrite);
+    // A retry reuses the refused attempt's own `JobId` rather than minting a
+    // fresh one: it is the same export continuing past the overwrite
+    // question, not a second one, so it reuses that attempt's still-pending
+    // trail entry instead of orphaning it (final review I4).
+    let retry = form.pending().map(Pending::job);
     let attempt = match form.pending() {
         Some(pending) => Some(pending.source().clone()),
         None => source(state, &form),
@@ -2182,24 +2187,34 @@ fn start_export(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     };
     let destination = PathBuf::from(form.path().text());
-    let (conn, job, format) = (connection.id, JobId::next(), form.format());
-
-    // Both scopes are something the session ran and both get an entry
-    // (design §8's `ExportFinished(Err)` row names no scope qualifier). A
-    // `Whole` export logs the statement it paged; a `Fetched` export writes
-    // rows already in memory and issues no statement (export design §3), so
-    // its subject records the act rather than quoting a query that never ran.
-    let subject = match &source {
-        Source::Whole(stmt) => statement_subject(stmt),
-        Source::Fetched { .. } => sentence("Exporting the fetched rows"),
-    };
-    logged(
-        state,
-        subject,
-        Outcome::Pending {
-            trace: Trace::Export(job),
-        },
+    let (conn, job, format) = (
+        connection.id,
+        retry.unwrap_or_else(JobId::next),
+        form.format(),
     );
+
+    // Only a fresh attempt logs an entry. A retry's is already pending under
+    // the id just reused, and logging a second one for it would give one
+    // `Trace` two pending entries — `Log::complete` would rewrite whichever
+    // it found first and strand the other exactly as before.
+    if retry.is_none() {
+        // Both scopes are something the session ran and both get an entry
+        // (design §8's `ExportFinished(Err)` row names no scope qualifier). A
+        // `Whole` export logs the statement it paged; a `Fetched` export writes
+        // rows already in memory and issues no statement (export design §3), so
+        // its subject records the act rather than quoting a query that never ran.
+        let subject = match &source {
+            Source::Whole(stmt) => statement_subject(stmt),
+            Source::Fetched { .. } => sentence("Exporting the fetched rows"),
+        };
+        logged(
+            state,
+            subject,
+            Outcome::Pending {
+                trace: Trace::Export(job),
+            },
+        );
+    }
 
     // Cloned rather than borrowed: the effect carries it out of the domain and
     // the job holds it against an `Exists` that has not come back yet.
@@ -2251,8 +2266,17 @@ fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char(' ') | Key::Enter => start_export(state),
         Key::Escape => {
+            let mut abandoned = None;
             if let Some(Overlay::Export(form)) = &mut state.overlay {
+                abandoned = form.pending().map(Pending::job);
                 form.dismiss();
+            }
+            // Nothing else will ever complete this trace: the source it was
+            // asking about is dropped with the question, so the trail's
+            // entry must not be left `⋯ running` for a retry that is now
+            // never coming (final review I4).
+            if let Some(job) = abandoned {
+                state.log.complete(Trace::Export(job), Outcome::Cancelled);
             }
             Vec::new()
         }
@@ -2271,8 +2295,10 @@ fn export_progress(state: &mut State, job: JobId, rows: usize) -> Vec<Effect> {
 }
 
 /// An export ended. `Exists` is the one outcome that is a question rather than
-/// a result: it reopens the form with its confirmation up (design §7), and the
-/// trail's entry stays pending for the retry that follows.
+/// a result: it reopens the form with its confirmation up (design §7), and
+/// the trail's entry stays pending — closed by `start_export`'s retry, which
+/// reuses this `job` rather than minting a fresh one, or by `confirm_key`'s
+/// `Esc` arm if the question is abandoned instead (final review I4).
 fn finish_export(
     state: &mut State,
     job: JobId,
@@ -2308,7 +2334,7 @@ fn finish_export(
         }
         Err(ExportError::Exists) => {
             let (mut form, source) = finished.into_parts();
-            form.ask(Pending::Overwrite(Box::new(source)));
+            form.ask(Pending::Overwrite(Box::new(source), job));
             unwind_overlay(state);
             state.overlay = Some(Overlay::Export(form));
         }
@@ -11342,14 +11368,17 @@ mod tests {
     }
 
     /// `ExportError::Exists` puts the form back for a retry rather than
-    /// ending the job, so the entry stays pending — closed by whatever the
-    /// retry's own outcome is (export design §7).
+    /// ending the job, so the entry stays pending while the question is up —
+    /// and the retry reuses the refused attempt's own `JobId` rather than
+    /// minting a fresh one, so it is this same entry the retry's outcome
+    /// closes, not a second one left stranded at `⋯ running` (final review
+    /// I4).
     #[test]
-    fn an_export_that_exists_leaves_its_entry_pending_for_the_retry() {
+    fn an_export_that_exists_stays_pending_through_the_retry_and_completes_with_it() {
         let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
         let job = state.export.as_ref().expect("a job").id();
 
-        let _effects = update(
+        update(
             &mut state,
             Msg::ExportFinished {
                 job,
@@ -11358,15 +11387,72 @@ mod tests {
             },
         );
 
-        let entry = state
+        let waiting = state
             .log
             .entries()
             .find(|entry| entry.subject().text().starts_with("SELECT"))
             .expect("the export entry");
         assert!(
-            matches!(entry.outcome(), Outcome::Pending { trace: Trace::Export(id) } if *id == job),
-            "still waiting on the retry"
+            matches!(waiting.outcome(), Outcome::Pending { trace: Trace::Export(id) } if *id == job),
+            "still waiting, with the confirmation up"
         );
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        let [Effect::Export { job: retried, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        assert_eq!(*retried, job, "the retry reuses the refused attempt's id");
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Ok(18_420),
+                took: Duration::from_millis(1_400),
+            },
+        );
+
+        let matching: Vec<_> = state
+            .log
+            .entries()
+            .filter(|entry| entry.subject().text().starts_with("SELECT"))
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "one entry for the whole export, not one per attempt"
+        );
+        let Outcome::Succeeded { detail, .. } = matching[0].outcome() else {
+            panic!("the retry succeeded");
+        };
+        assert!(detail.contains("18420"), "{detail}");
+    }
+
+    /// Nothing else will ever complete a trace whose question was abandoned:
+    /// the source it was asking about is dropped with the confirmation, so
+    /// the entry has to be closed right there rather than left `⋯ running`
+    /// for a retry that is now never coming (final review I4).
+    #[test]
+    fn abandoning_the_overwrite_confirmation_cancels_the_pending_entry() {
+        let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+                took: Duration::ZERO,
+            },
+        );
+
+        handle_key(&mut state, KeyPress::new(Key::Escape));
+
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| entry.subject().text().starts_with("SELECT"))
+            .expect("the export entry");
+        assert_eq!(*entry.outcome(), Outcome::Cancelled);
     }
 
     /// A `Fetched` export issues no statement, but it is still something the
@@ -11445,13 +11531,15 @@ mod tests {
     }
 
     /// Decision #4 holds for a `Fetched` export the same as it does for a
-    /// `Whole` one: `Exists` completes nothing.
+    /// `Whole` one: `Exists` completes nothing while the question is up, and
+    /// the retry — reusing the same `JobId` — is what closes this entry
+    /// rather than orphaning it (final review I4).
     #[test]
-    fn a_fetched_export_that_exists_leaves_its_entry_pending_for_the_retry() {
+    fn a_fetched_export_that_exists_stays_pending_through_the_retry_and_completes_with_it() {
         let mut state = export_fetched_in_flight("/tmp/orders.csv");
         let job = state.export.as_ref().expect("a job").id();
 
-        let _effects = update(
+        update(
             &mut state,
             Msg::ExportFinished {
                 job,
@@ -11460,15 +11548,70 @@ mod tests {
             },
         );
 
-        let entry = state
+        let waiting = state
             .log
             .entries()
             .find(|entry| matches!(entry.subject(), LogSubject::Sentence(_)))
             .expect("the fetched export's entry");
         assert!(
-            matches!(entry.outcome(), Outcome::Pending { trace: Trace::Export(id) } if *id == job),
-            "still waiting on the retry"
+            matches!(waiting.outcome(), Outcome::Pending { trace: Trace::Export(id) } if *id == job),
+            "still waiting, with the confirmation up"
         );
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        let [Effect::Export { job: retried, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        assert_eq!(*retried, job, "the retry reuses the refused attempt's id");
+
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Ok(200),
+                took: Duration::from_millis(50),
+            },
+        );
+
+        let matching: Vec<_> = state
+            .log
+            .entries()
+            .filter(|entry| matches!(entry.subject(), LogSubject::Sentence(_)))
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "one entry for the whole export, not one per attempt"
+        );
+        let Outcome::Succeeded { detail, .. } = matching[0].outcome() else {
+            panic!("the retry succeeded");
+        };
+        assert!(detail.contains("200"), "{detail}");
+    }
+
+    /// The abandon path holds for a `Fetched` export the same as a `Whole`
+    /// one (final review I4).
+    #[test]
+    fn abandoning_a_fetched_exports_overwrite_confirmation_cancels_the_pending_entry() {
+        let mut state = export_fetched_in_flight("/tmp/orders.csv");
+        let job = state.export.as_ref().expect("a job").id();
+        update(
+            &mut state,
+            Msg::ExportFinished {
+                job,
+                result: Err(ExportError::Exists),
+                took: Duration::ZERO,
+            },
+        );
+
+        handle_key(&mut state, KeyPress::new(Key::Escape));
+
+        let entry = state
+            .log
+            .entries()
+            .find(|entry| matches!(entry.subject(), LogSubject::Sentence(_)))
+            .expect("the fetched export's entry");
+        assert_eq!(*entry.outcome(), Outcome::Cancelled);
     }
 
     #[test]

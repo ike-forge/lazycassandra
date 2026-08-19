@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::cell;
 use crate::contents::Subject;
-use crate::model::{CqlValue, Row};
+use crate::model::{CqlValue, JobId, Row};
 use crate::style::Segment;
 use crate::update::{ROW_LIMIT, Source};
 use crate::yank;
@@ -394,9 +394,14 @@ pub enum Confirm {
 /// of an export, so the rows and the statement the refused attempt was made
 /// with are carried here rather than read again from a Contents panel the user
 /// is free to move meanwhile (final review I3).
+///
+/// Carries the [`JobId`] the refused attempt logged its pending trail entry
+/// under, alongside the source: a retry reuses it rather than minting a
+/// fresh one, so the trail keeps one entry for one export rather than
+/// stranding the first as permanently `⋯ running` (final review I4).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pending {
-    Overwrite(Box<Source>),
+    Overwrite(Box<Source>, JobId),
 }
 
 impl Pending {
@@ -404,7 +409,7 @@ impl Pending {
     #[must_use]
     pub const fn confirm(&self) -> Confirm {
         match self {
-            Self::Overwrite(_) => Confirm::Overwrite,
+            Self::Overwrite(..) => Confirm::Overwrite,
         }
     }
 
@@ -412,7 +417,15 @@ impl Pending {
     #[must_use]
     pub fn source(&self) -> &Source {
         match self {
-            Self::Overwrite(source) => source,
+            Self::Overwrite(source, _) => source,
+        }
+    }
+
+    /// The trail entry the refused attempt is still pending on.
+    #[must_use]
+    pub const fn job(&self) -> JobId {
+        match self {
+            Self::Overwrite(_, job) => *job,
         }
     }
 }
