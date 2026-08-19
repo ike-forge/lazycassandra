@@ -5,6 +5,7 @@
 
 use lc_domain::clock::Stamp;
 use lc_domain::config::Config;
+use lc_domain::log::Outcome;
 use lc_domain::model::{Column, ConnId, CqlValue, DbError, Key, KeyPress, Page, Row, Statement};
 use lc_domain::posture::Posture;
 use lc_domain::state::Panel;
@@ -425,5 +426,40 @@ async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
             },
         ],
         "layout order, not the alphabetical order the map stores"
+    );
+}
+
+// The tier that catches what the unit tests cannot see: that the trail reads
+// in the order the session actually ran things, and that every effect it
+// issued was eventually closed out (query log design §10).
+#[tokio::test]
+async fn a_session_leaves_a_trail_of_everything_it_ran() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    );
+    let mut state = on_a_table(&cluster).await;
+
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+
+    let texts: Vec<String> = state
+        .log
+        .entries()
+        .map(|entry| entry.subject().text())
+        .collect();
+
+    assert!(texts[0].starts_with("Connecting"), "{texts:?}");
+    assert!(texts[1].starts_with("Reading schema"), "{texts:?}");
+    assert!(
+        texts[2].contains(&format!("LIMIT {ROW_LIMIT}")),
+        "a table open logs the limit appended for it: {texts:?}"
+    );
+    assert!(
+        state
+            .log
+            .entries()
+            .all(|entry| !matches!(entry.outcome(), Outcome::Pending { .. })),
+        "every entry was closed out: {texts:?}"
     );
 }

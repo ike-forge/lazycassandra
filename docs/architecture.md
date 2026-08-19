@@ -29,8 +29,14 @@ a typed statement's key columns colour in the grid
 what it offers by what the grammar takes at the cursor, offers whole statement
 shapes where a statement begins, and writes the `FROM` clause a column offered
 without one implies
-(docs/superpowers/specs/2026-08-17-completion-ranking-design.md).
-**Last updated:** 2026-08-17
+(docs/superpowers/specs/2026-08-17-completion-ranking-design.md). A Logs tab
+beside the CQL buffer now holds a bounded trail of everything the session
+issued and what came back — the connection, the schema read, every query and
+export — and a startup connect or schema failure raises `Overlay::Fatal`, a
+modal with no dismissal that ends the process rather than leaving a
+half-connected app on screen
+(docs/superpowers/specs/2026-08-19-query-log-design.md).
+**Last updated:** 2026-08-19
 
 ---
 
@@ -215,6 +221,8 @@ lc-domain/src/
   tree.rs       # the Tables panel's tree: unfold set, flattening, transitions
   contents.rs   # the Contents panel: the outstanding read and its result
   editor.rs     # the Queries panel's text buffer
+  log.rs        # the Logs tab: a bounded trail of what ran
+  clock.rs      # the wall-clock, as a value handed in
   cell.rs       # one CqlValue as the text a grid draws
   update.rs     # update() and its per-panel handlers
   view.rs       # ViewModel projection (see §3)
@@ -416,12 +424,15 @@ in VISION §8.
   four panels. Nested per-panel state with message routing is the usual escape
   hatch; `TablesPanel` took it first and `ContentsPanel` followed, each a
   module of its own. `DdlPanel` took it third, the same `Cursor`-and-`Scroll`
-  shape, but stayed a struct in `state.rs` rather than earning a module of its
-  own — two fields was not enough state to need one. `editor.rs` is a third
-  module, but it is a *buffer* rather than a panel — `State.queries` is an
-  `Editor`, not a `QueriesPanel` — so the question of what routes messages to
-  per-panel state is still open and still answered by `update` dispatching by
-  hand.
+  shape, and has since earned its own module too. `Log` is a further one —
+  the Logs tab's cursor, viewport and search, built the same way for the same
+  reason: a vocabulary of its own rather than another few fields on `State`
+  (docs/superpowers/specs/2026-08-19-query-log-design.md §3). `editor.rs` is
+  a module of a different kind, a *buffer* rather than a list, now wrapped by
+  `queries.rs`'s `QueriesPanel` alongside the tab that switches between it and
+  the Logs list — `State.queries` is a `QueriesPanel`, not an `Editor`
+  directly. The question of what routes messages to per-panel state is still
+  open and still answered by `update` dispatching by hand.
 - **Where schema caching lives.** Domain (testable, but the domain starts
   holding a cache invalidation problem) or adapter (simpler domain, but cache
   behaviour becomes untestable at the fast tier).

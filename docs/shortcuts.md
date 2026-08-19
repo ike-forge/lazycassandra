@@ -32,8 +32,8 @@ panel that takes text (§2).
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
 | `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's search, or leave the editor for Tables — first hit wins (§2). |
-| `Tab`³ | Focus the next panel — Tables, DDL, Table contents, Queries — wrapping. |
-| `Shift-Tab` | Focus the previous panel. |
+| `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns tab where one is drawn; Table contents; Queries' Cql tab; Queries' Logs tab. This is how the Logs tab is reached. |
+| `Shift-Tab` | The same stops, walked backwards. |
 | `1`¹ | Focus Tables. |
 | `2`¹ | Focus DDL. Pressed again, its next tab. |
 | `2`¹ | Focus Table columns — the same key, one tab further in. |
@@ -68,7 +68,8 @@ candidate — as `⏎` does there too. The Queries subsection below is where tha
 is argued.
 
 Each panel's title opens with the key that reaches it — `[1]-Tables`,
-`[2]-Table DDL - Table columns`, `[3]-Table contents`, `[4]-Queries` — so the
+`[2]-Table DDL - Table columns`, `[3]-Table contents`, `[4]-Queries`
+(`[4]-Queries - Logs` on its second tab) — so the
 binding is learned by looking at the panel rather than by reading this file
 (vision.md §4, principle 1). The number is drawn in the same style as the
 panel's active tab: it names the panel, and so does the tab.
@@ -82,21 +83,33 @@ command acts on what has focus
 
 `1` `2` `3` `4` run down the frame in the order the panels are drawn —
 top-left, bottom-left, top-right, bottom-right — and `Tab` walks the same
-order. One order on screen, in the titles and under the fingers. Four letters
-chosen for the words they sit inside used to do this job; a letter has to be
-learned per panel, while four digits in frame order are one rule, and a novice
-reading `[2]-` has been told the whole binding.
+order, now stopping at every tab a panel draws along the way: DDL's own tab
+and, where a table is selected, its Columns tab beside it; then Queries' Cql
+tab and its Logs tab. One order on screen, in the titles and under the
+fingers. Four letters chosen for the words they sit inside used to do this
+job; a letter has to be learned per panel, while four digits in frame order
+are one rule, and a novice reading `[2]-` has been told the whole binding.
 
 A number focuses its panel. Pressed again — that is, pressed while its panel
-already has focus — it steps to the panel's next tab, wrapping. The DDL panel
-is the only one with tabs today, so `2` `2` reaches the Columns tab and a third
-`2` comes back; `1` `1` stays on Tables. The palette says so directly: `2`
-takes two rows, one per tab, one under the other. The general rule stays with
-`]`/`[`, but a reader who has not met those keys yet learns from the repetition
-that the number pressed again goes somewhere — which is how the tabs are found
-without reading this file (vision.md §4, principle 1). `]` and `[` do the same walk forwards
-and backwards from the focused panel, for a hand that learnt them in lazygit;
-on a panel with one tab they do nothing.
+already has focus — it steps to the panel's next tab, wrapping, but only on
+the DDL panel: `2` `2` reaches the Columns tab and a third `2` comes back;
+`1` `1` stays on Tables. Queries has two tabs now as well, Cql and Logs, and
+`4` does not walk them the way `2` walks DDL's — a genuine asymmetry, not an
+oversight. The reason is the panel itself: the Cql tab takes text, so a `4`
+typed there is a character like any other digit rather than a second press
+left over for `handle_key` to reinterpret, and arriving at Queries by its
+number always lands on Cql, because leaving the panel by any other route has
+already reverted it there (see the Logs tab subsection below). The trail is
+reached a different way instead — `Tab`/`Shift-Tab` walking every
+`(panel, tab)` stop a strip can draw, DDL's two and Queries' two alike (see
+the table above) — so the Logs tab costs no digit of its own. The palette
+says so directly for DDL: `2` takes two rows, one per tab, one under the
+other. The general rule stays with `]`/`[`, but a reader who has not met
+those keys yet learns from the repetition that the number pressed again goes
+somewhere — which is how the tabs are found without reading this file
+(vision.md §4, principle 1). `]` and `[` do the same walk forwards and
+backwards from the focused panel, for a hand that learnt them in lazygit; on
+a panel with one tab, or in Queries where they are text, they do nothing.
 
 Arriving at the tab already drawn costs nothing: `2` from another panel is how
 focus comes back to whichever DDL tab was up, and it leaves the cursor on the
@@ -456,7 +469,10 @@ Its tabs, and nothing else. `2` is a global key (§1) rather than a binding of
 this panel — it is how you reach it from anywhere, so a panel that does not yet
 have focus has to answer it. `[` and `]` are the exception that proves it: they
 walk the *focused* panel's strip, so they mean nothing here until `2` has been
-pressed. Motion, search and `Esc` reach
+pressed. `Tab`/`Shift-Tab` reach it too, now stopping on both of its tabs on
+the way through the cycle (§1) — the same two-stop treatment Queries' strip
+gets, though Queries reaches its second stop by a different route (see the
+Logs tab subsection below). Motion, search and `Esc` reach
 it the way they reach any other panel. `ctrl-e`/`ctrl-y`, which moved the
 viewport a line without the cursor, are gone.
 
@@ -496,8 +512,12 @@ table above says — the mode changes what is painted, not what a key does.
 
 ### Queries panel
 
-The panel takes text, so while it has focus every printable key is a
-character and not a binding. What it does not claim keeps its global meaning.
+Two tabs, Cql and Logs. This subsection is the Cql tab, the buffer the panel
+opens on; the Logs tab is read-only and has a subsection of its own,
+directly below. The panel takes text only while the Cql tab is drawn, so
+while it has focus every printable key is a character and not a binding here
+— the Logs tab claims none of them. What it does not claim keeps its global
+meaning.
 
 | Key | Action |
 |---|---|
@@ -556,13 +576,42 @@ names no table — also writes the `FROM` clause that puts it in scope, at the
 end of that statement, leaving the cursor on the select list. See
 [completion ranking design](specs/2026-08-17-completion-ranking-design.md).
 
-`Tab` and `Shift-Tab` still move focus, except as ³ says. Nothing else global
-survives inside the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
+`Tab` and `Shift-Tab` still reach here, except as ³ says, but from the Cql tab
+neither leaves the panel outright: `Tab` lands on the Logs tab first, the
+panel's own second stop in the cycle (§1), and only a second `Tab` from there
+wraps on to Tables; `Shift-Tab` from Cql steps back to Table contents
+instead, since Logs sits after Cql in the cycle, not before it. Nothing else
+global survives inside the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
 it is the ctrl layer's Queries member and does nothing outside this panel,
 and neither does `ctrl-e`, which opens the buffer in the user's editor
 ([external editor design](specs/2026-08-12-external-editor-design.md) §1).
 See [queries editor design](specs/2026-08-09-queries-editor-design.md) and
 [query editor design](specs/2026-08-16-query-editor-design.md).
+
+### Logs tab
+
+Queries' second tab: a read-only, scrollable trail of every statement the
+session issued and what came back, one entry per connection attempt, schema
+read, query and export. Reached only by `Tab`/`Shift-Tab` walking the cycle
+of `(panel, tab)` stops (§1) — `4` does not walk onto it, and the paragraph
+above explains why. Once drawn it takes no text at all, unlike the Cql tab
+beside it: `j`/`k` and the arrows move the cursor entry to entry, `PageUp`/
+`PageDown` and `ctrl-d`/`ctrl-u` page it, `Home`/`End` and `gg`/`G` reach
+either end, `v` starts or freezes a selection of whole entries, `/` searches
+it and `n`/`N` walk the matches, `y` yanks — the held selection if one is
+active, otherwise the entry under the cursor — each entry as its two rows
+joined, the statement and its outcome (query log design §5.3). `q` quits
+here, unlike the Cql tab, where it types itself.
+
+Nothing here writes, deletes or clears an entry: a trail with a delete key
+would not be a trail (query log design §5.3). Leaving the panel — by `Tab`,
+`Shift-Tab`, another panel's number, or a click — reverts the tab to Cql,
+because the panel's unfocused height is a function of the CQL buffer it
+hugs, not of the trail (query log design §5.2); returning to Logs costs
+`Tab`/`Shift-Tab` walking the cycle again, or `4` then `Tab` once. The
+trail's own search does not outlive the tab being drawn either — switching
+to Cql clears it, since the hint bar cannot advertise `n` while `n` is
+literal text there.
 
 ---
 
@@ -964,7 +1013,10 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A strip too narrow keeps the drawn tab whole | `a_border_wide_enough_names_both_tabs_and_fades_the_one_not_drawn`, `a_border_too_narrow_for_either_strip_keeps_the_tab_it_is_drawing_whole` (`inbound/render.rs`) |
 | `q` quits and cancels | `q_quits`, `quitting_cancels_everything_still_in_flight` |
 | `Esc` clears the overlay | `escape_dismisses_the_overlay` |
-| `Tab`/`Shift-Tab` cycle in number order and wrap | `tab_walks_the_panels_in_number_order_and_wraps`, `shift_tab_walks_them_the_other_way` |
+| `Tab`/`Shift-Tab` cycle every `(panel, tab)` stop, in order, and wrap | `tab_walks_every_stop_in_order_and_wraps`, `shift_tab_walks_the_same_stops_the_other_way`, `tab_steps_ddls_two_tabs_as_separate_stops`, `tab_from_queries_cql_lands_on_queries_logs`, `tab_from_queries_logs_lands_on_tables_and_reverts_to_cql`, `shift_tab_from_tables_lands_on_queries_logs`, `a_full_forward_cycle_returns_to_where_it_started`, `shift_tab_undoes_tab_from_every_stop` |
+| The Logs tab takes no text, and `q` quits it | `the_trail_takes_no_text`, `q_quits_from_the_trail` |
+| The trail is searchable, and `n` walks its matches | `the_trail_is_searchable`, `n_walks_the_trails_matches_and_wraps`, `escape_over_the_trail_clears_its_search` |
+| `y` yanks an entry's two rows, or a held selection's | `yanking_an_entry_copies_its_statement_and_its_outcome`, `yanking_a_visual_selection_joins_every_selected_entrys_two_rows`, `yanking_the_trail_lights_the_entries_it_took`, `y_on_the_cql_tab_yanks_nothing` |
 | Paging and `Home`/`End` | `page_down_moves_the_tree_by_one_panel_height`, `home_and_end_reach_the_ends_of_the_tree_in_one_key` |
 | `gg`/`G` reach the ends of a panel's list | `gg_and_shift_g_reach_the_ends_of_the_tree`, `gg_and_shift_g_reach_the_ends_of_the_ddl_rows`, `gg_and_shift_g_reach_the_ends_of_the_grids_rows` |
 | `g` alone is a prefix, and the next key spends it | `a_lone_g_moves_nothing`, `a_key_between_the_two_gs_spends_the_prefix` |
