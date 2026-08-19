@@ -11,6 +11,7 @@ use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
 use crate::cql;
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
+use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::ports::ExportError;
@@ -185,6 +186,13 @@ pub fn init(
     state.config = config;
     state.connection = ConnectionState::Connecting(conn);
     state.dirty = true;
+    state.log.push(Entry::new(
+        now,
+        sentence("Connecting"),
+        Outcome::Pending {
+            trace: Trace::Connect(conn),
+        },
+    ));
 
     (state, vec![Effect::Connect(conn)])
 }
@@ -275,73 +283,17 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::Measured(geometry) => measured(state, geometry),
 
-        Msg::Connected { conn, posture, .. } => {
-            if !state.connection.is_current(conn) {
-                return Vec::new();
-            }
-            state.connection = ConnectionState::Connected(crate::state::Connection {
-                id: conn,
-                posture,
-                schema: SchemaState::Loading,
-            });
-            state.mark_dirty();
-            vec![Effect::LoadSchema(conn)]
-        }
+        Msg::Connected {
+            conn,
+            posture,
+            took,
+        } => connected(state, conn, posture, took),
 
-        Msg::ConnectFailed { conn, error, .. } => {
-            if !state.connection.is_current(conn) {
-                return Vec::new();
-            }
-            raise(
-                state,
-                Message {
-                    title: "Connection failed".to_owned(),
-                    message: error.to_string(),
-                    severity: Severity::Danger,
-                },
-            );
-            state.connection = ConnectionState::Failed(error);
-            state.mark_dirty();
-            Vec::new()
-        }
+        Msg::ConnectFailed { conn, error, .. } => connect_failed(state, conn, error),
 
-        Msg::SchemaFailed { conn, error, .. } => {
-            let applied = match &mut state.connection {
-                ConnectionState::Connected(connection) if connection.id == conn => {
-                    connection.schema = SchemaState::Failed(error.clone());
-                    true
-                }
-                _ => false,
-            };
-            if applied {
-                raise(
-                    state,
-                    Message {
-                        title: "Schema unavailable".to_owned(),
-                        message: error.to_string(),
-                        severity: Severity::Danger,
-                    },
-                );
-                state.mark_dirty();
-            }
-            Vec::new()
-        }
+        Msg::SchemaFailed { conn, error, .. } => schema_failed(state, conn, &error),
 
-        Msg::SchemaLoaded { conn, schema, .. } => {
-            let applied = match &mut state.connection {
-                ConnectionState::Connected(connection) if connection.id == conn => {
-                    connection.schema = SchemaState::Loaded(*schema);
-                    true
-                }
-                _ => false,
-            };
-            if applied {
-                let rows = tree_rows(state);
-                state.tables.cursor.clamp_to(rows);
-                state.mark_dirty();
-            }
-            Vec::new()
-        }
+        Msg::SchemaLoaded { conn, schema, took } => schema_loaded(state, conn, *schema, took),
 
         // A result whose id is no longer in flight belongs to a cancelled
         // query, and applying it would resurrect a view the user left. The
@@ -375,6 +327,112 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::Quit => quit(state),
     }
+}
+
+fn connected(state: &mut State, conn: ConnId, posture: Posture, took: Duration) -> Vec<Effect> {
+    if !state.connection.is_current(conn) {
+        return Vec::new();
+    }
+    state.connection = ConnectionState::Connected(crate::state::Connection {
+        id: conn,
+        posture,
+        schema: SchemaState::Loading,
+    });
+    state.log.complete(
+        Trace::Connect(conn),
+        Outcome::Succeeded {
+            detail: format!("connected, {}", posture_label(posture)),
+            took,
+        },
+    );
+    logged(
+        state,
+        sentence("Reading schema"),
+        Outcome::Pending {
+            trace: Trace::Schema(conn),
+        },
+    );
+    state.mark_dirty();
+    vec![Effect::LoadSchema(conn)]
+}
+
+fn connect_failed(state: &mut State, conn: ConnId, error: DbError) -> Vec<Effect> {
+    if !state.connection.is_current(conn) {
+        return Vec::new();
+    }
+    state.log.complete(
+        Trace::Connect(conn),
+        Outcome::Failed {
+            detail: error.to_string(),
+        },
+    );
+    raise(
+        state,
+        Message {
+            title: "Connection failed".to_owned(),
+            message: error.to_string(),
+            severity: Severity::Danger,
+        },
+    );
+    state.connection = ConnectionState::Failed(error);
+    state.mark_dirty();
+    Vec::new()
+}
+
+fn schema_failed(state: &mut State, conn: ConnId, error: &DbError) -> Vec<Effect> {
+    let applied = match &mut state.connection {
+        ConnectionState::Connected(connection) if connection.id == conn => {
+            connection.schema = SchemaState::Failed(error.clone());
+            true
+        }
+        _ => false,
+    };
+    if applied {
+        state.log.complete(
+            Trace::Schema(conn),
+            Outcome::Failed {
+                detail: error.to_string(),
+            },
+        );
+        raise(
+            state,
+            Message {
+                title: "Schema unavailable".to_owned(),
+                message: error.to_string(),
+                severity: Severity::Danger,
+            },
+        );
+        state.mark_dirty();
+    }
+    Vec::new()
+}
+
+fn schema_loaded(state: &mut State, conn: ConnId, schema: Schema, took: Duration) -> Vec<Effect> {
+    let detail = format!(
+        "{} keyspaces, {} tables",
+        schema.keyspaces.len(),
+        schema
+            .keyspaces
+            .values()
+            .map(|ks| ks.tables.len())
+            .sum::<usize>(),
+    );
+    let applied = match &mut state.connection {
+        ConnectionState::Connected(connection) if connection.id == conn => {
+            connection.schema = SchemaState::Loaded(schema);
+            true
+        }
+        _ => false,
+    };
+    if applied {
+        state
+            .log
+            .complete(Trace::Schema(conn), Outcome::Succeeded { detail, took });
+        let rows = tree_rows(state);
+        state.tables.cursor.clamp_to(rows);
+        state.mark_dirty();
+    }
+    Vec::new()
 }
 
 /// The two things elapsed time does to the frame: turn the loader, and burn
@@ -1021,6 +1079,27 @@ fn walk_completion(state: &mut State, forwards: bool) {
 
     if !state.queries.step(forwards) {
         complete(state);
+    }
+}
+
+/// Pushes an entry stamped from the clock the last tick left behind.
+///
+/// Every push happens in the arm that returns the effect the entry waits on,
+/// or in the arm that handles the result — nothing outside `update` writes to
+/// the trail (query log design §3.1).
+fn logged(state: &mut State, subject: LogSubject, outcome: Outcome) {
+    state.log.push(Entry::new(state.now, subject, outcome));
+}
+
+fn sentence(text: impl Into<String>) -> LogSubject {
+    LogSubject::Sentence(text.into())
+}
+
+fn posture_label(posture: Posture) -> &'static str {
+    match posture {
+        Posture::ReadOnly => "read-only",
+        Posture::Writable => "writable",
+        Posture::Protected => "protected",
     }
 }
 
@@ -2661,6 +2740,121 @@ mod tests {
             schema: SchemaState::Loading,
         });
         state
+    }
+
+    #[test]
+    fn starting_up_logs_the_connection_it_is_opening() {
+        let (state, _effects) = init(
+            ConnId::next(),
+            Config::default(),
+            Vec::new(),
+            Stamp::new(14, 2, 9),
+        );
+
+        let entry = state.log.entries().next().expect("an entry per effect");
+        assert_eq!(entry.at(), Stamp::new(14, 2, 9));
+        assert!(entry.subject().text().starts_with("Connecting"));
+        assert!(matches!(
+            entry.outcome(),
+            Outcome::Pending {
+                trace: Trace::Connect(_)
+            }
+        ));
+    }
+
+    #[test]
+    fn connecting_completes_the_entry_that_was_waiting_on_it() {
+        let conn = ConnId::next();
+        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+
+        let _effects = update(
+            &mut state,
+            Msg::Connected {
+                conn,
+                posture: Posture::Writable,
+                took: Duration::from_millis(38),
+            },
+        );
+
+        let entry = state.log.entries().next().expect("the connection entry");
+        let Outcome::Succeeded { detail, took } = entry.outcome() else {
+            panic!("the connection succeeded");
+        };
+        assert!(detail.contains("writable"));
+        assert_eq!(*took, Duration::from_millis(38));
+    }
+
+    #[test]
+    fn a_failed_connection_leaves_its_reason_in_the_trail() {
+        let conn = ConnId::next();
+        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+
+        let _effects = update(
+            &mut state,
+            Msg::ConnectFailed {
+                conn,
+                error: DbError::Unreachable("no route to host".to_owned()),
+                took: Duration::from_millis(12),
+            },
+        );
+
+        let entry = state.log.entries().next().expect("the connection entry");
+        let Outcome::Failed { detail } = entry.outcome() else {
+            panic!("the connection failed");
+        };
+        assert!(detail.contains("no route to host"));
+    }
+
+    #[test]
+    fn connecting_logs_the_schema_read_it_starts() {
+        let conn = ConnId::next();
+        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+
+        let _effects = update(
+            &mut state,
+            Msg::Connected {
+                conn,
+                posture: Posture::Writable,
+                took: Duration::ZERO,
+            },
+        );
+
+        let entry = state.log.entries().nth(1).expect("the schema entry");
+        assert!(matches!(
+            entry.outcome(),
+            Outcome::Pending {
+                trace: Trace::Schema(_)
+            }
+        ));
+    }
+
+    #[test]
+    fn a_loaded_schema_reports_what_it_found() {
+        let conn = ConnId::next();
+        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let _effects = update(
+            &mut state,
+            Msg::Connected {
+                conn,
+                posture: Posture::Writable,
+                took: Duration::ZERO,
+            },
+        );
+
+        let _effects = update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema_of(&["shop"])),
+                took: Duration::from_millis(112),
+            },
+        );
+
+        let entry = state.log.entries().nth(1).expect("the schema entry");
+        let Outcome::Succeeded { detail, .. } = entry.outcome() else {
+            panic!("the schema loaded");
+        };
+        assert!(detail.contains("keyspace"), "{detail}");
     }
 
     #[test]
