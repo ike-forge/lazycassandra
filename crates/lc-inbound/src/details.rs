@@ -33,7 +33,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span as TextSpan};
 use ratatui::widgets::Paragraph;
 
-use crate::body::Marked;
+use crate::body::{Marked, barred, patched};
 use crate::theme::Theme;
 
 const ASCENDING: &str = " ↑";
@@ -214,19 +214,6 @@ pub(crate) fn lay_out(
     }
 }
 
-/// `line` behind the bar column, marked where the line was wrapped from a row
-/// the mark belongs to — every one of them, since the highlight covers every
-/// one. Only a row's lines take it: a heading and a group's blank line cannot
-/// be selected, so neither pays the column.
-///
-/// Prepended after the highlight is patched on, or the bar would be repainted
-/// in the selection's own foreground and stop reading as a bar.
-fn barred(mut line: Line<'static>, marked: bool, theme: Theme) -> Line<'static> {
-    line.spans
-        .insert(0, crate::body::selection_bar(marked, theme));
-    line
-}
-
 /// `text` behind its icon, or bare where the two together would push the name
 /// past `width`.
 ///
@@ -240,22 +227,6 @@ fn prefixed(icon: &str, text: &str, width: usize) -> String {
     }
 
     format!("{icon}{text}")
-}
-
-/// `style` patched onto both the line's own style and each of its spans'.
-///
-/// Every row shape builds its spans through [`crate::highlight::spans`] now,
-/// so a matched fragment can carry [`Token::Match`] distinct from the rest of
-/// the line — the colour lives on the spans, not on the line as a whole.
-/// Patching the line's own style too still matters: ratatui falls back to it
-/// past the end of the widths a line's spans account for, which `patched`
-/// itself has no way to know.
-fn patched(mut line: Line<'static>, style: Style) -> Line<'static> {
-    line.style = line.style.patch(style);
-    for span in &mut line.spans {
-        span.style = span.style.patch(style);
-    }
-    line
 }
 
 fn row_lines(
@@ -401,7 +372,7 @@ fn laid_out(left: &str, right: &str, width: usize) -> Vec<String> {
     match gap(left, right, width) {
         Some(gap) => vec![format!("{left}{}{right}", " ".repeat(gap))],
         None => std::iter::once(truncate(left, width))
-            .chain(wrap(right, width, TYPE_INDENT))
+            .chain(crate::wrap::plain(right, width, TYPE_INDENT))
             .collect(),
     }
 }
@@ -450,7 +421,7 @@ fn property_lines(
         theme,
     )))
     .chain(
-        wrap(value, width, INDENT)
+        crate::wrap::plain(value, width, INDENT)
             .into_iter()
             .map(|text| Line::from(crate::highlight::spans(&text, search, style, theme))),
     )
@@ -503,13 +474,13 @@ fn class_property_lines(
         theme,
     )))
     .chain(highlighted(
-        wrap(class, width, INDENT),
+        crate::wrap::plain(class, width, INDENT),
         search,
         style,
         theme,
     ))
     .chain(highlighted(
-        wrap(&tail, width, INDENT),
+        crate::wrap::plain(&tail, width, INDENT),
         search,
         faint,
         theme,
@@ -546,45 +517,6 @@ fn gap(left: &str, right: &str, width: usize) -> Option<usize> {
         Some(gap) if gap > 0 => Some(gap),
         _ => None,
     }
-}
-
-/// `text` broken across lines of at most `width` columns, each prefixed with
-/// `indent` spaces. A word with no room to fit is broken mid-word rather than
-/// dropped — `compaction`'s class name is one unbreakable 60-character token.
-fn wrap(text: &str, width: usize, indent: usize) -> Vec<String> {
-    let room = width.saturating_sub(indent);
-    if room == 0 {
-        return Vec::new();
-    }
-    let prefix = " ".repeat(indent);
-
-    let mut lines = Vec::new();
-    let mut current = String::new();
-
-    for chunk in text.split_whitespace().flat_map(|word| broken(word, room)) {
-        if current.is_empty() {
-            current = chunk;
-        } else if count(&current) + 1 + count(&chunk) <= room {
-            current.push(' ');
-            current.push_str(&chunk);
-        } else {
-            lines.push(format!("{prefix}{current}"));
-            current = chunk;
-        }
-    }
-
-    if !current.is_empty() {
-        lines.push(format!("{prefix}{current}"));
-    }
-    lines
-}
-
-fn broken(word: &str, room: usize) -> Vec<String> {
-    word.chars()
-        .collect::<Vec<char>>()
-        .chunks(room)
-        .map(|chunk| chunk.iter().collect())
-        .collect()
 }
 
 /// The one place `…` appears: a single token wider than the panel, which
@@ -959,23 +891,6 @@ mod tests {
                 "a match a wrap split in half is painted on neither half: {line:?}"
             );
         }
-    }
-
-    #[test]
-    fn a_value_with_no_break_in_it_is_broken_anyway() {
-        // The compaction class name arrives as one 60-character token.
-        assert_eq!(
-            wrap(
-                "org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy",
-                23,
-                2
-            ),
-            [
-                "  org.apache.cassandra.",
-                "  db.compaction.SizeTie",
-                "  redCompactionStrategy",
-            ]
-        );
     }
 
     #[test]

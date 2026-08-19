@@ -18,12 +18,14 @@ mod icons;
 pub mod input;
 pub mod layout;
 mod loader;
+mod logs;
 mod overlay;
 mod palette;
 pub mod render;
 pub mod theme;
 mod themes;
 mod too_small;
+mod wrap;
 
 pub use hit::FrameMap;
 pub use render::{Rendered, render};

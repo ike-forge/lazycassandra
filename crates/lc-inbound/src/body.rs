@@ -68,6 +68,34 @@ pub(crate) fn selection_bar(marked: bool, theme: Theme) -> TextSpan<'static> {
     }
 }
 
+/// `line` behind the bar column, marked where the line was wrapped from a row
+/// the mark belongs to — every one of them, since the highlight covers every
+/// one. Shared by Ddl and Logs, the two bodies whose rows stand one to
+/// several lines rather than one to a `List`/`Table` row of their own.
+///
+/// Prepended after the highlight is patched on, or the bar would be repainted
+/// in the selection's own foreground and stop reading as a bar.
+pub(crate) fn barred(mut line: Line<'static>, marked: bool, theme: Theme) -> Line<'static> {
+    line.spans.insert(0, selection_bar(marked, theme));
+    line
+}
+
+/// `style` patched onto both the line's own style and each of its spans'.
+///
+/// Every row shape builds its spans through [`crate::highlight::spans`] now,
+/// so a matched fragment can carry [`Token::Match`] distinct from the rest of
+/// the line — the colour lives on the spans, not on the line as a whole.
+/// Patching the line's own style too still matters: ratatui falls back to it
+/// past the end of the widths a line's spans account for, which `patched`
+/// itself has no way to know.
+pub(crate) fn patched(mut line: Line<'static>, style: Style) -> Line<'static> {
+    line.style = line.style.patch(style);
+    for span in &mut line.spans {
+        span.style = span.style.patch(style);
+    }
+    line
+}
+
 /// What a scrollbar needs, in whatever unit the panel scrolls in.
 pub(crate) struct Extent {
     pub(crate) position: usize,
@@ -142,8 +170,24 @@ pub(crate) fn render(
     }
 
     match body {
-        // `Log` is drawn by lc-inbound in a later pass (query log design §6).
-        PanelBody::Blank | PanelBody::Log { .. } => None,
+        PanelBody::Blank => None,
+        PanelBody::Log {
+            rows,
+            selected,
+            offset,
+            ranges,
+            flash,
+        } => {
+            let marked = Marked::new(ranges.clone(), *flash);
+            let view = crate::logs::LogsView {
+                rows,
+                selected: *selected,
+                offset: *offset,
+                marked: &marked,
+                search,
+            };
+            Some(log(frame, area, &view, theme))
+        }
         PanelBody::Notice { text, token } => {
             notice(frame, area, text, *token, theme);
             None
@@ -154,24 +198,17 @@ pub(crate) fn render(
             offset,
             ranges,
             flash,
-        } => Some(Body {
-            extent: tree(
-                frame,
-                area,
-                &TreeView {
-                    rows,
-                    selected: *selected,
-                    offset: *offset,
-                    marked: &Marked::new(ranges.clone(), *flash),
-                    search,
-                },
-                theme,
-            ),
-            columns: None,
-            bands: Vec::new(),
-            unit: Unit::Rows { header: 0 },
-            selection: Span::default(),
-        }),
+        } => {
+            let marked = Marked::new(ranges.clone(), *flash);
+            let view = TreeView {
+                rows,
+                selected: *selected,
+                offset: *offset,
+                marked: &marked,
+                search,
+            };
+            Some(tree_body(frame, area, &view, theme))
+        }
         PanelBody::Details {
             details,
             selected,
@@ -179,25 +216,15 @@ pub(crate) fn render(
             ranges,
             flash,
         } => {
-            let (extent, selection, rows) = crate::details::render(
-                frame,
-                area,
-                &crate::details::DetailsView {
-                    details,
-                    selected: *selected,
-                    offset: *offset,
-                    marked: &Marked::new(ranges.clone(), *flash),
-                    search,
-                },
-                theme,
-            );
-            Some(Body {
-                extent,
-                columns: None,
-                bands: Vec::new(),
-                unit: Unit::Lines { rows },
-                selection,
-            })
+            let marked = Marked::new(ranges.clone(), *flash);
+            let view = crate::details::DetailsView {
+                details,
+                selected: *selected,
+                offset: *offset,
+                marked: &marked,
+                search,
+            };
+            Some(details_body(frame, area, &view, theme))
         }
         PanelBody::Editor {
             lines,
@@ -261,6 +288,50 @@ const fn visible(selected: usize, offset: usize, height: usize) -> Option<usize>
 
 /// The view model's tree, as the renderer reads it.
 ///
+/// `PanelBody::Log`'s arm, split out so [`render`] stays under clippy's line
+/// budget — the same reason [`grid`] is its own function rather than inline
+/// in the match.
+fn log(frame: &mut Frame, area: Rect, view: &crate::logs::LogsView, theme: Theme) -> Body {
+    let (extent, selection, rows) = crate::logs::render(frame, area, view, theme);
+
+    Body {
+        extent,
+        columns: None,
+        bands: Vec::new(),
+        unit: Unit::Lines { rows },
+        selection,
+    }
+}
+
+/// `PanelBody::Tree`'s arm, split out for [`log`]'s reason.
+fn tree_body(frame: &mut Frame, area: Rect, view: &TreeView, theme: Theme) -> Body {
+    Body {
+        extent: tree(frame, area, view, theme),
+        columns: None,
+        bands: Vec::new(),
+        unit: Unit::Rows { header: 0 },
+        selection: Span::default(),
+    }
+}
+
+/// `PanelBody::Details`'s arm, split out for [`log`]'s reason.
+fn details_body(
+    frame: &mut Frame,
+    area: Rect,
+    view: &crate::details::DetailsView,
+    theme: Theme,
+) -> Body {
+    let (extent, selection, rows) = crate::details::render(frame, area, view, theme);
+
+    Body {
+        extent,
+        columns: None,
+        bands: Vec::new(),
+        unit: Unit::Lines { rows },
+        selection,
+    }
+}
+
 /// A struct rather than six more parameters: the fields arrive together from
 /// one `PanelBody::Tree` and mean nothing apart, the same reason
 /// [`GridView`] exists.
@@ -615,7 +686,7 @@ impl Marked {
         if flash { Token::Flash } else { Token::Ranged }
     }
 
-    fn new(ranges: Ranges, flash: bool) -> Self {
+    pub(crate) fn new(ranges: Ranges, flash: bool) -> Self {
         Self {
             ranges,
             band: Self::band(flash),

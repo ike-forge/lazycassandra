@@ -3,7 +3,7 @@
 use lc_domain::ViewModel;
 use lc_domain::state::{Geometry, Panel, Span as DdlSpan};
 use lc_domain::style::Token;
-use lc_domain::view::{OverlayView, PanelTitle, Tab};
+use lc_domain::view::{OverlayView, PanelBody, PanelTitle, Tab};
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Modifier, Style};
@@ -63,6 +63,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
     let mut ddl_selection = DdlSpan::default();
+    let mut log_lines = 0;
+    let mut log_selection = DdlSpan::default();
     let mut grid_width = 0;
     let mut hits: [PanelHit; 4] = std::array::from_fn(|_| PanelHit::default());
 
@@ -113,6 +115,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                     ddl_lines = drawn.extent.total;
                     ddl_selection = drawn.selection;
                 }
+                if matches!(panel.body, PanelBody::Log { .. }) {
+                    log_lines = drawn.extent.total;
+                    log_selection = drawn.selection;
+                }
                 if drawn.extent.overflows() {
                     scrollbar(frame, area, &drawn.extent, border, beneath);
                 }
@@ -153,6 +159,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
             .with_ddl_selection(ddl_selection)
+            .with_log(log_lines, log_selection)
             .with_export_fits(export_fits)
             .with_grid_width(grid_width)
             .with_theme_rows(theme_rows),
@@ -1202,6 +1209,25 @@ mod tests {
             !text.contains("Cannot connect"),
             "an overlay has nothing to sit over, got {text:?}"
         );
+    }
+
+    /// `OverlayView::Fatal` and `OverlayView::Message` share the same draw
+    /// arm (query log design §7): the two differ in what dismisses them, not
+    /// in how they look.
+    #[test]
+    fn a_fatal_failure_is_drawn_like_any_other_message() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Fatal(Message {
+            title: "Connection failed".to_owned(),
+            message: "could not reach the cluster: no route to host".to_owned(),
+            severity: Severity::Danger,
+        }));
+
+        let buffer = draw_state(60, 20, &state);
+        let text: String = (0..20).map(|y| row(&buffer, y)).collect();
+
+        assert!(text.contains("Connection failed"), "{text}");
+        assert!(text.contains("no route to host"), "{text}");
     }
 
     #[test]
