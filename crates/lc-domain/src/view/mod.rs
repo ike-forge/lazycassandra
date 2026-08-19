@@ -10,7 +10,7 @@
 mod contents;
 mod details;
 pub(crate) mod hints;
-mod logs;
+pub(crate) mod logs;
 mod tables;
 mod title;
 

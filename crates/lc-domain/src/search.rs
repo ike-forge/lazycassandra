@@ -112,15 +112,18 @@ fn fold(haystack: &str) -> (String, Vec<Range<usize>>) {
 
 /// A panel that can hold a search.
 ///
-/// Queries cannot, until it has a normal mode to reach a prompt from (design
-/// §8). Keying a search off [`Panel`] instead would leave an unreachable
-/// `Panel::Queries` arm in every accessor; this makes them total, and makes
-/// the compiler list them when that slice lands.
+/// `Queries` means its Logs tab — the Cql tab takes text and claims `/` as a
+/// character before a search ever sees it (query log design §5.3), so a
+/// prompt targeting it is unreachable in practice rather than refused here.
+/// Keying a search off [`Panel`] instead would leave an unreachable
+/// `Panel::Queries` arm in every accessor; this makes them total, and made
+/// the compiler list every one of them when this variant landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Searched {
     Tables,
     Ddl,
     Contents,
+    Queries,
 }
 
 impl Searched {
@@ -130,7 +133,7 @@ impl Searched {
             Panel::Tables => Some(Self::Tables),
             Panel::Ddl => Some(Self::Ddl),
             Panel::Contents => Some(Self::Contents),
-            Panel::Queries => None,
+            Panel::Queries => Some(Self::Queries),
         }
     }
 
@@ -140,6 +143,7 @@ impl Searched {
             Self::Tables => Panel::Tables,
             Self::Ddl => Panel::Ddl,
             Self::Contents => Panel::Contents,
+            Self::Queries => Panel::Queries,
         }
     }
 }
@@ -426,11 +430,11 @@ mod tests {
     }
 
     #[test]
-    fn every_panel_but_queries_can_hold_a_search() {
+    fn every_panel_can_hold_a_search() {
         assert_eq!(Searched::of(Panel::Tables), Some(Searched::Tables));
         assert_eq!(Searched::of(Panel::Ddl), Some(Searched::Ddl));
         assert_eq!(Searched::of(Panel::Contents), Some(Searched::Contents));
-        assert_eq!(Searched::of(Panel::Queries), None);
+        assert_eq!(Searched::of(Panel::Queries), Some(Searched::Queries));
     }
 
     #[test]

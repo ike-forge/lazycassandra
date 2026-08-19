@@ -539,7 +539,7 @@ fn yank(state: &mut State) -> Vec<Effect> {
         Panel::Contents => contents(state),
         Panel::Tables => tree_nodes(state),
         Panel::Ddl => detail_rows(state),
-        Panel::Queries => None,
+        Panel::Queries => log_entries(state),
     };
 
     // A payload of nothing but delimiters says nothing, and `Effect::Yank`
@@ -571,9 +571,12 @@ fn lit(state: &State) -> Flash {
             spanned(&state.ddl.selection, state.ddl.cursor.index()),
             Ranges::default(),
         ),
-        // Unreachable: the editor yanks nothing, so `yank` has already
-        // returned by the time this is asked.
-        Panel::Queries => (Ranges::default(), Ranges::default()),
+        // Only reached over the Logs tab: over Cql, `log_entries` yanks
+        // nothing and `yank` has already returned by the time this is asked.
+        Panel::Queries => (
+            spanned(&state.log.selection, state.log.cursor.index()),
+            Ranges::default(),
+        ),
     };
 
     Flash::lit(state.focus(), rows, columns)
@@ -665,6 +668,26 @@ fn detail_rows(state: &State) -> Option<String> {
             .indices()
             .filter_map(|index| rows.get(index))
             .map(|row| crate::yank::detail_row(row)),
+    ))
+}
+
+/// `None` over the Cql tab — the editor claims `y` as text before `yank` is
+/// ever called, so this is unreached there, but stated rather than assumed.
+/// Over the Logs tab, each selected entry yanks as its two rows joined,
+/// which is what makes it paste into a ticket (query log design §5.3).
+fn log_entries(state: &State) -> Option<String> {
+    if state.queries.tab() != QueriesTab::Logs {
+        return None;
+    }
+
+    let entries: Vec<&Entry> = state.log.entries().collect();
+    let selected = spanned(&state.log.selection, state.log.cursor.index());
+
+    Some(crate::yank::lines(
+        selected
+            .indices()
+            .filter_map(|index| entries.get(index).copied())
+            .map(crate::yank::log_entry),
     ))
 }
 
@@ -1322,6 +1345,10 @@ fn origin_of(state: &State, target: Searched) -> Origin {
             row: state.contents.cursor.index(),
             column: state.contents.column.index(),
         },
+        Searched::Queries => Origin {
+            row: state.log.cursor.index(),
+            column: 0,
+        },
     }
 }
 
@@ -1341,6 +1368,10 @@ fn restore_origin(state: &mut State, target: Searched, origin: Origin) {
             let columns = state.contents.column_count();
             state.contents.cursor.go_to(origin.row, rows);
             state.contents.column.go_to(origin.column, columns);
+        }
+        Searched::Queries => {
+            let len = state.log.len();
+            state.log.cursor.go_to(origin.row, len);
         }
     }
 }
@@ -1384,6 +1415,13 @@ fn jump_to_match(state: &mut State, target: Searched, from: Origin, direction: D
                 None => restore_origin(state, target, from),
             }
         }
+        Searched::Queries => match state.log.next_match(from.row, direction) {
+            Some(row) => {
+                let len = state.log.len();
+                state.log.cursor.go_to(row, len);
+            }
+            None => restore_origin(state, target, from),
+        },
     }
 }
 
@@ -1392,7 +1430,8 @@ fn jump_to_match(state: &mut State, target: Searched, from: Origin, direction: D
 /// Motions, so they take the path `j` and `k` take and an extending range
 /// follows them. Inert where the panel holds no search — a panel that cannot
 /// honour a motion swallows it (docs/shortcuts.md §2) — and unreachable from
-/// Queries, which takes text and holds no search (design §5.3).
+/// Queries' Cql tab, which takes text and never sees this key at all; its
+/// Logs tab holds a search like any other list (design §5.3).
 fn next_match_key(state: &mut State, direction: Direction) {
     let Some(target) = Searched::of(state.focus()) else {
         return;
@@ -1406,9 +1445,10 @@ fn next_match_key(state: &mut State, direction: Direction) {
     jump_to_match(state, target, from, direction);
 }
 
-/// `/` opens a prompt over the focused panel. Refused where the panel holds no
-/// search, which is Queries — unreachable, since the editor claims `/` as text
-/// first (panel search design §8), and stated here rather than assumed.
+/// `/` opens a prompt over the focused panel. Unreachable over Queries' Cql
+/// tab, since the editor claims `/` as text before this is ever called
+/// (panel search design §8); reachable over its Logs tab, which holds a
+/// search like any other list (query log design §5.3).
 ///
 /// Clears the target's search immediately rather than leaving `previous`
 /// showing until the first keystroke: the buffer opens empty, and live
@@ -2364,7 +2404,8 @@ struct Axis<'a> {
 }
 
 /// The axes `panel` selects on. Two for the grid in cell mode, which selects a
-/// rectangle (design §3); none for Queries, which is an editor.
+/// rectangle (design §3); none for Queries' Cql tab, which is an editor; one
+/// for its Logs tab, a list like Tables and Ddl (query log design §5.3).
 ///
 /// The one place a selection is matched up with its cursor. Column mode puts
 /// the *column* cursor on the first axis, and a second match written out
@@ -2422,7 +2463,17 @@ fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
                 }),
             ],
         },
-        Panel::Queries => [None, None],
+        Panel::Queries => match state.queries.tab() {
+            QueriesTab::Cql => [None, None],
+            QueriesTab::Logs => [
+                Some(Axis {
+                    selection: &mut state.log.selection,
+                    cursor: &mut state.log.cursor,
+                    len: rows,
+                }),
+                None,
+            ],
+        },
     }
 }
 
@@ -5038,6 +5089,125 @@ mod tests {
         let effects = press(&mut state, Key::Char('q'));
 
         assert!(effects.contains(&Effect::Quit));
+    }
+
+    /// A trail with one `Outcome::Cancelled` entry per statement, focused on
+    /// the Logs tab so `/`, `n`, `v` and `y` reach it directly.
+    fn trail_of(statements: &[&str]) -> State {
+        let mut state = on_the_trail();
+        for statement in statements {
+            state.log.push(Entry::new(
+                Stamp::default(),
+                LogSubject::Sentence((*statement).to_owned()),
+                Outcome::Cancelled,
+            ));
+        }
+        state
+    }
+
+    /// Opens a search over the focused panel and types `term` into it, the
+    /// same two steps `n_walks_to_the_next_match_and_wraps` and its
+    /// neighbours drive press by press.
+    fn search_for(state: &mut State, term: &str) {
+        press(state, Key::Char('/'));
+        type_into(state, term);
+    }
+
+    #[test]
+    fn the_trail_is_searchable() {
+        let mut state = trail_of(&["SELECT one", "SELECT two", "DELETE three"]);
+
+        search_for(&mut state, "DELETE");
+
+        assert_eq!(state.log.cursor.index(), 2);
+    }
+
+    #[test]
+    fn n_walks_the_trails_matches_and_wraps() {
+        let mut state = trail_of(&["SELECT one", "DELETE two", "DELETE three"]);
+        state.apply_search(Searched::Queries, Search::new("DELETE"));
+
+        press(&mut state, Key::Char('n'));
+        assert_eq!(state.log.cursor.index(), 1);
+
+        press(&mut state, Key::Char('n'));
+        assert_eq!(state.log.cursor.index(), 2);
+
+        press(&mut state, Key::Char('n'));
+        assert_eq!(state.log.cursor.index(), 1, "wraps back to the first match");
+    }
+
+    #[test]
+    fn escape_over_the_trail_clears_its_search() {
+        let mut state = trail_of(&["SELECT one"]);
+        search_for(&mut state, "one");
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(state.search(Searched::Queries), None);
+    }
+
+    // What lands on the clipboard is the pair, which is what makes it paste
+    // into a ticket (query log design §5.3).
+    #[test]
+    fn yanking_an_entry_copies_its_statement_and_its_outcome() {
+        let mut state = trail_of(&["SELECT one"]);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(copied)) = effects
+            .into_iter()
+            .find(|effect| matches!(effect, Effect::Yank(_)))
+        else {
+            panic!("a yank");
+        };
+        assert!(copied.contains("SELECT one"));
+        assert!(copied.contains("cancelled"), "{copied}");
+    }
+
+    #[test]
+    fn yanking_a_visual_selection_joins_every_selected_entrys_two_rows() {
+        let mut state = trail_of(&["SELECT one", "SELECT two", "SELECT three"]);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        let Some(Effect::Yank(copied)) = effects
+            .into_iter()
+            .find(|effect| matches!(effect, Effect::Yank(_)))
+        else {
+            panic!("a yank");
+        };
+        assert_eq!(
+            copied.matches("cancelled").count(),
+            2,
+            "one outcome row per selected entry: {copied}"
+        );
+        assert!(copied.contains("SELECT one"));
+        assert!(copied.contains("SELECT two"));
+        assert!(!copied.contains("SELECT three"), "{copied}");
+    }
+
+    #[test]
+    fn yanking_the_trail_lights_the_entries_it_took() {
+        let mut state = trail_of(&["SELECT one", "SELECT two"]);
+
+        press(&mut state, Key::Char('y'));
+
+        let flash = state
+            .flash
+            .expect("a yank on the Logs tab lights something");
+        assert_eq!(flash.panel(), Panel::Queries);
+        assert_eq!(flash.rows(), &Ranges::of(Range::new(0, 0)));
+    }
+
+    #[test]
+    fn y_on_the_cql_tab_yanks_nothing() {
+        let mut state = trail_of(&["SELECT one"]);
+        state.queries.show(QueriesTab::Cql);
+
+        assert!(press(&mut state, Key::Char('y')).is_empty());
     }
 
     /// The regression `Tab`'s cycle exists to prevent: the panel's own

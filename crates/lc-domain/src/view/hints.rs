@@ -1,6 +1,7 @@
 //! What the focused panel responds to, as the bar will say it.
 
 use crate::model::{Key, KeyPress};
+use crate::queries::QueriesTab;
 use crate::search::{Direction, Searched};
 use crate::state::{Overlay, Panel, State};
 
@@ -358,7 +359,11 @@ fn selected(state: &State) -> bool {
         Panel::Tables => state.tables.selection.is_active(),
         Panel::Ddl => state.ddl.selection.is_active(),
         Panel::Contents => state.contents.rows.is_active() || state.contents.columns.is_active(),
-        Panel::Queries => false,
+        // `false` on the Cql tab, which is an editor and has no selection to
+        // be active; the Logs tab is a list like the other three.
+        Panel::Queries => {
+            state.queries.tab() == QueriesTab::Logs && state.log.selection.is_active()
+        }
     }
 }
 
@@ -418,6 +423,10 @@ fn next_match_is_live(state: &State, target: Searched) -> bool {
                 (state.contents.cursor.index(), state.contents.column.index()),
                 Direction::Forwards,
             )
+            .is_some(),
+        Searched::Queries => state
+            .log
+            .next_match(state.log.cursor.index(), Direction::Forwards)
             .is_some(),
     }
 }

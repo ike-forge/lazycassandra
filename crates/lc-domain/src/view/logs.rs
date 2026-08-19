@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use crate::log::{Entry, Outcome, Subject};
-use crate::state::State;
+use crate::state::{Panel, State};
 use crate::style::{Segment, Severity, Token};
 use crate::view::PanelBody;
 
@@ -51,17 +51,24 @@ pub(crate) fn log_body(state: &State) -> PanelBody {
     let leading = usize::from(dropped.is_some());
 
     let rows = dropped.into_iter().chain(log.entries().map(row)).collect();
+    let flash = super::flash_over(state, Panel::Queries);
 
     // The cursor and the selection both index entries, but a dropped-count
     // row is prepended to `rows` once the ring has evicted — every row
     // index handed to the renderer has to move past it together, or one
-    // shifts and the other silently does not.
+    // shifts and the other silently does not. `flash`'s frozen rows were
+    // spanned in that same entry space, so they take the same shift.
     PanelBody::Log {
         rows,
         selected: log.cursor.index() + leading,
         offset: log.scroll.offset(),
-        ranges: log.selection.ranges(log.cursor.index()).shifted(leading),
-        flash: false,
+        ranges: flash
+            .map_or_else(
+                || log.selection.ranges(log.cursor.index()),
+                |flash| flash.rows().clone(),
+            )
+            .shifted(leading),
+        flash: flash.is_some(),
     }
 }
 
@@ -84,15 +91,21 @@ fn subject(subject: &Subject) -> Vec<Segment> {
 fn outcome(outcome: &Outcome) -> Vec<Segment> {
     let token = Token::Severity(outcome.severity());
 
-    let text = match outcome {
+    vec![Segment::styled(outcome_text(outcome), token)]
+}
+
+/// The outcome row's text. Written once and called from both the projection
+/// above and the yank line [`crate::yank::log_entry`] builds, so the two
+/// cannot drift into two spellings of the same outcome (query log design
+/// §5.3).
+pub(crate) fn outcome_text(outcome: &Outcome) -> String {
+    match outcome {
         Outcome::Pending { .. } => RUNNING.to_owned(),
         Outcome::Succeeded { detail, took } => format!("→ {detail}, {}", elapsed(*took)),
         Outcome::Failed { detail } => format!("✗ {detail}"),
         Outcome::Cancelled => "⊘ cancelled".to_owned(),
         Outcome::Rejected { reason } => format!("⊘ {reason}"),
-    };
-
-    vec![Segment::styled(text, token)]
+    }
 }
 
 /// Milliseconds up to a second, then seconds to one decimal. A trail is read,
@@ -112,7 +125,7 @@ mod tests {
     use crate::log::{LOG_CAPACITY, Log, Trace};
     use crate::model::QueryId;
     use crate::queries::QueriesTab;
-    use crate::state::{Range, Ranges};
+    use crate::state::{Flash, Range, Ranges};
 
     fn state_with(log: Log) -> State {
         let mut state = State::default();
@@ -262,6 +275,40 @@ mod tests {
             Ranges::of(Range::new(1, 3)),
             "the held entries sit one row past the dropped-count row, same as \
              the cursor does"
+        );
+    }
+
+    // A yank's afterglow draws from the rows it froze at yank time, not from
+    // the live selection — which a yank has already spent by the time this is
+    // projected — and takes the same dropped-count shift every other range
+    // does (Task 12).
+    #[test]
+    fn a_flash_over_the_trail_lights_the_rows_it_was_lit_with() {
+        let mut log = Log::default();
+        for index in 0..LOG_CAPACITY + 3 {
+            log.push(Entry::new(
+                Stamp::default(),
+                Subject::Sentence(index.to_string()),
+                Outcome::Cancelled,
+            ));
+        }
+        let mut state = state_with(log);
+        state.flash = Some(Flash::lit(
+            Panel::Queries,
+            Ranges::of(Range::new(0, 1)),
+            Ranges::default(),
+        ));
+
+        let PanelBody::Log { flash, ranges, .. } = log_body(&state) else {
+            panic!("a log body");
+        };
+
+        assert!(flash);
+        assert_eq!(
+            ranges,
+            Ranges::of(Range::new(1, 2)),
+            "the frozen span shifts past the dropped-count row same as a live \
+             selection does"
         );
     }
 }

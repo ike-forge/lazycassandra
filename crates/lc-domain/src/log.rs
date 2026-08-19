@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use crate::clock::Stamp;
 use crate::model::{ConnId, JobId, QueryId};
+use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
 use crate::style::{Segment, Severity};
 
@@ -30,6 +31,10 @@ pub struct Log {
     pub cursor: Cursor,
     pub scroll: Scroll,
     pub selection: Selection,
+    /// Private for the reason [`crate::ddl::DdlPanel`]'s is: setting it owes
+    /// the repair [`crate::state::State::apply_search`] carries out, and a
+    /// public field would let a caller skip it.
+    search: Option<Search>,
 }
 
 /// One thing the session did, and how it turned out.
@@ -153,6 +158,37 @@ impl Log {
     /// Moves to the last entry.
     pub fn to_end(&mut self) {
         self.cursor.to_end(self.entries.len());
+    }
+
+    /// The search painted over the trail, if any.
+    #[must_use]
+    pub fn search(&self) -> Option<&Search> {
+        self.search.as_ref()
+    }
+
+    /// Sets the search. Not public: [`State::apply_search`](crate::state::State::apply_search)
+    /// is the one caller, and the repair a change here owes is its job.
+    pub(crate) fn set_search(&mut self, search: Option<Search>) {
+        self.search = search;
+    }
+
+    /// The entry `n` reaches from `from`, wrapping. Matched against
+    /// [`Subject::text`] — what a search is matched against, by that method's
+    /// own doc comment.
+    #[must_use]
+    pub fn next_match(&self, from: usize, direction: Direction) -> Option<usize> {
+        let search = self.search.as_ref()?;
+        let len = self.entries.len();
+        if len == 0 {
+            return None;
+        }
+
+        (0..len)
+            .scan(from, |at, _| {
+                *at = direction.step(*at, len);
+                Some(*at)
+            })
+            .find(|at| search.matches(&self.entries[*at].subject().text()))
     }
 }
 
@@ -448,5 +484,62 @@ mod tests {
             .severity(),
             Severity::Warning
         );
+    }
+
+    #[test]
+    fn a_fresh_log_holds_no_search() {
+        assert_eq!(Log::default().search(), None);
+    }
+
+    #[test]
+    fn setting_a_search_is_read_back() {
+        let mut log = Log::default();
+
+        log.set_search(Search::new("delete"));
+
+        assert_eq!(log.search().map(Search::as_str), Some("delete"));
+    }
+
+    #[test]
+    fn the_entry_n_reaches_is_matched_against_its_subject() {
+        let mut log = Log::default();
+        log.push(done("SELECT one"));
+        log.push(done("DELETE two"));
+        log.push(done("SELECT three"));
+        log.set_search(Search::new("delete"));
+
+        let hit = log.next_match(0, Direction::Forwards);
+
+        assert_eq!(hit, Some(1));
+    }
+
+    #[test]
+    fn n_wraps_past_the_last_entry_back_to_the_first_match() {
+        let mut log = Log::default();
+        log.push(done("SELECT one"));
+        log.push(done("DELETE two"));
+        log.set_search(Search::new("delete"));
+
+        assert_eq!(
+            log.next_match(1, Direction::Forwards),
+            Some(1),
+            "the only match wraps to itself"
+        );
+    }
+
+    #[test]
+    fn no_search_finds_no_match() {
+        let mut log = Log::default();
+        log.push(done("SELECT one"));
+
+        assert_eq!(log.next_match(0, Direction::Forwards), None);
+    }
+
+    #[test]
+    fn a_search_over_an_empty_trail_finds_nothing() {
+        let mut log = Log::default();
+        log.set_search(Search::new("delete"));
+
+        assert_eq!(log.next_match(0, Direction::Forwards), None);
     }
 }

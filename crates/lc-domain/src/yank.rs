@@ -6,9 +6,11 @@
 //! and one encoder is what keeps that true.
 
 use crate::cell;
+use crate::log::Entry;
 use crate::model::{ClusteringOrder, CqlValue, Row};
 use crate::state::Ranges;
 use crate::tree::Node;
+use crate::view::logs::outcome_text;
 use crate::view::{ColumnKind, DetailRow};
 
 /// `fields` as one CSV line: RFC 4180 as far as a single line goes, and
@@ -103,6 +105,19 @@ pub fn node(node: &Node<'_>) -> String {
     line(&fields)
 }
 
+/// An entry's two rows joined — the statement and its outcome — which is
+/// what makes it paste into a ticket (query log design §5.3). `outcome_text`
+/// is the string the projection draws the outcome row with, not a second
+/// spelling of it.
+#[must_use]
+pub fn log_entry(entry: &Entry) -> String {
+    format!(
+        "{} {}",
+        entry.subject().text(),
+        outcome_text(entry.outcome())
+    )
+}
+
 /// Several lines as one payload: no trailing newline, for the reason a single
 /// line has none — a paste into a shell must not submit itself
 /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §5).
@@ -175,6 +190,8 @@ const fn part(kind: ColumnKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::Stamp;
+    use crate::log::{Outcome, Subject};
     use crate::model::{
         ClusteringOrder, CqlValue, Keyspace, Page, PrimaryKey, Replication, Row, Setting, Table,
         TableOptions,
@@ -183,6 +200,7 @@ mod tests {
     use crate::tree::Node;
     use crate::view::{ColumnKind, DetailRow, IdentityKind};
     use std::collections::BTreeMap;
+    use std::time::Duration;
 
     fn sample_rows(rows: usize, columns: usize) -> Vec<Row> {
         (0..rows)
@@ -358,6 +376,31 @@ mod tests {
             }),
             "demo.users"
         );
+    }
+
+    #[test]
+    fn a_log_entry_yanks_its_subject_and_its_outcome_joined() {
+        let entry = Entry::new(
+            Stamp::default(),
+            Subject::Sentence("SELECT one".to_owned()),
+            Outcome::Cancelled,
+        );
+
+        assert_eq!(log_entry(&entry), "SELECT one ⊘ cancelled");
+    }
+
+    #[test]
+    fn a_log_entrys_outcome_is_the_same_text_the_projection_draws() {
+        let entry = Entry::new(
+            Stamp::default(),
+            Subject::Sentence("SELECT one".to_owned()),
+            Outcome::Succeeded {
+                detail: "1 row".to_owned(),
+                took: Duration::from_millis(4),
+            },
+        );
+
+        assert_eq!(log_entry(&entry), "SELECT one → 1 row, 4ms");
     }
 
     #[test]

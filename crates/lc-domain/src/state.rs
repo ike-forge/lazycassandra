@@ -1408,6 +1408,7 @@ impl State {
             Searched::Tables => self.tables.search(),
             Searched::Ddl => self.ddl.search(),
             Searched::Contents => self.contents.search(),
+            Searched::Queries => self.log.search(),
         }
     }
 
@@ -1419,9 +1420,9 @@ impl State {
     /// only target whose row count a search can still move: no search drops
     /// a row (design §4.1), but forcing one keyspace open while another
     /// falls back closed changes how many rows are on screen between two
-    /// calls here, so Tables' cursor still needs the clamp. DDL and Table
-    /// contents never move a row for a search, so neither clamps anything
-    /// here — see their own arms below.
+    /// calls here, so Tables' cursor still needs the clamp. DDL, Table
+    /// contents and the trail never move a row for a search, so none of the
+    /// three clamps anything here — see their own arms below.
     pub fn apply_search(&mut self, target: Searched, search: Option<Search>) {
         match target {
             Searched::Tables => {
@@ -1451,6 +1452,16 @@ impl State {
             // cells and never renumbers a row, so a range still addresses
             // exactly what it did before the search changed.
             Searched::Contents => self.contents.set_search(search),
+            // Same shape as DDL, and for the same reason: the trail is a
+            // list of rows a search only flags, never drops or reorders, so
+            // there is nothing here for a cursor clamp to repair — but a
+            // fresh search is a fresh look at the list, so the row-based
+            // selection it might be mid-building does not survive it either
+            // (query log design §5.3).
+            Searched::Queries => {
+                self.log.set_search(search);
+                self.log.selection.clear();
+            }
         }
     }
 }
@@ -1932,6 +1943,28 @@ mod tests {
         state.apply_search(Searched::Tables, None);
 
         assert_eq!(state.search(Searched::Tables), None);
+    }
+
+    #[test]
+    fn the_trails_search_is_read_back_from_the_panel_it_was_applied_to() {
+        let mut state = State::default();
+
+        state.apply_search(Searched::Queries, Search::new("delete"));
+
+        assert_eq!(
+            state.search(Searched::Queries).map(Search::as_str),
+            Some("delete")
+        );
+    }
+
+    #[test]
+    fn a_fresh_search_over_the_trail_drops_a_visual_selection_being_built() {
+        let mut state = State::default();
+        state.log.selection.start(0);
+
+        state.apply_search(Searched::Queries, Search::new("delete"));
+
+        assert!(!state.log.selection.is_active());
     }
 
     #[test]
