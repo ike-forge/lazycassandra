@@ -1797,7 +1797,7 @@ fn open_export(state: &mut State) {
 }
 
 /// What [`export_key`]'s form-only match decided.
-enum Outcome {
+enum Decision {
     Nothing,
     Close,
     Run,
@@ -1814,54 +1814,54 @@ fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
         return confirm_key(state, key);
     }
 
-    let outcome = {
+    let decision = {
         let Some(Overlay::Export(form)) = &mut state.overlay else {
             return Vec::new();
         };
 
         match key {
-            Key::Escape => Outcome::Close,
+            Key::Escape => Decision::Close,
             Key::Tab => {
                 form.tab();
-                Outcome::Nothing
+                Decision::Nothing
             }
             Key::BackTab => {
                 form.back_tab();
-                Outcome::Nothing
+                Decision::Nothing
             }
             Key::Char(' ') if !form.stop().takes_text() => {
                 if form.activate() {
-                    Outcome::Run
+                    Decision::Run
                 } else {
-                    Outcome::Nothing
+                    Decision::Nothing
                 }
             }
-            Key::Enter if form.stop() == Stop::Export => Outcome::Run,
+            Key::Enter if form.stop() == Stop::Export => Decision::Run,
             Key::Char('j') | Key::Down if !form.stop().takes_text() => {
                 form.down();
-                Outcome::Nothing
+                Decision::Nothing
             }
             Key::Char('k') | Key::Up if !form.stop().takes_text() => {
                 form.up();
-                Outcome::Nothing
+                Decision::Nothing
             }
             _ if form.stop().takes_text() => {
                 edit_path(form, key);
-                Outcome::Nothing
+                Decision::Nothing
             }
-            _ => Outcome::Nothing,
+            _ => Decision::Nothing,
         }
     };
 
     state.dirty = true;
 
-    match outcome {
-        Outcome::Nothing => Vec::new(),
-        Outcome::Close => {
+    match decision {
+        Decision::Nothing => Vec::new(),
+        Decision::Close => {
             state.overlay = None;
             Vec::new()
         }
-        Outcome::Run => start_export(state),
+        Decision::Run => start_export(state),
     }
 }
 
