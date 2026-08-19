@@ -46,7 +46,10 @@ fn spawn_ticker(tx: mpsc::UnboundedSender<Incoming>) {
 
         loop {
             ticks.tick().await;
-            if tx.send(Msg::Tick.into()).is_err() {
+            if tx
+                .send(Msg::Tick(lc_outbound::clock::now()).into())
+                .is_err()
+            {
                 // The main loop has ended.
                 return;
             }
@@ -169,7 +172,8 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
     let (config, diagnostics) = source.load().await;
     let themes = Themes::new(&config.themes, config.background);
 
-    let (mut state, startup) = lc_domain::init(conn, config, diagnostics);
+    let (mut state, startup) =
+        lc_domain::init(conn, config, diagnostics, lc_outbound::clock::now());
     state.cwd = std::env::current_dir().unwrap_or_default();
     let mut measured: Option<Geometry> = None;
 
@@ -240,6 +244,7 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use lc_domain::clock::Stamp;
 
     use super::*;
 
@@ -256,7 +261,7 @@ mod tests {
     fn a_batch_takes_every_message_the_channel_is_already_holding() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         for _ in 0..3 {
-            let _sent = tx.send(Msg::Tick.into());
+            let _sent = tx.send(Msg::Tick(Stamp::default()).into());
         }
         let mut carried = None;
 
@@ -264,7 +269,7 @@ mod tests {
             assert!(
                 matches!(
                     queued(&mut rx, &mut carried),
-                    Some(Incoming::Msg(Msg::Tick))
+                    Some(Incoming::Msg(Msg::Tick(_)))
                 ),
                 "a queued message is applied before the frame, not after it"
             );
@@ -284,7 +289,7 @@ mod tests {
     fn a_gesture_ends_the_batch_and_waits_for_the_frame_it_earned() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let _sent = tx.send(gesture());
-        let _also_sent = tx.send(Msg::Tick.into());
+        let _also_sent = tx.send(Msg::Tick(Stamp::default()).into());
         let mut carried = None;
 
         assert!(

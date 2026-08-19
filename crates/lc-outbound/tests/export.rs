@@ -1,6 +1,7 @@
 //! Whole sessions that end in a file
 //! (docs/superpowers/specs/2026-08-14-export-design.md §9).
 
+use lc_domain::clock::Stamp;
 use lc_domain::config::Config;
 use lc_domain::export::{Confirm, Format, Stop};
 use lc_domain::model::{ConnId, CqlValue, DbError, Key, KeyPress, Page, PagingState, Row};
@@ -71,7 +72,7 @@ fn three_pages() -> Vec<Page> {
 /// state every export scenario opens its form from.
 async fn on_a_read_table(cluster: &FakeCluster) -> State {
     let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new());
+    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
     run_with_writer(cluster, None, &mut state, effects).await;
 
     let effects = press(&mut state, Key::Char('l'));

@@ -532,6 +532,7 @@ mod tests {
 
     use super::tests_support::{loaded, tabled};
     use super::*;
+    use crate::clock::Stamp;
     use crate::commands::CommandsPanel;
     use crate::config::{Config, CustomTheme};
     use crate::contents::{Subject, TableRef};
@@ -809,7 +810,7 @@ mod tests {
             }],
             ..Config::default()
         };
-        let (mut state, _) = init(ConnId::next(), config, Vec::new());
+        let (mut state, _) = init(ConnId::next(), config, Vec::new(), Stamp::default());
         state.overlay = Some(Overlay::Themes {
             cursor: Cursor::default(),
             restored: ThemeChoice::default(),

@@ -4,6 +4,7 @@
 //! what should happen next; it cannot open a socket because it has nothing to
 //! open one with (architecture.md §3).
 
+use crate::clock::Stamp;
 use crate::commands::{CommandsPanel, Run};
 use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
@@ -45,7 +46,9 @@ pub enum Msg {
     /// What the frame just drawn turned out to be. The renderer's one report
     /// back into the domain (design §3).
     Measured(Geometry),
-    Tick,
+    /// Elapsed time, and the wall-clock the domain is not allowed to read
+    /// (query log design §4).
+    Tick(Stamp),
     Connected {
         conn: ConnId,
         posture: Posture,
@@ -148,9 +151,18 @@ pub enum Source {
 /// TEA's `init`: the startup connection is *described* here rather than
 /// performed behind the domain's back, so the first frame can already say
 /// "Connecting…" (architecture.md §3).
+///
+/// `now` is passed in for the reason `State::cwd` is: the domain cannot read
+/// a clock and must not learn how (query log design §4.1).
 #[must_use]
-pub fn init(conn: ConnId, config: Config, diagnostics: Vec<Diagnostic>) -> (State, Vec<Effect>) {
+pub fn init(
+    conn: ConnId,
+    config: Config,
+    diagnostics: Vec<Diagnostic>,
+    now: Stamp,
+) -> (State, Vec<Effect>) {
     let mut state = State::default();
+    state.now = now;
     state.theme = config.theme.clone();
     state.overlay =
         (!diagnostics.is_empty()).then(|| Overlay::Diagnostics(DiagnosticsPanel::new(diagnostics)));
@@ -225,7 +237,7 @@ fn described(state: &State) -> Option<Described> {
 
 fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
-        Msg::Tick => tick(state),
+        Msg::Tick(now) => tick(state, now),
 
         // The flash is a moment rather than a state, and the next input is the
         // end of it: left standing, it would contend with a fresh `v` for the
@@ -355,7 +367,9 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 /// Each repaints only when it changed something. A tick arrives 25 times a
 /// second, and one that changes nothing must not cost a frame (visual polish
 /// design §4.2).
-fn tick(state: &mut State) -> Vec<Effect> {
+fn tick(state: &mut State, now: Stamp) -> Vec<Effect> {
+    state.now = now;
+
     let working = state.is_working();
     if state.loader.advance(working) {
         state.mark_dirty();
@@ -2604,6 +2618,7 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::Stamp;
     use crate::commands::{CATALOGUE, CommandsPanel, Run};
     use crate::config::{Config, Diagnostic, Icons, Origin, Span as ConfigSpan};
     use crate::contents::{ContentsState, SelectionMode};
@@ -2638,7 +2653,7 @@ mod tests {
         idle.dirty = false;
 
         assert!(!idle.is_working());
-        update(&mut idle, Msg::Tick);
+        update(&mut idle, Msg::Tick(Stamp::default()));
         assert!(
             !idle.dirty,
             "an idle tick changes nothing, and repainting on it would burn the terminal 25 times a second"
@@ -2648,15 +2663,37 @@ mod tests {
         working.dirty = false;
 
         assert!(working.is_working(), "the schema is still loading");
-        update(&mut working, Msg::Tick);
+        update(&mut working, Msg::Tick(Stamp::default()));
         assert!(working.dirty);
+    }
+
+    #[test]
+    fn a_tick_refreshes_the_clock() {
+        let mut state = State::default();
+
+        let effects = update(&mut state, Msg::Tick(Stamp::new(14, 2, 9)));
+
+        assert_eq!(state.now, Stamp::new(14, 2, 9));
+        assert!(effects.is_empty());
+    }
+
+    // A tick arrives twenty-five times a second. One that changes nothing must
+    // not cost a frame (visual polish design §4.2).
+    #[test]
+    fn refreshing_the_clock_does_not_cost_a_frame() {
+        let mut state = State::default();
+        state.dirty = false;
+
+        let _effects = update(&mut state, Msg::Tick(Stamp::new(14, 2, 9)));
+
+        assert!(!state.dirty, "an idle tick repaints nothing");
     }
 
     #[test]
     fn the_loader_falls_back_to_rest_when_the_work_finishes() {
         let mut state = connected(Posture::ReadOnly);
         for _ in 0..5 {
-            update(&mut state, Msg::Tick);
+            update(&mut state, Msg::Tick(Stamp::default()));
         }
         assert_ne!(state.loader.frame(), 0);
 
@@ -2669,7 +2706,7 @@ mod tests {
             },
         );
         state.dirty = false;
-        update(&mut state, Msg::Tick);
+        update(&mut state, Msg::Tick(Stamp::default()));
 
         assert_eq!(
             state.loader.frame(),
@@ -2895,16 +2932,36 @@ mod tests {
     fn the_application_starts_by_connecting() {
         let conn = ConnId::next();
 
-        let (state, effects) = init(conn, Config::default(), Vec::new());
+        let (state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
 
         assert_eq!(effects, vec![Effect::Connect(conn)]);
         assert!(state.connection.is_current(conn));
         assert!(state.dirty, "the first frame must be painted");
     }
 
+    // The connection entry is pushed before any tick has arrived, so a defaulted
+    // clock would stamp the one entry a user reads when something has gone wrong
+    // with a time that never happened (query log design §4.1).
+    #[test]
+    fn the_startup_state_is_stamped_by_its_caller() {
+        let (state, _effects) = init(
+            ConnId::next(),
+            Config::default(),
+            Vec::new(),
+            Stamp::new(9, 30, 0),
+        );
+
+        assert_eq!(state.now, Stamp::new(9, 30, 0));
+    }
+
     #[test]
     fn a_config_with_nothing_wrong_opens_no_overlay() {
-        let (state, _) = init(ConnId::next(), Config::default(), Vec::new());
+        let (state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            Vec::new(),
+            Stamp::default(),
+        );
 
         assert!(state.overlay.is_none());
     }
@@ -2920,7 +2977,12 @@ mod tests {
             severity: Severity::Danger,
             message: "connection `dev`: `posture` unknown value \"read\"".to_owned(),
         };
-        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic]);
+        let (mut state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            vec![diagnostic],
+            Stamp::default(),
+        );
 
         assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
 
@@ -2950,7 +3012,12 @@ mod tests {
 
     #[test]
     fn a_single_diagnostic_leaves_the_cursor_nowhere_to_go() {
-        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic("one")]);
+        let (mut state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            vec![diagnostic("one")],
+            Stamp::default(),
+        );
 
         let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
         let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
@@ -2961,7 +3028,12 @@ mod tests {
     #[test]
     fn motion_walks_the_diagnostics_and_stops_on_the_last_row() {
         let diagnostics = vec![diagnostic("one"), diagnostic("two"), diagnostic("three")];
-        let (mut state, _) = init(ConnId::next(), Config::default(), diagnostics);
+        let (mut state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            diagnostics,
+            Stamp::default(),
+        );
 
         for _ in 0..5 {
             let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
@@ -2982,7 +3054,7 @@ mod tests {
             icons: Icons::Off,
             ..Config::default()
         };
-        let (state, _) = init(ConnId::next(), config.clone(), Vec::new());
+        let (state, _) = init(ConnId::next(), config.clone(), Vec::new(), Stamp::default());
 
         assert_eq!(
             state.config, config,
@@ -2996,7 +3068,7 @@ mod tests {
             theme: ThemeChoice::Ours(Ours::QuillLight),
             ..Config::default()
         };
-        let (state, _) = init(ConnId::next(), config, Vec::new());
+        let (state, _) = init(ConnId::next(), config, Vec::new(), Stamp::default());
 
         assert_eq!(state.theme, ThemeChoice::Ours(Ours::QuillLight));
     }
@@ -3004,7 +3076,7 @@ mod tests {
     #[test]
     fn connecting_successfully_asks_for_the_schema() {
         let conn = ConnId::next();
-        let (mut state, _) = init(conn, Config::default(), Vec::new());
+        let (mut state, _) = init(conn, Config::default(), Vec::new(), Stamp::default());
 
         let effects = update(
             &mut state,
@@ -3020,7 +3092,12 @@ mod tests {
 
     #[test]
     fn a_connected_message_for_a_stale_attempt_is_ignored() {
-        let (mut state, _) = init(ConnId::next(), Config::default(), Vec::new());
+        let (mut state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            Vec::new(),
+            Stamp::default(),
+        );
 
         let effects = update(
             &mut state,
@@ -3040,7 +3117,7 @@ mod tests {
     #[test]
     fn a_failed_connection_is_recorded_and_raised() {
         let conn = ConnId::next();
-        let (mut state, _) = init(conn, Config::default(), Vec::new());
+        let (mut state, _) = init(conn, Config::default(), Vec::new(), Stamp::default());
 
         let effects = update(
             &mut state,
@@ -3061,7 +3138,12 @@ mod tests {
 
     #[test]
     fn a_failed_connection_for_a_stale_attempt_is_dropped() {
-        let (mut state, _) = init(ConnId::next(), Config::default(), Vec::new());
+        let (mut state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            Vec::new(),
+            Stamp::default(),
+        );
 
         update(
             &mut state,
@@ -3883,7 +3965,12 @@ mod tests {
     /// palette's.
     #[test]
     fn a_frame_that_shrinks_below_the_diagnostics_modal_closes_it() {
-        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic("one")]);
+        let (mut state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            vec![diagnostic("one")],
+            Stamp::default(),
+        );
         state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
         assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
 
@@ -6099,7 +6186,7 @@ mod tests {
 
         for tick in 1..FLASH_TICKS {
             state.dirty = false;
-            update(&mut state, Msg::Tick);
+            update(&mut state, Msg::Tick(Stamp::default()));
             assert!(
                 state.flash.is_some() && !state.dirty,
                 "tick {tick} neither ends the flash nor changes the frame"
@@ -6107,7 +6194,7 @@ mod tests {
         }
 
         state.dirty = false;
-        update(&mut state, Msg::Tick);
+        update(&mut state, Msg::Tick(Stamp::default()));
 
         assert_eq!(state.flash, None);
         assert!(
@@ -6858,7 +6945,12 @@ mod tests {
     #[test]
     fn gg_and_shift_g_reach_the_ends_of_the_diagnostics() {
         let diagnostics = vec![diagnostic("one"), diagnostic("two"), diagnostic("three")];
-        let (mut state, _) = init(ConnId::next(), Config::default(), diagnostics);
+        let (mut state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            diagnostics,
+            Stamp::default(),
+        );
 
         press(&mut state, Key::Char('G'));
         assert_eq!(diagnostics_cursor(&state), 2);
@@ -8937,7 +9029,12 @@ mod tests {
     /// from under it would destroy those diagnostics for good.
     #[test]
     fn ctrl_t_is_refused_over_diagnostics() {
-        let (mut state, _) = init(ConnId::next(), Config::default(), vec![diagnostic("one")]);
+        let (mut state, _) = init(
+            ConnId::next(),
+            Config::default(),
+            vec![diagnostic("one")],
+            Stamp::default(),
+        );
 
         ctrl(&mut state, Key::Char('t'));
 

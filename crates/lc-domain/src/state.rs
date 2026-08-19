@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::clock::Stamp;
 use crate::commands::CommandsPanel;
 use crate::config::{Config, Diagnostic};
 use crate::contents::ContentsPanel;
@@ -54,6 +55,10 @@ pub struct State {
     pub should_quit: bool,
     /// The theme in force. A name; `lc-inbound` owns what it looks like.
     pub theme: ThemeChoice,
+    /// The wall-clock as of the last tick, which is what a log entry stamps
+    /// itself from. Refreshing it never marks dirty: a tick that changes
+    /// nothing must not cost a frame (query log design §4).
+    pub now: Stamp,
     /// The configuration the tool started on. Most of it has no consumer yet
     /// (design §11); it is held rather than dropped so those follow-ups have
     /// somewhere to read from.

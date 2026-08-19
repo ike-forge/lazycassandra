@@ -7,6 +7,7 @@
 //! [`Cluster`]: lc_domain::ports::Cluster
 
 pub mod cassandra;
+pub mod clock;
 pub mod config;
 pub mod fake;
 pub mod file;
