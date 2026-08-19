@@ -1079,6 +1079,12 @@ pub struct Geometry {
     heights: [usize; 4],
     ddl_lines: usize,
     ddl_selection: Span,
+    /// Lines the trail wraps to at this width, and the span of the row the
+    /// cursor is on. A function of the terminal size and the view model,
+    /// never of the offset they bound (architecture.md §3, query log design
+    /// §5.4).
+    log_lines: usize,
+    log_selection: Span,
     command_rows: usize,
     /// Whether the frame is big enough for the renderer to draw the export
     /// form. A function of the terminal size alone — the form is a fixed
@@ -1105,6 +1111,8 @@ impl Geometry {
             heights,
             ddl_lines,
             ddl_selection: Span { first: 0, lines: 0 },
+            log_lines: 0,
+            log_selection: Span { first: 0, lines: 0 },
             command_rows,
             export_fits: false,
             grid_width: 0,
@@ -1222,6 +1230,33 @@ impl Geometry {
     #[must_use]
     pub const fn ddl_selection(self) -> Span {
         self.ddl_selection
+    }
+
+    /// Lines the Logs tab's trail wrapped to.
+    ///
+    /// The one length the domain cannot count for itself, for the reason
+    /// [`Self::ddl_lines`] cannot: wrapping needs a width (query log design
+    /// §5.4).
+    #[must_use]
+    pub const fn log_lines(self) -> usize {
+        self.log_lines
+    }
+
+    /// Where the Logs tab drew its selected entry.
+    #[must_use]
+    pub const fn log_selection(self) -> Span {
+        self.log_selection
+    }
+
+    /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason: a
+    /// test that opens no Logs tab has nothing to say here.
+    #[must_use]
+    pub const fn with_log(self, lines: usize, selection: Span) -> Self {
+        Self {
+            log_lines: lines,
+            log_selection: selection,
+            ..self
+        }
     }
 }
 

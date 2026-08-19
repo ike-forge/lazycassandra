@@ -134,6 +134,24 @@ impl Log {
     pub const fn dropped(&self) -> usize {
         self.dropped
     }
+
+    /// Moves to the next entry, stopping on the last one.
+    pub fn down(&mut self) {
+        self.cursor.down(self.entries.len());
+    }
+
+    /// Moves to the previous entry, stopping on the first one.
+    pub const fn up(&mut self) {
+        self.cursor.up();
+    }
+
+    pub const fn to_start(&mut self) {
+        self.cursor.to_start();
+    }
+
+    pub fn to_end(&mut self) {
+        self.cursor.to_end(self.entries.len());
+    }
 }
 
 impl Entry {
@@ -246,6 +264,50 @@ mod tests {
             Some("2".to_owned()),
             "the two oldest left, and the third is now the first"
         );
+    }
+
+    #[test]
+    fn the_cursor_stops_on_the_last_entry() {
+        let mut log = Log::default();
+        log.push(done("first"));
+        log.push(done("second"));
+
+        log.down();
+        log.down();
+        log.down();
+
+        assert_eq!(log.cursor.index(), 1);
+    }
+
+    #[test]
+    fn the_cursor_stops_on_the_first_entry() {
+        let mut log = Log::default();
+        log.push(done("first"));
+        log.push(done("second"));
+        log.down();
+
+        log.up();
+        log.up();
+
+        assert_eq!(log.cursor.index(), 0);
+    }
+
+    // `push` pops from the front and then always pushes back, so the ring's
+    // length never shrinks — a full ring stays full, it does not make room.
+    // A cursor already inside it therefore cannot be pushed out of bounds by
+    // eviction, which is why there is no clamp in `push` to test.
+    #[test]
+    fn eviction_leaves_the_cursor_addressable_and_the_ring_at_capacity() {
+        let mut log = Log::default();
+        for index in 0..LOG_CAPACITY {
+            log.push(done(&index.to_string()));
+        }
+        log.to_end();
+
+        log.push(done("one more"));
+
+        assert!(log.cursor.index() < log.len());
+        assert_eq!(log.len(), LOG_CAPACITY);
     }
 
     #[test]

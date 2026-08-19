@@ -1923,6 +1923,22 @@ fn scroll(state: &mut State, motion: Motion) {
         Motion::Start => cursor.to_start(),
         Motion::End => cursor.to_end(len),
     }
+
+    // The Logs viewport counts wrapped lines while its cursor counts entries,
+    // so it cannot follow the cursor by index the way Tables and Contents do
+    // — that mapping is the renderer's, reported back through `Msg::Measured`
+    // (design §5.4). `log_lines` is the trail's whole wrapped length, though,
+    // which unlike a per-row span does not depend on which entry the cursor
+    // just left, so jumping to either end of it needs no such round trip.
+    // `panel_cursor` only reached the Logs tab of Queries, so no further gate
+    // is needed here.
+    if panel == Panel::Queries {
+        match motion {
+            Motion::Start => state.log.scroll.to_start(),
+            Motion::End => state.log.scroll.to_end(state.geometry.log_lines(), height),
+            Motion::Down | Motion::Up | Motion::PageDown | Motion::PageUp => {}
+        }
+    }
 }
 
 /// The ctrl layer's whole key table (docs/shortcuts.md §2).
@@ -2320,27 +2336,33 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
     }
 }
 
-/// How many rows `panel`'s *cursor* moves over. Queries never arrives here —
-/// the editor claims the motion keys first (queries editor design §3) — so
-/// its arm is unreachable in practice and kept for exhaustiveness.
+/// How many rows `panel`'s *cursor* moves over — entries in the Logs tab. The
+/// Cql tab never arrives here: the editor claims the motion keys first
+/// (queries editor design §3).
 fn row_count(state: &State, panel: Panel) -> usize {
     match panel {
         Panel::Tables => tree_rows(state),
         Panel::Ddl => crate::view::ddl_rows(state),
         Panel::Contents => state.contents.row_count(),
-        Panel::Queries => 0,
+        Panel::Queries => match state.queries.tab() {
+            QueriesTab::Cql => 0,
+            QueriesTab::Logs => state.log.len(),
+        },
     }
 }
 
-/// Queries never arrives here — the editor claims the motion keys before
-/// this match is reached (design §3) — so its arm is unreachable in
+/// The Cql tab never arrives here — the editor claims the motion keys before
+/// this match is reached (design §3) — so that arm is unreachable in
 /// practice and kept for exhaustiveness.
 fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
     match panel {
         Panel::Tables => Some(&mut state.tables.cursor),
         Panel::Ddl => Some(&mut state.ddl.cursor),
         Panel::Contents => Some(&mut state.contents.cursor),
-        Panel::Queries => None,
+        Panel::Queries => match state.queries.tab() {
+            QueriesTab::Cql => None,
+            QueriesTab::Logs => Some(&mut state.log.cursor),
+        },
     }
 }
 
@@ -2528,6 +2550,21 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         state.mark_dirty();
     }
 
+    // The Logs tab's viewport, for the same reason as the Ddl block above:
+    // its offset counts wrapped lines rather than entries, so it is followed
+    // by span here rather than by index in the `LISTS` loop (design §5.4).
+    let log_before = state.log.scroll;
+    let log_height = geometry.height(Panel::Queries);
+    state
+        .log
+        .scroll
+        .follow_span(geometry.log_selection(), log_height);
+    state.log.scroll.clamp_to(geometry.log_lines(), log_height);
+
+    if state.log.scroll != log_before {
+        state.mark_dirty();
+    }
+
     // The bar's `? commands` hint is a function of `command_rows`
     // (view/hints.rs): a resize that flips it between zero and
     // non-zero changes the view model just as surely as the ddl
@@ -2581,17 +2618,24 @@ fn panel_scroll(state: &mut State, panel: Panel) -> Option<&mut Scroll> {
         Panel::Tables => Some(&mut state.tables.scroll),
         Panel::Contents => Some(&mut state.contents.scroll),
         Panel::Ddl => Some(&mut state.ddl.scroll),
-        Panel::Queries => None,
+        Panel::Queries => match state.queries.tab() {
+            QueriesTab::Cql => None,
+            QueriesTab::Logs => Some(&mut state.log.scroll),
+        },
     }
 }
 
-/// How long the document `panel` scrolls over is — wrapped lines in Ddl, rows
-/// elsewhere.
+/// How long the document `panel` scrolls over is — wrapped lines in Ddl and in
+/// the Logs tab, rows elsewhere. The Cql tab has no document to scroll: the
+/// editor claims its motion keys first (queries editor design §3).
 fn scroll_len(state: &State, panel: Panel) -> usize {
     match panel {
         Panel::Ddl => state.geometry.ddl_lines(),
         Panel::Tables | Panel::Contents => row_count(state, panel),
-        Panel::Queries => 0,
+        Panel::Queries => match state.queries.tab() {
+            QueriesTab::Cql => 0,
+            QueriesTab::Logs => state.geometry.log_lines(),
+        },
     }
 }
 
@@ -2601,7 +2645,10 @@ fn cursor_index(state: &State, panel: Panel) -> usize {
         Panel::Tables => state.tables.cursor.index(),
         Panel::Ddl => state.ddl.cursor.index(),
         Panel::Contents => state.contents.cursor.index(),
-        Panel::Queries => 0,
+        Panel::Queries => match state.queries.tab() {
+            QueriesTab::Cql => 0,
+            QueriesTab::Logs => state.log.cursor.index(),
+        },
     }
 }
 
@@ -7680,6 +7727,37 @@ mod tests {
             state.ddl.scroll.offset(),
             18,
             "the row measured at lines 20..22 has to be on screen in a four-line panel"
+        );
+    }
+
+    fn log_entry(text: &str) -> Entry {
+        Entry::new(
+            Stamp::default(),
+            LogSubject::Sentence(text.to_owned()),
+            Outcome::Succeeded {
+                detail: "ok".to_owned(),
+                took: Duration::from_millis(1),
+            },
+        )
+    }
+
+    fn geometry_with_log(lines: usize, height: usize) -> Geometry {
+        Geometry::new([0, 0, 0, height], 0, 0).with_log(lines, Span { first: 0, lines: 0 })
+    }
+
+    #[test]
+    fn the_trail_scrolls_by_the_lines_the_renderer_measured() {
+        let mut state = on_the_trail();
+        for index in 0..20 {
+            state.log.push(log_entry(&index.to_string()));
+        }
+
+        update(&mut state, Msg::Measured(geometry_with_log(40, 6)));
+        press(&mut state, Key::Char('G'));
+
+        assert!(
+            state.log.scroll.offset() > 0,
+            "the end of a forty-line document is not the top of it"
         );
     }
 
