@@ -1129,7 +1129,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A column position offers no keyword it could not take; a value position offers every one | `a_column_position_offers_no_keyword_it_could_not_take`, `a_value_position_still_offers_the_whole_grammar`, `a_value_position_offers_grammar_and_no_names` (`cql/complete.rs`) |
 | A statement shape is offered where a statement begins, and typed whole | `a_statement_start_offers_the_shapes_its_prefix_opens`, `accepting_a_shape_types_it_whole_and_lands_on_its_first_hole` (`cql/complete.rs`) |
 | A keyword lands with a space, a type without one, and a space already there is not doubled | `accepting_a_keyword_writes_the_space_the_word_after_it_needs`, `accepting_a_type_writes_no_space`, `a_keyword_accepted_before_a_space_does_not_write_a_second_one` (`cql/complete.rs`) |
-| Accepting a qualified column writes the `FROM` that puts it in scope | `accepting_a_column_with_no_table_in_scope_writes_the_clause_that_puts_it_in_scope` (`cql/complete.rs`) |
+| Accepting a qualified column writes the `FROM` that puts it in scope, and never a second one | `accepting_a_column_with_no_table_in_scope_writes_the_clause_that_puts_it_in_scope`, `a_column_accepted_where_a_from_already_stands_writes_no_second_one` (`cql/complete.rs`) |
 | `Esc` takes the popup down before it leaves the editor | `escape_takes_the_popup_down_before_it_leaves_the_editor` |
 | A motion takes the popup down | `a_motion_takes_the_popup_down` |
 | `ctrl-n` raises a popup and then walks it | `ctrl_n_raises_a_popup_and_then_walks_it` |

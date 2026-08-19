@@ -89,10 +89,26 @@ pub struct Analysis {
     /// a cursor at the end of the buffer sits.
     expects: Vec<Expect>,
     /// The statement each piece belongs to, as an index into `tables` and
-    /// `kinds`.
+    /// `scopes`.
     statement: Vec<usize>,
     tables: Vec<Vec<Name>>,
-    kinds: Vec<Statement>,
+    scopes: Vec<Scope>,
+}
+
+/// What one `;`-separated statement is, beside the tables it names.
+///
+/// A field of [`Analysis`] rather than a third vec parallel to `tables` and
+/// the kinds: two are already one desync away from a wrong answer, and a
+/// per-statement fact belongs with the others it sits beside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Scope {
+    kind: Statement,
+    /// Whether a clause that names a table has been opened — `FROM`, `INTO`,
+    /// the `UPDATE` verb itself. True whether or not a name followed it: a
+    /// statement with an empty `FROM` is not missing a `FROM`, which is what
+    /// a completion that writes one has to know
+    /// (completion ranking design §4.1).
+    table_clause: bool,
 }
 
 impl Analysis {
@@ -120,11 +136,22 @@ impl Analysis {
     /// What the statement the piece at `index` belongs to does.
     #[must_use]
     pub fn statement_at(&self, index: usize) -> Statement {
+        self.scope_at(index)
+            .map(|scope| scope.kind)
+            .unwrap_or_default()
+    }
+
+    /// Whether the statement the piece at `index` belongs to has already
+    /// opened the clause that names its table.
+    #[must_use]
+    pub fn table_clause_at(&self, index: usize) -> bool {
+        self.scope_at(index).is_some_and(|scope| scope.table_clause)
+    }
+
+    fn scope_at(&self, index: usize) -> Option<&Scope> {
         self.statement
             .get(index)
-            .and_then(|statement| self.kinds.get(*statement))
-            .copied()
-            .unwrap_or_default()
+            .and_then(|statement| self.scopes.get(*statement))
     }
 
     /// How many statements the buffer holds — a `BEGIN BATCH` counts as one
@@ -144,6 +171,12 @@ impl Analysis {
 pub struct Context {
     pub expects: Expect,
     pub tables: Vec<Name>,
+    /// Whether the statement has already opened the clause that names its
+    /// table, empty or not. A column completion reads it before writing the
+    /// `FROM` that would put the column in scope: `SELECT <> FROM <>` has one
+    /// standing already, and a second would be nonsense
+    /// (completion ranking design §4.1).
+    pub table_clause: bool,
 }
 
 /// The context at `offset`, counted in characters from the start of the text
@@ -164,6 +197,7 @@ pub(crate) fn context_at(pieces: &[Piece], offset: usize) -> Context {
     Context {
         expects: analysis.expects(index),
         tables: analysis.tables_at(index.saturating_sub(1)).to_vec(),
+        table_clause: analysis.table_clause_at(index.saturating_sub(1)),
     }
 }
 
@@ -203,7 +237,7 @@ fn piece_at(pieces: &[Piece], offset: usize) -> usize {
 pub(crate) fn resolve(pieces: &[Piece]) -> Analysis {
     let mut machine = Machine {
         tables: vec![Vec::new()],
-        kinds: vec![Statement::default()],
+        scopes: vec![Scope::default()],
         ..Machine::default()
     };
 
@@ -263,8 +297,8 @@ struct Machine {
     expects: Vec<Expect>,
     statement: Vec<usize>,
     tables: Vec<Vec<Name>>,
-    /// One per scope in `tables`, decided by the verb that opened it.
-    kinds: Vec<Statement>,
+    /// One per scope in `tables`, opened by the verb that starts it.
+    scopes: Vec<Scope>,
     /// The keyspace of a qualified name whose table has not been read yet,
     /// paired with the index of the role it was provisionally given: a bare
     /// name in table position is a table until a `.` proves it was a
@@ -334,9 +368,9 @@ impl Machine {
 
         if self.verb == Verb::Unread {
             if word == "SELECT"
-                && let Some(kind) = self.kinds.last_mut()
+                && let Some(scope) = self.scopes.last_mut()
             {
-                *kind = Statement::Select;
+                scope.kind = Statement::Select;
             }
 
             self.verb = match word {
@@ -360,7 +394,12 @@ impl Machine {
         self.expect = match word {
             // `ON` is what `CREATE INDEX … ON t (c)` names its table after;
             // `GRANT … ON` never reaches here, since `GRANT` is uncovered.
-            "FROM" | "INTO" | "UPDATE" | "TRUNCATE" | "TABLE" | "ON" => self.enter(Expect::Table),
+            "FROM" | "INTO" | "UPDATE" | "TRUNCATE" | "TABLE" | "ON" => {
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.table_clause = true;
+                }
+                self.enter(Expect::Table)
+            }
             "USE" | "KEYSPACE" | "SCHEMA" => self.enter(Expect::Keyspace),
             "SELECT" | "DELETE" | "WHERE" | "SET" | "BY" | "TOKEN" | "PRIMARY" | "RENAME"
             | "DROP" => self.enter(Expect::Column),
@@ -504,7 +543,7 @@ impl Machine {
 
     fn end_statement(&mut self) {
         self.tables.push(Vec::new());
-        self.kinds.push(Statement::default());
+        self.scopes.push(Scope::default());
         self.expect = Expect::Keyword;
         self.base = Expect::Keyword;
         self.verb = Verb::Unread;
@@ -531,7 +570,7 @@ impl Machine {
         // disappear from the count entirely.
         if !self.has_content && self.tables.last().is_some_and(Vec::is_empty) {
             self.tables.pop();
-            self.kinds.pop();
+            self.scopes.pop();
         }
 
         Analysis {
@@ -539,7 +578,7 @@ impl Machine {
             expects: self.expects,
             statement: self.statement,
             tables: self.tables,
-            kinds: self.kinds,
+            scopes: self.scopes,
         }
     }
 }
@@ -1101,6 +1140,30 @@ mod tests {
         let text = text.replace('|', "");
 
         context_at(&pieces(&text), text[..offset].chars().count())
+    }
+
+    #[test]
+    fn a_statement_says_whether_a_clause_has_already_named_its_table() {
+        assert!(
+            context("SELECT na| FROM shop.orders").table_clause,
+            "a resolved table is a clause that named one"
+        );
+        assert!(
+            context("SELECT na| FROM ;").table_clause,
+            "and so is a clause left empty — the word is what opens it"
+        );
+        assert!(
+            !context("SELECT na|").table_clause,
+            "a select list with nothing after it has no clause yet"
+        );
+        assert!(
+            context("UPDATE shop.orders SET to| = 1").table_clause,
+            "the verb itself opens one where there is no FROM to read"
+        );
+        assert!(
+            !context("SELECT id FROM shop.orders; SELECT na|").table_clause,
+            "and the clause belongs to its own statement, not to the buffer"
+        );
     }
 
     #[test]

@@ -414,7 +414,10 @@ fn columns(
 ) -> Vec<Candidate> {
     let columns = match context.tables.as_slice() {
         [table] => columns_of(schema, &resolved(table, keyspace), prefix),
-        tables => every_column(schema, prefix, tables.is_empty()),
+        // A statement whose `FROM` is standing but empty — the shape
+        // `SELECT <> FROM <>` leaves exactly that — names no table and is
+        // missing no clause. Writing one would give it two (design §4.1).
+        tables => every_column(schema, prefix, tables.is_empty() && !context.table_clause),
     };
 
     ahead(columns.into_iter(), column_words(prefix).collect())
@@ -1175,6 +1178,33 @@ mod tests {
             "SELECT total".chars().count(),
             "the cursor stays on the select list, not on the clause it wrote"
         );
+    }
+
+    /// The shape `SELECT <> FROM <>` leaves a `FROM` standing with no table
+    /// after it. A column accepted into its first hole must not write a
+    /// second one: the clause is not missing, only unfinished
+    /// (completion ranking design §4.1).
+    #[test]
+    fn a_column_accepted_where_a_from_already_stands_writes_no_second_one() {
+        let schema = schema();
+        let tail = " FROM ;";
+        let mut editor = typed(&format!("SELECT to{tail}"));
+        for _ in 0..tail.chars().count() {
+            editor.left();
+        }
+        let mut completion = suggest(&editor, Some(&schema), Some("shop")).expect("offers");
+        let at = completion
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.text == "total")
+            .expect("total is offered");
+
+        for _ in 0..at {
+            completion.next();
+        }
+        completion.accept(&mut editor);
+
+        assert_eq!(editor.text(), "SELECT total FROM ;");
     }
 
     /// The clause belongs to the statement the cursor is in, not to the end of
