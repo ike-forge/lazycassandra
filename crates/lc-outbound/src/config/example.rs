@@ -125,9 +125,11 @@ mod tests {
         assert_eq!(config.driver, default.driver, "{mismatch}");
     }
 
-    /// Every key `wire.rs` declares. Listed by hand rather than derived:
-    /// `serde` gives no way to enumerate a struct's fields, and a list that
-    /// has to be edited alongside the struct is the point — adding a field
+    /// Every key `wire.rs` declares, plus the serialized spelling of every
+    /// `CredentialSource` variant. Listed by hand rather than derived:
+    /// `serde` gives no way to enumerate a struct's fields or an enum's
+    /// variants, and a list that has to be edited alongside the type is the
+    /// point — adding a field, or renaming a credential source variant,
     /// without documenting it fails here.
     const KEYS: &[&str] = &[
         "theme",
@@ -158,6 +160,8 @@ mod tests {
         "datacenter",
         "username",
         "password",
+        "{ env = ",
+        "{ file = ",
         "[[themes]]",
         "extends",
         "[themes.colors]",

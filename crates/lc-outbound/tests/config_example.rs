@@ -69,3 +69,27 @@ fn a_write_that_cannot_happen_is_silent() {
 fn no_config_directory_to_resolve_means_no_write() {
     write_example_config(None, None);
 }
+
+#[test]
+fn a_symlink_pre_created_at_the_path_is_not_followed() {
+    let xdg = scratch("example-symlink");
+    let path = config_in(&xdg);
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("the config directory");
+    let target = xdg.join("elsewhere.toml");
+    std::os::unix::fs::symlink(&target, &path).expect("a symlink to pre-create");
+
+    write_example_config(Some(&xdg), None);
+
+    assert!(
+        !target.exists(),
+        "create_new must fail on a path that already exists as a symlink, without ever \
+         following it to create or write the target"
+    );
+    assert!(
+        path.symlink_metadata()
+            .expect("the symlink is still there")
+            .file_type()
+            .is_symlink(),
+        "a blocked write must leave the pre-created symlink exactly as it was"
+    );
+}

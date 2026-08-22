@@ -106,17 +106,25 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
     diagnostics
 }
 
-/// An environment variable, `None` if unset or empty.
+/// An environment variable, `None` if unset, empty, or not an absolute path.
 ///
 /// The XDG spec treats an empty value as unset; without this, `XDG_CONFIG_HOME=""`
 /// or `HOME=""` would resolve `global_path` against the current directory
-/// instead.
+/// instead. The spec also requires a non-absolute value to be ignored — for a
+/// read that only meant a surprising place to look, but for
+/// `write_example_config_from_env` it would mean writing
+/// `./lazycassandra/config.toml` into whatever directory the process happened
+/// to start in, exactly the untracked-file-in-a-repository outcome design §2
+/// rules out for the project file.
 fn non_empty_env(name: &str) -> Option<PathBuf> {
     non_empty(std::env::var_os(name))
 }
 
 fn non_empty(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
-    value.filter(|value| !value.is_empty()).map(PathBuf::from)
+    value
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
 }
 
 /// The two files, layered (design §3).
@@ -284,6 +292,22 @@ mod tests {
         assert_eq!(
             non_empty(Some(std::ffi::OsString::from("/x"))),
             Some(PathBuf::from("/x"))
+        );
+    }
+
+    #[test]
+    fn a_relative_environment_variable_is_treated_as_unset() {
+        assert_eq!(
+            non_empty(Some(std::ffi::OsString::from("relative/path"))),
+            None,
+            "the XDG spec requires a non-absolute value to be ignored — otherwise a relative \
+             XDG_CONFIG_HOME turns write_example_config_from_env into a write into whatever \
+             directory the process started in"
+        );
+        assert_eq!(
+            non_empty(Some(std::ffi::OsString::from("."))),
+            None,
+            "a relative path is still relative when it names the current directory itself"
         );
     }
 }
