@@ -233,7 +233,7 @@ was before config existed.
 | `j` / `k`, `Down` / `Up` | Moves the cursor, **and sets `State.theme`** — the frame repaints in that theme immediately. |
 | `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen — which here is the whole list. |
 | `Home` / `End`, `gg` / `G` | The first theme, the last theme — previewing it, as every motion here does. |
-| `Enter` | Closes, keeping whatever theme is set. |
+| `Enter` | Closes, keeping whatever theme is set — and writes it to the config file it is read from, so the next launch opens on it ([theme persistence design](superpowers/specs/2026-08-22-theme-persistence-design.md) §2). |
 | `Esc` | Sets `State.theme` back to the theme the picker opened on, then closes. |
 | `q` | Quits, as everywhere else. The picker takes motion, not text, so it leaves `q` alone — the palette's rule (§2). |
 | `/` | Search the list: typing walks the cursor to the next matching row, marking the hit and previewing it. `⏎` keeps the theme, `Esc` puts it back. |

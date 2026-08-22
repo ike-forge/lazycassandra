@@ -18,5 +18,10 @@ lc-outbound.workspace = true
 ratatui.workspace = true
 tokio.workspace = true
 
+# The ConfigSink double in effects.rs. A port is `#[async_trait]`, so a fake
+# for one needs the same attribute.
+[dev-dependencies]
+async-trait.workspace = true
+
 [lints]
 workspace = true

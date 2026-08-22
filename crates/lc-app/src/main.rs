@@ -15,7 +15,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use input::Incoming;
 use lc_domain::model::ConnId;
-use lc_domain::ports::{Cluster, ConfigSource, Writer};
+use lc_domain::ports::{Cluster, ConfigSink, ConfigSource, Writer};
 use lc_domain::posture::Posture;
 use lc_domain::state::Geometry;
 use lc_domain::{Effect, Msg, State, update, view_model};
@@ -169,8 +169,9 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
     let writer: Arc<dyn Writer> = Arc::new(lc_outbound::file::FileWriter);
 
     lc_outbound::config::write_example_config_from_env();
-    let source = lc_outbound::config::FileConfigSource::from_env();
+    let source = Arc::new(lc_outbound::config::FileConfigSource::from_env());
     let (config, diagnostics) = source.load().await;
+    let sink: Arc<dyn ConfigSink> = source;
     let themes = Themes::new(&config.themes, config.background);
 
     let (mut state, startup) =
@@ -179,7 +180,7 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
     let mut measured: Option<Geometry> = None;
 
     for effect in &startup {
-        effects::run(&tx, &cluster, &writer, effect);
+        effects::run(&tx, &cluster, &writer, &sink, effect);
     }
 
     let rendered = draw(&mut terminal, &state, &themes)?;
@@ -216,7 +217,7 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
                         continue;
                     }
 
-                    effects::run(&tx, &cluster, &writer, &effect);
+                    effects::run(&tx, &cluster, &writer, &sink, &effect);
                 }
             }
 

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use lc_domain::ports::{Cluster, Writer};
+use lc_domain::ports::{Cluster, ConfigSink, Writer};
 use lc_domain::{Effect, Msg};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -23,6 +23,7 @@ pub(crate) fn run(
     tx: &UnboundedSender<Incoming>,
     cluster: &Arc<dyn Cluster>,
     writer: &Arc<dyn Writer>,
+    sink: &Arc<dyn ConfigSink>,
     effect: &Effect,
 ) {
     match effect {
@@ -130,10 +131,79 @@ pub(crate) fn run(
             },
         ),
 
-        Effect::Cancel(_)
-        | Effect::RecordHistory(_)
-        | Effect::OpenEditor { .. }
-        | Effect::SaveTheme(_)
-        | Effect::Quit => {}
+        Effect::SaveTheme(theme) => {
+            tokio::spawn(save(tx.clone(), Arc::clone(sink), theme.clone()));
+        }
+
+        Effect::Cancel(_) | Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {
+        }
+    }
+}
+
+/// Silent on success, by design: the theme on screen is the confirmation, and
+/// only a failure is worth a line (theme persistence design §6).
+///
+/// Spawned by [`run`], and written as its own `async fn` so the two outcomes
+/// can be tested without a runtime racing the assertion.
+async fn save(
+    tx: UnboundedSender<Incoming>,
+    sink: Arc<dyn ConfigSink>,
+    theme: lc_domain::theme::ThemeChoice,
+) {
+    if let Err(error) = sink.save_theme(&theme).await {
+        // A closed channel means the main loop has already ended.
+        let _sent = tx.send(
+            Msg::ThemeSaveFailed {
+                reason: error.to_string(),
+            }
+            .into(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lc_domain::ports::{ConfigSink, ConfigWriteError};
+    use lc_domain::theme::{Ours, ThemeChoice};
+
+    use super::*;
+
+    struct Sink(Result<(), ConfigWriteError>);
+
+    #[async_trait::async_trait]
+    impl ConfigSink for Sink {
+        async fn save_theme(&self, _theme: &ThemeChoice) -> Result<(), ConfigWriteError> {
+            self.0.clone()
+        }
+    }
+
+    fn theme() -> ThemeChoice {
+        ThemeChoice::Ours(Ours::QuillDark)
+    }
+
+    #[tokio::test]
+    async fn a_successful_save_says_nothing() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        save(tx, Arc::new(Sink(Ok(()))), theme()).await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "the theme on screen is the confirmation"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_save_reports_which_file_and_why() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let error = ConfigWriteError::Io("/home/x/config.toml: permission denied".to_owned());
+
+        save(tx, Arc::new(Sink(Err(error))), theme()).await;
+
+        let Some(Incoming::Msg(Msg::ThemeSaveFailed { reason })) = rx.recv().await else {
+            panic!("a save the user asked for and did not get is worth one line");
+        };
+        assert!(reason.contains("permission denied"), "{reason}");
+        assert!(reason.contains("/home/x/config.toml"), "{reason}");
     }
 }
