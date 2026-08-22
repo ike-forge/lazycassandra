@@ -128,18 +128,22 @@ fn non_empty(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
 }
 
 /// The two files, layered (design §3).
+///
+/// Holds where to look rather than what was found: the save may create the
+/// user-level file, and both operations must see the disk as it is when they
+/// run (theme persistence design §3).
 #[derive(Debug, Clone)]
 pub struct FileConfigSource {
+    cwd: PathBuf,
     global: Option<PathBuf>,
-    local: Option<PathBuf>,
 }
 
 impl FileConfigSource {
     #[must_use]
     pub fn new(cwd: &Path, xdg: Option<&Path>, home: Option<&Path>) -> Self {
         Self {
-            global: discover::global_path(xdg, home).filter(|path| path.is_file()),
-            local: discover::first_existing(&discover::local_candidates(cwd)).cloned(),
+            cwd: cwd.to_path_buf(),
+            global: discover::global_path(xdg, home),
         }
     }
 
@@ -150,6 +154,20 @@ impl FileConfigSource {
         let home = non_empty_env("HOME");
 
         Self::new(&cwd, xdg.as_deref(), home.as_deref())
+    }
+
+    /// Both files, nearest last, skipping whichever is not there.
+    fn paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+
+        if let Some(global) = self.global.as_ref().filter(|path| path.is_file()) {
+            paths.push(global.clone());
+        }
+        if let Some(local) = discover::first_existing(&discover::local_candidates(&self.cwd)) {
+            paths.push(local.clone());
+        }
+
+        paths
     }
 
     fn read(path: &Path, diagnostics: &mut Vec<Diagnostic>) -> Option<Layer> {
@@ -199,9 +217,9 @@ pub fn write_example_config_from_env() {
 impl lc_domain::ports::ConfigSource for FileConfigSource {
     async fn load(&self) -> (Config, Vec<Diagnostic>) {
         let mut diagnostics = Vec::new();
-        let layers: Vec<Layer> = [self.global.as_deref(), self.local.as_deref()]
-            .into_iter()
-            .flatten()
+        let layers: Vec<Layer> = self
+            .paths()
+            .iter()
             .filter_map(|path| Self::read(path, &mut diagnostics))
             .collect();
         let (merged, more) = merge::merge(layers);
