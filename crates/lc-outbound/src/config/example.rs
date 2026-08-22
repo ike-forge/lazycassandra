@@ -6,10 +6,30 @@
 //! that every stated default is the real default — is bought back by
 //! `the_example_states_the_defaults_it_claims_to`.
 
-// The writer that reads this lands separately (design §4); until then only
-// the tests below use it.
-#[cfg(test)]
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
+
 pub(crate) const EXAMPLE: &str = include_str!("example.toml");
+
+/// Writes the example, and does nothing at all if anything is in the way.
+///
+/// `create_new` makes the absence check and the creation one syscall, so there
+/// is no window between them and "someone else got there first" is
+/// indistinguishable from "it was already there" — which is what the silence
+/// of design §2 wants. It also refuses to follow a symlink someone pre-created
+/// at the path, the way `fs::write` would.
+pub(crate) fn write_if_absent(path: &Path) {
+    if let Some(parent) = path.parent() {
+        let _ignored = std::fs::create_dir_all(parent);
+    }
+
+    let _ignored = File::options()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(EXAMPLE.as_bytes()));
+}
 
 #[cfg(test)]
 mod tests {

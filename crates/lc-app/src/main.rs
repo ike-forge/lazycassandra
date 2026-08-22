@@ -168,6 +168,7 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
     ));
     let writer: Arc<dyn Writer> = Arc::new(lc_outbound::file::FileWriter);
 
+    lc_outbound::config::write_example_config_from_env();
     let source = lc_outbound::config::FileConfigSource::from_env();
     let (config, diagnostics) = source.load().await;
     let themes = Themes::new(&config.themes, config.background);

@@ -166,6 +166,27 @@ impl FileConfigSource {
     }
 }
 
+/// Puts the annotated example at the user-level path when nothing is there
+/// (example config design §2).
+///
+/// Silent throughout, success and failure alike: a file appearing where the
+/// documentation says config lives is not an event, and a machine where the
+/// write cannot happen — no home, a read-only one, a container — is not a
+/// machine with a problem to report on every launch.
+pub fn write_example_config(xdg: Option<&Path>, home: Option<&Path>) {
+    if let Some(path) = discover::global_path(xdg, home) {
+        example::write_if_absent(&path);
+    }
+}
+
+/// [`write_example_config`] against the environment this process was given.
+pub fn write_example_config_from_env() {
+    let xdg = non_empty_env("XDG_CONFIG_HOME");
+    let home = non_empty_env("HOME");
+
+    write_example_config(xdg.as_deref(), home.as_deref());
+}
+
 #[async_trait::async_trait]
 impl lc_domain::ports::ConfigSource for FileConfigSource {
     async fn load(&self) -> (Config, Vec<Diagnostic>) {
