@@ -98,6 +98,11 @@ pub enum Msg {
     EditorFailed {
         reason: String,
     },
+    /// The theme was confirmed and could not be written down. Carries the
+    /// adapter's own words: which file, and why (theme persistence design §6).
+    ThemeSaveFailed {
+        reason: String,
+    },
     /// Rows written so far by `job`, a running total.
     ExportProgress {
         job: JobId,
@@ -136,6 +141,10 @@ pub enum Effect {
     /// no answer, so there is no `Msg` back and nothing to report
     /// (docs/superpowers/specs/2026-08-13-yank-design.md §3, §4).
     Yank(String),
+    /// Write the confirmed theme into the config file it is read from, so the
+    /// next launch opens on it (theme persistence design §2). Silent on
+    /// success: the theme on screen is the confirmation.
+    SaveTheme(ThemeChoice),
     /// Write a result set to a file. The paging loop, if there is one, runs in
     /// `lc-app` (export design §5).
     Export {
@@ -353,6 +362,8 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::EditorFailed { reason } => editor_failed(state, reason),
 
+        Msg::ThemeSaveFailed { reason } => theme_save_failed(state, reason),
+
         Msg::ExportProgress { job, rows } => export_progress(state, job, rows),
 
         Msg::ExportFinished { job, result, took } => finish_export(state, job, result, took),
@@ -503,6 +514,32 @@ fn editor_failed(state: &mut State, reason: String) -> Vec<Effect> {
             title: "Editor".to_owned(),
             message: reason,
             severity: Severity::Danger,
+        },
+    );
+    state.mark_dirty();
+    Vec::new()
+}
+
+/// Not silent, unlike the first-run example write: that one is ambient and
+/// repeats on every launch, so a warning would fire forever on a machine where
+/// nothing is wrong. This one happens because a key was pressed, once per
+/// press (theme persistence design §6).
+fn theme_save_failed(state: &mut State, reason: String) -> Vec<Effect> {
+    logged(
+        state,
+        sentence("Saving the theme"),
+        Outcome::Failed {
+            detail: reason.clone(),
+        },
+    );
+    // The theme stays applied. A save that failed is not a reason to take back
+    // the theme the user chose.
+    raise(
+        state,
+        Message {
+            title: "Theme".to_owned(),
+            message: reason,
+            severity: Severity::Warning,
         },
     );
     state.mark_dirty();
@@ -1880,8 +1917,17 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char('q') => return quit(state),
         Key::Enter => {
-            state.overlay = None;
-            return Vec::new();
+            let chosen = state.theme.clone();
+            let changed = match state.overlay.take() {
+                Some(Overlay::Themes { restored, .. }) => restored != chosen,
+                _ => false,
+            };
+
+            return if changed {
+                vec![Effect::SaveTheme(chosen)]
+            } else {
+                Vec::new()
+            };
         }
         Key::Escape => {
             escape(state);
@@ -4783,6 +4829,134 @@ mod tests {
 
         assert_eq!(state.theme, ThemeChoice::from(BuiltIn::ALL[1]));
         assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn enter_saves_the_theme_it_keeps() {
+        let mut state = measured(&["a"]);
+
+        ctrl(&mut state, Key::Char('t'));
+        press(&mut state, Key::Char('j'));
+        let effects = press(&mut state, Key::Enter);
+
+        assert_eq!(
+            effects,
+            vec![Effect::SaveTheme(ThemeChoice::from(BuiltIn::ALL[1]))],
+            "the theme a restart opens on is the one the picker was left on"
+        );
+    }
+
+    /// Opening the picker to look at the list and confirming out of it must
+    /// not touch the user's config (theme persistence design §2).
+    #[test]
+    fn enter_on_the_theme_already_in_force_saves_nothing() {
+        let mut state = measured(&["a"]);
+
+        ctrl(&mut state, Key::Char('t'));
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn a_previewed_theme_is_not_a_saved_one() {
+        let mut state = measured(&["a"]);
+
+        ctrl(&mut state, Key::Char('t'));
+        let effects = press(&mut state, Key::Char('j'));
+
+        assert!(
+            effects.is_empty(),
+            "moving the cursor previews; it does not save"
+        );
+    }
+
+    #[test]
+    fn escape_saves_nothing() {
+        let mut state = measured(&["a"]);
+
+        ctrl(&mut state, Key::Char('t'));
+        press(&mut state, Key::Char('j'));
+        let effects = press(&mut state, Key::Escape);
+
+        assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn a_click_that_dismisses_the_picker_saves_nothing() {
+        let mut state = measured(&["a"]);
+
+        ctrl(&mut state, Key::Char('t'));
+        press(&mut state, Key::Char('j'));
+        let effects = update(
+            &mut state,
+            Msg::Pointer(Pointer::Click(Click::Panel(Panel::Tables))),
+        );
+
+        assert!(effects.is_empty(), "a click restores, the same as Esc");
+    }
+
+    #[test]
+    fn a_frame_that_shrinks_below_the_picker_saves_nothing() {
+        let mut state = measured(&["a"]);
+
+        ctrl(&mut state, Key::Char('t'));
+        press(&mut state, Key::Char('j'));
+        let effects = update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 0)),
+        );
+
+        assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    /// `Enter` inside a live sift ends the search and leaves the picker open,
+    /// so the confirming `Enter` is the next one.
+    #[test]
+    fn ending_a_search_with_enter_saves_nothing_yet() {
+        let mut state = measured(&["a"]);
+
+        ctrl(&mut state, Key::Char('t'));
+        press(&mut state, Key::Char('/'));
+        type_into(&mut state, "quill");
+        let ending = press(&mut state, Key::Enter);
+
+        assert!(ending.is_empty(), "the search closed; the picker did not");
+        assert!(matches!(state.overlay, Some(Overlay::Themes { .. })));
+
+        let confirming = press(&mut state, Key::Enter);
+
+        assert_eq!(confirming.len(), 1, "and this one is the confirmation");
+    }
+
+    #[test]
+    fn a_failed_save_warns_and_logs_and_keeps_the_theme() {
+        let mut state = measured(&["a"]);
+        state.theme = ThemeChoice::Ported(Ported::CatppuccinMocha);
+
+        update(
+            &mut state,
+            Msg::ThemeSaveFailed {
+                reason: "/home/x/.config/lazycassandra/config.toml: permission denied".to_owned(),
+            },
+        );
+
+        let Some(Overlay::Message(message)) = &state.overlay else {
+            panic!("a save the user asked for and did not get is worth one line");
+        };
+        assert_eq!(message.severity, Severity::Warning);
+        assert!(message.message.contains("permission denied"));
+
+        let entry = state.log.entries().next().expect("the save entry");
+        let Outcome::Failed { detail } = entry.outcome() else {
+            panic!("the save failed");
+        };
+        assert!(detail.contains("permission denied"));
+        assert_eq!(
+            state.theme,
+            ThemeChoice::Ported(Ported::CatppuccinMocha),
+            "a save that failed is not a reason to take back the theme the user chose"
+        );
     }
 
     #[test]

@@ -130,7 +130,10 @@ pub(crate) fn run(
             },
         ),
 
-        Effect::Cancel(_) | Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {
-        }
+        Effect::Cancel(_)
+        | Effect::RecordHistory(_)
+        | Effect::OpenEditor { .. }
+        | Effect::SaveTheme(_)
+        | Effect::Quit => {}
     }
 }
