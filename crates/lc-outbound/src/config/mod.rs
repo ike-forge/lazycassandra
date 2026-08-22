@@ -7,6 +7,7 @@
 mod discover;
 mod example;
 mod merge;
+mod save;
 mod validate;
 mod wire;
 
@@ -170,6 +171,24 @@ impl FileConfigSource {
         paths
     }
 
+    /// The file whose `theme` is in force: the project file when it states
+    /// one, else the user-level file — created if it is not there.
+    ///
+    /// Writing the global file while a project file states `theme` would save
+    /// a value that loses on the next launch, which is the bug this exists to
+    /// remove (theme persistence design §3).
+    fn save_target(&self) -> Result<PathBuf, lc_domain::ports::ConfigWriteError> {
+        let local = discover::first_existing(&discover::local_candidates(&self.cwd))
+            .filter(|path| {
+                std::fs::read_to_string(path).is_ok_and(|source| save::states_theme(&source))
+            })
+            .cloned();
+
+        local
+            .or_else(|| self.global.clone())
+            .ok_or(lc_domain::ports::ConfigWriteError::NoPath)
+    }
+
     fn read(path: &Path, diagnostics: &mut Vec<Diagnostic>) -> Option<Layer> {
         let origin = Origin::new(&path.display().to_string());
 
@@ -228,6 +247,39 @@ impl lc_domain::ports::ConfigSource for FileConfigSource {
         diagnostics.extend(more);
 
         (config, diagnostics)
+    }
+}
+
+#[async_trait::async_trait]
+impl lc_domain::ports::ConfigSink for FileConfigSource {
+    async fn save_theme(
+        &self,
+        theme: &lc_domain::theme::ThemeChoice,
+    ) -> Result<(), lc_domain::ports::ConfigWriteError> {
+        let target = self.save_target()?;
+        let source = match std::fs::read_to_string(&target) {
+            Ok(source) => source,
+            // Nothing there yet is not a failure: the first run's example
+            // write can have been blocked, and the key still has to land.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                return Err(lc_domain::ports::ConfigWriteError::Io(format!(
+                    "{}: {error}",
+                    target.display()
+                )));
+            }
+        };
+        let edited = save::set_theme(&source, &theme.slug()).map_err(|error| match error {
+            lc_domain::ports::ConfigWriteError::Unparsable(_, message) => {
+                lc_domain::ports::ConfigWriteError::Unparsable(
+                    target.display().to_string(),
+                    message,
+                )
+            }
+            other => other,
+        })?;
+
+        save::write(&target, &edited)
     }
 }
 

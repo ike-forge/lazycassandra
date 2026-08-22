@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use crate::config::{Config, Credential, Diagnostic};
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
+use crate::theme::ThemeChoice;
 
 /// A cluster, in our vocabulary rather than a driver's.
 ///
@@ -45,6 +46,17 @@ pub trait ConfigSource: Send + Sync {
     /// Never fails: a file that cannot be read or parsed produces
     /// diagnostics and contributes nothing (design §6).
     async fn load(&self) -> (Config, Vec<Diagnostic>);
+}
+
+/// Writes one setting back into the file it was read from
+/// (theme persistence design §5).
+///
+/// A trait of its own rather than a method on [`ConfigSource`]: every run
+/// reads config at startup, one keystroke writes it, and a fake for one should
+/// not have to implement the other.
+#[async_trait]
+pub trait ConfigSink: Send + Sync {
+    async fn save_theme(&self, theme: &ThemeChoice) -> Result<(), ConfigWriteError>;
 }
 
 /// Resolves a credential to a value at connect time.
@@ -88,6 +100,19 @@ pub enum ConfigError {
     Invalid(String),
     #[error("could not resolve credential: {0}")]
     Unresolvable(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ConfigWriteError {
+    #[error("could not write {0}")]
+    Io(String),
+    /// The file was left exactly as it was. Splicing into a document we cannot
+    /// parse would mean writing over what the user wrote (theme persistence
+    /// design §4).
+    #[error("{0} could not be parsed, so it was left alone: {1}")]
+    Unparsable(String, String),
+    #[error("nowhere to save it: neither XDG_CONFIG_HOME nor HOME is set")]
+    NoPath,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
