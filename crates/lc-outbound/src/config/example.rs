@@ -104,4 +104,71 @@ mod tests {
         assert_eq!(config.grid, default.grid, "{mismatch}");
         assert_eq!(config.driver, default.driver, "{mismatch}");
     }
+
+    /// Every key `wire.rs` declares. Listed by hand rather than derived:
+    /// `serde` gives no way to enumerate a struct's fields, and a list that
+    /// has to be edited alongside the struct is the point — adding a field
+    /// without documenting it fails here.
+    const KEYS: &[&str] = &[
+        "theme",
+        "background",
+        "icons",
+        "mouse",
+        "default_connection",
+        "[layout]",
+        "sidebar",
+        "ddl",
+        "queries",
+        "[grid]",
+        "max_column_width",
+        "row_limit",
+        "[driver]",
+        "page_size",
+        "request_timeout_ms",
+        "connect_timeout_ms",
+        "consistency",
+        "compression",
+        "[export]",
+        "path",
+        "prefix",
+        "[[connections]]",
+        "name",
+        "hosts",
+        "posture",
+        "datacenter",
+        "username",
+        "password",
+        "[[themes]]",
+        "extends",
+        "[themes.colors]",
+    ];
+
+    #[test]
+    fn every_key_the_schema_accepts_is_in_the_example() {
+        for key in KEYS {
+            assert!(
+                EXAMPLE.contains(key),
+                "`{key}` is accepted by wire.rs and undocumented in the example"
+            );
+        }
+    }
+
+    #[test]
+    fn every_theme_and_role_is_named_in_the_example() {
+        for built_in in lc_domain::theme::BuiltIn::ALL {
+            assert!(
+                EXAMPLE.contains(built_in.slug()),
+                "the built-in theme `{}` is missing from the `theme` comment",
+                built_in.slug()
+            );
+        }
+
+        for role in lc_domain::theme::Role::ALL {
+            assert!(
+                EXAMPLE.contains(role.key()),
+                "the role `{}` is missing from the roles list",
+                role.key()
+            );
+        }
+    }
 }
