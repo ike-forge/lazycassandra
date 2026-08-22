@@ -231,8 +231,12 @@ catches most of this before a warning ever fires.
 ## 6. Configuration
 
 Config is a `.lazycassandra.toml` in the project root, layered under a
-user-level config at `$XDG_CONFIG_HOME/lazycassandra/config.toml`. The
-LazySQL model: **the project file is meant to be committed to git.**
+user-level config at `$XDG_CONFIG_HOME/lazycassandra/config.toml`. That file
+is created on first run, fully commented — every key with its default, in
+effect nothing — so configuring the tool is deleting a `#` rather than
+writing a file from a document. Deleting it gets it back; the tool behaves
+identically whether it is there or not. The LazySQL model: **the project file
+is meant to be committed to git.**
 
 The committed file should hold references to secrets rather than secrets —
 credentials resolve from environment variables or files on disk — but a
