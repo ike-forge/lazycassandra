@@ -1,0 +1,85 @@
+# LazyCassandra — user-level configuration.
+#
+# Written on first run; every line is commented, so this file changes nothing
+# until you uncomment something. Each key states its default.
+#
+# A project may override any of this from a `.lazycassandra.toml` in the
+# repository. Uncomment a key and its `[section]` header together — a key
+# without its header lands in the wrong table and is reported as unknown.
+
+# ── appearance ────────────────────────────────────────────────
+# theme      = "default-dark"   # default-dark | default-light | ash-dark |
+#                               # ash-light | beacon-dark | beacon-light |
+#                               # quill-dark | quill-light | catppuccin-latte |
+#                               # catppuccin-frappe | catppuccin-macchiato |
+#                               # catppuccin-mocha | a [[themes]] name
+# background = "theme"          # "theme" | "terminal" | a hex such as "#0b0d12".
+#                               # "terminal" paints nothing, which is what lets
+#                               # a translucent or blurred terminal show
+#                               # through. A hex overrides the `base` role only.
+# icons      = true
+
+# ── input ─────────────────────────────────────────────────────
+# mouse = true
+
+# ── connections ───────────────────────────────────────────────
+# Unset by default. Stated here, ahead of the first [section] below,
+# because a root key uncommented after a table header lands in that
+# table instead and is reported as unknown.
+# default_connection = "prod"
+
+# ── panels ────────────────────────────────────────────────────
+# Percentage shares, each 5..=95.
+# [layout]
+# sidebar = 25   # the sidebar's share of the frame width
+# ddl     = 60   # Ddl's share of the sidebar's height
+# queries = 10   # Queries' share of the main column's height
+
+# ── the results grid ──────────────────────────────────────────
+# [grid]
+# max_column_width = 24    # 1..=512, in cells
+# row_limit        = 500   # 1..=1000000; the LIMIT on a generated SELECT —
+#                          # how much data exists, not how much arrives at once
+
+# ── the driver ────────────────────────────────────────────────
+# [driver]
+# page_size          = 5000    # 1..=100000; rows per round trip
+# request_timeout_ms = 5000    # 1..=600000
+# connect_timeout_ms = 5000    # 1..=600000
+# consistency        = "local-quorum"   # any | one | two | three | quorum |
+#                                       # all | local-quorum | each-quorum |
+#                                       # local-one
+# compression        = "lz4"            # none | lz4 | snappy
+
+# ── export ────────────────────────────────────────────────────
+# Both unset by default; an export then asks for a destination.
+# [export]
+# path   = "~/exports"
+# prefix = "lc-"
+
+# [[connections]]
+# name       = "prod"                        # required; no whitespace
+# hosts      = ["10.0.0.1:9042", "10.0.0.2:9042"]
+# posture    = "read-only"                   # read-only | writable | protected
+# datacenter = "eu-west-1"                   # without this the driver will
+#                                            # happily cross a region
+# username   = "cassandra"
+# password   = "hunter2"                     # or { env = "CASSANDRA_PW" }
+#                                            # or { file = "~/.cassandra/pw" }
+
+# ── custom themes ─────────────────────────────────────────────
+# [[themes]]
+# name    = "midnight"          # may not shadow a built-in slug
+# extends = "default-dark"      # a built-in slug; a custom theme may not
+#                               # extend another custom theme
+
+# Any subset of the roles; what you leave out comes from `extends`.
+# [themes.colors]
+# base   = "#0b0d12"
+# focus  = "#7aa2f7"
+# danger = "#f7768e"
+#
+# The roles: base, surface, text, dim, faint, border, focus, selection_bg,
+# crosshair, ranged, selection_fg, selection_bar, shortcut, keyspace, table,
+# partition, clustering, column, label, section, accent, match, success,
+# warning, danger, info, keyword, reference, literal, comment.

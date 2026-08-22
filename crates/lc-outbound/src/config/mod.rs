@@ -5,6 +5,7 @@
 //! (docs/superpowers/specs/2026-08-14-configuration-design.md §7).
 
 mod discover;
+mod example;
 mod merge;
 mod validate;
 mod wire;
