@@ -153,6 +153,19 @@ mod tests {
         }
     }
 
+    /// The roles the example documents, read off its own list rather than
+    /// searched for one at a time: `table` and `comment` are ordinary words,
+    /// and a `contains` for either passes on any prose that happens to use
+    /// them.
+    fn documented_roles(source: &str) -> Vec<&str> {
+        let list = source.split_once("The roles:").map_or("", |(_, rest)| rest);
+        let list = list.split_once('.').map_or(list, |(before, _)| before);
+
+        list.split(',')
+            .map(|role| role.trim_matches(|c: char| c.is_whitespace() || c == '#'))
+            .collect()
+    }
+
     #[test]
     fn every_theme_and_role_is_named_in_the_example() {
         for built_in in lc_domain::theme::BuiltIn::ALL {
@@ -163,12 +176,15 @@ mod tests {
             );
         }
 
-        for role in lc_domain::theme::Role::ALL {
-            assert!(
-                EXAMPLE.contains(role.key()),
-                "the role `{}` is missing from the roles list",
-                role.key()
-            );
-        }
+        let expected: Vec<&str> = lc_domain::theme::Role::ALL
+            .iter()
+            .map(|role| role.key())
+            .collect();
+
+        assert_eq!(
+            documented_roles(EXAMPLE),
+            expected,
+            "the roles list must name every role, in the order `Role::ALL` declares them"
+        );
     }
 }
