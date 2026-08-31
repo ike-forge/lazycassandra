@@ -6,7 +6,7 @@
 
 use crate::clock::Stamp;
 use crate::commands::{CommandsPanel, Run};
-use crate::config::{Config, Diagnostic};
+use crate::config::{Config, ConnectionConfig, Diagnostic};
 use crate::contents::{ContentsState, Filter, SelectionMode, Subject, TableRef};
 use crate::cql;
 use crate::ddl::DdlTab;
@@ -123,7 +123,17 @@ pub enum Msg {
 /// `lc-app`, never here.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
-    Connect(ConnId),
+    /// Open a session to `target`. Carries the connection rather than only an
+    /// id: the adapter has no table to look one up in, and a picker means the
+    /// address is chosen at runtime rather than fixed when the adapter is
+    /// built (connection picker design §6).
+    ///
+    /// Boxed for `clippy::large_enum_variant`: a [`ConnectionConfig`] holds
+    /// four strings and a host list.
+    Connect {
+        conn: ConnId,
+        target: Box<ConnectionConfig>,
+    },
     LoadSchema(ConnId),
     Execute {
         conn: ConnId,
@@ -181,15 +191,17 @@ pub enum Source {
 /// performed behind the domain's back, so the first frame can already say
 /// "Connecting…" (architecture.md §3).
 ///
+/// Nothing is connected to unless a config named it. `default_connection` is
+/// the whole of that: it names one entry, so "exactly one connection is the
+/// default" is a property of the type rather than a rule the merge has to
+/// enforce, and a start with no default ends in the picker rather than at
+/// whatever address happened to be compiled in
+/// (connection picker design §2).
+///
 /// `now` is passed in for the reason `State::cwd` is: the domain cannot read
 /// a clock and must not learn how (query log design §4.1).
 #[must_use]
-pub fn init(
-    conn: ConnId,
-    config: Config,
-    diagnostics: Vec<Diagnostic>,
-    now: Stamp,
-) -> (State, Vec<Effect>) {
+pub fn init(config: Config, diagnostics: Vec<Diagnostic>, now: Stamp) -> (State, Vec<Effect>) {
     let mut state = State::default();
     state.now = now;
     state.theme = config.theme.clone();
@@ -214,17 +226,20 @@ pub fn init(
     state.overlay =
         (!diagnostics.is_empty()).then(|| Overlay::Diagnostics(DiagnosticsPanel::new(diagnostics)));
     state.config = config;
-    state.connection = ConnectionState::Connecting(conn);
+    state.connection = ConnectionState::Unchosen;
     state.dirty = true;
-    state.log.push(Entry::new(
-        now,
-        sentence("Connecting"),
-        Outcome::Pending {
-            trace: Trace::Connect(conn),
-        },
-    ));
 
-    (state, vec![Effect::Connect(conn)])
+    // The picker is not opened here: it is a block sized against a frame, and
+    // at `init` there has been none to measure. `offer_connections` opens it
+    // at the first measurement instead — and again after the diagnostics
+    // modal is dismissed, which is what claims startup's first frame whenever
+    // the config had anything wrong with it (connection picker design §4).
+    let target = default_connection_index(&state.config)
+        .and_then(|at| state.config.connections.get(at))
+        .cloned();
+    let effects = target.map_or_else(Vec::new, |target| connect(&mut state, target));
+
+    (state, effects)
 }
 
 /// Applies a message and returns the effects it implies.
@@ -846,6 +861,11 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return themes_key(state, press.key);
     }
 
+    // The connection picker, on the same terms as the theme picker above.
+    if matches!(state.overlay, Some(Overlay::Connections { .. })) {
+        return connections_key(state, press.key);
+    }
+
     // A prompt takes text, so it claims every printable key — the
     // panel-that-takes-text rule, applied to an overlay (design §1.1).
     if matches!(state.overlay, Some(Overlay::Search(_))) {
@@ -956,7 +976,7 @@ fn takes_text(state: &State) -> bool {
         // design §5): the letters that would otherwise move the cursor or
         // close the overlay type themselves instead.
         Some(Overlay::Commands(panel)) => panel.sift().is_some(),
-        Some(Overlay::Themes { sift, .. }) => sift.is_some(),
+        Some(Overlay::Themes { sift, .. } | Overlay::Connections { sift, .. }) => sift.is_some(),
         // `Fatal` is unreachable here — `handle_key` claims every press for
         // it before this is consulted — but written down anyway, rather than
         // grouped with `Message`/`None`, because neither it nor `Diagnostics`
@@ -974,6 +994,7 @@ fn takes_text(state: &State) -> bool {
 /// `PageDown` (docs/shortcuts.md §1).
 fn goto(state: &mut State, edge: Edge) {
     let last = BuiltIn::ALL.len() + state.config.themes.len();
+    let connections = state.config.connections.len();
 
     match &mut state.overlay {
         Some(Overlay::Commands(panel)) => match edge {
@@ -991,6 +1012,10 @@ fn goto(state: &mut State, edge: Edge) {
             }
             preview_theme(state);
         }
+        Some(Overlay::Connections { cursor, .. }) => match edge {
+            Edge::Start => cursor.to_start(),
+            Edge::End => cursor.to_end(connections),
+        },
         Some(Overlay::Message(_)) | None => scroll(state, edge.motion()),
         // The drop confirmation drives no list either, and `Fatal` never
         // reaches here for `takes_text`'s reason.
@@ -1683,6 +1708,25 @@ fn escape(state: &mut State) {
             state.theme = restored;
             return;
         }
+        Some(Overlay::Connections {
+            cursor,
+            sift: Some(sift),
+        }) => {
+            let mut cursor = cursor;
+            cursor.go_to(sift.origin(), state.config.connections.len());
+            state.overlay = Some(Overlay::Connections { cursor, sift: None });
+            return;
+        }
+        // A dismissed picker leaves `Disconnected` rather than `Unchosen`, so
+        // `offer_connections` does not put it straight back up: waving the
+        // picker away is a choice, and the panels are allowed to stay empty
+        // (connection picker design §4).
+        Some(Overlay::Connections { .. }) => {
+            if matches!(state.connection, ConnectionState::Unchosen) {
+                state.connection = ConnectionState::Disconnected;
+            }
+            return;
+        }
         Some(Overlay::Commands(mut panel)) if panel.sift().is_some() => {
             panel.restore_origin();
             state.overlay = Some(Overlay::Commands(panel));
@@ -1698,7 +1742,13 @@ fn escape(state: &mut State) {
             | Overlay::Export(_)
             | Overlay::Filter(_)
             | Overlay::Drop(_),
-        ) => return,
+        ) => {
+            // The diagnostics modal is what claims startup's first frame when
+            // the config had anything wrong with it; closing it is where the
+            // picker underneath finally gets its turn.
+            offer_connections(state);
+            return;
+        }
         // Not dismissable: `handle_key` claims `Esc` for `Fatal` before this
         // function is reached, so the only caller left is a click routed
         // through here by `handle_pointer`, which must not spend itself on
@@ -1855,6 +1905,10 @@ fn run_selected(state: &mut State) -> Vec<Effect> {
 fn diagnostics_key(state: &mut State, key: Key) -> Vec<Effect> {
     if matches!(key, Key::Escape) {
         state.overlay = None;
+        // What the config got wrong is read before a connection is chosen, so
+        // this dismissal is where the picker underneath gets its turn
+        // (connection picker design §4).
+        offer_connections(state);
         return Vec::new();
     }
 
@@ -2120,6 +2174,217 @@ fn themes_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
+/// The picker's rows in picker order, which is the order the merge defined:
+/// global entries first, then local-only ones (configuration design §5).
+///
+/// The one builder for that order, shared with [`crate::view`]'s
+/// `OverlayView::Connections`, for the reason [`theme_labels`] is shared —
+/// the search's correctness claim is that `connection_names[i]` names the row
+/// the renderer draws at `i`.
+pub(crate) fn connection_names(config: &Config) -> Vec<String> {
+    config
+        .connections
+        .iter()
+        .map(|connection| connection.name.as_str().to_owned())
+        .collect()
+}
+
+/// The connection `default_connection` names, as an index into
+/// [`connection_names`].
+fn default_connection_index(config: &Config) -> Option<usize> {
+    let name = config.default_connection.as_ref()?;
+
+    config
+        .connections
+        .iter()
+        .position(|connection| connection.name == *name)
+}
+
+/// Opens the connection picker, seated on the default connection when there
+/// is one and the first entry otherwise.
+///
+/// Refused where the frame cannot draw the list, for [`open_themes`]'s
+/// reason, and over a live prompt for the same reason it is — with one
+/// exception: a picker with *nothing* to list is guidance rather than a list,
+/// and is opened whatever the row count, because a user with no connections
+/// is exactly the user who most needs telling why the panels are empty
+/// (connection picker design §3).
+fn open_connections(state: &mut State) {
+    let last = state.config.connections.len();
+    let busy = matches!(state.overlay, Some(Overlay::Search(_)));
+    // The guidance an empty list draws is a block the size of a message, so
+    // it is gated on the signal every other modal is gated on rather than on
+    // rows it does not have (design §3, §7).
+    let fits = if last == 0 {
+        state.geometry.command_rows() > 0
+    } else {
+        last <= state.geometry.connection_rows()
+    };
+
+    if busy || !fits {
+        return;
+    }
+
+    let mut cursor = Cursor::default();
+    cursor.go_to(default_connection_index(&state.config).unwrap_or(0), last);
+
+    state.overlay = Some(Overlay::Connections { cursor, sift: None });
+}
+
+/// What an open picker responds to.
+///
+/// Unlike [`themes_key`] a motion previews nothing: a connection is reached
+/// by opening it, and opening one is a round trip to a cluster rather than a
+/// repaint. So `⏎` is the only key that acts, and `esc` leaves the connection
+/// as it was (connection picker design §3).
+fn connections_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(
+        state.overlay,
+        Some(Overlay::Connections { sift: Some(_), .. })
+    ) {
+        return connections_sift_key(state, key);
+    }
+
+    match key {
+        Key::Char('q') => return quit(state),
+        Key::Enter => return choose_connection(state),
+        // Nothing to search when there is nothing listed: the bar names no
+        // `/` on an empty picker, and the key must agree with it.
+        Key::Char('/') if state.config.connections.is_empty() => return Vec::new(),
+        Key::Escape => {
+            escape(state);
+            return Vec::new();
+        }
+        _ => {}
+    }
+
+    let last = state.config.connections.len();
+    let height = state.geometry.connection_rows();
+    let Some(Overlay::Connections { cursor, sift }) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char('j') | Key::Down => cursor.down(last),
+        Key::Char('k') | Key::Up => cursor.up(),
+        Key::PageDown => cursor.page_down(last, height),
+        Key::PageUp => cursor.page_up(height),
+        Key::Home => cursor.to_start(),
+        Key::End => cursor.to_end(last),
+        Key::Char('/') => *sift = Some(Sift::opened(cursor.index())),
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+/// What a picker with a live sift responds to — [`themes_sift_key`]'s
+/// contract, over a list that previews nothing.
+fn connections_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(key, Key::Escape) {
+        escape(state);
+        return Vec::new();
+    }
+
+    let names = connection_names(&state.config);
+    let Some(Overlay::Connections { cursor, sift }) = &mut state.overlay else {
+        return Vec::new();
+    };
+    let Some(open) = sift else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char(character) => open.push(character),
+        Key::Backspace => {
+            if !open.pop() {
+                *sift = None;
+                return Vec::new();
+            }
+        }
+        // `⏎` closes the prompt onto the row it left the cursor on rather
+        // than connecting: a term typed to find an entry should not also open
+        // it, when the entry the cursor happens to hold may not be the one
+        // the user was still narrowing towards (connection picker design §5).
+        Key::Enter => {
+            // A term that matched nothing holds no row, so the cursor goes
+            // back where the prompt opened rather than staying on the row it
+            // was pushed to — the same landing `Esc` makes. Leaving it would
+            // seat the cursor on an entry the filter had hidden, and the next
+            // `⏎` would open a connection the user never saw
+            // (connection picker design §5).
+            let at = picker_matches(&names, open.search().as_ref())
+                .get(cursor.index())
+                .copied()
+                .unwrap_or_else(|| open.origin());
+            *sift = None;
+            cursor.go_to(at, names.len());
+            return Vec::new();
+        }
+        _ => return Vec::new(),
+    }
+
+    let origin = open.origin();
+    let matches = picker_matches(&names, open.search().as_ref());
+    let seat = matches
+        .iter()
+        .position(|at| *at >= origin)
+        .unwrap_or_else(|| matches.len().saturating_sub(1));
+    cursor.go_to(seat, matches.len());
+
+    Vec::new()
+}
+
+/// Connects to the row the picker's cursor holds.
+///
+/// The cursor counts in the rows a live sift left, so it is resolved through
+/// those before the config is asked — [`preview_theme`]'s rule, applied to a
+/// list where landing on the wrong row costs a connection rather than a
+/// repaint. A term that matched nothing holds no row and connects to nothing.
+fn choose_connection(state: &mut State) -> Vec<Effect> {
+    let names = connection_names(&state.config);
+    let Some(Overlay::Connections { cursor, sift }) = &state.overlay else {
+        return Vec::new();
+    };
+    let search = sift.as_ref().and_then(Sift::search);
+    let Some(target) = picker_matches(&names, search.as_ref())
+        .get(cursor.index())
+        .copied()
+        .and_then(|at| state.config.connections.get(at))
+        .cloned()
+    else {
+        return Vec::new();
+    };
+
+    state.overlay = None;
+
+    connect(state, target)
+}
+
+/// Begins a connection to `target`, whatever the state was before.
+///
+/// Shared by the startup path and the picker: an id is minted here so a
+/// result that arrives after the user has moved on can be dropped by
+/// `is_current`, which is the whole reason [`ConnId`] is carried
+/// (architecture.md §3).
+fn connect(state: &mut State, target: ConnectionConfig) -> Vec<Effect> {
+    let conn = ConnId::next();
+
+    state.connection = ConnectionState::Connecting(conn);
+    state.log.push(Entry::new(
+        state.now,
+        sentence(format!("Connecting to {}", target.name.as_str())),
+        Outcome::Pending {
+            trace: Trace::Connect(conn),
+        },
+    ));
+
+    vec![Effect::Connect {
+        conn,
+        target: Box::new(target),
+    }]
+}
+
 #[derive(Clone, Copy)]
 enum Transition {
     Open,
@@ -2176,6 +2441,7 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
         Some(
             Overlay::Commands(_)
                 | Overlay::Themes { .. }
+                | Overlay::Connections { .. }
                 | Overlay::Diagnostics(_)
                 | Overlay::Export(_)
                 | Overlay::Filter(_)
@@ -2189,6 +2455,14 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::Char('r') => run(state),
         Key::Char('t') => {
             open_themes(state);
+            Vec::new()
+        }
+        // The way back to the picker. Without it a dismissed picker is
+        // final — `Esc` leaves `Disconnected`, which nothing re-offers — and
+        // a user who opened the wrong cluster would have to restart the tool
+        // to reach another (connection picker design §5).
+        Key::Char('o') => {
+            open_connections(state);
             Vec::new()
         }
         Key::Char('e') => ctrl_e(state),
@@ -2883,6 +3157,7 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
     match &state.overlay {
         Some(Overlay::Commands(_)) => palette_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
+        Some(Overlay::Connections { .. }) => connections_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does;
         // the form and the filter modal have nothing paged either, and the
@@ -3197,7 +3472,46 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         state.mark_dirty();
     }
 
+    // The connection picker shrinks out the same way, on its own gate — with
+    // the exception `open_connections` makes: an empty list is guidance, not
+    // a list, and there are no rows for a frame to be too short for.
+    if geometry.connection_rows() == 0
+        && !state.config.connections.is_empty()
+        && matches!(state.overlay, Some(Overlay::Connections { .. }))
+    {
+        state.overlay = None;
+        state.mark_dirty();
+    }
+
+    // Last, so a picker is offered only into a frame the guards above have
+    // already emptied. `init` had no frame to size one against, so this
+    // measurement is where an unchosen connection gets its offer
+    // (connection picker design §4).
+    offer_connections(state);
+
     Vec::new()
+}
+
+/// Opens the picker where the frame is free and nothing has been chosen.
+///
+/// Called from the two places the frame becomes free with the connection
+/// still unmade: the first measurement, since `init` runs before there is a
+/// frame, and a dismissal, since the diagnostics modal claims startup's first
+/// frame whenever the config had anything wrong with it.
+///
+/// Keyed on [`ConnectionState::Unchosen`] and not on "not connected", which
+/// is what makes a picker the user has waved away stay away: dismissing it
+/// leaves `Disconnected`, and nothing here re-offers that.
+fn offer_connections(state: &mut State) {
+    if !matches!(state.connection, ConnectionState::Unchosen) || state.overlay.is_some() {
+        return;
+    }
+
+    open_connections(state);
+
+    if state.overlay.is_some() {
+        state.mark_dirty();
+    }
 }
 
 /// The panels whose viewport `update` follows by index. Ddl keeps its own: its
@@ -3599,7 +3913,7 @@ mod tests {
     use super::*;
     use crate::clock::Stamp;
     use crate::commands::{CATALOGUE, CommandsPanel, Run};
-    use crate::config::{Config, Diagnostic, Icons, Origin, Span as ConfigSpan};
+    use crate::config::{Config, ConnectionName, Diagnostic, Icons, Origin, Span as ConfigSpan};
     use crate::contents::{ContentsState, SelectionMode};
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
@@ -3615,6 +3929,42 @@ mod tests {
         tabled_schema(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
     }
 
+    /// A config naming one connection and making it the default.
+    ///
+    /// What `init` needs before it opens anything at all: nothing is reached
+    /// unless a file named it, so `Config::default()` now starts in the
+    /// picker rather than on a cluster (connection picker design §2).
+    fn connecting_config() -> Config {
+        let name = ConnectionName::try_new("fixture").expect("a valid name");
+
+        Config {
+            connections: vec![ConnectionConfig {
+                name: name.clone(),
+                hosts: vec!["127.0.0.1:9042".to_owned()],
+                posture: Posture::ReadOnly,
+                datacenter: None,
+                username: None,
+                password: None,
+            }],
+            default_connection: Some(name),
+            ..Config::default()
+        }
+    }
+
+    /// Starts up on a config with a default connection, and reports the id
+    /// `init` minted for it — the id is no longer the caller's to choose.
+    fn started_on_default(
+        diagnostics: Vec<Diagnostic>,
+        now: Stamp,
+    ) -> (State, ConnId, Vec<Effect>) {
+        let (state, effects) = init(connecting_config(), diagnostics, now);
+        let Some(Effect::Connect { conn, .. }) = effects.first() else {
+            panic!("a config naming a default connection opens it at startup");
+        };
+
+        (state, *conn, effects)
+    }
+
     fn connected(posture: Posture) -> State {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
@@ -3627,16 +3977,14 @@ mod tests {
 
     #[test]
     fn starting_up_logs_the_connection_it_is_opening() {
-        let (state, _effects) = init(
-            ConnId::next(),
-            Config::default(),
-            Vec::new(),
-            Stamp::new(14, 2, 9),
-        );
+        let (state, _conn, _effects) = started_on_default(Vec::new(), Stamp::new(14, 2, 9));
 
         let entry = state.log.entries().next().expect("an entry per effect");
         assert_eq!(entry.at(), Stamp::new(14, 2, 9));
-        assert!(entry.subject().text().starts_with("Connecting"));
+        assert!(
+            entry.subject().text().starts_with("Connecting to fixture"),
+            "the trail names which connection, now that there is more than one to name"
+        );
         assert!(matches!(
             entry.outcome(),
             Outcome::Pending {
@@ -3647,8 +3995,7 @@ mod tests {
 
     #[test]
     fn connecting_completes_the_entry_that_was_waiting_on_it() {
-        let conn = ConnId::next();
-        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let (mut state, conn, _effects) = started_on_default(Vec::new(), Stamp::default());
 
         let _effects = update(
             &mut state,
@@ -3669,8 +4016,7 @@ mod tests {
 
     #[test]
     fn a_failed_connection_leaves_its_reason_in_the_trail() {
-        let conn = ConnId::next();
-        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let (mut state, conn, _effects) = started_on_default(Vec::new(), Stamp::default());
 
         let _effects = update(
             &mut state,
@@ -3690,8 +4036,7 @@ mod tests {
 
     #[test]
     fn a_failed_startup_connection_raises_a_modal_that_ends_the_process() {
-        let conn = ConnId::next();
-        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let (mut state, conn, _effects) = started_on_default(Vec::new(), Stamp::default());
 
         let _effects = update(
             &mut state,
@@ -3707,8 +4052,7 @@ mod tests {
 
     #[test]
     fn the_fatal_modal_quits_rather_than_dismissing() {
-        let conn = ConnId::next();
-        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let (mut state, conn, _effects) = started_on_default(Vec::new(), Stamp::default());
         let _effects = update(
             &mut state,
             Msg::ConnectFailed {
@@ -3736,13 +4080,8 @@ mod tests {
     // The config diagnostics describe a session that is not going to happen.
     #[test]
     fn a_fatal_modal_replaces_the_diagnostics_it_lands_on() {
-        let conn = ConnId::next();
-        let (mut state, _effects) = init(
-            conn,
-            Config::default(),
-            vec![diagnostic("boom")],
-            Stamp::default(),
-        );
+        let (mut state, conn, _effects) =
+            started_on_default(vec![diagnostic("boom")], Stamp::default());
         assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
 
         let _effects = update(
@@ -3760,7 +4099,6 @@ mod tests {
     #[test]
     fn what_the_config_got_wrong_is_in_the_trail_as_well_as_the_modal() {
         let (state, _effects) = init(
-            ConnId::next(),
             Config::default(),
             vec![diagnostic("boom")],
             Stamp::default(),
@@ -3788,8 +4126,7 @@ mod tests {
 
     #[test]
     fn connecting_logs_the_schema_read_it_starts() {
-        let conn = ConnId::next();
-        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let (mut state, conn, _effects) = started_on_default(Vec::new(), Stamp::default());
 
         let _effects = update(
             &mut state,
@@ -3811,8 +4148,7 @@ mod tests {
 
     #[test]
     fn a_loaded_schema_reports_what_it_found() {
-        let conn = ConnId::next();
-        let (mut state, _effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let (mut state, conn, _effects) = started_on_default(Vec::new(), Stamp::default());
         let _effects = update(
             &mut state,
             Msg::Connected {
@@ -4124,15 +4460,258 @@ mod tests {
         );
     }
 
+    /// Design §2: a config that names a default connection opens it, and one
+    /// that does not opens nothing — the tool reaches no cluster a file did
+    /// not name.
     #[test]
-    fn the_application_starts_by_connecting() {
-        let conn = ConnId::next();
+    fn a_config_naming_a_default_connection_opens_it_at_startup() {
+        let (state, conn, effects) = started_on_default(Vec::new(), Stamp::default());
 
-        let (state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
-
-        assert_eq!(effects, vec![Effect::Connect(conn)]);
+        assert!(
+            matches!(effects.as_slice(), [Effect::Connect { conn: id, target }]
+                if *id == conn && target.name.as_str() == "fixture"),
+            "the effect carries the connection it opens, not only an id"
+        );
         assert!(state.connection.is_current(conn));
         assert!(state.dirty, "the first frame must be painted");
+    }
+
+    /// A config naming `count` connections, none of them the default.
+    fn config_of(names: &[&str]) -> Config {
+        Config {
+            connections: names
+                .iter()
+                .map(|name| ConnectionConfig {
+                    name: ConnectionName::try_new(name).expect("a valid name"),
+                    hosts: vec![format!("{name}.example:9042")],
+                    posture: Posture::ReadOnly,
+                    datacenter: None,
+                    username: None,
+                    password: None,
+                })
+                .collect(),
+            ..Config::default()
+        }
+    }
+
+    /// A frame the picker and the palette both fit in.
+    const ROOMY: Geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+
+    fn roomy() -> Geometry {
+        ROOMY.with_connection_rows(20).with_theme_rows(20)
+    }
+
+    /// Startup on `config`, carried to the first measurement — which is where
+    /// the picker is offered, `init` having had no frame to size one against.
+    fn started_on(config: Config) -> State {
+        let (mut state, _effects) = init(config, Vec::new(), Stamp::default());
+        update(&mut state, Msg::Measured(roomy()));
+        state
+    }
+
+    fn connection_picker(state: &State) -> Option<usize> {
+        match state.overlay.as_ref()? {
+            Overlay::Connections { cursor, .. } => Some(cursor.index()),
+            _ => None,
+        }
+    }
+
+    /// Design §4: a config with connections but no default opens the picker
+    /// rather than guessing which one was meant.
+    #[test]
+    fn connections_with_no_default_open_the_picker() {
+        let state = started_on(config_of(&["prod", "staging"]));
+
+        assert_eq!(
+            connection_picker(&state),
+            Some(0),
+            "the picker opens on the first entry when no default names one"
+        );
+        assert!(matches!(state.connection, ConnectionState::Unchosen));
+    }
+
+    /// Design §2: the default is seated under the cursor, so `⏎` on an opened
+    /// picker is the same connection a start with no picker would have made.
+    #[test]
+    fn the_picker_opens_seated_on_the_default_connection() {
+        let mut config = config_of(&["prod", "staging", "dev"]);
+        config.default_connection = Some(ConnectionName::try_new("dev").expect("a valid name"));
+        let mut state = started_on(config);
+        // A default connects at startup rather than opening the picker, so it
+        // is reopened by hand to see where its cursor lands.
+        state.connection = ConnectionState::Disconnected;
+        state.overlay = None;
+        open_connections(&mut state);
+
+        assert_eq!(connection_picker(&state), Some(2));
+    }
+
+    /// Design §3: nothing to list is not a short list — the picker still
+    /// opens, because a user with no connections is the one who most needs
+    /// telling why the panels are empty.
+    #[test]
+    fn a_config_with_no_connections_still_opens_the_picker() {
+        let state = started_on(Config::default());
+
+        assert_eq!(connection_picker(&state), Some(0));
+    }
+
+    #[test]
+    fn enter_on_the_picker_connects_to_the_row_under_the_cursor() {
+        let mut state = started_on(config_of(&["prod", "staging"]));
+
+        press(&mut state, Key::Char('j'));
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            matches!(effects.as_slice(), [Effect::Connect { target, .. }]
+                if target.name.as_str() == "staging"),
+            "the second row is the one opened: {effects:?}"
+        );
+        assert!(state.overlay.is_none(), "the picker closes behind it");
+    }
+
+    /// Design §4: dismissing the picker is a choice, and nothing puts it back
+    /// up — otherwise `esc` would be inert and the tool unusable without a
+    /// connection.
+    #[test]
+    fn a_dismissed_picker_is_not_offered_again() {
+        let mut state = started_on(config_of(&["prod"]));
+
+        press(&mut state, Key::Escape);
+        assert!(state.overlay.is_none());
+        assert!(matches!(state.connection, ConnectionState::Disconnected));
+
+        update(&mut state, Msg::Measured(roomy().with_grid_width(40)));
+
+        assert!(
+            state.overlay.is_none(),
+            "a measurement must not resurrect a picker the user waved away"
+        );
+    }
+
+    /// Design §5: `ctrl-o` is the way back, so a dismissed picker — or a
+    /// connection opened by mistake — is not final.
+    #[test]
+    fn ctrl_o_reopens_the_picker() {
+        let mut state = started_on(config_of(&["prod"]));
+        press(&mut state, Key::Escape);
+
+        update(&mut state, Msg::Input(KeyPress::ctrl(Key::Char('o'))));
+
+        assert_eq!(connection_picker(&state), Some(0));
+    }
+
+    /// Design §4: the diagnostics modal claims startup's first frame, so the
+    /// picker underneath waits for it rather than being lost.
+    #[test]
+    fn the_picker_waits_behind_the_diagnostics_modal_and_opens_when_it_closes() {
+        let (mut state, _effects) = init(
+            config_of(&["prod"]),
+            vec![diagnostic("boom")],
+            Stamp::default(),
+        );
+        update(&mut state, Msg::Measured(roomy()));
+
+        assert!(
+            matches!(state.overlay, Some(Overlay::Diagnostics(_))),
+            "what the config got wrong is read before a connection is chosen"
+        );
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(
+            connection_picker(&state),
+            Some(0),
+            "closing the diagnostics gives the picker its turn"
+        );
+    }
+
+    /// Overlay filter design §1: the term filters the list, and `⏎` after it
+    /// opens the row the cursor was left on.
+    #[test]
+    fn a_term_filters_the_picker_and_enter_connects_to_what_it_left() {
+        let mut state = started_on(config_of(&["prod", "staging", "dev"]));
+
+        press(&mut state, Key::Char('/'));
+        for character in "sta".chars() {
+            press(&mut state, Key::Char(character));
+        }
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            effects.is_empty(),
+            "the first enter closes the prompt rather than connecting"
+        );
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            matches!(effects.as_slice(), [Effect::Connect { target, .. }]
+                if target.name.as_str() == "staging"),
+            "the row the term left is the row opened: {effects:?}"
+        );
+    }
+
+    /// Design §5: a term that kept nothing holds no row, so closing it opens
+    /// nothing and puts the cursor back where the prompt started — never on
+    /// an entry the filter had hidden.
+    #[test]
+    fn a_term_that_matches_nothing_opens_nothing_and_restores_the_cursor() {
+        let mut state = started_on(config_of(&["prod", "staging", "dev"]));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('/'));
+        for character in "zzz".chars() {
+            press(&mut state, Key::Char(character));
+        }
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            effects.is_empty(),
+            "a term holding no row opens no connection"
+        );
+        assert_eq!(
+            connection_picker(&state),
+            Some(1),
+            "the cursor lands back where the prompt opened"
+        );
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            matches!(effects.as_slice(), [Effect::Connect { target, .. }]
+                if target.name.as_str() == "staging"),
+            "and the row it landed on is the visible one: {effects:?}"
+        );
+    }
+
+    /// The posture the picker names is the connection's own, which is what
+    /// `Posture::default()` being `ReadOnly` protects: opening `writable`
+    /// has to be something a file said.
+    #[test]
+    fn the_connection_opened_carries_its_own_posture() {
+        let mut config = config_of(&["prod"]);
+        config.connections[0].posture = Posture::Writable;
+        let mut state = started_on(config);
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            matches!(effects.as_slice(), [Effect::Connect { target, .. }]
+                if target.posture == Posture::Writable),
+        );
+    }
+
+    #[test]
+    fn a_config_naming_no_default_connects_to_nothing() {
+        let (state, effects) = init(Config::default(), Vec::new(), Stamp::default());
+
+        assert!(
+            effects.is_empty(),
+            "no file named a cluster, so none is reached"
+        );
+        assert!(matches!(state.connection, ConnectionState::Unchosen));
     }
 
     // The connection entry is pushed before any tick has arrived, so a defaulted
@@ -4140,24 +4719,14 @@ mod tests {
     // with a time that never happened (query log design §4.1).
     #[test]
     fn the_startup_state_is_stamped_by_its_caller() {
-        let (state, _effects) = init(
-            ConnId::next(),
-            Config::default(),
-            Vec::new(),
-            Stamp::new(9, 30, 0),
-        );
+        let (state, _effects) = init(Config::default(), Vec::new(), Stamp::new(9, 30, 0));
 
         assert_eq!(state.now, Stamp::new(9, 30, 0));
     }
 
     #[test]
     fn a_config_with_nothing_wrong_opens_no_overlay() {
-        let (state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            Vec::new(),
-            Stamp::default(),
-        );
+        let (state, _) = init(Config::default(), Vec::new(), Stamp::default());
 
         assert!(state.overlay.is_none());
     }
@@ -4173,12 +4742,7 @@ mod tests {
             severity: Severity::Danger,
             message: "connection `dev`: `posture` unknown value \"read\"".to_owned(),
         };
-        let (mut state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            vec![diagnostic],
-            Stamp::default(),
-        );
+        let (mut state, _) = init(Config::default(), vec![diagnostic], Stamp::default());
 
         assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
 
@@ -4208,12 +4772,7 @@ mod tests {
 
     #[test]
     fn a_single_diagnostic_leaves_the_cursor_nowhere_to_go() {
-        let (mut state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            vec![diagnostic("one")],
-            Stamp::default(),
-        );
+        let (mut state, _) = init(Config::default(), vec![diagnostic("one")], Stamp::default());
 
         let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
         let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
@@ -4224,12 +4783,7 @@ mod tests {
     #[test]
     fn motion_walks_the_diagnostics_and_stops_on_the_last_row() {
         let diagnostics = vec![diagnostic("one"), diagnostic("two"), diagnostic("three")];
-        let (mut state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            diagnostics,
-            Stamp::default(),
-        );
+        let (mut state, _) = init(Config::default(), diagnostics, Stamp::default());
 
         for _ in 0..5 {
             let _ = update(&mut state, Msg::Input(KeyPress::new(Key::Char('j'))));
@@ -4250,7 +4804,7 @@ mod tests {
             icons: Icons::Off,
             ..Config::default()
         };
-        let (state, _) = init(ConnId::next(), config.clone(), Vec::new(), Stamp::default());
+        let (state, _) = init(config.clone(), Vec::new(), Stamp::default());
 
         assert_eq!(
             state.config, config,
@@ -4264,15 +4818,14 @@ mod tests {
             theme: ThemeChoice::Ours(Ours::QuillLight),
             ..Config::default()
         };
-        let (state, _) = init(ConnId::next(), config, Vec::new(), Stamp::default());
+        let (state, _) = init(config, Vec::new(), Stamp::default());
 
         assert_eq!(state.theme, ThemeChoice::Ours(Ours::QuillLight));
     }
 
     #[test]
     fn connecting_successfully_asks_for_the_schema() {
-        let conn = ConnId::next();
-        let (mut state, _) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let (mut state, conn, _) = started_on_default(Vec::new(), Stamp::default());
 
         let effects = update(
             &mut state,
@@ -4289,12 +4842,7 @@ mod tests {
 
     #[test]
     fn a_connected_message_for_a_stale_attempt_is_ignored() {
-        let (mut state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            Vec::new(),
-            Stamp::default(),
-        );
+        let (mut state, conn, _) = started_on_default(Vec::new(), Stamp::default());
 
         let effects = update(
             &mut state,
@@ -4307,15 +4855,14 @@ mod tests {
 
         assert!(effects.is_empty());
         assert!(
-            matches!(state.connection, ConnectionState::Connecting(_)),
+            state.connection.is_current(conn),
             "a Connected message for a connection we are no longer waiting on must not be applied"
         );
     }
 
     #[test]
     fn a_failed_connection_is_recorded_and_raised() {
-        let conn = ConnId::next();
-        let (mut state, _) = init(conn, Config::default(), Vec::new(), Stamp::default());
+        let (mut state, conn, _) = started_on_default(Vec::new(), Stamp::default());
 
         let effects = update(
             &mut state,
@@ -4337,12 +4884,7 @@ mod tests {
 
     #[test]
     fn a_failed_connection_for_a_stale_attempt_is_dropped() {
-        let (mut state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            Vec::new(),
-            Stamp::default(),
-        );
+        let (mut state, conn, _) = started_on_default(Vec::new(), Stamp::default());
 
         update(
             &mut state,
@@ -4354,7 +4896,7 @@ mod tests {
         );
 
         assert!(state.overlay.is_none());
-        assert!(matches!(state.connection, ConnectionState::Connecting(_)));
+        assert!(state.connection.is_current(conn));
     }
 
     #[test]
@@ -4494,6 +5036,7 @@ mod tests {
             Overlay::Message(_)
             | Overlay::Search(_)
             | Overlay::Themes { .. }
+            | Overlay::Connections { .. }
             | Overlay::Diagnostics(_)
             | Overlay::Export(_)
             | Overlay::Filter(_)
@@ -5229,12 +5772,7 @@ mod tests {
     /// palette's.
     #[test]
     fn a_frame_that_shrinks_below_the_diagnostics_modal_closes_it() {
-        let (mut state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            vec![diagnostic("one")],
-            Stamp::default(),
-        );
+        let (mut state, _) = init(Config::default(), vec![diagnostic("one")], Stamp::default());
         state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
         assert!(matches!(state.overlay, Some(Overlay::Diagnostics(_))));
 
@@ -9347,12 +9885,7 @@ mod tests {
     #[test]
     fn gg_and_shift_g_reach_the_ends_of_the_diagnostics() {
         let diagnostics = vec![diagnostic("one"), diagnostic("two"), diagnostic("three")];
-        let (mut state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            diagnostics,
-            Stamp::default(),
-        );
+        let (mut state, _) = init(Config::default(), diagnostics, Stamp::default());
 
         press(&mut state, Key::Char('G'));
         assert_eq!(diagnostics_cursor(&state), 2);
@@ -12196,12 +12729,7 @@ mod tests {
     /// from under it would destroy those diagnostics for good.
     #[test]
     fn ctrl_t_is_refused_over_diagnostics() {
-        let (mut state, _) = init(
-            ConnId::next(),
-            Config::default(),
-            vec![diagnostic("one")],
-            Stamp::default(),
-        );
+        let (mut state, _) = init(Config::default(), vec![diagnostic("one")], Stamp::default());
 
         ctrl(&mut state, Key::Char('t'));
 

@@ -26,12 +26,13 @@ pub use title::{PanelTitle, TAB_SEPARATOR, Tab};
 pub use crate::editor::Position;
 
 use crate::commands::{self, CommandRow};
-use crate::config::Diagnostic;
+use crate::config::{Config, ConnectionConfig, Diagnostic};
 use crate::contents::SelectionMode;
 use crate::cql::{CandidateKind, Completion};
 use crate::ddl::DdlTab;
 use crate::drop::Answer;
 use crate::export::{Confirm, Format, Scope, Stop};
+use crate::posture::Posture;
 use crate::queries::QueriesTab;
 use crate::search::{Direction, Search, Sift};
 use crate::state::{Message, Overlay, Panel, Ranges, State};
@@ -102,6 +103,30 @@ pub enum OverlayView {
         selected: usize,
         sift: Option<SiftView>,
     },
+    /// The connection picker's rows and where its cursor is.
+    ///
+    /// Carries every row and the indices a sift left, where
+    /// [`Self::Themes`] carries only the surviving labels. The difference is
+    /// what the block needs to size itself: a theme is one string and its
+    /// block a fixed width, while a connection row is a name, a host list and
+    /// a posture, and the widest of those sets the width. Sizing that from
+    /// the rows a filter left would move the border as the user typed, which
+    /// is what the filter design forbids (overlay filter design §2).
+    Connections {
+        /// Every connection there is, in picker order.
+        rows: Vec<ConnectionRow>,
+        /// Indices into `rows` that a live sift left, and every index when
+        /// there is none.
+        matched: Vec<usize>,
+        /// Where the cursor is, counted in `matched`.
+        selected: usize,
+        sift: Option<SiftView>,
+        /// Where a connection would be written, for the guidance an empty
+        /// list draws in place of a picker. `None` when neither
+        /// `$XDG_CONFIG_HOME` nor `$HOME` is set and there is no global file
+        /// to name (connection picker design §3).
+        config_home: Option<String>,
+    },
     /// The config diagnostics' rows and where its cursor is.
     Diagnostics {
         rows: Vec<DiagnosticRow>,
@@ -123,6 +148,21 @@ pub enum OverlayView {
     /// A startup failure with no dismissal, only `q`/`esc` ending the
     /// process (query log design §7).
     Fatal(Message),
+}
+
+/// One connection as a renderer needs it.
+///
+/// `hosts` arrives joined rather than as a list: the picker draws one row per
+/// connection, and how a host list is punctuated is a rendering decision the
+/// domain would otherwise be making twice — once here and once in the block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionRow {
+    pub name: String,
+    pub hosts: String,
+    pub posture: Posture,
+    /// Whether `default_connection` names this one — the entry a start with
+    /// no picker connects to, marked so the list says which that is.
+    pub is_default: bool,
 }
 
 /// One diagnostic as a renderer needs it: the location already formatted, so
@@ -230,6 +270,18 @@ fn sift_view(sift: &Sift) -> SiftView {
     }
 }
 
+fn connection_row(config: &Config, connection: &ConnectionConfig) -> ConnectionRow {
+    ConnectionRow {
+        name: connection.name.as_str().to_owned(),
+        hosts: connection.hosts.join(", "),
+        posture: connection.posture,
+        is_default: config
+            .default_connection
+            .as_ref()
+            .is_some_and(|name| *name == connection.name),
+    }
+}
+
 fn overlay(state: &State) -> Option<OverlayView> {
     match state.overlay.as_ref()? {
         Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
@@ -263,6 +315,26 @@ fn overlay(state: &State) -> Option<OverlayView> {
                     .collect(),
                 selected: cursor.index(),
                 sift: sift.as_ref().map(sift_view),
+            })
+        }
+        Overlay::Connections { cursor, sift } => {
+            let names = crate::update::connection_names(&state.config);
+            let search = sift.as_ref().and_then(Sift::search);
+
+            Some(OverlayView::Connections {
+                rows: state
+                    .config
+                    .connections
+                    .iter()
+                    .map(|connection| connection_row(&state.config, connection))
+                    .collect(),
+                matched: crate::update::picker_matches(&names, search.as_ref()),
+                selected: cursor.index(),
+                sift: sift.as_ref().map(sift_view),
+                config_home: state
+                    .config_home
+                    .as_ref()
+                    .map(|path| path.display().to_string()),
             })
         }
         Overlay::Export(form) => Some(OverlayView::Export(Box::new(ExportView {
@@ -647,7 +719,7 @@ mod tests {
     use crate::config::{Config, CustomTheme};
     use crate::contents::{Subject, TableRef};
     use crate::export::{ExportForm, Fetched, Format, Scope, Stop};
-    use crate::model::{ConnId, JobId, Key, Page, QueryId};
+    use crate::model::{JobId, Key, Page, QueryId};
     use crate::state::{Cursor, ExportJob, Message, Overlay};
     use crate::theme::{BuiltIn, Ours, Ported, ThemeName};
     use crate::update::init;
@@ -984,7 +1056,7 @@ mod tests {
             }],
             ..Config::default()
         };
-        let (mut state, _) = init(ConnId::next(), config, Vec::new(), Stamp::default());
+        let (mut state, _) = init(config, Vec::new(), Stamp::default());
         state.overlay = Some(Overlay::Themes {
             cursor: Cursor::default(),
             restored: ThemeChoice::default(),

@@ -1,0 +1,35 @@
+# LazyCassandra, in this repository.
+#
+# The local layer of the two the tool reads: this file overrides
+# $XDG_CONFIG_HOME/lazycassandra/config.toml, key by key for the tables and
+# entry by entry for the lists
+# (docs/superpowers/specs/2026-08-14-configuration-design.md §5).
+#
+# It exists so that running `lazycassandra` from a checkout reaches the docker
+# fixture without anyone having to configure one. Nothing is connected to
+# unless a file names it, and this is the file that names it here
+# (docs/superpowers/specs/2026-08-31-connection-picker-design.md §2). It
+# replaces the LC_CASSANDRA_HOST/LC_CASSANDRA_PORT scaffolding `main.rs`
+# used to read, which was never a configuration mechanism.
+
+# Exactly one connection is the default, because this names one rather than
+# marking them: two entries cannot both claim it, and the picker opens seated
+# here whenever it is opened by hand.
+default_connection = "local"
+
+[[connections]]
+name = "local"
+# `LC_CASSANDRA_PORT` still moves the port the fixture publishes
+# (docker/compose.yaml), and it no longer reaches the application — it never
+# was configuration. Bringing the fixture up on another port means editing
+# this line to match.
+hosts = ["127.0.0.1:9042"]
+# The fixture is a scratch cluster seeded by docker/seed.sh, so writes are
+# safe here in a way they are not against anything a person would call "prod".
+# `posture` is `read-only` when unstated (vision.md §6), so this is the
+# deliberate exception rather than an inherited default.
+posture = "writable"
+# `scylla`'s load balancing is datacenter-aware and will cross a region
+# without comment when it is not told which one is local. The fixture
+# publishes `datacenter1` (docker/compose.yaml).
+datacenter = "datacenter1"

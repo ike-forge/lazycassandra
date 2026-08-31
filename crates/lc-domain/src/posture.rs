@@ -31,4 +31,19 @@ impl Posture {
     pub const fn requires_confirmation(self) -> bool {
         matches!(self, Self::Protected)
     }
+
+    /// How a config file spells this posture.
+    ///
+    /// The one spelling: the connection picker names a posture back to the
+    /// user, and a picker that said "Read only" where the file says
+    /// `read-only` would be teaching a key that does not parse
+    /// (connection picker design §3).
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::Writable => "writable",
+            Self::Protected => "protected",
+        }
+    }
 }

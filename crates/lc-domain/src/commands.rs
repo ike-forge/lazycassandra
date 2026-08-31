@@ -66,6 +66,11 @@ const GLOBAL: &[Command] = &[
     Command::new(&[Stroke::key(Key::Char('q'))], "quit", Run::Here),
     Command::new(&[Stroke::key(Key::Char('?'))], "commands", Run::Here),
     Command::new(&[Stroke::ctrl(Key::Char('t'))], "choose a theme", Run::Here),
+    Command::new(
+        &[Stroke::ctrl(Key::Char('o'))],
+        "choose a connection",
+        Run::Here,
+    ),
     // Queries is the one panel this does nothing in: there the editor claims
     // `/` as text before the binding is consulted (panel search design §5.3,
     // §8). That is a panel that has not caught up rather than a key that is

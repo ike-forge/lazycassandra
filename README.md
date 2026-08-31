@@ -80,4 +80,11 @@ mise run db:cqlsh  # poke at it
 mise run db:reset  # destroy it, volume included
 ```
 
-Set `LC_CASSANDRA_PORT` if something already holds 9042.
+Set `LC_CASSANDRA_PORT` if something already holds 9042. It moves the port the
+fixture publishes and the integration tier connects to; the application itself
+reads `.lazycassandra.toml`, so a moved port means editing the `hosts` line
+there to match.
+
+`.lazycassandra.toml` at the repository root is what points a checkout at that
+fixture. Without a config naming a connection the tool connects to nothing and
+opens its connection picker instead — `ctrl-o` reopens it.

@@ -140,7 +140,11 @@ impl FakeCluster {
 
 #[async_trait]
 impl Cluster for FakeCluster {
-    async fn connect(&self, _conn: ConnId) -> Result<Posture, DbError> {
+    async fn connect(
+        &self,
+        _conn: ConnId,
+        _target: &lc_domain::config::ConnectionConfig,
+    ) -> Result<Posture, DbError> {
         self.connect_error.clone().map_or(Ok(self.posture), Err)
     }
 

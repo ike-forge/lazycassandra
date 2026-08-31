@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use lc_domain::config::{ConnectionConfig, ConnectionName};
 use lc_domain::model::{
     ClusteringOrder, ConnId, CqlValue, DbError, Keyspace, KeyspaceKind, Replication, Statement,
 };
@@ -14,17 +15,35 @@ use lc_domain::posture::Posture;
 use lc_domain::update::ROW_LIMIT;
 use lc_outbound::cassandra::CassandraCluster;
 
-fn contact_point() -> String {
+/// The fixture, as a connection the adapter now takes at connect time rather
+/// than at construction (connection picker design §6). `LC_CASSANDRA_PORT`
+/// stays: this is the docker fixture's address, not application configuration.
+#[allow(
+    clippy::expect_used,
+    reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
+)]
+fn fixture() -> ConnectionConfig {
     let port = std::env::var("LC_CASSANDRA_PORT").unwrap_or_else(|_| "9042".to_owned());
-    format!("127.0.0.1:{port}")
+
+    ConnectionConfig {
+        name: ConnectionName::try_new("fixture").expect("a valid name"),
+        hosts: vec![format!("127.0.0.1:{port}")],
+        posture: Posture::ReadOnly,
+        datacenter: None,
+        username: None,
+        password: None,
+    }
 }
 
 #[tokio::test]
 async fn the_fixture_cluster_reports_the_keyspaces_the_seed_created() {
     let conn = ConnId::next();
-    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
+    let cluster = CassandraCluster::new();
 
-    cluster.connect(conn).await.expect("the fixture is up");
+    cluster
+        .connect(conn, &fixture())
+        .await
+        .expect("the fixture is up");
     let schema = cluster.describe(conn).await.expect("describe succeeds");
 
     let shop = schema.keyspaces.get("shop").expect("shop exists");
@@ -47,9 +66,12 @@ async fn the_fixture_cluster_reports_the_keyspaces_the_seed_created() {
 #[tokio::test]
 async fn the_clusters_own_keyspaces_sort_after_the_fixtures() {
     let conn = ConnId::next();
-    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
+    let cluster = CassandraCluster::new();
 
-    cluster.connect(conn).await.expect("the fixture is up");
+    cluster
+        .connect(conn, &fixture())
+        .await
+        .expect("the fixture is up");
     let schema = cluster.describe(conn).await.expect("describe succeeds");
 
     let kinds: Vec<KeyspaceKind> = schema
@@ -75,9 +97,12 @@ async fn the_clusters_own_keyspaces_sort_after_the_fixtures() {
 )]
 async fn fixture_schema() -> lc_domain::model::Schema {
     let conn = ConnId::next();
-    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
+    let cluster = CassandraCluster::new();
 
-    cluster.connect(conn).await.expect("the fixture is up");
+    cluster
+        .connect(conn, &fixture())
+        .await
+        .expect("the fixture is up");
     cluster.describe(conn).await.expect("describe succeeds")
 }
 
@@ -196,9 +221,12 @@ async fn a_column_reports_the_cql_type_the_cluster_stores() {
 )]
 async fn read(keyspace: &str, table: &str) -> lc_domain::model::Page {
     let conn = ConnId::next();
-    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
+    let cluster = CassandraCluster::new();
 
-    cluster.connect(conn).await.expect("the fixture is up");
+    cluster
+        .connect(conn, &fixture())
+        .await
+        .expect("the fixture is up");
     cluster
         .execute(conn, &Statement::select_all(keyspace, table, ROW_LIMIT))
         .await
@@ -378,8 +406,11 @@ async fn a_null_is_distinct_from_an_empty_value() {
 #[tokio::test]
 async fn a_read_is_bounded_by_the_limit_it_carries() {
     let conn = ConnId::next();
-    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
-    cluster.connect(conn).await.expect("the fixture is up");
+    let cluster = CassandraCluster::new();
+    cluster
+        .connect(conn, &fixture())
+        .await
+        .expect("the fixture is up");
 
     let page = cluster
         .execute(
@@ -395,8 +426,11 @@ async fn a_read_is_bounded_by_the_limit_it_carries() {
 #[tokio::test]
 async fn a_statement_the_cluster_rejects_comes_back_as_an_error_not_a_panic() {
     let conn = ConnId::next();
-    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
-    cluster.connect(conn).await.expect("the fixture is up");
+    let cluster = CassandraCluster::new();
+    cluster
+        .connect(conn, &fixture())
+        .await
+        .expect("the fixture is up");
 
     let result = cluster
         .execute(conn, &Statement::select_all("typezoo", "no_such_table", 1))
@@ -457,8 +491,11 @@ async fn every_table_in_the_fixture_describes_itself() {
 #[tokio::test]
 async fn paging_walks_a_table_larger_than_one_driver_page() {
     let conn = ConnId::next();
-    let cluster = CassandraCluster::new(conn, contact_point(), Posture::ReadOnly);
-    cluster.connect(conn).await.expect("the fixture is up");
+    let cluster = CassandraCluster::new();
+    cluster
+        .connect(conn, &fixture())
+        .await
+        .expect("the fixture is up");
 
     // shop.audit_log_by_day's single seeded partition is 10 000 rows
     // (docker/seed.sh), which outruns the driver's 5 000-row default page.

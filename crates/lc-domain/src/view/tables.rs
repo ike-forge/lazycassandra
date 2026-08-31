@@ -45,6 +45,11 @@ pub(super) fn body(state: &State) -> PanelBody {
         // the trail owns the detail (query log design §7), so the panel goes
         // back to being about keyspaces.
         ConnectionState::Disconnected | ConnectionState::Failed(_) => waiting("Not connected"),
+        // The picker is what fills this panel, and it is either up or one
+        // `ctrl-o` away — so the panel says what to do rather than reporting
+        // a disconnection the user has not attempted yet
+        // (connection picker design §3).
+        ConnectionState::Unchosen => waiting("No connection chosen"),
         ConnectionState::Connecting(_) => waiting("Connecting…"),
         ConnectionState::Connected(connection) => match &connection.schema {
             SchemaState::Loading => waiting("Loading schema…"),

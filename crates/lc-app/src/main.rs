@@ -14,9 +14,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use input::Incoming;
-use lc_domain::model::ConnId;
 use lc_domain::ports::{Cluster, ConfigSink, ConfigSource, Writer};
-use lc_domain::posture::Posture;
 use lc_domain::state::Geometry;
 use lc_domain::{Effect, Msg, State, update, view_model};
 use lc_inbound::{FrameMap, Rendered, Themes};
@@ -76,15 +74,6 @@ async fn captured(terminal: DefaultTerminal) -> Result<()> {
     let capture = mouse::MouseCapture::enable()?;
 
     run(terminal, &capture).await
-}
-
-/// The fixture's convention (docker/compose.yaml). Scaffolding until the
-/// config layering of vision.md §6 lands — not a configuration mechanism.
-fn contact_point() -> String {
-    let host = std::env::var("LC_CASSANDRA_HOST").unwrap_or_else(|_| "127.0.0.1".to_owned());
-    let port = std::env::var("LC_CASSANDRA_PORT").unwrap_or_else(|_| "9042".to_owned());
-
-    format!("{host}:{port}")
 }
 
 /// Draws a frame and reports what it turned out to be.
@@ -160,12 +149,10 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
     input::spawn_reader(tx.clone(), suspension.clone());
     spawn_ticker(tx.clone());
 
-    let conn = ConnId::next();
-    let cluster: Arc<dyn Cluster> = Arc::new(CassandraCluster::new(
-        conn,
-        contact_point(),
-        Posture::ReadOnly,
-    ));
+    // Built empty: which cluster this reaches is whatever the config named as
+    // the default, or whatever the picker chooses, and neither is known here
+    // (connection picker design §6).
+    let cluster: Arc<dyn Cluster> = Arc::new(CassandraCluster::new());
     let writer: Arc<dyn Writer> = Arc::new(lc_outbound::file::FileWriter);
 
     lc_outbound::config::write_example_config_from_env();
@@ -174,9 +161,10 @@ async fn run(mut terminal: DefaultTerminal, capture: &mouse::MouseCapture) -> Re
     let sink: Arc<dyn ConfigSink> = source;
     let themes = Themes::new(&config.themes, config.background);
 
-    let (mut state, startup) =
-        lc_domain::init(conn, config, diagnostics, lc_outbound::clock::now());
+    let config_home = lc_outbound::config::global_path();
+    let (mut state, startup) = lc_domain::init(config, diagnostics, lc_outbound::clock::now());
     state.cwd = std::env::current_dir().unwrap_or_default();
+    state.config_home = config_home;
     let mut measured: Option<Geometry> = None;
 
     for effect in &startup {

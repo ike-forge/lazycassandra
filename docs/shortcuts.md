@@ -20,14 +20,15 @@ unconditional; the ten marked rows are text instead, on the one tab that
 takes text — Queries' Cql tab, argued in that subsection below. Its Logs tab
 takes no text at all, so most of the marked rows reach it exactly as
 written; the footnote below says which few still do not, and why. `ctrl-t`
-is unmarked because a chord is not text anywhere: the ctrl layer is
-dispatched above the panel that takes text (§2).
+and `ctrl-o` are unmarked because a chord is not text anywhere: the ctrl
+layer is dispatched above the panel that takes text (§2).
 
 | Key | Action |
 |---|---|
 | `q`¹ | Quit. Cancels every in-flight query. |
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
+| `ctrl-o` | Open the connection picker: every `[[connections]]` a config defines. |
 | `/`¹ | Search the focused panel. |
 | `n`¹ | Move to the next match of the focused panel's search, wrapping. |
 | `N`¹ | Move to the previous match of the focused panel's search, wrapping. |
@@ -277,6 +278,46 @@ has been given back, so `A`, `B`, `C`, `D` and `U` stay unbound (§2, §4). `N`
 is the program's only shifted letter now, and it is spent walking a search
 backwards (§1's global table), not opening the picker. `a`, `b`, `c`, `d`,
 `t` and `u` are free too, since the panels moved to `1`–`4`.
+
+### The connection picker
+
+`ctrl-o` opens `Overlay::Connections`, an `Overlay` of the same rank as the
+theme picker: it outranks focus, claims every key, is refused on its own gate
+— its block is wider, so a frame that fits one picker need not fit the other
+— and is refused over a live search prompt for the same reason `ctrl-t` is.
+The palette carries a row for it.
+
+It also opens **by itself** at startup, whenever a config defines connections
+but names no `default_connection`, or defines none at all. That is the only
+overlay that opens unasked, and it is why: nothing is connected to unless a
+file named it, so without the picker a fresh checkout would draw four empty
+panels and no explanation. A config that names a default skips it and connects.
+
+| Key | Effect |
+|---|---|
+| `j` / `k`, `Down` / `Up` | Moves the cursor. Previews nothing — opening a connection is a round trip, not a repaint. |
+| `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen. |
+| `Home` / `End`, `gg` / `G` | The first connection, the last. |
+| `Enter` | Opens the connection under the cursor, and closes. |
+| `Esc` | Closes, leaving the tool connected to whatever it already was — at startup, nothing. |
+| `q` | Quits, as everywhere else. The picker takes motion, not text (§2). |
+| `/` | Filter the list by name. `⏎` closes the prompt onto its row, `Esc` puts the cursor back. |
+
+The two `⏎`s are deliberate. The first closes a filter onto the row the cursor
+holds; the second opens it. A term typed to *find* an entry should not also
+connect to it, because the row the cursor happens to hold may not be the one
+the user was still narrowing towards — and unlike the theme picker, landing on
+the wrong row here costs a connection rather than a repaint. A term matching
+nothing draws one faint line saying so, opens nothing, and puts the cursor back
+where the prompt started, so the next `⏎` cannot open an entry the filter had
+hidden.
+
+`Esc` leaving the picker closed is what `ctrl-o` exists for: dismissing it is a
+choice, and nothing re-offers it, so without a way back a dismissed picker
+would be final and a connection opened by mistake would cost a restart.
+
+See [connection picker design](specs/2026-08-31-connection-picker-design.md)
+§3, §4, §5.
 
 ### The configuration diagnostics overlay
 
@@ -1092,9 +1133,10 @@ editor and the export form's path stop bind.
 
 Ctrl taken: `ctrl-r`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
-`ctrl-t` everywhere, and `ctrl-d`/`ctrl-u` everywhere `PageDown`/`PageUp` do
-anything. The rest of the layer is free — including `r`, `e`, `t`, `d`, `u`
-and `p` as plain keys, which nothing binds. `n` is bound plain, to the next
+`ctrl-t` and `ctrl-o` everywhere, and `ctrl-d`/`ctrl-u` everywhere
+`PageDown`/`PageUp` do anything. The rest of the layer is free — including
+`r`, `e`, `t`, `o`, `d`, `u` and `p` as plain keys, which nothing binds. `n`
+is bound plain, to the next
 search match, and `ctrl-n` is a binding of its own rather than a synonym for
 it. Alt is not a layer and nothing may claim from it.
 
@@ -1213,6 +1255,16 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
 | `/` narrows the picker to the themes that match, previewing the row it seats on | `typing_in_the_picker_narrows_the_list_to_the_matches`, `a_term_matching_only_above_the_origin_seats_on_the_last_match`, `a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview`, `enter_closes_the_pickers_sift_and_keeps_the_row`, `a_searched_row_previews_its_theme` (`update.rs`), `a_matched_span_is_marked_in_a_label`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/themes.rs`) |
 | The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
+| A config naming a default connection opens it, and one naming none opens nothing | `a_config_naming_a_default_connection_opens_it_at_startup`, `a_config_naming_no_default_connects_to_nothing` |
+| Connections with no default open the picker, seated on the first | `connections_with_no_default_open_the_picker` |
+| The picker opens seated on the default when reopened by hand | `the_picker_opens_seated_on_the_default_connection` |
+| No connections still opens the picker, as guidance | `a_config_with_no_connections_still_opens_the_picker`, `no_connections_draws_guidance_naming_the_config_file` (`inbound/connections.rs`) |
+| `Enter` opens the row under the cursor, with its own posture | `enter_on_the_picker_connects_to_the_row_under_the_cursor`, `the_connection_opened_carries_its_own_posture` |
+| A dismissed picker is not offered again, and `ctrl-o` reopens it | `a_dismissed_picker_is_not_offered_again`, `ctrl_o_reopens_the_picker` |
+| The picker waits behind the diagnostics modal | `the_picker_waits_behind_the_diagnostics_modal_and_opens_when_it_closes` |
+| `/` filters the picker, and a term matching nothing opens nothing | `a_term_filters_the_picker_and_enter_connects_to_what_it_left`, `a_term_that_matches_nothing_opens_nothing_and_restores_the_cursor`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/connections.rs`) |
+| A row names the connection, its hosts and its posture; the default is marked | `a_row_names_the_connection_its_hosts_and_its_posture`, `the_default_connection_is_marked_and_no_other_is` (`inbound/connections.rs`) |
+| A filter moves no border, and a narrow frame draws nothing | `a_filter_moves_no_border`, `a_frame_too_narrow_for_a_row_draws_none_of_it` (`inbound/connections.rs`) |
 | The cursor row, its crosshair and a range are the only tokens that paint a background, and none spends a foreground | `the_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
 | A range reads louder than the crosshair and quieter than the cursor row | `the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row` (`inbound/theme/mod.rs`) |
 | Every palette of ours reads on every ground it declares, the crosshair included | `every_palette_of_ours_reads_on_every_ground_it_declares`, `the_neutral_ramp_of_ours_is_a_staircase`, `every_border_of_ours_is_perceptible` (`inbound/theme/mod.rs`) |

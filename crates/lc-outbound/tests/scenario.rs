@@ -4,9 +4,8 @@
 //! provides to await the port.
 
 use lc_domain::clock::Stamp;
-use lc_domain::config::Config;
 use lc_domain::log::Outcome;
-use lc_domain::model::{Column, ConnId, CqlValue, DbError, Key, KeyPress, Page, Row, Statement};
+use lc_domain::model::{Column, CqlValue, DbError, Key, KeyPress, Page, Row, Statement};
 use lc_domain::posture::Posture;
 use lc_domain::state::Panel;
 use lc_domain::style::Token;
@@ -24,8 +23,7 @@ async fn connecting_and_describing_fills_the_tables_panel() {
         schema_of(&["system_schema", "typezoo", "shop"]),
         Posture::ReadOnly,
     );
-    let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
 
     run(&cluster, &mut state, effects).await;
 
@@ -49,8 +47,7 @@ async fn connecting_and_describing_fills_the_tables_panel() {
 #[tokio::test]
 async fn a_cluster_that_cannot_be_reached_raises_a_fatal_modal() {
     let cluster = FakeCluster::failing(DbError::Unreachable("no route to host".to_owned()));
-    let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
 
     run(&cluster, &mut state, effects).await;
 
@@ -67,8 +64,7 @@ async fn a_cluster_that_cannot_be_reached_raises_a_fatal_modal() {
 #[tokio::test]
 async fn a_cluster_that_connects_but_cannot_be_described_raises_a_fatal_modal() {
     let cluster = FakeCluster::failing_to_describe(DbError::Invalid("unauthorized".to_owned()));
-    let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
 
     run(&cluster, &mut state, effects).await;
 
@@ -84,8 +80,7 @@ async fn pressing_l_unfolds_a_keyspace_and_the_view_model_shows_its_tables() {
         tabled_schema_of(&[("shop", &["orders", "users"])]),
         Posture::ReadOnly,
     );
-    let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
     run(&cluster, &mut state, effects).await;
 
     let effects = update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
@@ -116,8 +111,7 @@ async fn pressing_h_from_a_table_lands_on_its_parent_keyspace() {
         tabled_schema_of(&[("shop", &["orders", "users"])]),
         Posture::ReadOnly,
     );
-    let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
     run(&cluster, &mut state, effects).await;
 
     update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
@@ -166,8 +160,7 @@ fn customers() -> Page {
 
 /// Connect, describe, unfold `shop`, step onto `orders`.
 async fn on_a_table(cluster: &FakeCluster) -> State {
-    let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
     run(cluster, &mut state, effects).await;
 
     let effects = press(&mut state, Key::Char('l'));
@@ -387,8 +380,7 @@ async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
         tabled_schema_of(&[("shop", &["orders", "users"])]),
         Posture::ReadOnly,
     );
-    let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
     run(&cluster, &mut state, effects).await;
 
     let keyspace = ddl_details(&state);

@@ -128,6 +128,20 @@ fn non_empty(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
+/// Where the global config file goes, whether or not it is there.
+///
+/// Exposed for the connection picker, which names it when a config defines no
+/// connections — the guidance has to point somewhere, and `lc-domain` cannot
+/// read an environment variable (connection picker design §3). `None` when
+/// neither `$XDG_CONFIG_HOME` nor `$HOME` is set.
+#[must_use]
+pub fn global_path() -> Option<PathBuf> {
+    let xdg = non_empty_env("XDG_CONFIG_HOME");
+    let home = non_empty_env("HOME");
+
+    discover::global_path(xdg.as_deref(), home.as_deref())
+}
+
 /// The two files, layered (design §3).
 ///
 /// Holds where to look rather than what was found: the save may create the
@@ -379,5 +393,56 @@ mod tests {
             None,
             "a relative path is still relative when it names the current directory itself"
         );
+    }
+}
+
+/// The repository's own `.lazycassandra.toml`, checked here rather than only
+/// by hand: it is what points a checkout at the docker fixture, and a typo in
+/// it would surface as an empty connection picker rather than as an error
+/// anyone would connect to this file.
+#[cfg(test)]
+mod repo_config {
+    use lc_domain::config::Origin;
+    use lc_domain::posture::Posture;
+    use lc_domain::style::Severity;
+
+    use super::{merge, parse, validate};
+
+    #[test]
+    fn the_repository_config_parses_validates_and_names_its_default() {
+        let source = include_str!("../../../../.lazycassandra.toml");
+        let (layer, diagnostics) = parse(source, &Origin::new(".lazycassandra.toml"));
+
+        assert!(
+            diagnostics.is_empty(),
+            "the committed config has no unknown keys: {diagnostics:?}"
+        );
+
+        let (merged, more) = merge::merge(vec![layer.expect("it parses")]);
+        assert!(more.is_empty(), "{more:?}");
+
+        let (config, more) = validate::validate(merged);
+        assert!(
+            !more.iter().any(|d| d.severity == Severity::Danger),
+            "the committed config validates: {more:?}"
+        );
+
+        let default = config
+            .default_connection
+            .as_ref()
+            .expect("it names a default, so a checkout connects without the picker");
+        let connection = config
+            .connections
+            .iter()
+            .find(|c| c.name == *default)
+            .expect("and the name it gives resolves to an entry");
+
+        assert_eq!(connection.hosts, ["127.0.0.1:9042"]);
+        assert_eq!(
+            connection.posture,
+            Posture::Writable,
+            "the fixture is a scratch cluster, and says so deliberately"
+        );
+        assert_eq!(connection.datacenter.as_deref(), Some("datacenter1"));
     }
 }

@@ -11,7 +11,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use crate::config::{Config, Credential, Diagnostic};
+use crate::config::{Config, ConnectionConfig, Credential, Diagnostic};
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
 use crate::theme::ThemeChoice;
@@ -22,7 +22,14 @@ use crate::theme::ThemeChoice;
 /// choosing a driver (architecture.md §8) touches one crate.
 #[async_trait]
 pub trait Cluster: Send + Sync {
-    async fn connect(&self, conn: ConnId) -> Result<Posture, DbError>;
+    /// Opens a session to `target` and binds it to `conn`.
+    ///
+    /// The address arrives here rather than at the adapter's constructor: a
+    /// connection is chosen from the picker at runtime, so there is no one
+    /// contact point to build the adapter around. The posture that comes back
+    /// is the connection's own — nothing else knows it
+    /// (connection picker design §6).
+    async fn connect(&self, conn: ConnId, target: &ConnectionConfig) -> Result<Posture, DbError>;
     async fn describe(&self, conn: ConnId) -> Result<Schema, DbError>;
     async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError>;
 

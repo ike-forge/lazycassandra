@@ -49,6 +49,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let command_rows =
         crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count(None));
     let theme_rows = crate::themes::visible_rows(frame.area());
+    let connection_rows = crate::connections::visible_rows(frame.area());
     let export_fits = crate::export::fits(frame.area());
     let drop_fits = crate::drop::fits(frame.area());
     let rects = match layout(frame.area(), queries_height(view)) {
@@ -166,7 +167,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_export_fits(export_fits)
             .with_drop_fits(drop_fits)
             .with_grid_width(grid_width)
-            .with_theme_rows(theme_rows),
+            .with_theme_rows(theme_rows)
+            .with_connection_rows(connection_rows),
         map: FrameMap::new(hits),
     }
 }
@@ -213,6 +215,26 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
                 *total,
                 *selected,
                 sift.as_ref().and_then(|sift| sift.search.as_ref()),
+                theme,
+            );
+            if let Some(sift) = sift {
+                render_prompt(frame, hint_bar, &sift.query, view, theme);
+            }
+        }
+        Some(OverlayView::Connections {
+            rows,
+            matched,
+            selected,
+            sift,
+            config_home,
+        }) => {
+            crate::connections::render(
+                frame,
+                rows,
+                matched,
+                *selected,
+                sift.as_ref().and_then(|sift| sift.search.as_ref()),
+                config_home.as_deref(),
                 theme,
             );
             if let Some(sift) = sift {
@@ -289,6 +311,7 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             | OverlayView::Fatal(_)
             | OverlayView::Commands { .. }
             | OverlayView::Themes { .. }
+            | OverlayView::Connections { .. }
             | OverlayView::Diagnostics { .. }
             // A modal that owns the frame. Unlike the export form, which is
             // asking about the grid beneath it, a drop is asking about one
@@ -4897,6 +4920,16 @@ mod tests {
         buffer.content().iter().map(Cell::symbol).collect()
     }
 
+    /// A frame height at which the whole catalogue fits inside the palette,
+    /// derived rather than pinned: the block takes `HEIGHT_PERCENT` of the
+    /// frame, so a catalogue that grows by one command would otherwise rot
+    /// every test that hard-codes a "tall enough" number.
+    fn tall_enough_for_the_catalogue() -> u16 {
+        let needed = u16::try_from(lc_domain::commands::row_count(None) + 2).expect("small");
+
+        needed.div_ceil(7).saturating_mul(10)
+    }
+
     fn with_palette(width: u16, height: u16) -> Buffer {
         let mut state = State::default();
         state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
@@ -5012,9 +5045,8 @@ mod tests {
     #[test]
     fn a_rule_meets_the_block_it_divides() {
         // Tall enough that the whole catalogue fits, so no scrollbar owns the
-        // right border where the rule lands. The block takes 70% of the
-        // frame, so this height tracks the catalogue as groups are added.
-        let buffer = with_palette(100, 120);
+        // right border where the rule lands.
+        let buffer = with_palette(100, tall_enough_for_the_catalogue());
         let area = block_area(&buffer, "Commands");
         let symbol = |x: u16, y: u16| {
             buffer
@@ -5037,7 +5069,7 @@ mod tests {
     #[test]
     fn a_command_row_names_what_it_does_before_the_key_it_costs() {
         let buffer = with_palette(100, 40);
-        let row = block_row(&buffer, "Commands", 17);
+        let row = block_row(&buffer, "Commands", 18);
 
         assert_eq!(row.trim(), "yank                  y");
     }
@@ -5259,11 +5291,13 @@ mod tests {
             "a catalogue taller than the box gets a scrollbar"
         );
 
-        // At 100x120 the whole catalogue fits (design §10) — 70% of 120
-        // rows clears the catalogue plus its two borders — so there is no
-        // scrollbar, and its absence is what says nothing is hidden.
+        // Given a frame that holds the whole catalogue (design §10) there is
+        // no scrollbar — and its absence is what says nothing is hidden.
         assert!(
-            !has_scrollbar(&with_palette(100, 120), "Commands"),
+            !has_scrollbar(
+                &with_palette(100, tall_enough_for_the_catalogue()),
+                "Commands"
+            ),
             "a frame tall enough to hold the whole catalogue must draw no scrollbar"
         );
     }
@@ -5285,7 +5319,7 @@ mod tests {
 
     #[test]
     fn a_tall_frame_does_not_get_a_palette_full_of_blank_rows() {
-        let buffer = with_palette(100, 120);
+        let buffer = with_palette(100, tall_enough_for_the_catalogue());
         let (x, y) = top_border(&buffer, "Commands");
 
         let bottom = (y + 1..buffer.area.height)

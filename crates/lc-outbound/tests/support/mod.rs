@@ -17,12 +17,14 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use lc_domain::config::{ConnectionConfig, ConnectionName};
 use lc_domain::export::{Encoder, Format};
 use lc_domain::model::{
     Column, ConnId, JobId, Key, KeyPress, Keyspace, Page, PrimaryKey, Replication, Schema,
     Statement, Table, TableOptions,
 };
 use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
+use lc_domain::posture::Posture;
 use lc_domain::{Effect, Msg, Source, State, update};
 
 pub(crate) fn schema_of(names: &[&str]) -> Schema {
@@ -74,6 +76,30 @@ pub(crate) fn press(state: &mut State, key: Key) -> Vec<Effect> {
     update(state, Msg::Input(KeyPress::new(key)))
 }
 
+/// A config naming one connection and making it the default, which is what
+/// `init` needs before it will connect to anything at all: nothing is reached
+/// unless a file named it (connection picker design §2).
+#[allow(
+    clippy::expect_used,
+    reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
+)]
+pub(crate) fn connected_config() -> lc_domain::Config {
+    let name = ConnectionName::try_new("fixture").expect("a valid name");
+
+    lc_domain::Config {
+        connections: vec![ConnectionConfig {
+            name: name.clone(),
+            hosts: vec!["127.0.0.1:9042".to_owned()],
+            posture: Posture::ReadOnly,
+            datacenter: None,
+            username: None,
+            password: None,
+        }],
+        default_connection: Some(name),
+        ..lc_domain::Config::default()
+    }
+}
+
 /// Drives a session with no file destination in play. Any `Effect::Export`
 /// reaching this is a scenario bug: use [`run_with_writer`] instead.
 pub(crate) async fn run(cluster: &dyn Cluster, state: &mut State, effects: Vec<Effect>) {
@@ -92,7 +118,7 @@ pub(crate) async fn run_with_writer(
 
     while let Some(effect) = pending.pop_front() {
         let messages: Vec<Msg> = match effect {
-            Effect::Connect(conn) => vec![match cluster.connect(conn).await {
+            Effect::Connect { conn, target } => vec![match cluster.connect(conn, &target).await {
                 Ok(posture) => Msg::Connected {
                     conn,
                     posture,

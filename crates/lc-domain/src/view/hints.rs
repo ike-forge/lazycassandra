@@ -182,6 +182,37 @@ pub(crate) const THEMES_GLOBAL: &[Binding] = &[
     },
 ];
 
+/// What the bar names in place of the focused panel's group while the
+/// connection picker is open.
+///
+/// No `j`/`k` here where [`THEMES`] names them: the theme picker teaches the
+/// motion because moving it previews a theme, and there is a side effect
+/// worth naming. Moving this cursor does nothing until `⏎`, so the motion is
+/// assumed as it is in every panel bar (docs/shortcuts.md §2).
+pub(crate) const CONNECTIONS: &[Binding] = &[Binding {
+    keys: &[Stroke::key(Key::Char('/'))],
+    action: "search",
+}];
+
+/// The two ways out differ in what they leave behind, as the theme picker's
+/// do: `⏎` opens the connection under the cursor, and `esc` leaves the tool
+/// connected to whatever it already was — which at startup is nothing.
+/// `q` is named for the reason [`PALETTE_GLOBAL`] names it.
+pub(crate) const CONNECTIONS_GLOBAL: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "connect",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Escape)],
+        action: "close",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('q'))],
+        action: "quit",
+    },
+];
+
 /// What the bar names while the drop confirmation is up. Two sets, because
 /// the two spellings are answered with different keys and a bar that named
 /// both would be lying in every frame (drop design §2.1).
@@ -279,6 +310,30 @@ const NEXT_MATCH: Binding = Binding {
     action: "next match",
 };
 
+/// The connection picker's bar.
+///
+/// With nothing to list the picker is guidance rather than a list, and neither
+/// searching it nor pressing `⏎` on it does anything — so the bar names
+/// neither. A hint that would do nothing this frame is the lie this bar exists
+/// to prevent (design §2, connection picker design §3).
+fn connections_bar(state: &State, export: Option<String>) -> HintBar {
+    let listed = !state.config.connections.is_empty();
+
+    HintBar {
+        panel: if listed {
+            CONNECTIONS.iter().map(rendered).collect()
+        } else {
+            Vec::new()
+        },
+        global: CONNECTIONS_GLOBAL
+            .iter()
+            .filter(|binding| listed || !binding.keys.contains(&Stroke::key(Key::Enter)))
+            .map(rendered)
+            .collect(),
+        export,
+    }
+}
+
 pub(crate) fn bar(state: &State) -> HintBar {
     let export = state
         .export
@@ -313,6 +368,10 @@ pub(crate) fn bar(state: &State) -> HintBar {
             global: THEMES_GLOBAL.iter().map(rendered).collect(),
             export,
         };
+    }
+
+    if matches!(state.overlay, Some(Overlay::Connections { .. })) {
+        return connections_bar(state, export);
     }
 
     if matches!(state.overlay, Some(Overlay::Diagnostics(_))) {
@@ -434,7 +493,7 @@ fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar
 fn sifting(state: &State) -> bool {
     match &state.overlay {
         Some(Overlay::Commands(panel)) => panel.sift().is_some(),
-        Some(Overlay::Themes { sift, .. }) => sift.is_some(),
+        Some(Overlay::Themes { sift, .. } | Overlay::Connections { sift, .. }) => sift.is_some(),
         _ => false,
     }
 }
@@ -861,6 +920,95 @@ mod tests {
                 .map(|hint| (hint.keys.as_str(), hint.action))
                 .collect::<Vec<_>>(),
             [("⏎", "keep"), ("esc", "cancel"), ("q", "quit")]
+        );
+    }
+
+    /// Connection picker design §5: the bar names `⏎ connect` rather than
+    /// `⏎ keep`, and no `j/k` — moving this cursor previews nothing, so the
+    /// motion is assumed as it is in every panel bar.
+    #[test]
+    fn the_connection_pickers_bar_names_connect_and_teaches_no_motion() {
+        let mut state = State::default();
+        state.config.connections = vec![connection()];
+        state.overlay = Some(Overlay::Connections {
+            cursor: Cursor::default(),
+            sift: None,
+        });
+
+        let bar = bar(&state);
+
+        assert_eq!(
+            bar.panel
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .collect::<Vec<_>>(),
+            [("/", "search")],
+            "a motion that previews nothing is not worth the bar's width"
+        );
+        assert_eq!(
+            bar.global
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .collect::<Vec<_>>(),
+            [("⏎", "connect"), ("esc", "close"), ("q", "quit")]
+        );
+    }
+
+    fn connection() -> crate::config::ConnectionConfig {
+        crate::config::ConnectionConfig {
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
+            hosts: vec!["127.0.0.1:9042".to_owned()],
+            posture: crate::posture::Posture::ReadOnly,
+            datacenter: None,
+            username: None,
+            password: None,
+        }
+    }
+
+    /// Connection picker design §3: with nothing listed, `/` searches nothing
+    /// and `⏎` opens nothing, so the bar names neither — the rule against a
+    /// hint that would do nothing this frame (design §2).
+    #[test]
+    fn an_empty_connection_picker_names_neither_search_nor_connect() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Connections {
+            cursor: Cursor::default(),
+            sift: None,
+        });
+
+        let bar = bar(&state);
+
+        assert!(bar.panel.is_empty(), "there is nothing to search");
+        assert_eq!(
+            bar.global
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .collect::<Vec<_>>(),
+            [("esc", "close"), ("q", "quit")],
+            "the two ways out are all that is true of an empty picker"
+        );
+    }
+
+    /// Overlay search design §8: a picker with a live sift is a panel that
+    /// takes text, and the two ways out are the prompt's two.
+    #[test]
+    fn a_live_sift_in_the_connection_picker_shows_the_prompts_bar() {
+        let mut state = State::default();
+        state.config.connections = vec![connection()];
+        state.overlay = Some(Overlay::Connections {
+            cursor: Cursor::default(),
+            sift: Some(crate::search::Sift::opened(0)),
+        });
+
+        let bar = bar(&state);
+
+        assert!(bar.panel.is_empty());
+        assert_eq!(
+            bar.global
+                .iter()
+                .map(|hint| (hint.keys.as_str(), hint.action))
+                .collect::<Vec<_>>(),
+            [("⏎", "apply"), ("esc", "cancel")]
         );
     }
 

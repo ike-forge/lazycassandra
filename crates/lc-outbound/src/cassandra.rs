@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use lc_domain::config::ConnectionConfig;
 use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Keyspace, Page, PagingState,
     PrimaryKey, Replication, Row, Schema, Statement, Table, TableOptions,
@@ -26,67 +27,61 @@ use crate::value::to_value;
 
 /// One cluster, reached over CQL.
 ///
-/// `Cluster::connect` carries a [`ConnId`] and no address, so the adapter has
-/// to already know where that id points; `&self` is why the session sits behind
-/// a lock. One target rather than a map is the honest match for a `State` that
-/// also holds exactly one connection.
-#[derive(Debug)]
+/// Holds whichever connection was opened last rather than one fixed at
+/// construction: the address is chosen from the picker at runtime, so an
+/// adapter built around a single compiled-in contact point could not serve it
+/// (connection picker design §6). `&self` is why the session sits behind a
+/// lock. One target rather than a map is still the honest match for a `State`
+/// that holds exactly one connection — opening a second replaces the first,
+/// and the [`ConnId`] guard is what makes a late result for the one left
+/// behind droppable.
+#[derive(Debug, Default)]
 pub struct CassandraCluster {
+    open: RwLock<Option<Open>>,
+}
+
+/// The session in hand, and the id it answers to.
+#[derive(Debug)]
+struct Open {
     conn: ConnId,
-    contact_point: String,
-    posture: Posture,
-    session: RwLock<Option<Arc<Session>>>,
+    session: Arc<Session>,
 }
 
 impl CassandraCluster {
     #[must_use]
-    pub fn new(conn: ConnId, contact_point: String, posture: Posture) -> Self {
-        Self {
-            conn,
-            contact_point,
-            posture,
-            session: RwLock::new(None),
-        }
-    }
-
-    fn check(&self, conn: ConnId) -> Result<(), DbError> {
-        if conn == self.conn {
-            Ok(())
-        } else {
-            Err(DbError::Other(
-                "this adapter serves one connection".to_owned(),
-            ))
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     async fn session(&self, conn: ConnId) -> Result<Arc<Session>, DbError> {
-        self.check(conn)?;
-        self.session
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| DbError::Unreachable("not connected".to_owned()))
+        match self.open.read().await.as_ref() {
+            Some(open) if open.conn == conn => Ok(Arc::clone(&open.session)),
+            // A statement for a connection this adapter has moved past. The
+            // domain drops such results by id anyway; refusing here means the
+            // driver is never asked in the first place.
+            Some(_) => Err(DbError::Other(
+                "this adapter serves one connection".to_owned(),
+            )),
+            None => Err(DbError::Unreachable("not connected".to_owned())),
+        }
     }
 }
 
 #[async_trait]
 impl Cluster for CassandraCluster {
-    async fn connect(&self, conn: ConnId) -> Result<Posture, DbError> {
-        self.check(conn)?;
-
+    async fn connect(&self, conn: ConnId, target: &ConnectionConfig) -> Result<Posture, DbError> {
         // Boxed to satisfy clippy::large_futures: SessionBuilder::build's
         // future is large enough to be worth moving off this async fn's stack.
-        let session = Box::pin(
-            SessionBuilder::new()
-                .known_node(&self.contact_point)
-                .build(),
-        )
-        .await
-        .map_err(|error| DbError::Unreachable(error.to_string()))?;
+        let session = Box::pin(SessionBuilder::new().known_nodes(&target.hosts).build())
+            .await
+            .map_err(|error| DbError::Unreachable(error.to_string()))?;
 
-        *self.session.write().await = Some(Arc::new(session));
+        *self.open.write().await = Some(Open {
+            conn,
+            session: Arc::new(session),
+        });
 
-        Ok(self.posture)
+        Ok(target.posture)
     }
 
     async fn describe(&self, conn: ConnId) -> Result<Schema, DbError> {
@@ -839,13 +834,21 @@ mod tests {
         );
     }
 
-    // Not gated behind `integration`: `check` refuses before the adapter ever
-    // opens a socket, so this needs no cluster and belongs in `mise run ci`.
+    // Not gated behind `integration`: the guard refuses before the adapter
+    // ever reaches a socket, so this needs no cluster and belongs in
+    // `mise run ci`.
+    //
+    // The guard moved with the address: `connect` now binds whichever id it
+    // is handed, because the picker chooses the target at runtime, so what is
+    // refused is a *statement* for a connection this adapter is not holding
+    // (connection picker design §6).
     #[tokio::test]
-    async fn connecting_with_an_id_the_adapter_does_not_serve_is_refused() {
-        let conn = ConnId::next();
-        let cluster = CassandraCluster::new(conn, "127.0.0.1:0".to_owned(), Posture::ReadOnly);
+    async fn a_statement_before_any_connection_is_refused() {
+        let cluster = CassandraCluster::new();
 
-        assert!(cluster.connect(ConnId::next()).await.is_err());
+        assert!(matches!(
+            cluster.describe(ConnId::next()).await,
+            Err(DbError::Unreachable(_))
+        ));
     }
 }

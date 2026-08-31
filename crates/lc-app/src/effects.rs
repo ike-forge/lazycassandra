@@ -27,11 +27,16 @@ pub(crate) fn run(
     effect: &Effect,
 ) {
     match effect {
-        Effect::Connect(conn) => {
-            let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
+        Effect::Connect { conn, target } => {
+            let (tx, cluster, conn, target) = (
+                tx.clone(),
+                Arc::clone(cluster),
+                *conn,
+                target.as_ref().clone(),
+            );
             tokio::spawn(async move {
                 let started = std::time::Instant::now();
-                let result = cluster.connect(conn).await;
+                let result = cluster.connect(conn, &target).await;
                 let took = started.elapsed();
                 let msg = match result {
                     Ok(posture) => Msg::Connected {

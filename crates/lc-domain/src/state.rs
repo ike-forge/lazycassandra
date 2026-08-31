@@ -72,6 +72,12 @@ pub struct State {
     /// Passed in by `lc-app` at startup: the domain cannot read it and must
     /// not learn how (export design §2.1).
     pub cwd: PathBuf,
+    /// Where the global config file goes, which the picker names when there
+    /// are no connections to list. Passed in by `lc-app` for `cwd`'s reason:
+    /// the domain cannot read the environment and must not learn how. `None`
+    /// when neither `$XDG_CONFIG_HOME` nor `$HOME` is set, and there is no
+    /// path to name (connection picker design §3).
+    pub config_home: Option<PathBuf>,
     /// The one export in flight, if any. One at a time (export design §5).
     pub export: Option<ExportJob>,
     /// The one drop in flight, if any. One at a time for the reason an export
@@ -229,6 +235,13 @@ impl Loader {
 pub enum ConnectionState {
     #[default]
     Disconnected,
+    /// No connection has been chosen yet, and none will be until the user
+    /// picks one. Distinct from [`Self::Disconnected`], which is what a
+    /// *dismissed* picker leaves behind: the difference is whether the picker
+    /// is still owed, so a startup that had to show diagnostics first can
+    /// open it when they close without reopening one the user has waved away
+    /// (connection picker design §4).
+    Unchosen,
     /// Carries the id so a failure can be matched to the attempt that is
     /// outstanding.
     Connecting(ConnId),
@@ -293,6 +306,20 @@ pub enum Overlay {
         /// The live search over the list, while one is up. A field rather
         /// than a sibling variant: a prompt and a picker must both be up
         /// (overlay search design §4).
+        sift: Option<Sift>,
+    },
+    /// The connection picker: the `[[connections]]` a config defines, one of
+    /// which the user chooses to connect to.
+    ///
+    /// No `restored` twin to [`Self::Themes`]': a cursor here previews
+    /// nothing, so there is no state under the picker for `Esc` to put back
+    /// — dismissing it leaves the connection unchosen and the panels empty
+    /// (connection picker design §3).
+    Connections {
+        cursor: Cursor,
+        /// The live search over the list. A field rather than a sibling
+        /// variant, for `Themes`' reason: a prompt and a picker must both be
+        /// up (overlay search design §4).
         sift: Option<Sift>,
     },
     /// What the config files got wrong, drawn over the panels at startup.
@@ -401,7 +428,7 @@ impl ConnectionState {
         match self {
             Self::Connecting(id) => *id == conn,
             Self::Connected(connection) => connection.id == conn,
-            Self::Disconnected | Self::Failed(_) => false,
+            Self::Unchosen | Self::Disconnected | Self::Failed(_) => false,
         }
     }
 }
@@ -1217,6 +1244,12 @@ pub struct Geometry {
     /// the same way `command_rows` measures the palette's — its own room,
     /// not a borrowed one (configuration design §9).
     theme_rows: usize,
+    /// Rows the connection picker's own block could show, measured the way
+    /// `theme_rows` measures the theme picker's. Its own, because the block
+    /// is wider — it draws a host list beside each name — so a frame that
+    /// fits one picker need not fit the other
+    /// (connection picker design §7).
+    connection_rows: usize,
 }
 
 impl Geometry {
@@ -1236,6 +1269,7 @@ impl Geometry {
             drop_fits: false,
             grid_width: 0,
             theme_rows: 0,
+            connection_rows: 0,
         }
     }
 
@@ -1352,6 +1386,28 @@ impl Geometry {
     #[must_use]
     pub const fn with_theme_rows(self, theme_rows: usize) -> Self {
         Self { theme_rows, ..self }
+    }
+
+    /// Rows the connection picker's own block would show at this frame size,
+    /// whether or not one is open.
+    ///
+    /// Zero means it does not fit, which is what makes the picker refuse to
+    /// open over a list nothing would draw. An empty list is the exception
+    /// the opener makes rather than one this measurement makes: guidance is
+    /// sized as a message, not as rows (connection picker design §7).
+    #[must_use]
+    pub const fn connection_rows(self) -> usize {
+        self.connection_rows
+    }
+
+    /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason: a
+    /// test that opens no picker has nothing to say here.
+    #[must_use]
+    pub const fn with_connection_rows(self, connection_rows: usize) -> Self {
+        Self {
+            connection_rows,
+            ..self
+        }
     }
 
     /// Where the Ddl panel drew its selected row.
@@ -1482,7 +1538,8 @@ impl State {
     pub const fn posture(&self) -> Posture {
         match &self.connection {
             ConnectionState::Connected(connection) => connection.posture,
-            ConnectionState::Disconnected
+            ConnectionState::Unchosen
+            | ConnectionState::Disconnected
             | ConnectionState::Connecting(_)
             | ConnectionState::Failed(_) => Posture::ReadOnly,
         }
@@ -1493,7 +1550,8 @@ impl State {
     pub const fn conn_id(&self) -> Option<ConnId> {
         match &self.connection {
             ConnectionState::Connected(connection) => Some(connection.id),
-            ConnectionState::Disconnected
+            ConnectionState::Unchosen
+            | ConnectionState::Disconnected
             | ConnectionState::Connecting(_)
             | ConnectionState::Failed(_) => None,
         }
@@ -1576,7 +1634,9 @@ impl State {
                 ConnectionState::Connected(connection) => {
                     matches!(connection.schema, SchemaState::Loading)
                 }
-                ConnectionState::Disconnected | ConnectionState::Failed(_) => false,
+                ConnectionState::Unchosen
+                | ConnectionState::Disconnected
+                | ConnectionState::Failed(_) => false,
             },
             Panel::Contents => !self.in_flight.is_empty(),
             Panel::Queries => self
