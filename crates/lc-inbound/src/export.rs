@@ -14,7 +14,14 @@ use unicode_width::UnicodeWidthChar as _;
 use crate::theme::Theme;
 
 const WIDTH: u16 = 56;
-const HEIGHT: u16 = 11;
+/// Eight content rows, none spare: the form used to reserve a ninth that
+/// nothing drew into, leaving `Export` sitting one line above the border
+/// instead of on it.
+const HEIGHT: u16 = 10;
+/// A floor, not a cap: [`confirm_width`] widens the dialog to fit the whole
+/// path on its own line rather than clip it. Unlike the form's path field,
+/// this line has no cursor to scroll around, so cutting it would just hide
+/// the rest of the path with no way to see it.
 const CONFIRM_WIDTH: u16 = 44;
 const CONFIRM_HEIGHT: u16 = 7;
 
@@ -106,7 +113,7 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
         TextLine::default(),
         path(&visible, view.stop == Stop::Path, theme),
         TextLine::default(),
-        button("Export", view.stop == Stop::Export, theme),
+        export_button(view.stop == Stop::Export, theme),
     ];
 
     frame.render_widget(Paragraph::new(lines), inner);
@@ -226,6 +233,25 @@ fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'_> {
     TextLine::from(Span::styled(label, style)).right_aligned()
 }
 
+/// The form's own key, drawn the way a hint bar draws one
+/// (`hints::Segment::spans`): the key in the colour a shortcut always wears,
+/// the label beside it dim, so only the key reads as pressable. When `Tab`
+/// is not on this stop the whole pairing recedes to `Faint` together, an
+/// inert hint rather than a live one.
+fn export_button(focused: bool, theme: Theme) -> TextLine<'static> {
+    let (key, label) = if focused {
+        (Token::HintKey, Token::HintAction)
+    } else {
+        (Token::Faint, Token::Faint)
+    };
+
+    TextLine::from(vec![
+        Span::styled("space ", theme.style(key)),
+        Span::styled("Export", theme.style(label)),
+    ])
+    .right_aligned()
+}
+
 /// Positions the caret over the path field, measuring the way
 /// `render::render_prompt` measures its query: `caret` is a character offset
 /// into the drawn window, converted to a column through `Line::width()` rather
@@ -240,8 +266,17 @@ fn set_caret(frame: &mut Frame, inner: Rect, visible: &str, caret: usize) {
     frame.set_cursor_position((cursor_x, inner.y + PATH_ROW));
 }
 
+/// Wide enough for `path` plus the block's border and padding, never wider
+/// than the frame itself.
+fn confirm_width(path: &str, frame_width: u16) -> u16 {
+    let needed = u16::try_from(TextLine::raw(path).width() + 4).unwrap_or(u16::MAX);
+
+    needed.max(CONFIRM_WIDTH).min(frame_width)
+}
+
 fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) {
-    let Some(area) = centred(frame.area(), CONFIRM_WIDTH, CONFIRM_HEIGHT) else {
+    let width = confirm_width(&view.path, frame.area().width);
+    let Some(area) = centred(frame.area(), width, CONFIRM_HEIGHT) else {
         return;
     };
 
@@ -393,6 +428,54 @@ mod tests {
     }
 
     #[test]
+    fn the_export_key_alone_carries_the_shortcut_colour() {
+        let theme = Theme::default();
+        let live = super::export_button(true, theme);
+
+        assert_eq!(live.spans[0].content.as_ref(), "space ");
+        assert_eq!(live.spans[1].content.as_ref(), "Export");
+        assert_eq!(
+            live.spans[0].style,
+            theme.style(lc_domain::style::Token::HintKey)
+        );
+        assert_eq!(
+            live.spans[1].style,
+            theme.style(lc_domain::style::Token::HintAction)
+        );
+        assert_ne!(
+            live.spans[0].style, live.spans[1].style,
+            "only the key reads as highlighted"
+        );
+    }
+
+    #[test]
+    fn the_export_button_dims_together_when_tab_is_elsewhere() {
+        let theme = Theme::default();
+        let inert = super::export_button(false, theme);
+        let faint = theme.style(lc_domain::style::Token::Faint);
+
+        assert_eq!(inert.spans[0].style, faint);
+        assert_eq!(inert.spans[1].style, faint);
+    }
+
+    /// The block reserves no row past `Export`: `inner.height - 1` (the last
+    /// row `block.inner` hands back) is where the button lands, not one row
+    /// above it (final review, 2026-08-31 feedback).
+    #[test]
+    fn the_export_button_sits_on_the_form_s_last_row() {
+        let buffer = drawn(80, 24, form(Fetched::Some(200)));
+        let area = super::centred(
+            ratatui::layout::Rect::new(0, 0, 80, 24),
+            super::WIDTH,
+            super::HEIGHT,
+        )
+        .expect("the form fits an 80x24 frame");
+        let last_inner_row = area.y + super::HEIGHT - 2;
+
+        assert!(row(&buffer, last_inner_row).contains("space Export"));
+    }
+
+    #[test]
     fn the_confirmation_replaces_the_form() {
         let mut form = form(Fetched::Some(200));
         form.ask(lc_domain::export::Pending::Overwrite(
@@ -407,6 +490,36 @@ mod tests {
 
         assert!(drawn.contains("File exists"));
         assert!(drawn.contains("Yes, overwrite"));
+    }
+
+    /// [`CONFIRM_WIDTH`] is a floor sized for a short path; a longer one used
+    /// to run past the fixed 44-column dialog and lose its tail with no way
+    /// to see it (2026-08-31 feedback).
+    #[test]
+    fn the_confirmation_widens_to_fit_a_long_path() {
+        let mut form = form(Fetched::Some(200));
+        let long = format!("/home/ike/{}shop.orders.csv", "deep/".repeat(6));
+        let line = form.path_mut();
+        while line.cursor() > 0 {
+            line.delete_back();
+        }
+        for character in long.chars() {
+            line.insert(character);
+        }
+        form.ask(lc_domain::export::Pending::Overwrite(
+            Box::new(lc_domain::Source::Fetched {
+                columns: Vec::new(),
+                rows: Vec::new(),
+            }),
+            lc_domain::model::JobId::next(),
+        ));
+
+        let drawn = text(&drawn(100, 24, form));
+
+        assert!(
+            drawn.contains(&long),
+            "the whole path is drawn, not clipped: {drawn:?}"
+        );
     }
 
     #[test]
