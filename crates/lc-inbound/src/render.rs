@@ -46,7 +46,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         frame.buffer_mut().set_style(area, ground);
     }
 
-    let command_rows = crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count());
+    let command_rows =
+        crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count(None));
     let theme_rows = crate::themes::visible_rows(frame.area());
     let export_fits = crate::export::fits(frame.area());
     let rects = match layout(frame.area(), queries_height(view)) {
@@ -184,6 +185,7 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
             crate::palette::render(
                 frame,
                 rows,
+                lc_domain::commands::row_count(None),
                 *selected,
                 sift.as_ref().and_then(|sift| sift.search.as_ref()),
                 theme,
@@ -5094,7 +5096,7 @@ mod tests {
 
         assert_eq!(
             usize::from(bottom - y) + 1,
-            lc_domain::commands::row_count() + 2,
+            lc_domain::commands::row_count(None) + 2,
             "the block ends where the catalogue does, not at 70% of 80 rows"
         );
     }

@@ -61,14 +61,18 @@ fn percent(value: u16, share: u16) -> u16 {
     u16::try_from(u32::from(value) * u32::from(share) / 100).unwrap_or(u16::MAX)
 }
 
+/// `total` is the unfiltered catalogue's row count, and what the block is
+/// sized from: a filter narrows the list inside a block that does not move
+/// (docs/superpowers/specs/2026-08-31-palette-filter-design.md §2).
 pub(crate) fn render(
     frame: &mut Frame,
     rows: &[CommandRow],
+    total: usize,
     selected: usize,
     search: Option<&Search>,
     theme: Theme,
 ) {
-    let Some(area) = rect(frame.area(), rows.len()) else {
+    let Some(area) = rect(frame.area(), total) else {
         return;
     };
 
@@ -91,7 +95,11 @@ pub(crate) fn render(
         .enumerate()
         .map(|(index, row)| item(row, gutter, index == selected, search, theme))
         .collect();
-    let mut state = ListState::default().with_selected(Some(selected));
+    // A cursor on nothing is not a cursor: the empty line a term that matched
+    // nothing leaves is not a row `⏎` can run, and does not wear the ground
+    // that says it is (palette filter design §3).
+    let landed = matches!(rows.get(selected), Some(CommandRow::Command { .. }));
+    let mut state = ListState::default().with_selected(landed.then_some(selected));
 
     frame.render_stateful_widget(
         List::new(items).highlight_style(theme.style(Token::Selected)),
@@ -148,6 +156,10 @@ fn item(
         // Blank: `rules` paints the line itself, across the borders a
         // `ListItem` cannot reach.
         CommandRow::Separator => ListItem::new(Line::default()),
+        CommandRow::Empty => ListItem::new(Line::from(Span::styled(
+            "no command matches".to_owned(),
+            theme.style(Token::Faint),
+        ))),
         CommandRow::Heading(heading) => ListItem::new(Line::from(Span::styled(
             (*heading).to_owned(),
             theme.style(Token::Section),
@@ -199,7 +211,7 @@ fn item(
 /// labels `hints::name` produces.
 fn action_width(row: &CommandRow) -> usize {
     match row {
-        CommandRow::Heading(_) | CommandRow::Separator => 0,
+        CommandRow::Heading(_) | CommandRow::Separator | CommandRow::Empty => 0,
         CommandRow::Command { action, .. } => action.chars().count(),
     }
 }
@@ -220,7 +232,7 @@ mod tests {
             Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("TestBackend always initialises");
 
         terminal
-            .draw(|frame| render(frame, rows, selected, None, Theme::default()))
+            .draw(|frame| render(frame, rows, rows.len(), selected, None, Theme::default()))
             .expect("TestBackend always draws");
 
         terminal.backend().buffer().clone()
@@ -240,7 +252,16 @@ mod tests {
         let search = Search::new(term);
 
         terminal
-            .draw(|frame| render(frame, rows, selected, search.as_ref(), Theme::default()))
+            .draw(|frame| {
+                render(
+                    frame,
+                    rows,
+                    rows.len(),
+                    selected,
+                    search.as_ref(),
+                    Theme::default(),
+                );
+            })
             .expect("TestBackend always draws");
 
         terminal.backend().buffer().clone()
@@ -316,6 +337,90 @@ mod tests {
                 .style(Token::HintAction)
                 .fg
                 .expect("a live action spends a colour")
+        );
+    }
+
+    /// Palette filter design §2: the block is sized from the whole catalogue,
+    /// so narrowing the list moves no border.
+    #[test]
+    fn a_filtered_palette_keeps_the_block_the_catalogue_gives_it() {
+        let total = 40;
+        let rows = [
+            CommandRow::Heading("Export"),
+            row("export these rows", Liveness::Live),
+        ];
+        let whole = rect(Rect::new(0, 0, WIDTH, HEIGHT), total).expect("fits this frame");
+        let mut terminal =
+            Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| render(frame, &rows, total, 1, None, Theme::default()))
+            .expect("TestBackend always draws");
+
+        assert_eq!(
+            rect(Rect::new(0, 0, WIDTH, HEIGHT), rows.len()),
+            None,
+            "two rows on their own would not open a palette at all"
+        );
+        let buffer = terminal.backend().buffer().clone();
+        assert_eq!(
+            buffer
+                .cell((whole.x, whole.y))
+                .expect("the block's own corner")
+                .symbol(),
+            "╭",
+            "the border sits where the unfiltered catalogue puts it"
+        );
+    }
+
+    /// Palette filter design §3: a term that matched nothing says so, on a row
+    /// that wears neither the selection ground nor a promise that `⏎` runs it.
+    #[test]
+    fn a_term_that_matches_nothing_draws_a_line_saying_so() {
+        let total = 40;
+        let area = rect(Rect::new(0, 0, WIDTH, HEIGHT), total).expect("fits this frame");
+        let mut terminal =
+            Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("TestBackend always initialises");
+
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    &[CommandRow::Empty],
+                    total,
+                    0,
+                    None,
+                    Theme::default(),
+                );
+            })
+            .expect("TestBackend always draws");
+
+        let buffer = terminal.backend().buffer().clone();
+        let theme = Theme::default();
+        let x = area.x + 1 + PAD;
+        let y = area.y + 1;
+        let drawn: String = (0..18)
+            .map(|offset| {
+                buffer
+                    .cell((x + offset, y))
+                    .expect("inside the block")
+                    .symbol()
+                    .to_owned()
+            })
+            .collect();
+
+        assert_eq!(drawn, "no command matches");
+        assert_eq!(
+            buffer.cell((x, y)).expect("inside the block").fg,
+            theme.style(Token::Faint).fg.expect("faint spends a colour")
+        );
+        assert_ne!(
+            buffer.cell((x, y)).expect("inside the block").bg,
+            theme
+                .style(Token::Selected)
+                .bg
+                .expect("the selection spends a ground"),
+            "a cursor on nothing is not a cursor"
         );
     }
 

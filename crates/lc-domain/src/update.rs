@@ -1746,10 +1746,10 @@ fn run_selected(state: &mut State) -> Vec<Effect> {
     let Some(Overlay::Commands(open)) = &state.overlay else {
         return Vec::new();
     };
-    let selected = open.selected();
+    let command = open.command();
     state.overlay = None;
 
-    let Some(command) = crate::commands::command_at(selected) else {
+    let Some(command) = command else {
         return Vec::new();
     };
 
@@ -4326,7 +4326,6 @@ mod tests {
     fn g_and_shift_g_type_themselves_into_the_palettes_sift() {
         let mut state = measured(&["a"]);
         press(&mut state, Key::Char('?'));
-        let origin = palette(&state).expect("open").selected();
 
         press(&mut state, Key::Char('/'));
         press(&mut state, Key::Char('g'));
@@ -4334,7 +4333,10 @@ mod tests {
 
         let panel = palette(&state).expect("the palette is still up");
         assert_eq!(panel.sift().map(Sift::query), Some("gG"));
-        assert_eq!(panel.selected(), origin, "the cursor did not move");
+        assert!(
+            panel.command().is_none(),
+            "the term matched nothing, and neither letter jumped the cursor"
+        );
     }
 
     /// Design §1: `⏎` closes the prompt and keeps the cursor, so the next
@@ -4430,7 +4432,7 @@ mod tests {
         press(&mut state, Key::End);
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            crate::commands::row_count() - 1
+            crate::commands::row_count(None) - 1
         );
 
         press(&mut state, Key::Home);
@@ -4496,11 +4498,11 @@ mod tests {
     /// Walks the palette cursor down onto `action`'s row. `down` steps command
     /// to command, so this reaches every row a user can reach and no other.
     fn seat_on(state: &mut State, action: &str) {
-        for _ in 0..crate::commands::row_count() {
-            let seated = crate::commands::command_at(
-                palette(state).expect("the palette is open").selected(),
-            )
-            .is_some_and(|command| command.binding.action == action);
+        for _ in 0..crate::commands::row_count(None) {
+            let seated = palette(state)
+                .expect("the palette is open")
+                .command()
+                .is_some_and(|command| command.binding.action == action);
 
             if seated {
                 return;
@@ -8439,7 +8441,7 @@ mod tests {
         press(&mut state, Key::Char('G'));
         assert_eq!(
             palette(&state).expect("still open").selected(),
-            crate::commands::row_count() - 1
+            crate::commands::row_count(None) - 1
         );
 
         press(&mut state, Key::Char('g'));

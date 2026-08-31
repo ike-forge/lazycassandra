@@ -145,7 +145,7 @@ before the panel underneath is consulted (§2).
 | `⏎` | Close the palette and perform the selected command. |
 | `?` `Esc` | Close it. |
 | `q` | Quits, as everywhere else. |
-| `/` | Search the list: typing walks the cursor to the next matching row, marking the hit. `⏎` keeps the row, `Esc` puts it back. |
+| `/` | Filter the list: typing keeps the rows that match, marking the hit in each. `⏎` keeps the row and widens the list back out, `Esc` puts both back. |
 | anything else | Inert. Nothing means "close" in one frame and something else in the next. |
 
 `⏎` presses the row's own first key, in the panel the row belongs to — it
@@ -155,13 +155,19 @@ at all: it is drawn faint, and `⏎` on it closes the palette and stops
 ([palette execution design](superpowers/specs/2026-08-15-palette-execution-design.md) §8).
 
 `/` searches the action text alone — never the key column, never a group
-heading — and the cursor it walks only ever lands on a command, the same
-skip-the-heading rule `j`/`k` and paging already keep. A term matching
-nothing leaves the cursor where the prompt opened. The catalogue this table
-draws gained no row of its own for it: a row saying `/` searches the palette
-would be a row about the palette inside the palette, so the hint bar names
-the key instead — a mode names its own keys
-([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §6, §8).
+heading — and narrows the list to what matches: a group keeps the commands
+that match and is dropped whole, heading and rule with it, when it keeps
+none. The cursor still only ever lands on a command, the same
+skip-the-heading rule `j`/`k` and paging already keep, and it lands on the
+first surviving one at or beyond the row the prompt opened on. A term
+matching nothing draws one faint line saying so, which `⏎` does nothing on.
+The block itself is sized from the whole catalogue, so no keystroke moves a
+border. The catalogue this table draws gained no row of its own for `/`: a
+row saying `/` searches the palette would be a row about the palette inside
+the palette, so the hint bar names the key instead — a mode names its own
+keys
+([palette filter design](superpowers/specs/2026-08-31-palette-filter-design.md) §1, §2,
+[overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §6, §8).
 
 ### The search prompt
 
@@ -891,14 +897,17 @@ either's is up the overlay it belongs to stops taking motion and takes text
 instead — the panel-that-takes-text rule, applied a second time, inside an
 overlay that already claimed every key once. Every printable key types
 itself there, `q` included, the same swap the search prompt already makes
-of the palette and the picker's own `q`-quits rule. The list under it never
-narrows — a cursor walks to the match instead, the same live-as-you-type
-preview the search prompt gives Tables, DDL and Table contents — and nothing
-of the search outlives the prompt: `⏎` keeps only the row the cursor found,
-`Esc` puts the cursor back where the prompt opened, and either way the query
-itself is gone once the prompt closes, with no highlight and no `n`/`N` left
-to walk
-([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §2, §5, §6).
+of the palette and the picker's own `q`-quits rule. The two differ in what
+the list does under it: the palette narrows to the rows that match, while
+the picker's cursor walks to the match with every theme left on screen —
+the same live-as-you-type preview the search prompt gives Tables, DDL and
+Table contents, and the reason the picker keeps it is that its cursor is the
+preview. Either way nothing of the search outlives the prompt: `⏎` keeps
+only the row the cursor found, `Esc` puts the cursor back where the prompt
+opened, and the query itself is gone once the prompt closes, with no
+highlight and no `n`/`N` left to walk
+([palette filter design](superpowers/specs/2026-08-31-palette-filter-design.md) §1,
+[overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §5, §6).
 
 **`Esc` resolves in one order, first hit wins.** A live sift inside an
 overlay comes off first, restoring the cursor to the row the prompt opened on
@@ -1105,6 +1114,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A form row is documentation, not a command | `enter_on_a_form_row_closes_the_palette_and_stops`, `the_export_form_rows_are_documentation_rather_than_commands` (`commands.rs`) |
 | The cursor never lands on a heading | `the_palette_cursor_steps_over_a_heading`, `paging_settles_on_a_command_rather_than_a_heading` (`commands.rs`) |
 | No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` (`commands.rs`) |
+| `/` narrows the palette to the rows that match, keeping the cursor on a command and the block on its borders | `a_search_narrows_the_palette_to_the_rows_that_match`, `a_search_seats_the_palette_on_a_command`, `a_search_seats_from_the_row_it_opened_on`, `the_palettes_search_reads_the_action_and_not_the_keys`, `closing_a_sift_keeps_the_command_the_filter_found`, `popping_an_empty_palette_sift_closes_it` (`commands.rs`), `a_filtered_palette_keeps_the_block_the_catalogue_gives_it`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/palette.rs`) |
 | The bar names `?`, and the palette's own keys | `the_bar_names_the_palette_between_panel_and_quit`, `the_bar_names_what_the_palette_responds_to` (`view/hints.rs`) |
 | The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update.rs`) |
 | `?` earns its place in the width-fitting bar, and goes before `q quit` but after `tab panel` | `a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel` (`inbound/hints.rs`) |

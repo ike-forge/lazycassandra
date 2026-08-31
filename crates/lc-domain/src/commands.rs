@@ -7,7 +7,7 @@
 //! arm of `handle_key` claims.
 
 use crate::model::{Key, KeyPress};
-use crate::search::Sift;
+use crate::search::{Search, Sift};
 use crate::state::{Cursor, Panel};
 use crate::view::Binding;
 use crate::view::Liveness;
@@ -307,65 +307,129 @@ pub enum CommandRow {
         /// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §8).
         liveness: Liveness,
     },
+    /// What a term that matched nothing leaves behind. A row rather than an
+    /// empty block: a search still typing towards its first match is not a
+    /// failure state, and an empty bordered box reads as one
+    /// (docs/superpowers/specs/2026-08-31-palette-filter-design.md §3).
+    Empty,
 }
 
-/// The catalogue as a flat list, headings included.
+/// One row, and where that row sits in the unfiltered catalogue.
 ///
-/// Headings are rows so that the cursor and the renderer count in the same
-/// scheme; [`CommandsPanel`] is what keeps the cursor off them.
-#[must_use]
-pub fn rows() -> Vec<CommandRow> {
-    CATALOGUE
-        .iter()
-        .enumerate()
-        .flat_map(|(index, group)| {
-            let rule = (index > 0).then_some(CommandRow::Separator);
-
-            rule.into_iter()
-                .chain(std::iter::once(CommandRow::Heading(group.heading)))
-                .chain(group.commands.iter().map(|command| CommandRow::Command {
-                    keys: label(command.binding.keys),
-                    action: command.binding.action,
-                    liveness: command.run.liveness(),
-                }))
-        })
-        .collect()
+/// The two numberings share exactly this: the index is what puts a cursor
+/// seated in a filtered list back into the full one when the prompt closes
+/// (palette filter design §3).
+#[derive(Clone, Copy)]
+enum Slot {
+    Separator,
+    Heading(&'static str),
+    Command {
+        at: usize,
+        command: &'static Command,
+    },
 }
 
-/// How many rows [`rows`] produces, without building them.
-#[must_use]
-pub fn row_count() -> usize {
-    CATALOGUE
-        .iter()
-        .enumerate()
-        .map(|(index, group)| usize::from(index > 0) + 1 + group.commands.len())
-        .sum()
-}
-
-/// The command drawn on row `index`, or `None` for a heading or a rule.
-#[must_use]
-pub fn command_at(index: usize) -> Option<&'static Command> {
-    let mut at = 0;
-
-    for (group_index, group) in CATALOGUE.iter().enumerate() {
-        // The separator, then the heading: neither is selectable, and both
-        // sit below this group's first command.
-        at += usize::from(group_index > 0);
-        if index <= at {
-            return None;
-        }
-        let first = at + 1;
-        at += 1 + group.commands.len();
-        if index < at {
-            return group.commands.get(index - first);
+impl Slot {
+    const fn command(self) -> Option<&'static Command> {
+        match self {
+            Self::Command { command, .. } => Some(command),
+            Self::Separator | Self::Heading(_) => None,
         }
     }
 
-    None
+    const fn at(self) -> Option<usize> {
+        match self {
+            Self::Command { at, .. } => Some(at),
+            Self::Separator | Self::Heading(_) => None,
+        }
+    }
+
+    fn row(self) -> CommandRow {
+        match self {
+            Self::Separator => CommandRow::Separator,
+            Self::Heading(heading) => CommandRow::Heading(heading),
+            Self::Command { command, .. } => CommandRow::Command {
+                keys: label(command.binding.keys),
+                action: command.binding.action,
+                liveness: command.run.liveness(),
+            },
+        }
+    }
 }
 
-fn is_command(index: usize) -> bool {
-    command_at(index).is_some()
+/// The catalogue as a flat list under `search`, headings included: every
+/// command whose action matches, and no heading of a group that kept none.
+///
+/// Headings are rows so that the cursor and the renderer count in the same
+/// scheme; [`CommandsPanel`] is what keeps the cursor off them. Matching is
+/// the action alone, for the reason overlay search design §6 gives: a row
+/// matching in its key column would put the mark where the term did not name.
+fn slots(search: Option<&Search>) -> Vec<Slot> {
+    let mut slots = Vec::new();
+    let mut at = 0;
+
+    for (index, group) in CATALOGUE.iter().enumerate() {
+        // The separator, then the heading: neither is selectable, and both
+        // sit above this group's first command.
+        let heading = at + usize::from(index > 0);
+        let first = heading + 1;
+        at = first + group.commands.len();
+
+        let mut kept = group
+            .commands
+            .iter()
+            .enumerate()
+            .filter(|(_, command)| {
+                search.is_none_or(|search| search.matches(command.binding.action))
+            })
+            .map(|(offset, command)| Slot::Command {
+                at: first + offset,
+                command,
+            })
+            .peekable();
+
+        if kept.peek().is_none() {
+            continue;
+        }
+
+        // The rule separates groups that are drawn, so the first surviving
+        // group never opens with one however many were filtered out above it.
+        if !slots.is_empty() {
+            slots.push(Slot::Separator);
+        }
+        slots.push(Slot::Heading(group.heading));
+        slots.extend(kept);
+    }
+
+    slots
+}
+
+/// The rows the palette draws under `search`, `None` meaning no prompt or a
+/// query too short to mean one.
+#[must_use]
+pub fn rows(search: Option<&Search>) -> Vec<CommandRow> {
+    let slots = slots(search);
+
+    if slots.is_empty() {
+        return vec![CommandRow::Empty];
+    }
+
+    slots.into_iter().map(Slot::row).collect()
+}
+
+/// How many rows [`rows`] produces. The block's geometry is derived from
+/// `row_count(None)` rather than from this call's answer, so a filter moves
+/// no border (palette filter design §2).
+#[must_use]
+pub fn row_count(search: Option<&Search>) -> usize {
+    slots(search).len().max(1)
+}
+
+/// The command drawn on row `index`, or `None` for a heading, a rule or the
+/// empty line.
+#[must_use]
+pub fn command_at(search: Option<&Search>, index: usize) -> Option<&'static Command> {
+    slots(search).get(index).copied().and_then(Slot::command)
 }
 
 #[derive(Clone, Copy)]
@@ -411,7 +475,7 @@ impl CommandsPanel {
         panel
     }
 
-    /// The selected row, as an index into [`rows`].
+    /// The selected row, as an index into [`rows`] built with [`Self::search`].
     #[must_use]
     pub const fn selected(&self) -> usize {
         self.cursor.index()
@@ -422,14 +486,41 @@ impl CommandsPanel {
         self.sift.as_ref()
     }
 
+    /// What the open sift means, and so which rows the palette is showing —
+    /// `None` while there is no prompt or the query is still empty.
+    #[must_use]
+    pub fn search(&self) -> Option<Search> {
+        self.sift.as_ref().and_then(Sift::search)
+    }
+
+    /// The command the cursor is on, `None` on a heading, a rule or the row a
+    /// term that matched nothing leaves.
+    #[must_use]
+    pub fn command(&self) -> Option<&'static Command> {
+        self.slots()
+            .get(self.selected())
+            .copied()
+            .and_then(Slot::command)
+    }
+
     /// Opens a search on the row the cursor is on.
     pub fn open_sift(&mut self) {
         self.sift = Some(Sift::opened(self.selected()));
     }
 
-    /// Drops the search, leaving the cursor where it landed.
+    /// Drops the search, putting the cursor back on the same command in the
+    /// list the palette widens back out to (palette filter design §1).
     pub fn close_sift(&mut self) {
+        let at = self
+            .slots()
+            .get(self.selected())
+            .copied()
+            .and_then(Slot::at);
         self.sift = None;
+
+        if let Some(index) = at {
+            self.seat(index, Direction::Down);
+        }
     }
 
     pub fn push(&mut self, character: char) {
@@ -460,27 +551,22 @@ impl CommandsPanel {
         }
     }
 
-    /// The first command at or after the origin whose action matches,
-    /// wrapping once; the origin itself when nothing does (design §6).
+    /// The first surviving command at or beyond the row the prompt opened on,
+    /// and the last one when the term kept nothing beyond it — so backspacing
+    /// back to an empty term returns the reader to where they started
+    /// (palette filter design §1).
     fn reseat(&mut self) {
         let Some(sift) = &self.sift else {
             return;
         };
         let origin = sift.origin();
-        let seat = sift
-            .search()
-            .and_then(|search| {
-                let total = row_count();
-                (0..total)
-                    .map(|step| (origin + step) % total)
-                    .find(|index| {
-                        command_at(*index)
-                            .is_some_and(|command| search.matches(command.binding.action))
-                    })
-            })
-            .unwrap_or(origin);
+        let slots = self.slots();
+        let target = slots
+            .iter()
+            .position(|slot| slot.at().is_some_and(|at| at >= origin))
+            .unwrap_or(slots.len());
 
-        self.seat(seat, Direction::Down);
+        self.seat_in(&slots, target, Direction::Down);
     }
 
     /// Moves to the next command, skipping a heading, and stopping on the
@@ -514,7 +600,12 @@ impl CommandsPanel {
 
     /// Moves to the last command.
     pub fn to_end(&mut self) {
-        self.seat(row_count().saturating_sub(1), Direction::Up);
+        let slots = self.slots();
+        self.seat_in(&slots, slots.len().saturating_sub(1), Direction::Up);
+    }
+
+    fn slots(&self) -> Vec<Slot> {
+        slots(self.search().as_ref())
     }
 
     /// Seats the cursor on the first command at or beyond `target` in
@@ -522,20 +613,28 @@ impl CommandsPanel {
     /// motion that runs out of catalogue stops on the last command rather
     /// than on the heading it happened to reach.
     fn seat(&mut self, target: usize, direction: Direction) {
-        let seat = seek(target, direction).or_else(|| seek(target, direction.reversed()));
+        let slots = self.slots();
+        self.seat_in(&slots, target, direction);
+    }
 
-        if let Some(index) = seat {
-            self.cursor.go_to(index, row_count());
-        }
+    /// Row zero when there is no command to seat on at all, which only a term
+    /// that matched nothing produces: the cursor holds the empty line, and
+    /// `⏎` there finds no command to run.
+    fn seat_in(&mut self, slots: &[Slot], target: usize, direction: Direction) {
+        let seat = seek(slots, target, direction)
+            .or_else(|| seek(slots, target, direction.reversed()))
+            .unwrap_or(0);
+
+        self.cursor.go_to(seat, slots.len().max(1));
     }
 }
 
-fn seek(from: usize, direction: Direction) -> Option<usize> {
-    let last = row_count().checked_sub(1)?;
+fn seek(slots: &[Slot], from: usize, direction: Direction) -> Option<usize> {
+    let last = slots.len().checked_sub(1)?;
     let mut index = from.min(last);
 
     loop {
-        if is_command(index) {
+        if slots[index].command().is_some() {
             return Some(index);
         }
         match direction {
@@ -587,7 +686,7 @@ mod tests {
     #[test]
     fn the_chord_is_spelled_as_one_stroke() {
         assert!(
-            rows().contains(&CommandRow::Command {
+            rows(None).contains(&CommandRow::Command {
                 keys: "home/gg".to_owned(),
                 action: "to the start",
                 liveness: Liveness::Live,
@@ -599,7 +698,7 @@ mod tests {
     #[test]
     fn a_row_that_cannot_be_run_says_so() {
         let row = |action: &str| {
-            rows()
+            rows(None)
                 .into_iter()
                 .find(|row| matches!(row, CommandRow::Command { action: a, .. } if *a == action))
                 .unwrap_or_else(|| panic!("no row labelled {action:?}"))
@@ -624,7 +723,7 @@ mod tests {
     #[test]
     fn the_palette_names_the_run_binding() {
         assert!(
-            rows().contains(&CommandRow::Command {
+            rows(None).contains(&CommandRow::Command {
                 keys: "ctrl-r".to_owned(),
                 action: "run the buffer",
                 liveness: Liveness::Live,
@@ -639,7 +738,7 @@ mod tests {
     /// (docs/shortcuts.md §1).
     #[test]
     fn the_panel_number_names_the_tab_its_second_press_reaches() {
-        let rows = rows();
+        let rows = rows(None);
         let ddl = rows
             .iter()
             .position(|row| {
@@ -663,7 +762,7 @@ mod tests {
 
     #[test]
     fn the_catalogue_lists_visual_mode() {
-        assert!(rows().contains(&CommandRow::Command {
+        assert!(rows(None).contains(&CommandRow::Command {
             keys: "v".to_owned(),
             action: "select rows",
             liveness: Liveness::Live,
@@ -673,7 +772,7 @@ mod tests {
     #[test]
     fn the_catalogue_lists_the_external_editor() {
         assert!(
-            rows().contains(&CommandRow::Command {
+            rows(None).contains(&CommandRow::Command {
                 keys: "ctrl-e".to_owned(),
                 action: "open in $EDITOR",
                 liveness: Liveness::Live,
@@ -684,12 +783,12 @@ mod tests {
 
     #[test]
     fn the_palette_lists_the_export_form() {
-        let rows = rows();
+        let rows = rows(None);
         let headings: Vec<&str> = rows
             .iter()
             .filter_map(|row| match row {
                 CommandRow::Heading(heading) => Some(*heading),
-                CommandRow::Command { .. } | CommandRow::Separator => None,
+                CommandRow::Command { .. } | CommandRow::Separator | CommandRow::Empty => None,
             })
             .collect();
 
@@ -720,12 +819,12 @@ mod tests {
     /// frames that could hold one.
     #[test]
     fn the_catalogue_is_taller_than_the_palettes_floor() {
-        assert!(row_count() >= 6, "{} rows", row_count());
+        assert!(row_count(None) >= 6, "{} rows", row_count(None));
     }
 
     #[test]
     fn the_catalogue_flattens_to_a_heading_then_its_commands() {
-        let rows = rows();
+        let rows = rows(None);
 
         assert_eq!(rows[0], CommandRow::Heading("Global"));
         assert_eq!(
@@ -736,7 +835,7 @@ mod tests {
                 liveness: Liveness::Live,
             }
         );
-        assert_eq!(rows.len(), row_count());
+        assert_eq!(rows.len(), row_count(None));
     }
 
     /// `/` is global, and Queries is the one panel that has not caught up:
@@ -798,7 +897,7 @@ mod tests {
 
     #[test]
     fn a_rule_stands_between_one_group_and_the_next() {
-        let rows = rows();
+        let rows = rows(None);
         let rules = rows
             .iter()
             .filter(|row| matches!(row, CommandRow::Separator))
@@ -821,9 +920,9 @@ mod tests {
     fn the_cursor_steps_over_a_rule() {
         let mut panel = CommandsPanel::opened();
 
-        for _ in 0..row_count() {
+        for _ in 0..row_count(None) {
             assert!(
-                !matches!(rows()[panel.selected()], CommandRow::Separator),
+                !matches!(rows(None)[panel.selected()], CommandRow::Separator),
                 "the cursor landed on the rule at {}",
                 panel.selected()
             );
@@ -857,7 +956,7 @@ mod tests {
 
     #[test]
     fn the_palette_cursor_steps_over_a_heading() {
-        let headings: Vec<usize> = rows()
+        let headings: Vec<usize> = rows(None)
             .iter()
             .enumerate()
             .filter(|(_, row)| matches!(row, CommandRow::Heading(_)))
@@ -869,7 +968,7 @@ mod tests {
         let mut panel = CommandsPanel::opened();
         let mut seen = vec![panel.selected()];
 
-        for _ in 1..row_count() {
+        for _ in 1..row_count(None) {
             panel.down();
             seen.push(panel.selected());
         }
@@ -884,10 +983,10 @@ mod tests {
         let mut panel = CommandsPanel::opened();
         panel.to_end();
 
-        for _ in 1..row_count() {
+        for _ in 1..row_count(None) {
             panel.up();
             assert!(
-                !matches!(rows()[panel.selected()], CommandRow::Heading(_)),
+                !matches!(rows(None)[panel.selected()], CommandRow::Heading(_)),
                 "walking up landed on row {}",
                 panel.selected()
             );
@@ -897,14 +996,18 @@ mod tests {
     #[test]
     fn the_palette_cursor_cannot_run_off_the_catalogue() {
         let mut panel = CommandsPanel::opened();
-        for _ in 0..row_count() * 2 {
+        for _ in 0..row_count(None) * 2 {
             panel.down();
         }
         let last = panel.selected();
 
-        assert_eq!(last, row_count() - 1, "the last row is the last command");
+        assert_eq!(
+            last,
+            row_count(None) - 1,
+            "the last row is the last command"
+        );
 
-        for _ in 0..row_count() * 2 {
+        for _ in 0..row_count(None) * 2 {
             panel.up();
         }
 
@@ -916,7 +1019,7 @@ mod tests {
         let mut panel = CommandsPanel::opened();
 
         panel.to_end();
-        assert_eq!(panel.selected(), row_count() - 1);
+        assert_eq!(panel.selected(), row_count(None) - 1);
 
         panel.to_start();
         assert_eq!(panel.selected(), 1);
@@ -924,18 +1027,18 @@ mod tests {
 
     #[test]
     fn paging_settles_on_a_command_rather_than_a_heading() {
-        for height in 1..row_count() {
+        for height in 1..row_count(None) {
             let mut panel = CommandsPanel::opened();
 
             panel.page_down(height);
             assert!(
-                !matches!(rows()[panel.selected()], CommandRow::Heading(_)),
+                !matches!(rows(None)[panel.selected()], CommandRow::Heading(_)),
                 "paging down by {height} landed on a heading"
             );
 
             panel.page_up(height);
             assert!(
-                !matches!(rows()[panel.selected()], CommandRow::Heading(_)),
+                !matches!(rows(None)[panel.selected()], CommandRow::Heading(_)),
                 "paging up by {height} landed on a heading"
             );
         }
@@ -1012,21 +1115,21 @@ mod tests {
 
     #[test]
     fn a_row_index_resolves_to_the_command_drawn_on_it() {
-        let rows = rows();
+        let rows = rows(None);
 
         for (index, row) in rows.iter().enumerate() {
             match row {
                 CommandRow::Command { keys, action, .. } => {
-                    let command = command_at(index).unwrap_or_else(|| {
+                    let command = command_at(None, index).unwrap_or_else(|| {
                         panic!("row {index} draws a command and resolves to none")
                     });
 
                     assert_eq!(&label(command.binding.keys), keys);
                     assert_eq!(command.binding.action, *action);
                 }
-                CommandRow::Heading(_) | CommandRow::Separator => {
+                CommandRow::Heading(_) | CommandRow::Separator | CommandRow::Empty => {
                     assert!(
-                        command_at(index).is_none(),
+                        command_at(None, index).is_none(),
                         "row {index} is not a command and resolves to one"
                     );
                 }
@@ -1068,57 +1171,107 @@ mod tests {
     }
 
     fn row_of(action: &str) -> usize {
-        rows()
+        rows(None)
             .iter()
             .position(|row| matches!(row, CommandRow::Command { action: it, .. } if *it == action))
             .expect("a command with that action")
     }
 
-    /// Overlay search design §6: the scan runs over command rows only, so a
-    /// search can no more land on a heading than `j` can.
-    #[test]
-    fn a_search_seats_the_palette_on_a_command() {
+    fn typed(term: &str) -> CommandsPanel {
         let mut panel = CommandsPanel::opened();
         panel.open_sift();
 
-        for character in "choose a theme".chars() {
+        for character in term.chars() {
             panel.push(character);
         }
 
-        assert_eq!(panel.selected(), row_of("choose a theme"));
-        assert!(
-            command_at(panel.selected()).is_some(),
-            "never a heading or a rule"
+        panel
+    }
+
+    fn actions(panel: &CommandsPanel) -> Vec<&'static str> {
+        rows(panel.search().as_ref())
+            .iter()
+            .filter_map(|row| match row {
+                CommandRow::Command { action, .. } => Some(*action),
+                CommandRow::Heading(_) | CommandRow::Separator | CommandRow::Empty => None,
+            })
+            .collect()
+    }
+
+    /// Palette filter design §1: a group keeps the commands that match, and a
+    /// group that keeps none is dropped whole — its heading and rule with it.
+    #[test]
+    fn a_search_narrows_the_palette_to_the_rows_that_match() {
+        let panel = typed("theme");
+        let drawn = rows(panel.search().as_ref());
+
+        assert_eq!(actions(&panel), ["choose a theme"]);
+        assert_eq!(
+            drawn,
+            [
+                CommandRow::Heading("Global"),
+                CommandRow::Command {
+                    keys: label(&[Stroke::ctrl(Key::Char('t'))]),
+                    action: "choose a theme",
+                    liveness: Liveness::Live,
+                },
+            ],
+            "one heading, one command, and no rule above the first group kept"
+        );
+    }
+
+    /// Design §1, and overlay search design §6 before it: the cursor seats on
+    /// a command, never on the heading the filter kept above it.
+    #[test]
+    fn a_search_seats_the_palette_on_a_command() {
+        let panel = typed("choose a theme");
+
+        assert_eq!(
+            panel.command().map(|command| command.binding.action),
+            Some("choose a theme")
         );
     }
 
     /// Design §6: the term matches the action and nothing else — typing the
-    /// key column's text finds nothing.
+    /// key column's text keeps no row.
     #[test]
     fn the_palettes_search_reads_the_action_and_not_the_keys() {
-        let mut panel = CommandsPanel::opened();
-        let origin = panel.selected();
-        panel.open_sift();
+        let panel = typed("ctrl-");
 
-        for character in "ctrl-".chars() {
-            panel.push(character);
-        }
-
-        assert_eq!(panel.selected(), origin, "no action says ctrl-");
+        assert_eq!(rows(panel.search().as_ref()), [CommandRow::Empty]);
+        assert_eq!(panel.selected(), 0);
+        assert!(panel.command().is_none(), "the empty line runs nothing");
     }
 
-    /// Design §6: the scan wraps once past the end of the catalogue.
+    /// Design §1: the cursor lands on the first match at or beyond the row the
+    /// prompt opened on, so a search from the end of the list does not jump
+    /// the reader back to the top of it.
     #[test]
-    fn the_palettes_search_wraps_past_the_end() {
+    fn a_search_seats_from_the_row_it_opened_on() {
         let mut panel = CommandsPanel::opened();
         panel.to_end();
         panel.open_sift();
 
-        for character in "quit".chars() {
+        for character in "next".chars() {
             panel.push(character);
         }
 
-        assert_eq!(panel.selected(), row_of("quit"));
+        let found = panel.command().expect("a command matches");
+        let last = actions(&panel).last().copied().expect("at least one match");
+
+        assert_eq!(found.binding.action, last, "the last match, not the first");
+    }
+
+    /// Design §1: `⏎` widens the list back out and keeps the cursor on the
+    /// command the filter left it on.
+    #[test]
+    fn closing_a_sift_keeps_the_command_the_filter_found() {
+        let mut panel = typed("choose a theme");
+
+        panel.close_sift();
+
+        assert_eq!(rows(panel.search().as_ref()).len(), row_count(None));
+        assert_eq!(panel.selected(), row_of("choose a theme"));
     }
 
     /// Design §1: `Esc` puts the cursor back on the row the prompt opened on.
@@ -1151,5 +1304,10 @@ mod tests {
         panel.pop();
         assert!(panel.sift().is_none());
         assert_eq!(panel.selected(), landed, "closing moves nothing");
+        assert_eq!(
+            rows(panel.search().as_ref()).len(),
+            row_count(None),
+            "and the whole catalogue is back"
+        );
     }
 }
