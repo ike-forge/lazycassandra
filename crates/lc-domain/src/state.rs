@@ -474,6 +474,13 @@ const CONTENTS_HINTS: &[Binding] = &[
         keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "export",
     },
+    // The same key the tree answers, aimed at what this panel holds. Greyed
+    // wherever the rows on screen cannot be addressed by their primary key
+    // (drop design §3.1).
+    Binding {
+        keys: &[Stroke::key(Key::Char('d'))],
+        action: "delete",
+    },
     Binding {
         keys: &[Stroke::key(Key::Char('m'))],
         action: "mode",

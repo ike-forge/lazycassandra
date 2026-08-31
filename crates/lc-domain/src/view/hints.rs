@@ -199,12 +199,37 @@ pub(crate) const DROP_YES_NO: &[Binding] = &[
     },
 ];
 
+/// The same two, for the target that deletes rows rather than dropping a
+/// named thing. The verb is what the bar is for: `y` is the key either way,
+/// and which of the two it answers is the only thing worth a word.
+pub(crate) const DELETE_YES_NO: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('y'))],
+        action: "delete them",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('n')), Stroke::key(Key::Escape)],
+        action: "cancel",
+    },
+];
+
 /// `⏎` is greyed until the field says the name it asked for — the promise
 /// every other greyed hint keeps (docs/shortcuts.md §2).
 pub(crate) const DROP_TYPED: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
         action: "drop it",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Escape)],
+        action: "cancel",
+    },
+];
+
+pub(crate) const DELETE_TYPED: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "delete them",
     },
     Binding {
         keys: &[Stroke::key(Key::Escape)],
@@ -381,10 +406,11 @@ pub(crate) fn bar(state: &State) -> HintBar {
 /// so the tree underneath answers to nothing — the rule `Search` and the
 /// export form already follow above.
 fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar {
-    let bindings = if prompt.takes_text() {
-        DROP_TYPED
-    } else {
-        DROP_YES_NO
+    let bindings = match (prompt.takes_text(), prompt.target().row_count().is_some()) {
+        (true, false) => DROP_TYPED,
+        (true, true) => DELETE_TYPED,
+        (false, false) => DROP_YES_NO,
+        (false, true) => DELETE_YES_NO,
     };
 
     HintBar {
@@ -480,12 +506,19 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
         return Liveness::Inert;
     }
 
-    // `d` is greyed on the two refusals a user cannot see for themselves: a
-    // connection that would not run the statement, and a frame with no room
-    // for the block (drop design §1). The other three — no schema, a drop
-    // already running, a range of more than one row — are visible on screen.
+    // `d` names a question, so it is greyed wherever there is none to ask —
+    // read off the very derivation the key itself reads, so the bar cannot
+    // promise one `open_drop` would refuse (drop design §1). That covers the
+    // posture and the frame, which a user cannot see for themselves, and the
+    // grid's own gate: a page whose primary key is not present addresses no
+    // row, and the greyed key is where that is said (design §3.1).
     let drops = binding.keys == [Stroke::key(Key::Char('d'))];
-    if drops && (!state.posture().permits_mutation() || !state.geometry.drop_fits()) {
+    if drops
+        && (!state.posture().permits_mutation()
+            || !state.geometry.drop_fits()
+            || state.dropping.is_some()
+            || crate::update::drop_target(state).is_none())
+    {
         return Liveness::Inert;
     }
 
@@ -1098,41 +1131,83 @@ mod tests {
         assert!(!bar(&state).panel.iter().any(|hint| hint.keys == "esc"));
     }
 
-    /// `fits()` is disconnected, so its posture is the read-only default and
-    /// `d` names a statement that would be refused. Both halves of the gate
-    /// are checked here, since neither is visible on screen (drop design §1).
+    fn hint(state: &State, action: &str) -> Liveness {
+        bar(state)
+            .panel
+            .into_iter()
+            .find(|hint| hint.action == action)
+            .unwrap_or_else(|| panic!("the panel names {action}"))
+            .liveness
+    }
+
+    fn connected(posture: crate::Posture, schema: crate::state::SchemaState) -> State {
+        let mut state = fits();
+        state.connection = crate::state::ConnectionState::Connected(crate::state::Connection {
+            id: crate::model::ConnId::next(),
+            posture,
+            schema,
+        });
+        state
+    }
+
+    /// Each half of the gate on its own, since none of the three is visible
+    /// on screen: a connection that would refuse the statement, a frame with
+    /// no room for the block, and a cursor naming nothing (drop design §1).
     #[test]
     fn the_drop_hint_is_live_only_where_the_key_would_open_something() {
-        let drop_hint = |state: &State| {
-            bar(state)
-                .panel
-                .into_iter()
-                .find(|hint| hint.action == "drop")
-                .expect("Tables names it")
-                .liveness
-        };
+        let loading = crate::state::SchemaState::Loading;
+        let loaded = crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
+            "shop",
+            &["orders"],
+        )]));
 
-        let mut state = fits();
+        let mut state = connected(crate::Posture::ReadOnly, loaded.clone());
         state.focus_on(Panel::Tables);
+        state.geometry = state.geometry.with_drop_fits(true);
         assert_eq!(
-            drop_hint(&state),
+            hint(&state, "drop"),
             Liveness::Inert,
             "a read-only connection would refuse the statement"
         );
 
-        state.connection = crate::state::ConnectionState::Connected(crate::state::Connection {
-            id: crate::model::ConnId::next(),
-            posture: crate::Posture::Writable,
-            schema: crate::state::SchemaState::Loading,
-        });
+        let mut state = connected(crate::Posture::Writable, loaded.clone());
+        state.focus_on(Panel::Tables);
         assert_eq!(
-            drop_hint(&state),
+            hint(&state, "drop"),
             Liveness::Inert,
             "a frame with no room for the block draws no question"
         );
 
+        let mut state = connected(crate::Posture::Writable, loading);
+        state.focus_on(Panel::Tables);
         state.geometry = state.geometry.with_drop_fits(true);
-        assert_eq!(drop_hint(&state), Liveness::Live);
+        assert_eq!(
+            hint(&state, "drop"),
+            Liveness::Inert,
+            "an unread schema names no node to aim at"
+        );
+
+        let mut state = connected(crate::Posture::Writable, loaded);
+        state.focus_on(Panel::Tables);
+        state.geometry = state.geometry.with_drop_fits(true);
+        assert_eq!(hint(&state, "drop"), Liveness::Live);
+    }
+
+    /// The grid's own gate: with no page loaded there is no row to address,
+    /// so the key that would delete one is greyed (drop design §3.1).
+    #[test]
+    fn the_delete_hint_is_inert_over_a_grid_holding_no_addressable_row() {
+        let mut state = connected(
+            crate::Posture::Writable,
+            crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
+                "shop",
+                &["orders"],
+            )])),
+        );
+        state.focus_on(Panel::Contents);
+        state.geometry = state.geometry.with_drop_fits(true);
+
+        assert_eq!(hint(&state, "delete"), Liveness::Inert);
     }
 
     #[test]
@@ -1148,7 +1223,8 @@ mod tests {
                         || hint.action == "run"
                         || hint.action == "format"
                         || hint.action == "export"
-                        || hint.action == "drop",
+                        || hint.action == "drop"
+                        || hint.action == "delete",
                     "{panel:?}'s '{} {}' is inert and nothing says why",
                     hint.keys,
                     hint.action

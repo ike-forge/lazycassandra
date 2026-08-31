@@ -11,26 +11,41 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::theme::Theme;
 
-/// A floor, not a cap: [`width`] widens the block to fit the statement on one
-/// line rather than clip it. A `DROP` the user cannot read whole is a `DROP`
-/// they are confirming blind, and unlike the export form's path field there
-/// is no cursor here to scroll it around.
+/// A floor, not a cap: [`width`] widens the block to fit the statement rather
+/// than clip it. A statement the user cannot read whole is one they are
+/// confirming blind, and unlike the export form's path field there is no
+/// cursor here to scroll it around.
 const MIN_WIDTH: u16 = 44;
-/// The yes/no block: a blank line, the statement, a blank line, the warning, a
-/// blank line, the keys — six content rows inside the border.
-const YES_NO_HEIGHT: u16 = 8;
-/// Two more rows: the field, and the blank line above it.
-const TYPED_HEIGHT: u16 = 10;
+/// Statement lines drawn before the rest are summarised away.
+///
+/// A batch of forty deletes is forty lines, which is a block taller than the
+/// frame and a wall of near-identical text nobody reads. What answers the
+/// question at that size is the count in the border, and the head of the
+/// batch is what says the shape of it.
+const MAX_CQL_LINES: usize = 8;
+/// Everything the block draws that is not the statement: the two border
+/// rows, a blank line above the statement and one below it, the warning or
+/// the prompt, a blank line, and the keys.
+const CHROME_HEIGHT: u16 = 7;
+/// Two more rows on the typed spelling: the field, and the blank above it.
+const TYPED_EXTRA: u16 = 2;
 
 /// Whether `area` can hold the block at all.
 ///
 /// The domain's gate on `d` and on closing a confirmation the frame shrank
 /// past reads this rather than a size of its own, for the reason
 /// `export::fits` gives: the dimensions are named once, beside the block they
-/// measure. Measured against the taller of the two spellings, so the gate
-/// cannot open a question that grows past the frame the moment it is asked.
+/// measure.
+///
+/// Measured against the *largest* block either spelling can grow to, so the
+/// gate cannot open a question that then fails to draw — a statement's line
+/// count is not known until the target is, and the gate is asked before
+/// there is one.
 pub(crate) fn fits(area: Rect) -> bool {
-    centred(area, MIN_WIDTH, TYPED_HEIGHT).is_some()
+    let tallest =
+        CHROME_HEIGHT + TYPED_EXTRA + u16::try_from(MAX_CQL_LINES + 1).unwrap_or(u16::MAX);
+
+    centred(area, MIN_WIDTH, tallest).is_some()
 }
 
 fn centred(area: Rect, width: u16, height: u16) -> Option<Rect> {
@@ -52,13 +67,34 @@ fn width(view: &DropView, frame_width: u16) -> u16 {
     let longest = view
         .typed
         .iter()
-        .map(|typed| prompt_line(typed).len())
-        .chain(std::iter::once(view.cql.chars().count()))
+        .map(|typed| prompt_line(typed).chars().count())
+        .chain(statement(view).iter().map(|line| line.chars().count()))
         .max()
         .unwrap_or_default();
     let needed = u16::try_from(longest + 4).unwrap_or(u16::MAX);
 
     needed.max(MIN_WIDTH).min(frame_width)
+}
+
+/// The statement as the block draws it: whole where it fits in
+/// [`MAX_CQL_LINES`], and otherwise its head, a line counting what was left
+/// out, and its last line.
+///
+/// The last line is kept rather than cut off with the rest: a batch that
+/// stops before `APPLY BATCH` is not a statement, and a preview that is not
+/// one teaches the reader the wrong shape. Only `DELETE` lines are ever
+/// elided, which is why the count reads as rows.
+fn statement(view: &DropView) -> Vec<String> {
+    if view.cql.len() <= MAX_CQL_LINES {
+        return view.cql.clone();
+    }
+
+    let head = MAX_CQL_LINES - 2;
+    let mut lines: Vec<String> = view.cql.iter().take(head).cloned().collect();
+    lines.push(format!("  … and {} more", view.cql.len() - head - 1));
+    lines.extend(view.cql.last().cloned());
+
+    lines
 }
 
 /// The block's border text. A run with no token of its own keeps the block's
@@ -87,16 +123,16 @@ fn prompt_line(typed: &TypedName) -> String {
 pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) {
     // Asked before the block is sized, so the two cannot disagree: [`width`]
     // clamps to the frame, which on a narrow one would otherwise draw a
-    // block below the floor `fits` promised (drop design §1).
+    // block below the floor `fits` promised, and the height below varies with
+    // the statement while the gate does not (drop design §1).
     if !fits(frame.area()) {
         return;
     }
 
-    let height = if view.typed.is_some() {
-        TYPED_HEIGHT
-    } else {
-        YES_NO_HEIGHT
-    };
+    let cql = statement(view);
+    let height = CHROME_HEIGHT
+        + u16::try_from(cql.len()).unwrap_or(u16::MAX)
+        + if view.typed.is_some() { TYPED_EXTRA } else { 0 };
     let Some(area) = centred(frame.area(), width(view, frame.area().width), height) else {
         return;
     };
@@ -113,18 +149,19 @@ pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) {
     frame.buffer_mut().set_style(area, theme.overlay_ground());
     frame.render_widget(block, area);
 
-    let mut lines = vec![
-        TextLine::default(),
-        TextLine::from(Span::styled(view.cql.clone(), theme.style(Token::Keyword))),
-        TextLine::default(),
-    ];
+    let mut lines = vec![TextLine::default()];
+    lines.extend(
+        cql.iter()
+            .map(|line| TextLine::from(Span::styled(line.clone(), theme.style(Token::Keyword)))),
+    );
+    lines.push(TextLine::default());
 
     match &view.typed {
         None => {
-            lines.push(TextLine::from("This cannot be undone."));
+            lines.push(TextLine::from(warning(view)));
             lines.push(TextLine::default());
             lines.push(keys(
-                &[("y", "Yes, drop it", true), ("n", "Cancel", true)],
+                &[("y", yes(view), true), ("n", "Cancel", true)],
                 theme,
             ));
         }
@@ -137,7 +174,18 @@ pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) {
             )));
             lines.push(TextLine::default());
             lines.push(keys(
-                &[("⏎", "Drop", typed.confirmed), ("esc", "Cancel", true)],
+                &[
+                    (
+                        "⏎",
+                        if view.rows.is_some() {
+                            "Delete"
+                        } else {
+                            "Drop"
+                        },
+                        typed.confirmed,
+                    ),
+                    ("esc", "Cancel", true),
+                ],
                 theme,
             ));
         }
@@ -146,24 +194,46 @@ pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) {
     frame.render_widget(Paragraph::new(lines), inner);
 
     if let Some(typed) = &view.typed {
-        set_caret(frame, inner, typed);
+        set_caret(frame, inner, view, typed);
     }
 }
 
-/// The row of rows the field is drawn on, counted from the top of `inner`: a
-/// blank line, the statement, a blank line, the prompt, a blank line.
-const FIELD_ROW: u16 = 5;
+/// The `y` key's label. It names the verb, because the two verbs take
+/// different things away and the border is the only other place that says
+/// which.
+const fn yes(view: &DropView) -> &'static str {
+    match view.rows {
+        Some(1) => "Yes, delete it",
+        Some(_) => "Yes, delete them",
+        None => "Yes, drop it",
+    }
+}
+
+/// What the yes/no block says under the statement. The count is already in
+/// the border; this is the line that says what answering costs.
+fn warning(view: &DropView) -> String {
+    match view.rows {
+        Some(1) => "This row cannot be brought back.".to_owned(),
+        Some(count) => format!("These {count} rows cannot be brought back."),
+        None => "This cannot be undone.".to_owned(),
+    }
+}
 
 /// Positions the caret in the name field, measuring the way
 /// `export::set_caret` does: the cursor is a character offset, converted to a
 /// column through `Line::width()` so a multi-byte or double-width character
 /// before it is not counted as one column.
-fn set_caret(frame: &mut Frame, inner: Rect, typed: &TypedName) {
+///
+/// The row is counted rather than a constant: the statement above it is as
+/// many lines as it is written on.
+fn set_caret(frame: &mut Frame, inner: Rect, view: &DropView, typed: &TypedName) {
     let prefix: String = typed.text.chars().take(typed.cursor).collect();
     let taken = u16::try_from(TextLine::raw(prefix).width()).unwrap_or(inner.width);
     let cursor_x = (inner.x + taken).min(inner.right().saturating_sub(1));
+    // A blank line, the statement, a blank line, the prompt, a blank line.
+    let row = 4 + u16::try_from(statement(view).len()).unwrap_or(u16::MAX);
 
-    frame.set_cursor_position((cursor_x, inner.y + FIELD_ROW));
+    frame.set_cursor_position((cursor_x, inner.y + row));
 }
 
 /// The block's own keys, drawn the way a hint bar draws one
@@ -304,5 +374,97 @@ mod tests {
                 "fits and render disagree at {width}x{height}"
             );
         }
+    }
+
+    fn described() -> lc_domain::model::Table {
+        use lc_domain::model::{
+            ClusteringColumn, ClusteringOrder, Column, PrimaryKey, Table, TableOptions,
+        };
+
+        Table {
+            name: "orders".to_owned(),
+            primary_key: PrimaryKey {
+                partition: vec![Column {
+                    name: "id".to_owned(),
+                    cql_type: "uuid".to_owned(),
+                }],
+                clustering: vec![ClusteringColumn {
+                    column: Column {
+                        name: "placed".to_owned(),
+                        cql_type: "date".to_owned(),
+                    },
+                    order: ClusteringOrder::Ascending,
+                }],
+            },
+            static_columns: Vec::new(),
+            regular_columns: Vec::new(),
+            options: TableOptions::new(std::collections::BTreeMap::new()),
+        }
+    }
+
+    fn deleting(count: usize) -> DropPrompt {
+        use lc_domain::model::{CqlValue, Row};
+
+        let columns = vec!["id".to_owned(), "placed".to_owned()];
+        let rows: Vec<Row> = (0..count)
+            .map(|index| Row {
+                values: vec![
+                    CqlValue::Uuid(format!("8f14e45f-000{index}")),
+                    CqlValue::Text(format!("2026-01-0{}", index + 1)),
+                ],
+            })
+            .collect();
+        let target = Target::rows(
+            &TableRef::new("shop", "orders"),
+            &described(),
+            &columns,
+            rows.iter(),
+        )
+        .expect("every key column spells a literal");
+
+        DropPrompt::opened(target, Posture::Writable)
+    }
+
+    #[test]
+    fn a_delete_block_counts_the_rows_in_its_border_and_in_its_warning() {
+        let drawn = text(&drawn(100, 26, deleting(3)));
+
+        assert!(drawn.contains("Delete 3 rows from shop.orders"));
+        assert!(drawn.contains("These 3 rows cannot be brought back."));
+        assert!(drawn.contains("Yes, delete them"));
+    }
+
+    #[test]
+    fn one_row_is_counted_in_the_singular_everywhere_it_is_counted() {
+        let drawn = text(&drawn(100, 26, deleting(1)));
+
+        assert!(drawn.contains("Delete 1 row from shop.orders"));
+        assert!(drawn.contains("This row cannot be brought back."));
+        assert!(drawn.contains("Yes, delete it"));
+        assert!(
+            !drawn.contains("BEGIN BATCH"),
+            "a batch of one is a batch the user has to read past"
+        );
+    }
+
+    #[test]
+    fn a_delete_block_shows_the_statement_it_would_run() {
+        let drawn = text(&drawn(100, 26, deleting(1)));
+
+        assert!(drawn.contains(
+            "DELETE FROM \"shop\".\"orders\" WHERE \"id\" = 8f14e45f-0000 AND \"placed\" = '2026-01-01'"
+        ));
+    }
+
+    /// A batch too tall to draw whole keeps its head and its last line: one
+    /// that stops before `APPLY BATCH` is not a statement, and a preview that
+    /// is not one teaches the wrong shape.
+    #[test]
+    fn a_long_batch_is_elided_in_the_middle_and_says_how_much() {
+        let drawn = text(&drawn(120, 30, deleting(9)));
+
+        assert!(drawn.contains("BEGIN BATCH"));
+        assert!(drawn.contains("… and 4 more"));
+        assert!(drawn.contains("APPLY BATCH"));
     }
 }

@@ -175,20 +175,30 @@ const TABLES: &[Command] = &[Command::new(
     Run::In(Panel::Tables),
 )];
 
-/// The confirmation's own keys. `y`, `n`, `⏎` and `esc` all appear elsewhere
-/// meaning something else, which is the same thing the `Export` group's rows
-/// do: the palette may not omit what a key does somewhere
+/// One key aimed at two panels, and the confirmation's own keys. `y`, `n`,
+/// `⏎` and `esc` all appear elsewhere meaning something else, which is the
+/// same thing the `Export` group's rows do: the palette may not omit what a
+/// key does somewhere
 /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §2).
 ///
-/// `d` is the one live row. The other three mean something only inside the
-/// confirmation, and their keys mean something else outside it — `y` yanks,
-/// `n` walks to the next match — so a palette that pressed one would yank
-/// rather than confirm (palette execution design §5).
+/// `d` takes two rows for the reason `2` does under `Global` and `ctrl-e`
+/// does across `Export` and `Queries`: one key gated on two panels is two
+/// bindings to learn, and the pairing is what teaches that.
+///
+/// The last three mean something only inside the confirmation, and their keys
+/// mean something else outside it — `y` yanks, `n` walks to the next match —
+/// so a palette that pressed one would yank rather than confirm (palette
+/// execution design §5).
 const DROP: &[Command] = &[
     Command::new(
         &[Stroke::key(Key::Char('d'))],
         "drop this",
         Run::In(Panel::Tables),
+    ),
+    Command::new(
+        &[Stroke::key(Key::Char('d'))],
+        "delete these rows",
+        Run::In(Panel::Contents),
     ),
     Command::new(&[Stroke::key(Key::Char('y'))], "yes, drop it", Run::Inert),
     Command::new(
@@ -330,7 +340,7 @@ pub const CATALOGUE: &[Group] = &[
         commands: CONTENTS,
     },
     Group {
-        heading: "Drop",
+        heading: "Drop and delete",
         commands: DROP,
     },
     Group {

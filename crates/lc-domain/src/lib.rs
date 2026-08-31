@@ -15,6 +15,7 @@ pub mod editor;
 pub mod export;
 pub mod grid;
 pub mod line;
+pub mod literal;
 pub mod log;
 pub mod model;
 pub mod pointer;

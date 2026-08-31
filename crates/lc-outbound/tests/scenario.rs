@@ -574,3 +574,106 @@ async fn dropping_a_keyspace_takes_its_name_typed_back() {
         "the tree draws the keyspaces the re-read schema still has"
     );
 }
+
+/// The whole delete path, driven through the ports: the grid names rows, the
+/// confirmation counts them and names the statement, and the success re-reads
+/// the page rather than the schema
+/// (docs/superpowers/specs/2026-08-31-drop-design.md §3.1, §4).
+#[tokio::test]
+async fn deleting_the_selected_rows_re_reads_the_grid() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::Writable,
+    )
+    .returning(keyed_rows(3));
+    let mut state = on_a_table(&cluster).await;
+    state.geometry = state.geometry.with_drop_fits(true);
+
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+
+    // Two rows held, from the cursor down.
+    let effects = press(&mut state, Key::Char('v'));
+    run(&cluster, &mut state, effects).await;
+    let effects = press(&mut state, Key::Char('j'));
+    run(&cluster, &mut state, effects).await;
+
+    let effects = press(&mut state, Key::Char('d'));
+    run(&cluster, &mut state, effects).await;
+
+    let Some(OverlayView::Drop(view)) = view_model(&state).overlay else {
+        panic!("the confirmation is up");
+    };
+    assert_eq!(view.rows, Some(2), "the block counts what it would delete");
+    assert!(
+        lc_domain::style::text(&view.title).contains("Delete 2 rows from shop.orders"),
+        "{:?}",
+        view.title
+    );
+
+    let effects = press(&mut state, Key::Char('y'));
+    run(&cluster, &mut state, effects).await;
+
+    let ran: Vec<String> = cluster
+        .executed()
+        .iter()
+        .map(|stmt| stmt.cql.clone())
+        .collect();
+    assert_eq!(
+        ran.len(),
+        3,
+        "the read, the batch, and the re-read: {ran:?}"
+    );
+    assert!(ran[1].starts_with("BEGIN BATCH"), "{}", ran[1]);
+    assert_eq!(ran[1].matches("DELETE FROM").count(), 2, "{}", ran[1]);
+    assert_eq!(
+        ran[2], "SELECT * FROM \"shop\".\"orders\" LIMIT 200",
+        "the grid is re-read so it stops drawing rows that are gone"
+    );
+}
+
+/// The gate that makes the rest of it safe: a page that does not carry every
+/// primary key column addresses no row, so `d` opens nothing (design §3.1).
+#[tokio::test]
+async fn a_page_without_the_whole_primary_key_deletes_nothing() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::Writable,
+    )
+    .returning(Page {
+        columns: vec!["email".to_owned()],
+        rows: vec![Row {
+            values: vec![CqlValue::Text("ada@example.com".to_owned())],
+        }],
+        next: None,
+    });
+    let mut state = on_a_table(&cluster).await;
+    state.geometry = state.geometry.with_drop_fits(true);
+
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+    let before = cluster.executed().len();
+
+    let effects = press(&mut state, Key::Char('d'));
+    run(&cluster, &mut state, effects).await;
+
+    assert!(view_model(&state).overlay.is_none());
+    assert_eq!(cluster.executed().len(), before);
+}
+
+/// The fixture table's key is `(id uuid, created_at timestamp)`.
+fn keyed_rows(count: usize) -> Page {
+    Page {
+        columns: vec!["id".to_owned(), "created_at".to_owned(), "email".to_owned()],
+        rows: (0..count)
+            .map(|index| Row {
+                values: vec![
+                    CqlValue::Uuid(format!("8f14e45f-000{index}")),
+                    CqlValue::Text("2023-11-14T22:13:20.000Z".to_owned()),
+                    CqlValue::Text("ada@example.com".to_owned()),
+                ],
+            })
+            .collect(),
+        next: None,
+    }
+}

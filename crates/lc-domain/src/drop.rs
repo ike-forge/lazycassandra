@@ -1,31 +1,140 @@
-//! Dropping a keyspace or a table: what is aimed at, and the confirmation
-//! that has to be answered before the statement runs
+//! Taking something away: what is aimed at, and the confirmation that has to
+//! be answered before the statement runs
 //! (docs/superpowers/specs/2026-08-31-drop-design.md).
+//!
+//! One key, `d`, and one overlay for the three things it can aim at: a
+//! keyspace and a table from the tree, and rows from the grid. They differ in
+//! the statement they run and in what has to be typed to run it, which is
+//! exactly what [`Target`] and [`Answer`] carry — not in anything the key
+//! dispatch, the renderer or the round trip has to know about separately.
 
 use crate::contents::TableRef;
 use crate::line::Line;
-use crate::model::{KeyspaceKind, Statement};
+use crate::model::{KeyspaceKind, Row, Statement, Table};
 use crate::posture::Posture;
 use crate::style::{Segment, Token};
 
-/// What a drop is aimed at.
+/// One row's primary key: every key column, in key order, paired with the
+/// CQL literal that addresses it.
 ///
-/// The two nodes the tree draws, and nothing else: a drop is opened from a
-/// cursor sitting on one of them, so a target that names neither cannot be
-/// written down (design §1).
+/// Private field and one fallible constructor, which is the whole point: a
+/// key holding a value [`crate::literal`] could not spell cannot be built,
+/// so [`Statement::delete_row`] is total and no `WHERE` clause is ever
+/// written from a guess (design §3.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowKey(Vec<(String, String)>);
+
+impl RowKey {
+    /// `row`'s key, or `None` where any key column is missing from the page
+    /// or holds a value with no literal.
+    ///
+    /// `key` is `(column name, declared CQL type)` in key order.
+    fn of(key: &[(&str, &str)], columns: &[String], row: &Row) -> Option<Self> {
+        key.iter()
+            .map(|(name, cql_type)| {
+                let at = columns.iter().position(|column| column == name)?;
+                let literal = crate::literal::of(cql_type, row.values.get(at)?)?;
+
+                Some(((*name).to_owned(), literal))
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Self)
+    }
+
+    fn pairs(&self) -> &[(String, String)] {
+        &self.0
+    }
+}
+
+/// What `d` is aimed at.
+///
+/// The three things the two panels can name, and nothing else: a
+/// confirmation is opened from a cursor sitting on one of them, so a target
+/// that names none cannot be written down (design §1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Keyspace(String),
     Table(TableRef),
+    /// Rows of one table, each addressed by its whole primary key. Never
+    /// empty: the grid's cursor is always on a row, so a target with nothing
+    /// in it is not a state [`Target::rows`] can produce.
+    Rows {
+        table: TableRef,
+        keys: Vec<RowKey>,
+    },
 }
 
 impl Target {
+    /// The rows of `table` at `selected`, or `None` where this program cannot
+    /// address one of them — the "primary key known and present" gate
+    /// (design §3.1).
+    ///
+    /// `schema_table` is the same table as `table`, read from the loaded
+    /// schema: the primary key is a fact about the schema, and the page on
+    /// screen only carries the columns a `SELECT` happened to return.
+    #[must_use]
+    pub fn rows<'a>(
+        table: &TableRef,
+        schema_table: &Table,
+        columns: &[String],
+        selected: impl Iterator<Item = &'a Row>,
+    ) -> Option<Self> {
+        let key: Vec<(&str, &str)> = schema_table
+            .primary_key
+            .partition
+            .iter()
+            .map(|column| (column.name.as_str(), column.cql_type.as_str()))
+            .chain(
+                schema_table
+                    .primary_key
+                    .clustering
+                    .iter()
+                    .map(|clustering| {
+                        (
+                            clustering.column.name.as_str(),
+                            clustering.column.cql_type.as_str(),
+                        )
+                    }),
+            )
+            .collect();
+
+        if key.is_empty() {
+            return None;
+        }
+
+        let keys: Vec<RowKey> = selected
+            .map(|row| RowKey::of(&key, columns, row))
+            .collect::<Option<Vec<_>>>()?;
+
+        (!keys.is_empty()).then(|| Self::Rows {
+            table: table.clone(),
+            keys,
+        })
+    }
+
+    /// How many rows answering the confirmation would delete. `None` where
+    /// the target is not rows — the count is what the block draws, and a
+    /// keyspace has none (design §2).
+    #[must_use]
+    pub fn row_count(&self) -> Option<usize> {
+        match self {
+            Self::Rows { keys, .. } => Some(keys.len()),
+            Self::Keyspace(_) | Self::Table(_) => None,
+        }
+    }
+
     /// The statement answering the confirmation runs.
     #[must_use]
     pub fn statement(&self) -> Statement {
         match self {
             Self::Keyspace(keyspace) => Statement::drop_keyspace(keyspace),
             Self::Table(table) => Statement::drop_table(&table.keyspace, &table.table),
+            Self::Rows { table, keys } => {
+                let pairs: Vec<Vec<(String, String)>> =
+                    keys.iter().map(|key| key.pairs().to_vec()).collect();
+
+                Statement::delete_rows(&table.keyspace, &table.table, &pairs)
+            }
         }
     }
 
@@ -38,7 +147,7 @@ impl Target {
     pub fn name(&self) -> &str {
         match self {
             Self::Keyspace(keyspace) => keyspace,
-            Self::Table(table) => &table.table,
+            Self::Table(table) | Self::Rows { table, .. } => &table.table,
         }
     }
 
@@ -48,6 +157,14 @@ impl Target {
         match self {
             Self::Keyspace(keyspace) => keyspace.clone(),
             Self::Table(table) => table.qualified(),
+            Self::Rows { table, keys } => {
+                format!(
+                    "{} {} from {}",
+                    keys.len(),
+                    rows(keys.len()),
+                    table.qualified()
+                )
+            }
         }
     }
 
@@ -72,8 +189,25 @@ impl Target {
                 segments.extend(table.segments());
                 segments
             }
+            // The count is in the border rather than only in the body: it is
+            // the one fact that changes what answering this costs, and the
+            // border is the line the eye lands on first (design §2).
+            Self::Rows { table, keys } => {
+                let mut segments = vec![Segment::plain(format!(
+                    "Delete {} {} from ",
+                    keys.len(),
+                    rows(keys.len())
+                ))];
+                segments.extend(table.segments());
+                segments
+            }
         }
     }
+}
+
+/// The noun for a count, so "1 rows" is never drawn.
+fn rows(count: usize) -> &'static str {
+    if count == 1 { "row" } else { "rows" }
 }
 
 /// How the confirmation has to be answered before the statement runs.
@@ -105,7 +239,13 @@ impl DropPrompt {
     /// [`Posture::requires_confirmation`]'s first caller.
     #[must_use]
     pub fn opened(target: Target, posture: Posture) -> Self {
-        let typed = matches!(target, Target::Keyspace(_)) || posture.requires_confirmation();
+        // The posture rule is applied to exactly the statements it names —
+        // `Posture::Protected` is about *destructive* statements, and a row
+        // delete is a `Write` (`Statement::delete_row`). Read off the
+        // statement rather than restated here, so the two cannot drift.
+        let destructive = target.statement().kind.is_destructive();
+        let typed = matches!(target, Target::Keyspace(_))
+            || (posture.requires_confirmation() && destructive);
         let answer = if typed {
             Answer::Typed(Line::default())
         } else {

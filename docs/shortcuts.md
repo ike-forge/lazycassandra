@@ -334,24 +334,53 @@ See [export design](specs/2026-08-14-export-design.md) §2, §7.
 
 ### The drop confirmation
 
-`d` opens `Overlay::Drop` over the node the Tables cursor is on — a keyspace
-or a table — when the connection permits mutation, the frame is big enough to
-draw the block, no drop is already running, and the tree does not hold a range
-of more than one row. Each refusal is a question that cannot be answered; the
-first two are greyed on the hint bar, because they are the two a user cannot
-see for themselves. A frame that shrinks past the block closes it, the same
-rule the export form follows.
+`d` opens `Overlay::Drop` over whatever the focused panel's cursor names —
+a keyspace or a table on Tables, rows on Table contents — when the connection
+permits mutation, the frame is big enough to draw the block, and nothing is
+already running. Two panels for one key, gated on focus, exactly as `ctrl-e`
+is. A frame that shrinks past the block closes it, the same rule the export
+form follows.
 
-Like the form it outranks focus and claims every key before the tree sees
+The bar greys `d` wherever the key would open nothing, and it does so by
+reading the very derivation the key reads — so the bar cannot promise a
+question `d` refuses.
+
+Like the form it outranks focus and claims every key before the panel sees
 one, `q` included. The block names the statement it would run, because every
-action this program takes is shown as CQL first (vision.md §4, principle 3).
+action this program takes is shown as CQL first (vision.md §4, principle 3),
+and for rows it names the count as well — in the border and again under the
+statement.
 
-What it asks depends on what is being dropped and on the connection's
-posture. A keyspace is always typed back — it takes every table in it — and
-`Posture::Protected` raises a table to the same bar:
+| Focus | Cursor on | It runs |
+|---|---|---|
+| Tables | a keyspace | `DROP KEYSPACE` |
+| Tables | a table | `DROP TABLE` |
+| Table contents | its rows | `DELETE`, or one `BEGIN BATCH` of them |
+
+On the tree `d` reads the **cursor** and is refused over a range of more than
+one row: `v` selects rows for `y`, and "drop these four keyspaces" is a
+different feature with a different confirmation. On the grid `d` reads the
+**range**, because there `v` already selects the rows a command acts on and
+`y` reads it the same way. Whole rows in every selection mode — a column
+range addresses no row, and a cell is not a thing `DELETE` removes.
+
+Over the grid it is refused unless the rows can be *addressed*: the panel is
+showing a table rather than a typed statement, that table is in the loaded
+schema, every partition and clustering column is among the page's columns,
+and every one of those values is one this program can spell as a CQL literal.
+A `DELETE` restricts the whole primary key or it deletes something else. See
+[drop design](specs/2026-08-31-drop-design.md) §3.1 for what is spelled and
+what is refused.
+
+What the block asks depends on what is being taken away and on the
+connection's posture. A keyspace is always typed back — it takes every table
+in it — and `Posture::Protected` raises a table to the same bar. A row delete
+is a `Write` rather than a destructive statement, so that posture rule does
+not reach it:
 
 | Target | `Writable` | `Protected` |
 |---|---|---|
+| Rows | `y`/`n` | `y`/`n` |
 | Table | `y`/`n` | the name typed back |
 | Keyspace | the name typed back | the name typed back |
 
@@ -376,10 +405,12 @@ confirmed by typing `MyKs` — what the tree draws is what the field asks for.
 `ctrl-d`/`ctrl-u` reach the confirmation and page nothing there, and every
 other ctrl chord is refused, exactly as with the export form.
 
-A drop that succeeds re-issues `Effect::LoadSchema`, so the tree stops naming
-what is gone. That is the reload path §4 records `r` as waiting on; `r` is
-still unbound, because a refresh key is a binding with its own argument to
-make.
+Whatever went stale is re-read. A drop that succeeds re-issues
+`Effect::LoadSchema`, so the tree stops naming what is gone — that is the
+reload path §4 records `r` as waiting on. A delete re-submits the Contents
+panel's own read, which resets its cursor, viewport and selection: the rows
+the selection named are the rows that are gone. `r` is still unbound, because
+a refresh key is a binding with its own argument to make.
 
 See [drop design](specs/2026-08-31-drop-design.md).
 
@@ -510,7 +541,7 @@ while one is being offered. See the Queries subsection below.
 | Key | Action |
 |---|---|
 | `Enter` | On a keyspace: fold/unfold. On a table: read it into Contents and focus that panel. |
-| `d` | Open the drop confirmation over the node under the cursor. Inert on a connection that is not writable, on a frame with no room to draw the block, while a drop is already running, and over a range of more than one row. See the drop confirmation's own subsection in §1. |
+| `d` | Open the drop confirmation over the node under the cursor. Inert on a connection that is not writable, on a frame with no room to draw the block, while a drop is already running, and over a range of more than one row. The same key answers Table contents, aimed at its rows. See the drop confirmation's own subsection in §1. |
 
 `Space` used to be `Enter`'s synonym here and is now free (§3): one key for one
 action, and a second name for a key everyone already knows buys nothing.
@@ -575,6 +606,7 @@ below.
 |---|---|
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
 | `ctrl-e` | Open the export form. Inert on an empty grid, while an export is running, and on a frame with no room to draw the form. |
+| `d` | Open the delete confirmation over the selected rows, or the row under the cursor when no range is held. Inert unless those rows can be addressed by their whole primary key. See the drop confirmation's own subsection in §1. |
 
 The panel opens in row mode, which lights the whole row: reading a table is
 reading rows. Cell mode draws the selected cell over a faint wash across its
@@ -1040,6 +1072,9 @@ activates the focused stop there (§1's export-form subsection) and is free
 everywhere else, unlike a plain letter — a panel's own claim on a letter
 stops at that panel's border, and so does the form's.
 
+`d` is one key gated on two panels, the shape `ctrl-e` already has: the tree
+and the grid, each aimed at what that panel holds.
+
 `y` and `n` are bound plain already — yank, and the next search match — and
 the drop confirmation answers with the same two letters while it is up. That
 is not a second binding of either: an overlay claims keys before focus is
@@ -1343,7 +1378,14 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A frame that shrank past the block closes it | `a_frame_that_shrank_past_the_drop_block_closes_it` |
 | A successful drop re-reads the schema; a failed one reloads nothing | `a_completed_drop_re_reads_the_schema`, `a_failed_drop_reloads_nothing_and_says_why`, `a_page_for_an_ordinary_read_reloads_nothing`, `dropping_a_table_removes_it_from_the_tree`, `dropping_a_keyspace_takes_its_name_typed_back` (`outbound/scenario.rs`) |
 | A refusal survives the modal in the trail | `a_drop_the_posture_refuses_is_logged_and_raised` |
-| The statement is quoted, destructive, and shown before it runs | `dropping_quotes_the_names_and_is_destructive`, `a_built_drop_classifies_as_its_own_cql_would` (`model/statement.rs`), `the_block_names_its_statement_and_its_keys`, `a_keyspace_block_draws_the_name_field_rather_than_a_yes_key`, `fits_agrees_with_what_the_block_actually_draws` (`inbound/drop.rs`) |
+| The statement is quoted, destructive, and shown before it runs | `dropping_quotes_the_names_and_is_destructive`, `a_built_statement_classifies_as_its_own_cql_would` (`model/statement.rs`), `the_block_names_its_statement_and_its_keys`, `a_keyspace_block_draws_the_name_field_rather_than_a_yes_key`, `fits_agrees_with_what_the_block_actually_draws` (`inbound/drop.rs`) |
+| `d` over the grid reads the range, and the cursor's row without one | `d_over_a_grid_asks_about_the_row_under_the_cursor`, `d_over_a_grid_asks_about_every_selected_row` |
+| A row deletes by its whole primary key, and several as one batch | `y_deletes_the_row_by_its_whole_primary_key`, `several_rows_delete_as_one_batch`, `n_abandons_a_delete`, `deleting_a_row_restricts_every_key_column_and_quotes_the_names`, `one_key_is_a_statement_and_several_are_a_batch` (`model/statement.rs`) |
+| Rows that cannot be addressed are not offered | `d_is_inert_where_the_rows_cannot_be_addressed`, `d_is_inert_over_a_grid_filled_by_a_typed_statement`, `d_is_inert_over_a_grid_with_no_page`, `a_delete_is_refused_on_a_read_only_connection`, `the_delete_hint_is_inert_over_a_grid_holding_no_addressable_row` (`view/hints.rs`), `a_page_without_the_whole_primary_key_deletes_nothing` (`outbound/scenario.rs`) |
+| A literal is spelled by declared type, and refused where it is not sure | every test in `literal.rs` |
+| A delete is a `Write`, so `Posture::Protected` still answers it with `y` | `a_delete_is_a_write_rather_than_a_destructive_statement` (`model/statement.rs`), `a_protected_connection_still_answers_a_delete_with_y` |
+| A completed delete re-reads the grid rather than the schema | `a_completed_delete_re_reads_the_grid_rather_than_the_schema`, `deleting_the_selected_rows_re_reads_the_grid` (`outbound/scenario.rs`) |
+| The block counts the rows, and counts one in the singular | `a_delete_block_counts_the_rows_in_its_border_and_in_its_warning`, `one_row_is_counted_in_the_singular_everywhere_it_is_counted`, `a_long_batch_is_elided_in_the_middle_and_says_how_much` (`inbound/drop.rs`) |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
 | `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
 | A cell yanks its value, unescaped and untruncated | `a_cell_yanks_without_quoting`, `a_cell_yank_is_not_ellipsised` (`yank.rs`) |

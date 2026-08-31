@@ -5,6 +5,8 @@
 //! that can be previewed, logged, and copied — not a string assembled at the
 //! point of execution.
 
+use std::fmt::Write as _;
+
 /// A statement plus what it is allowed to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Statement {
@@ -88,6 +90,63 @@ impl Statement {
         }
     }
 
+    /// One row, addressed by its whole primary key.
+    ///
+    /// `key` is `(column, literal)` in key order — partition columns then
+    /// clustering ones — already spelled by [`crate::literal`], which is
+    /// what makes this total: a key it could not spell never becomes one of
+    /// these (drop design §3.1).
+    ///
+    /// [`StatementKind::Write`] rather than `Destructive`, and deliberately:
+    /// `kind_of` classifies a typed `DELETE` the same way, and the two must
+    /// not disagree about one verb. The confirmation this runs behind is
+    /// owed to the key that opened it, not to the kind (drop design §2).
+    #[must_use]
+    pub fn delete_row(keyspace: &str, table: &str, key: &[(String, String)]) -> Self {
+        Self {
+            cql: format!(
+                "DELETE FROM {}.{} WHERE {}",
+                quoted(keyspace),
+                quoted(table),
+                restriction(key)
+            ),
+            kind: StatementKind::Write,
+        }
+    }
+
+    /// Several rows, as one batch.
+    ///
+    /// Logged, which is the expensive one: a confirmation that said "3 rows"
+    /// promises three rows, and an unlogged batch that half-applies has told
+    /// the user something untrue. The count is bounded by what the grid
+    /// holds, so the batchlog write it costs is bounded too.
+    ///
+    /// A single key produces [`Self::delete_row`] instead — a batch of one
+    /// is a batch the user has to read past to see what it does.
+    #[must_use]
+    pub fn delete_rows(keyspace: &str, table: &str, keys: &[Vec<(String, String)>]) -> Self {
+        if let [only] = keys {
+            return Self::delete_row(keyspace, table, only);
+        }
+
+        let mut cql = "BEGIN BATCH\n".to_owned();
+        for key in keys {
+            let _ = writeln!(
+                cql,
+                "  DELETE FROM {}.{} WHERE {};",
+                quoted(keyspace),
+                quoted(table),
+                restriction(key)
+            );
+        }
+        cql.push_str("APPLY BATCH");
+
+        Self {
+            cql,
+            kind: StatementKind::Write,
+        }
+    }
+
     /// A statement typed by hand, classified by its first keyword.
     ///
     /// A sniffer rather than a parser: a statement opening with a comment
@@ -109,6 +168,16 @@ impl Statement {
 /// safe to interpolate quoted. An embedded quote is doubled, as CQL requires.
 fn quoted(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+/// The `WHERE` clause addressing one row: every key column, in key order,
+/// joined with `AND`. The names are quoted for [`quoted`]'s reason; the
+/// values arrive already spelled.
+fn restriction(key: &[(String, String)]) -> String {
+    key.iter()
+        .map(|(column, literal)| format!("{} = {literal}", quoted(column)))
+        .collect::<Vec<_>>()
+        .join(" AND ")
 }
 
 /// An unrecognised verb is mutating: being wrong that way costs an error
@@ -222,13 +291,67 @@ mod tests {
         assert_eq!(keyspace.kind, StatementKind::Destructive);
     }
 
-    /// The builders and the sniffer must not disagree about what a `DROP` is:
+    /// The builders and the sniffer must not disagree about what a verb is:
     /// the posture guard reads `kind` whichever of the two produced it.
     #[test]
-    fn a_built_drop_classifies_as_its_own_cql_would() {
+    fn a_built_statement_classifies_as_its_own_cql_would() {
+        for built in [
+            Statement::drop_table("shop", "orders"),
+            Statement::drop_keyspace("shop"),
+            Statement::delete_row("shop", "orders", &key()),
+        ] {
+            assert_eq!(
+                built.kind,
+                Statement::typed(&built.cql).kind,
+                "{} classifies two ways",
+                built.cql
+            );
+        }
+    }
+
+    fn key() -> Vec<(String, String)> {
+        vec![("id".to_owned(), "8f14e45f".to_owned())]
+    }
+
+    #[test]
+    fn deleting_a_row_restricts_every_key_column_and_quotes_the_names() {
         assert_eq!(
-            Statement::drop_table("shop", "orders").kind,
-            Statement::typed(&Statement::drop_table("shop", "orders").cql).kind
+            Statement::delete_row(
+                "shop",
+                "orders",
+                &[
+                    ("id".to_owned(), "8f14e45f".to_owned()),
+                    ("placed".to_owned(), "'2026-01-01'".to_owned()),
+                ]
+            )
+            .cql,
+            "DELETE FROM \"shop\".\"orders\" WHERE \"id\" = 8f14e45f AND \"placed\" = '2026-01-01'"
+        );
+    }
+
+    #[test]
+    fn a_delete_is_a_write_rather_than_a_destructive_statement() {
+        let stmt = Statement::delete_row("shop", "orders", &key());
+
+        assert_eq!(stmt.kind, StatementKind::Write);
+        assert!(stmt.mutates(), "a read-only connection still refuses it");
+    }
+
+    #[test]
+    fn one_key_is_a_statement_and_several_are_a_batch() {
+        assert_eq!(
+            Statement::delete_rows("shop", "orders", &[key()]).cql,
+            Statement::delete_row("shop", "orders", &key()).cql,
+            "a batch of one is a batch the user has to read past"
+        );
+
+        let two = vec![key(), vec![("id".to_owned(), "c9f0f895".to_owned())]];
+        assert_eq!(
+            Statement::delete_rows("shop", "orders", &two).cql,
+            "BEGIN BATCH\n  \
+             DELETE FROM \"shop\".\"orders\" WHERE \"id\" = 8f14e45f;\n  \
+             DELETE FROM \"shop\".\"orders\" WHERE \"id\" = c9f0f895;\n\
+             APPLY BATCH"
         );
     }
 

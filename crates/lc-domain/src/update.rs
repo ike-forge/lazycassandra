@@ -2608,7 +2608,76 @@ fn finish_export(
     Vec::new()
 }
 
-/// `d` opens the drop confirmation over the node the tree cursor is on.
+/// What `d` would aim at in this frame, or `None` where it would open
+/// nothing.
+///
+/// One derivation, read by the key that opens the confirmation and by the
+/// hint bar that greys it (`view::hints::liveness`), so the bar cannot
+/// promise a question the key refuses (drop design §1).
+///
+/// It answers only what the *cursor* names. The refusals that are about the
+/// session rather than about the cursor — the posture, the frame, a drop
+/// already running — are [`open_drop`]'s, because the bar greys the first two
+/// and shows the third as a running job.
+pub(crate) fn drop_target(state: &State) -> Option<Target> {
+    match state.focus() {
+        Panel::Tables => tree_target(state),
+        Panel::Contents => rows_target(state),
+        Panel::Ddl | Panel::Queries => None,
+    }
+}
+
+/// The node under the tree cursor. Not the range: `v` selects rows for `y`,
+/// and "drop these four" is a different question with a different
+/// confirmation (design §1).
+fn tree_target(state: &State) -> Option<Target> {
+    if state.tables.selects_many() {
+        return None;
+    }
+
+    match state.tables.selected(state.schema()?)? {
+        Node::Keyspace { keyspace, .. } => Some(Target::Keyspace(keyspace.name.clone())),
+        Node::Table { keyspace, table } => {
+            Some(Target::Table(TableRef::new(&keyspace.name, &table.name)))
+        }
+    }
+}
+
+/// The grid's selected rows, addressed by their primary key — `None` where
+/// that key is not known or not present (design §3.1).
+///
+/// The range, here, and not only the cursor: the tree's `v` selects rows of a
+/// list and a delete of several is a different statement, while the grid's
+/// `v` selects the rows a command acts on and `y` already reads it that way
+/// (yank selection modes design §1). Whole rows in every selection mode — a
+/// column range addresses no row, and a cell is not a thing `DELETE` removes.
+fn rows_target(state: &State) -> Option<Target> {
+    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+        return None;
+    };
+    // A typed statement names its table in text this program will not trust
+    // for a `WHERE` clause it writes itself (design §3.1).
+    let Subject::Table(table) = subject else {
+        return None;
+    };
+    let described = state
+        .schema()?
+        .keyspaces
+        .get(&table.keyspace)?
+        .tables
+        .get(&table.table)?;
+
+    let page = page.page();
+    let selected = spanned(&state.contents.rows, state.contents.cursor.index());
+    let rows: Vec<&Row> = selected
+        .indices()
+        .map(|index| page.rows.get(index))
+        .collect::<Option<Vec<_>>>()?;
+
+    Target::rows(table, described, &page.columns, rows.into_iter())
+}
+
+/// `d` opens the confirmation over whatever [`drop_target`] names.
 ///
 /// Refused, silently, wherever the question it would ask cannot be answered:
 /// a posture that would not run the statement anyway, a frame with no room to
@@ -2618,26 +2687,15 @@ fn finish_export(
 /// greyed on the hint bar, so the refusal is visible before the key is
 /// pressed (`view::hints::liveness`).
 fn open_drop(state: &mut State) {
-    if state.focus() != Panel::Tables
-        || state.dropping.is_some()
+    if state.dropping.is_some()
         || !state.posture().permits_mutation()
         || !state.geometry.drop_fits()
-        || state.tables.selects_many()
     {
         return;
     }
 
-    let Some((tables, schema)) = state.tables_and_schema() else {
+    let Some(target) = drop_target(state) else {
         return;
-    };
-    // The cursor, not the range: `v` selects rows for `y`, and this slice
-    // does not give it a second meaning (design §1).
-    let target = match tables.selected(schema) {
-        Some(Node::Keyspace { keyspace, .. }) => Target::Keyspace(keyspace.name.clone()),
-        Some(Node::Table { keyspace, table }) => {
-            Target::Table(TableRef::new(&keyspace.name, &table.name))
-        }
-        None => return,
     };
 
     state.overlay = Some(Overlay::Drop(DropPrompt::opened(target, state.posture())));
@@ -2781,24 +2839,40 @@ fn finish_drop(state: &mut State, query: QueryId, error: Option<&DbError>) -> Ve
     raise(
         state,
         Message {
-            title: "Dropped".to_owned(),
+            title: match dropped.target() {
+                Target::Rows { .. } => "Deleted".to_owned(),
+                Target::Keyspace(_) | Target::Table(_) => "Dropped".to_owned(),
+            },
             message: format!("{} is gone", dropped.target().qualified()),
             severity: Severity::Info,
         },
     );
 
-    let Some(conn) = state.conn_id() else {
-        return Vec::new();
-    };
-    logged(
-        state,
-        sentence("Reading schema"),
-        Outcome::Pending {
-            trace: Trace::Schema(conn),
-        },
-    );
+    // What went stale is what gets re-read. A drop changed the shape of the
+    // cluster and the tree is describing it; a delete changed the rows of one
+    // table and the grid is showing them (design §4).
+    match dropped.target() {
+        Target::Rows { table, .. } => {
+            let table = table.clone();
+            let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
 
-    vec![Effect::LoadSchema(conn)]
+            submit_into_contents(state, Subject::Table(table), stmt)
+        }
+        Target::Keyspace(_) | Target::Table(_) => {
+            let Some(conn) = state.conn_id() else {
+                return Vec::new();
+            };
+            logged(
+                state,
+                sentence("Reading schema"),
+                Outcome::Pending {
+                    trace: Trace::Schema(conn),
+                },
+            );
+
+            vec![Effect::LoadSchema(conn)]
+        }
+    }
 }
 
 /// `ctrl-d`/`ctrl-u`, dispatched to whatever `key` would reach unmodified.
@@ -11134,6 +11208,298 @@ mod tests {
             dropping(&state).and_then(DropPrompt::typed).map(Line::text),
             Some("shod"),
             "`d` is a character in the field, not a second opener"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Deleting rows (drop design §3.1, §4)
+    // ------------------------------------------------------------------
+
+    /// A grid over `shop.orders`, whose fixture primary key is
+    /// `(id uuid, created_at timestamp)`, holding `rows` addressable rows.
+    fn deletable(rows: usize) -> State {
+        grid_over(
+            rows,
+            &["id", "created_at", "email"],
+            |index| {
+                vec![
+                    CqlValue::Uuid(format!("8f14e45f-000{index}")),
+                    CqlValue::Timestamp(
+                        1_699_999_999_000 + i64::try_from(index).unwrap_or_default(),
+                    ),
+                    CqlValue::Text("ada@example.com".to_owned()),
+                ]
+            },
+            Posture::Writable,
+        )
+    }
+
+    fn grid_over(
+        rows: usize,
+        columns: &[&str],
+        values: impl Fn(usize) -> Vec<CqlValue>,
+        posture: Posture,
+    ) -> State {
+        let mut state = connected(posture);
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(tabled_schema(&[("shop", &["orders"])])),
+                took: Duration::ZERO,
+            },
+        );
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_drop_fits(true);
+
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: columns.iter().map(|name| (*name).to_owned()).collect(),
+                rows: (0..rows)
+                    .map(|index| Row {
+                        values: values(index),
+                    })
+                    .collect(),
+                next: None,
+            },
+        );
+        state.focus_on(Panel::Contents);
+        state
+    }
+
+    fn deleted_cql(effects: &[Effect]) -> Option<String> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Execute { stmt, .. } => Some(stmt.cql.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn d_over_a_grid_asks_about_the_row_under_the_cursor() {
+        let mut state = deletable(3);
+
+        press(&mut state, Key::Char('d'));
+
+        let prompt = dropping(&state).expect("the confirmation is up");
+        assert_eq!(prompt.target().row_count(), Some(1));
+        assert!(
+            !prompt.takes_text(),
+            "a delete is answered y/n on a writable connection"
+        );
+    }
+
+    #[test]
+    fn d_over_a_grid_asks_about_every_selected_row() {
+        let mut state = deletable(3);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('d'));
+
+        assert_eq!(
+            dropping(&state)
+                .expect("the confirmation is up")
+                .target()
+                .row_count(),
+            Some(3),
+            "the range is what a command over the grid acts on"
+        );
+    }
+
+    #[test]
+    fn y_deletes_the_row_by_its_whole_primary_key() {
+        let mut state = deletable(3);
+        press(&mut state, Key::Char('d'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(
+            deleted_cql(&effects).as_deref(),
+            Some(
+                "DELETE FROM \"shop\".\"orders\" WHERE \"id\" = 8f14e45f-0000 \
+                 AND \"created_at\" = 1699999999000"
+            )
+        );
+        assert!(state.dropping.is_some(), "the delete is outstanding");
+    }
+
+    #[test]
+    fn several_rows_delete_as_one_batch() {
+        let mut state = deletable(3);
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('d'));
+        let effects = press(&mut state, Key::Char('y'));
+
+        let cql = deleted_cql(&effects).expect("a statement");
+        assert!(cql.starts_with("BEGIN BATCH\n"), "{cql}");
+        assert!(cql.ends_with("APPLY BATCH"), "{cql}");
+        assert_eq!(cql.matches("DELETE FROM").count(), 2, "{cql}");
+    }
+
+    #[test]
+    fn n_abandons_a_delete() {
+        let mut state = deletable(3);
+        press(&mut state, Key::Char('d'));
+
+        let effects = press(&mut state, Key::Char('n'));
+
+        assert!(state.overlay.is_none());
+        assert!(effects.is_empty());
+        assert!(state.dropping.is_none());
+    }
+
+    /// The "primary key known and present" gate (design §3.1), each half of
+    /// it on its own.
+    #[test]
+    fn d_is_inert_where_the_rows_cannot_be_addressed() {
+        let missing_key_column = grid_over(
+            2,
+            &["email"],
+            |_| vec![CqlValue::Text("ada@example.com".to_owned())],
+            Posture::Writable,
+        );
+        let unspellable_value = grid_over(
+            2,
+            &["id", "created_at"],
+            |_| vec![CqlValue::Uuid("8f14e45f".to_owned()), CqlValue::Null],
+            Posture::Writable,
+        );
+
+        for (mut state, why) in [
+            (missing_key_column, "a page without every key column"),
+            (unspellable_value, "a key column holding no literal"),
+        ] {
+            press(&mut state, Key::Char('d'));
+
+            assert!(state.overlay.is_none(), "{why} addresses no row");
+        }
+    }
+
+    #[test]
+    fn d_is_inert_over_a_grid_filled_by_a_typed_statement() {
+        let mut state = deletable(2);
+        let query = QueryId::next();
+        state.contents.requested(
+            query,
+            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+        );
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["id".to_owned(), "created_at".to_owned()],
+                rows: vec![Row {
+                    values: vec![
+                        CqlValue::Uuid("8f14e45f".to_owned()),
+                        CqlValue::Timestamp(0),
+                    ],
+                }],
+                next: None,
+            },
+        );
+
+        press(&mut state, Key::Char('d'));
+
+        assert!(
+            state.overlay.is_none(),
+            "a typed statement names its table in text this will not trust"
+        );
+    }
+
+    #[test]
+    fn d_is_inert_over_a_grid_with_no_page() {
+        let mut state = connected(Posture::Writable);
+        state.geometry = Geometry::default().with_drop_fits(true);
+        state.focus_on(Panel::Contents);
+
+        press(&mut state, Key::Char('d'));
+
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn a_delete_is_refused_on_a_read_only_connection() {
+        let mut state = grid_over(
+            2,
+            &["id", "created_at"],
+            |_| {
+                vec![
+                    CqlValue::Uuid("8f14e45f".to_owned()),
+                    CqlValue::Timestamp(0),
+                ]
+            },
+            Posture::ReadOnly,
+        );
+
+        press(&mut state, Key::Char('d'));
+
+        assert!(state.overlay.is_none());
+    }
+
+    /// A `Protected` connection is about *destructive* statements, and a row
+    /// delete is a `Write` — so it stays y/n (design §2).
+    #[test]
+    fn a_protected_connection_still_answers_a_delete_with_y() {
+        let mut state = deletable(2);
+        let ConnectionState::Connected(connection) = &mut state.connection else {
+            panic!("the fixture is connected");
+        };
+        connection.posture = Posture::Protected;
+
+        press(&mut state, Key::Char('d'));
+
+        assert!(
+            !dropping(&state)
+                .expect("the confirmation is up")
+                .takes_text(),
+            "the posture rule names destructive statements, which a delete is not"
+        );
+    }
+
+    /// What went stale is what gets re-read: a delete changed the rows of one
+    /// table, and the grid is showing them (design §4).
+    #[test]
+    fn a_completed_delete_re_reads_the_grid_rather_than_the_schema() {
+        let mut state = deletable(3);
+        press(&mut state, Key::Char('d'));
+        press(&mut state, Key::Char('y'));
+        let query = state
+            .dropping
+            .as_ref()
+            .expect("the delete is outstanding")
+            .query();
+
+        let effects = update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page::default()),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::LoadSchema(_))),
+            "the schema did not change"
+        );
+        assert_eq!(
+            deleted_cql(&effects).as_deref(),
+            Some("SELECT * FROM \"shop\".\"orders\" LIMIT 200"),
+            "the grid is re-read so the rows stop being drawn"
+        );
+        assert!(
+            matches!(&state.overlay, Some(Overlay::Message(message))
+                if message.message.contains("1 row from shop.orders")),
+            "the modal names what is gone"
         );
     }
 

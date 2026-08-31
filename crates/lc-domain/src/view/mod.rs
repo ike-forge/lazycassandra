@@ -184,8 +184,14 @@ pub struct DropView {
     /// The block's border text, in the colours the tree gives the same names.
     pub title: Vec<Segment>,
     /// The statement answering runs, shown before it runs (vision.md §4,
-    /// principle 3).
-    pub cql: String,
+    /// principle 3), split into the lines it is written on — a batch is
+    /// several, and the renderer draws what it is given rather than deciding
+    /// where a statement breaks.
+    pub cql: Vec<String>,
+    /// How many rows answering would delete, where that is what it does.
+    /// `None` for a drop, which removes a named thing rather than a count of
+    /// them (drop design §2).
+    pub rows: Option<usize>,
     /// What has to be typed back, and what has been. `None` on the yes/no
     /// spelling, which is the whole of what tells the two apart on screen
     /// (drop design §2).
@@ -276,7 +282,8 @@ fn overlay(state: &State) -> Option<OverlayView> {
         }),
         Overlay::Drop(prompt) => Some(OverlayView::Drop(Box::new(DropView {
             title: prompt.title(),
-            cql: prompt.statement().cql,
+            cql: prompt.statement().cql.lines().map(str::to_owned).collect(),
+            rows: prompt.target().row_count(),
             typed: match prompt.answer() {
                 Answer::YesNo => None,
                 Answer::Typed(line) => Some(TypedName {
