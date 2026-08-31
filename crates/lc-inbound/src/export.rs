@@ -123,10 +123,20 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     }
 }
 
-/// `(•)` or `( )`, the label, and the styling that says whether it can be
-/// chosen and whether `Tab` is on its group.
+/// The radio glyphs. A filled and a hollow circle rather than a parenthesised
+/// dot: the mark reads as one character wide in the cell grid, so the label
+/// column is the same for both states without padding the empty one.
+const MARK_ON: &str = "◉ ";
+const MARK_OFF: &str = "○ ";
+
+fn mark(selected: bool) -> &'static str {
+    if selected { MARK_ON } else { MARK_OFF }
+}
+
+/// [`MARK_ON`] or [`MARK_OFF`], the label, and the styling that says whether
+/// it can be chosen and whether `Tab` is on its group.
 fn radio(label: &str, selected: bool, enabled: bool, focused: bool, theme: Theme) -> TextLine<'_> {
-    let mark = if selected { "(•) " } else { "( ) " };
+    let mark = mark(selected);
     let style = if enabled {
         theme.style(if focused {
             Token::Selected
@@ -145,11 +155,7 @@ fn formats(view: &ExportView, theme: Theme) -> TextLine<'static> {
     let mut spans = Vec::new();
 
     for format in [Format::Csv, Format::Json] {
-        let mark = if view.format == format {
-            "(•) "
-        } else {
-            "( ) "
-        };
+        let mark = mark(view.format == format);
         let style = theme.style(if focused {
             Token::Selected
         } else {
@@ -399,8 +405,8 @@ mod tests {
     fn the_selected_radio_is_marked_and_the_other_is_not() {
         let drawn = text(&drawn(80, 24, form(Fetched::Some(200))));
 
-        assert!(drawn.contains("(•) Export the whole table"));
-        assert!(drawn.contains("( ) Export the 200 fetched rows"));
+        assert!(drawn.contains("◉ Export the whole table"));
+        assert!(drawn.contains("○ Export the 200 fetched rows"));
     }
 
     #[test]
