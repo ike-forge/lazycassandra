@@ -463,3 +463,114 @@ async fn a_session_leaves_a_trail_of_everything_it_ran() {
         "every entry was closed out: {texts:?}"
     );
 }
+
+/// The whole drop path, driven through the ports: the tree names a table, the
+/// confirmation names the statement, and the success re-reads the schema the
+/// drop just changed (docs/superpowers/specs/2026-08-31-drop-design.md §4).
+#[tokio::test]
+async fn dropping_a_table_removes_it_from_the_tree() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders", "users"])]),
+        Posture::Writable,
+    )
+    .re_describing(tabled_schema_of(&[("shop", &["users"])]));
+    let mut state = on_a_table(&cluster).await;
+    // What a rendered frame reports; `lc-inbound`'s `drop::fits` and the
+    // block it measures are held together by its own tests.
+    state.geometry = state.geometry.with_drop_fits(true);
+
+    let effects = press(&mut state, Key::Char('d'));
+    run(&cluster, &mut state, effects).await;
+    let effects = press(&mut state, Key::Char('y'));
+    run(&cluster, &mut state, effects).await;
+
+    assert_eq!(
+        cluster
+            .executed()
+            .iter()
+            .map(|stmt| stmt.cql.as_str())
+            .collect::<Vec<_>>(),
+        ["DROP TABLE \"shop\".\"orders\""],
+        "the statement the confirmation named is the statement that ran"
+    );
+
+    let PanelBody::Tree { rows, .. } = &view_model(&state).panels[0].body else {
+        panic!("the tree is still a tree");
+    };
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>(),
+        ["shop", "users"],
+        "the re-read schema is what the tree draws"
+    );
+}
+
+/// A read-only connection never gets as far as the question (design §1), and
+/// nothing reaches the cluster.
+#[tokio::test]
+async fn a_read_only_connection_drops_nothing() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    );
+    let mut state = on_a_table(&cluster).await;
+    state.geometry = state.geometry.with_drop_fits(true);
+
+    let effects = press(&mut state, Key::Char('d'));
+    run(&cluster, &mut state, effects).await;
+
+    assert!(view_model(&state).overlay.is_none());
+    assert!(cluster.executed().is_empty());
+}
+
+/// A keyspace takes its name typed back before anything runs (design §2).
+#[tokio::test]
+async fn dropping_a_keyspace_takes_its_name_typed_back() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"]), ("billing", &[])]),
+        Posture::Writable,
+    )
+    .re_describing(tabled_schema_of(&[("shop", &["orders"])]));
+    let conn = ConnId::next();
+    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    run(&cluster, &mut state, effects).await;
+    state.geometry = state.geometry.with_drop_fits(true);
+
+    let effects = press(&mut state, Key::Char('d'));
+    run(&cluster, &mut state, effects).await;
+
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+    assert!(
+        cluster.executed().is_empty(),
+        "an empty field drops nothing"
+    );
+
+    for character in "billing".chars() {
+        let effects = press(&mut state, Key::Char(character));
+        run(&cluster, &mut state, effects).await;
+    }
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+
+    assert_eq!(
+        cluster
+            .executed()
+            .iter()
+            .map(|stmt| stmt.cql.as_str())
+            .collect::<Vec<_>>(),
+        ["DROP KEYSPACE \"billing\""]
+    );
+
+    let PanelBody::Tree { rows, .. } = &view_model(&state).panels[0].body else {
+        panic!("the tree is still a tree");
+    };
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>(),
+        ["shop"],
+        "the tree draws the keyspaces the re-read schema still has"
+    );
+}

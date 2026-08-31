@@ -332,6 +332,57 @@ confirmation over the form rather than a sixth overlay variant:
 
 See [export design](specs/2026-08-14-export-design.md) §2, §7.
 
+### The drop confirmation
+
+`d` opens `Overlay::Drop` over the node the Tables cursor is on — a keyspace
+or a table — when the connection permits mutation, the frame is big enough to
+draw the block, no drop is already running, and the tree does not hold a range
+of more than one row. Each refusal is a question that cannot be answered; the
+first two are greyed on the hint bar, because they are the two a user cannot
+see for themselves. A frame that shrinks past the block closes it, the same
+rule the export form follows.
+
+Like the form it outranks focus and claims every key before the tree sees
+one, `q` included. The block names the statement it would run, because every
+action this program takes is shown as CQL first (vision.md §4, principle 3).
+
+What it asks depends on what is being dropped and on the connection's
+posture. A keyspace is always typed back — it takes every table in it — and
+`Posture::Protected` raises a table to the same bar:
+
+| Target | `Writable` | `Protected` |
+|---|---|---|
+| Table | `y`/`n` | the name typed back |
+| Keyspace | the name typed back | the name typed back |
+
+| Key | Effect, `y`/`n` | Effect, typed |
+|---|---|---|
+| `y` | Runs the drop. | Text. |
+| `n` | Closes it, and runs nothing. | Text. |
+| `Enter` | Inert. | Runs the drop, and only once the field equals the name asked for. The bar greys `⏎ drop it` until it does. |
+| any printable key, `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Inert. | Text and editing, the panel-that-takes-text rule applied inside an overlay (§2). |
+| `Esc` | Closes it, and runs nothing. | The same. |
+| anything else | Inert. Nothing means "close" in one frame and something else in the next. |
+
+`n` is deliberately *not* a cancel on the typed spelling: a field that takes
+text claims every printable key, and a keyspace named `nation` could not be
+typed if it did. `Esc` is the way out of every text field in this program,
+and the block names it rather than leaving it to be found.
+
+The name is matched verbatim rather than case-folded. CQL folds an unquoted
+identifier and `system_schema` does not, so a keyspace called `MyKs` is
+confirmed by typing `MyKs` — what the tree draws is what the field asks for.
+
+`ctrl-d`/`ctrl-u` reach the confirmation and page nothing there, and every
+other ctrl chord is refused, exactly as with the export form.
+
+A drop that succeeds re-issues `Effect::LoadSchema`, so the tree stops naming
+what is gone. That is the reload path §4 records `r` as waiting on; `r` is
+still unbound, because a refresh key is a binding with its own argument to
+make.
+
+See [drop design](specs/2026-08-31-drop-design.md).
+
 ### Motion
 
 Applies to the focused panel and nothing else. What moves depends on the panel:
@@ -459,6 +510,7 @@ while one is being offered. See the Queries subsection below.
 | Key | Action |
 |---|---|
 | `Enter` | On a keyspace: fold/unfold. On a table: read it into Contents and focus that panel. |
+| `d` | Open the drop confirmation over the node under the cursor. Inert on a connection that is not writable, on a frame with no room to draw the block, while a drop is already running, and over a range of more than one row. See the drop confirmation's own subsection in §1. |
 
 `Space` used to be `Enter`'s synonym here and is now free (§3): one key for one
 action, and a second name for a key everyone already knows buys nothing.
@@ -970,23 +1022,30 @@ mode design §4, overlay search design §1).
 
 ## 3. The key budget
 
-Taken, lowercase: `c` `f` `g` `h` `j` `k` `l` `m` `n` `q` `s` `v` `y`, plus `?`
-and `/`. `c`, `f` and `s` are taken by Table contents' column mode alone — a
-panel's claim on a letter stops at that panel's border, and this one stops at a
-mode's (§1's Table contents subsection).
+Taken, lowercase: `c` `d` `f` `g` `h` `j` `k` `l` `m` `n` `q` `s` `v` `y`,
+plus `?` and `/`. `c`, `f` and `s` are taken by Table contents' column mode
+alone — a panel's claim on a letter stops at that panel's border, and this
+one stops at a mode's (§1's Table contents subsection).
 `g` is spent as a prefix rather than as a binding: it is the first half of
 `gg` and does nothing alone, which spends it just the same.
 Taken, digits: `1` `2` `3` `4`.
 Taken, punctuation: `[` and `]`.
 Taken, uppercase: `N` and `G` — the only shifted letters bound (§2).
 
-Free, lowercase: `a` `b` `d` `e` `i` `o` `p` `r` `t` `u` `w` `x` `z`, the
+Free, lowercase: `a` `b` `e` `i` `o` `p` `r` `t` `u` `w` `x` `z`, the
 digits `5`–`9` and `0`, and every uppercase letter but `N` and `G`.
 
 `Space` is claimed for the first time, inside the export form only: it
 activates the focused stop there (§1's export-form subsection) and is free
 everywhere else, unlike a plain letter — a panel's own claim on a letter
 stops at that panel's border, and so does the form's.
+
+`y` and `n` are bound plain already — yank, and the next search match — and
+the drop confirmation answers with the same two letters while it is up. That
+is not a second binding of either: an overlay claims keys before focus is
+consulted (§2), so the letters mean one thing on a panel and one thing inside
+the modal, the way `j` means one thing in the tree and another in the
+palette.
 
 Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
@@ -999,6 +1058,10 @@ anything. The rest of the layer is free — including `r`, `e`, `t`, `d`, `u`
 and `p` as plain keys, which nothing binds. `n` is bound plain, to the next
 search match, and `ctrl-n` is a binding of its own rather than a synonym for
 it. Alt is not a layer and nothing may claim from it.
+
+`Backspace`, `Delete`, `←`/`→` and `Home`/`End` gained a third text field
+with the drop confirmation's typed name; the editor and the export form's
+path stop are the other two.
 
 Named keys the domain understands but nothing binds: `Insert` `F1`–`F12`.
 Anything crossterm reports outside that vocabulary is dropped at the edge and
@@ -1019,12 +1082,12 @@ which is a spec-level change.
 
 | Not bound | Why |
 |---|---|
-| `a` `b` `d` `u` focus | Were the four panels and the Columns tab until §1 moved to `1`–`4`. A letter has to be learned per panel; four digits in frame order are one rule, and `[1]-` in the title tells a novice the whole binding. Free, and deliberately left so for a while — a finger that learnt one should find nothing rather than something else. |
+| `a` `b` `u` focus | Were three of the five panel and tab letters until §1 moved to `1`–`4`. A letter has to be learned per panel; four digits in frame order are one rule, and `[1]-` in the title tells a novice the whole binding. Free, and deliberately left so for a while — a finger that learnt one should find nothing rather than something else. `c` and `d` were the other two and are free no longer: `c` clears a column filter (§1's Table contents subsection) and `d` opens the drop confirmation (§1). Letters reclaimed for the nouns they start, not for panels. |
 | `A` `B` `C` `D` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. `T` opened the theme picker until the picker moved to `ctrl-t`, and is free again. |
 | `t` focus | Was Tables before either scheme (§1). Free for the same reason the letters above are. |
 | `Space` on a tree row | Was `Enter`'s synonym there. One key, one action (§2) — true still, even though `Space` is no longer unbound everywhere: it activates a stop inside the export form (§1), and a tree row is not one. |
 | `ctrl-e` / `ctrl-y` | Moved the DDL viewport a line without its cursor. Reading a panel from its heading down needs a design, not two chords. The yank slice did not claim `ctrl-y`: `y` was free as a plain key, and a yank in Queries needs a selection first (yank design §1). |
-| `r` refresh | Nothing re-issues `Effect::LoadSchema` after a racing DDL change; recovery is a restart. The binding waits on the reload path, not the other way round (TODO.md). |
+| `r` refresh | The reload path exists now — a successful drop re-issues `Effect::LoadSchema` (§1's drop subsection) — but it has exactly that one caller. A refresh key is a binding with its own argument to make about what a racing DDL change costs a panel mid-read, and this slice did not make it (TODO.md). |
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
 | Horizontal wheel | Dropped at the edge, and this slice did not pick it up. A notch moves the row viewport; columns are reached with the keys §1 names. |
 | An expand-cell key | Horizontal scrolling reaches columns, not the tails of values, so a 36-character uuid is still ellipsised. Showing one in full is a view with a design of its own, and a cell cursor is what it was waiting for (TODO.md). |
@@ -1271,6 +1334,16 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | An existing destination reopens the form asking to overwrite, putting back whatever it replaces | `an_existing_file_reopens_the_form_asking_to_overwrite`, `an_existing_file_landing_on_an_open_picker_puts_the_theme_back` |
 | Confirming re-emits the export with `overwrite: true`, and re-emits what was attempted rather than what the panel now holds | `confirming_re_emits_the_export_with_overwrite_set`, `confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds`, `confirming_still_exports_when_the_panel_has_moved_on_entirely` |
 | `Esc` from the confirmation goes back to the form intact | `esc_from_the_confirmation_goes_back_to_the_form_intact` |
+| `d` asks over the node the cursor is on, and asks the right question | `d_on_a_keyspace_asks_for_its_name`, `d_on_a_table_asks_yes_or_no`, `a_protected_connection_types_a_table_name_back`, `a_keyspace_is_always_typed_back`, `a_table_is_yes_or_no_until_the_posture_is_protected` (`drop.rs`) |
+| `y` drops and `n` abandons, on the yes/no spelling | `y_drops_the_table`, `n_abandons_the_drop`, `esc_abandons_the_drop_on_either_spelling`, `a_yes_no_confirmation_swallows_the_keys_it_does_not_use` |
+| The typed spelling runs only on the name it asked for, matched verbatim | `enter_on_a_mismatched_name_does_nothing`, `enter_on_the_typed_name_drops_the_keyspace`, `a_typed_confirmation_runs_only_on_the_name_it_asked_for`, `a_name_is_matched_verbatim_rather_than_folded` (`drop.rs`) |
+| Every printable key is text there, `n` and `d` included | `n_is_text_on_a_typed_confirmation`, `a_typed_confirmation_takes_text_rather_than_quitting_or_moving`, `a_second_d_leaves_the_open_confirmation_as_it_was` |
+| `d` is refused where the question could not be answered | `d_is_inert_on_a_read_only_connection`, `d_is_inert_where_the_frame_cannot_draw_the_block`, `d_is_inert_while_a_drop_is_running`, `d_is_inert_over_a_multi_row_selection`, `d_does_nothing_outside_the_tree`, `a_read_only_connection_drops_nothing` (`outbound/scenario.rs`) |
+| The bar greys `d` where it is refused | `the_drop_hint_is_live_only_where_the_key_would_open_something` (`view/hints.rs`) |
+| A frame that shrank past the block closes it | `a_frame_that_shrank_past_the_drop_block_closes_it` |
+| A successful drop re-reads the schema; a failed one reloads nothing | `a_completed_drop_re_reads_the_schema`, `a_failed_drop_reloads_nothing_and_says_why`, `a_page_for_an_ordinary_read_reloads_nothing`, `dropping_a_table_removes_it_from_the_tree`, `dropping_a_keyspace_takes_its_name_typed_back` (`outbound/scenario.rs`) |
+| A refusal survives the modal in the trail | `a_drop_the_posture_refuses_is_logged_and_raised` |
+| The statement is quoted, destructive, and shown before it runs | `dropping_quotes_the_names_and_is_destructive`, `a_built_drop_classifies_as_its_own_cql_would` (`model/statement.rs`), `the_block_names_its_statement_and_its_keys`, `a_keyspace_block_draws_the_name_field_rather_than_a_yes_key`, `fits_agrees_with_what_the_block_actually_draws` (`inbound/drop.rs`) |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
 | `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
 | A cell yanks its value, unescaped and untruncated | `a_cell_yanks_without_quoting`, `a_cell_yank_is_not_ellipsised` (`yank.rs`) |

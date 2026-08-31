@@ -10,6 +10,7 @@
 mod body;
 mod details;
 mod diagnostics;
+mod drop;
 mod export;
 mod filter;
 mod highlight;

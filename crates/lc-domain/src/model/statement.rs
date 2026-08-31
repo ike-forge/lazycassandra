@@ -69,6 +69,25 @@ impl Statement {
         }
     }
 
+    /// One table, gone. Quoted for [`quoted`]'s reason: a name read back
+    /// from the cluster is only safe to interpolate quoted (drop design §3).
+    #[must_use]
+    pub fn drop_table(keyspace: &str, table: &str) -> Self {
+        Self {
+            cql: format!("DROP TABLE {}.{}", quoted(keyspace), quoted(table)),
+            kind: StatementKind::Destructive,
+        }
+    }
+
+    /// One keyspace and every table in it.
+    #[must_use]
+    pub fn drop_keyspace(keyspace: &str) -> Self {
+        Self {
+            cql: format!("DROP KEYSPACE {}", quoted(keyspace)),
+            kind: StatementKind::Destructive,
+        }
+    }
+
     /// A statement typed by hand, classified by its first keyword.
     ///
     /// A sniffer rather than a parser: a statement opening with a comment
@@ -190,6 +209,27 @@ mod tests {
     fn the_cql_is_kept_verbatim() {
         let cql = "SELECT *\nFROM shop.orders";
         assert_eq!(Statement::typed(cql).cql, cql);
+    }
+
+    #[test]
+    fn dropping_quotes_the_names_and_is_destructive() {
+        let table = Statement::drop_table("MyKs", "Orders");
+        assert_eq!(table.cql, "DROP TABLE \"MyKs\".\"Orders\"");
+        assert_eq!(table.kind, StatementKind::Destructive);
+
+        let keyspace = Statement::drop_keyspace("MyKs");
+        assert_eq!(keyspace.cql, "DROP KEYSPACE \"MyKs\"");
+        assert_eq!(keyspace.kind, StatementKind::Destructive);
+    }
+
+    /// The builders and the sniffer must not disagree about what a `DROP` is:
+    /// the posture guard reads `kind` whichever of the two produced it.
+    #[test]
+    fn a_built_drop_classifies_as_its_own_cql_would() {
+        assert_eq!(
+            Statement::drop_table("shop", "orders").kind,
+            Statement::typed(&Statement::drop_table("shop", "orders").cql).kind
+        );
     }
 
     #[test]

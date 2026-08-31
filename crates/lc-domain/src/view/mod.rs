@@ -30,6 +30,7 @@ use crate::config::Diagnostic;
 use crate::contents::SelectionMode;
 use crate::cql::{CandidateKind, Completion};
 use crate::ddl::DdlTab;
+use crate::drop::Answer;
 use crate::export::{Confirm, Format, Scope, Stop};
 use crate::queries::QueriesTab;
 use crate::search::{Direction, Search, Sift};
@@ -117,6 +118,8 @@ pub enum OverlayView {
     /// Boxed: `OverlayView`'s other variants are small, and clippy's
     /// `large_enum_variant` is denied.
     Export(Box<ExportView>),
+    /// The drop confirmation, flattened the way the export form is.
+    Drop(Box<DropView>),
     /// A startup failure with no dismissal, only `q`/`esc` ending the
     /// process (query log design §7).
     Fatal(Message),
@@ -172,6 +175,34 @@ pub struct ExportView {
     pub cursor: usize,
     pub stop: Stop,
     pub confirm: Option<Confirm>,
+}
+
+/// The drop confirmation, flattened for a renderer that never sees a
+/// [`DropPrompt`](crate::drop::DropPrompt).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DropView {
+    /// The block's border text, in the colours the tree gives the same names.
+    pub title: Vec<Segment>,
+    /// The statement answering runs, shown before it runs (vision.md §4,
+    /// principle 3).
+    pub cql: String,
+    /// What has to be typed back, and what has been. `None` on the yes/no
+    /// spelling, which is the whole of what tells the two apart on screen
+    /// (drop design §2).
+    pub typed: Option<TypedName>,
+}
+
+/// The typed confirmation's field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedName {
+    /// The name being asked for.
+    pub name: String,
+    pub text: String,
+    /// A character offset into `text`, for the drawn caret.
+    pub cursor: usize,
+    /// Whether `⏎` would drop it this frame — what greys the key when the
+    /// field does not yet say what it was asked to say.
+    pub confirmed: bool,
 }
 
 /// A live overlay search, as a renderer needs it.
@@ -243,6 +274,19 @@ fn overlay(state: &State) -> Option<OverlayView> {
             column: filter.name().to_owned(),
             query: filter.query().to_owned(),
         }),
+        Overlay::Drop(prompt) => Some(OverlayView::Drop(Box::new(DropView {
+            title: prompt.title(),
+            cql: prompt.statement().cql,
+            typed: match prompt.answer() {
+                Answer::YesNo => None,
+                Answer::Typed(line) => Some(TypedName {
+                    name: prompt.target().name().to_owned(),
+                    text: line.text().to_owned(),
+                    cursor: line.cursor(),
+                    confirmed: prompt.confirmed(),
+                }),
+            },
+        }))),
         Overlay::Fatal(message) => Some(OverlayView::Fatal(message.clone())),
     }
 }

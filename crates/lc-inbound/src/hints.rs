@@ -195,7 +195,7 @@ mod tests {
     fn a_wide_frame_shows_every_hint() {
         assert_eq!(
             drawn(Panel::Tables, 80),
-            " ⏎ open | / search | v select | tab panel | q quit"
+            " ⏎ open | / search | d drop | v select | tab panel | q quit"
         );
     }
 
@@ -246,7 +246,7 @@ mod tests {
 
         assert_eq!(
             drawn(80),
-            " ⏎ open | / search | v select | tab panel | ? commands | q quit"
+            " ⏎ open | / search | d drop | v select | tab panel | ? commands | q quit"
         );
         assert_eq!(
             drawn(46),

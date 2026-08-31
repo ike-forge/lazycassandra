@@ -10,8 +10,10 @@ use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsState, Filter, SelectionMode, Subject, TableRef};
 use crate::cql;
 use crate::ddl::DdlTab;
+use crate::drop::{DropPrompt, Target};
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
+use crate::line::Line;
 use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
 use crate::pointer::{Click, Mark, Pointer, Wheel};
@@ -20,8 +22,8 @@ use crate::posture::Posture;
 use crate::queries::{QueriesTab, Refresh};
 use crate::search::{Direction, Origin, Prompt, Search, Searched, Sift};
 use crate::state::{
-    ConnectionState, Cursor, DiagnosticsPanel, ExportJob, Flash, Geometry, Message, Overlay, Panel,
-    Prefix, Range, Ranges, SchemaState, Scroll, Selection, State,
+    ConnectionState, Cursor, DiagnosticsPanel, Dropping, ExportJob, Flash, Geometry, Message,
+    Overlay, Panel, Prefix, Range, Ranges, SchemaState, Scroll, Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
@@ -327,35 +329,40 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         // query, and applying it would resurrect a view the user left. The
         // panel applies the second gate: whether the result is *its* result.
         Msg::PageReady { query, page, took } => {
-            if state.in_flight.remove(&query).is_some() {
-                state.log.complete(
-                    Trace::Query(query),
-                    Outcome::Succeeded {
-                        detail: format!("{} rows", page.rows.len()),
-                        took,
-                    },
-                );
-                state.contents.page_ready(query, *page);
-                state.mark_dirty();
+            if state.in_flight.remove(&query).is_none() {
+                return Vec::new();
             }
-            Vec::new()
+            state.log.complete(
+                Trace::Query(query),
+                Outcome::Succeeded {
+                    detail: format!("{} rows", page.rows.len()),
+                    took,
+                },
+            );
+            // Answers whichever asked for it. A drop's result reaches the
+            // panel too and is dropped there, because the panel is not
+            // waiting on that id (drop design §3).
+            state.contents.page_ready(query, *page);
+            state.mark_dirty();
+            finish_drop(state, query, None)
         }
 
         // No overlay, unlike `SchemaFailed`: a schema failure disables the
         // application, a failed browse disables one panel, and an overlay per
         // mistyped table is the warning noise vision.md §8 flags.
         Msg::Failed { query, error, .. } => {
-            if state.in_flight.remove(&query).is_some() {
-                state.log.complete(
-                    Trace::Query(query),
-                    Outcome::Failed {
-                        detail: error.to_string(),
-                    },
-                );
-                state.contents.failed(query);
-                state.mark_dirty();
+            if state.in_flight.remove(&query).is_none() {
+                return Vec::new();
             }
-            Vec::new()
+            state.log.complete(
+                Trace::Query(query),
+                Outcome::Failed {
+                    detail: error.to_string(),
+                },
+            );
+            state.contents.failed(query);
+            state.mark_dirty();
+            finish_drop(state, query, Some(&error))
         }
 
         Msg::EditorClosed { buffer } => editor_closed(state, &buffer),
@@ -860,6 +867,13 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return Vec::new();
     }
 
+    // The confirmation claims every key it is answered with, and — on its
+    // typed spelling — every printable key besides, the same rule the form
+    // and the prompt follow above (drop design §2.1).
+    if matches!(state.overlay, Some(Overlay::Drop(_))) {
+        return drop_key(state, press.key);
+    }
+
     // Focus is the mode. A panel that takes text claims every printable key
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
@@ -907,6 +921,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Char('c') if columnar(state) => {
             state.contents.set_filter(column_of(state), None);
         }
+        Key::Char('d') => open_drop(state),
         Key::Char('v') => toggle_visual(state),
         Key::Char('n') => next_match_key(state, Direction::Forwards),
         Key::Char('N') => next_match_key(state, Direction::Backwards),
@@ -933,6 +948,10 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
 fn takes_text(state: &State) -> bool {
     match &state.overlay {
         Some(Overlay::Search(_) | Overlay::Export(_) | Overlay::Filter(_)) => true,
+        // Only on the spelling that has a name to type into. A `y`/`n`
+        // confirmation takes no text, so `gg`/`G` are decided above it and
+        // find nothing to move (drop design §2.1).
+        Some(Overlay::Drop(prompt)) => prompt.takes_text(),
         // A sift up makes the overlay itself a text field (overlay search
         // design §5): the letters that would otherwise move the cursor or
         // close the overlay type themselves instead.
@@ -973,8 +992,15 @@ fn goto(state: &mut State, edge: Edge) {
             preview_theme(state);
         }
         Some(Overlay::Message(_)) | None => scroll(state, edge.motion()),
-        // Unreachable, for `takes_text`'s reason: `Fatal` never reaches here.
-        Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_) | Overlay::Filter(_)) => {}
+        // The drop confirmation drives no list either, and `Fatal` never
+        // reaches here for `takes_text`'s reason.
+        Some(
+            Overlay::Fatal(_)
+            | Overlay::Search(_)
+            | Overlay::Export(_)
+            | Overlay::Filter(_)
+            | Overlay::Drop(_),
+        ) => {}
     }
 }
 
@@ -1670,7 +1696,8 @@ fn escape(state: &mut State) {
             | Overlay::Commands(_)
             | Overlay::Diagnostics(_)
             | Overlay::Export(_)
-            | Overlay::Filter(_),
+            | Overlay::Filter(_)
+            | Overlay::Drop(_),
         ) => return,
         // Not dismissable: `handle_key` claims `Esc` for `Fatal` before this
         // function is reached, so the only caller left is a click routed
@@ -2152,6 +2179,7 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
                 | Overlay::Diagnostics(_)
                 | Overlay::Export(_)
                 | Overlay::Filter(_)
+                | Overlay::Drop(_)
         )
     ) {
         return Vec::new();
@@ -2342,7 +2370,7 @@ fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
                 Decision::Nothing
             }
             _ if form.stop().takes_text() => {
-                edit_path(form, key);
+                edit_line(form.path_mut(), key);
                 Decision::Nothing
             }
             _ => Decision::Nothing,
@@ -2361,11 +2389,11 @@ fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 }
 
-/// The path stop's keys. Every printable key is a character there and the
-/// editing keys move within the line (design §2).
-fn edit_path(form: &mut ExportForm, key: Key) {
-    let line = form.path_mut();
-
+/// The keys a single-line field claims: every printable key is a character
+/// and the editing keys move within the line. Shared by the export form's
+/// path stop (export design §2) and the drop confirmation's typed name
+/// (drop design §2.1), which take text on the same terms.
+fn edit_line(line: &mut Line, key: Key) {
     match key {
         Key::Char(character) => line.insert(character),
         Key::Backspace => line.delete_back(),
@@ -2580,6 +2608,199 @@ fn finish_export(
     Vec::new()
 }
 
+/// `d` opens the drop confirmation over the node the tree cursor is on.
+///
+/// Refused, silently, wherever the question it would ask cannot be answered:
+/// a posture that would not run the statement anyway, a frame with no room to
+/// draw the block, no schema to name a node from, a drop already in flight,
+/// and a range of more than one row — "drop these four" is a different
+/// question with a different confirmation (drop design §1). The first two are
+/// greyed on the hint bar, so the refusal is visible before the key is
+/// pressed (`view::hints::liveness`).
+fn open_drop(state: &mut State) {
+    if state.focus() != Panel::Tables
+        || state.dropping.is_some()
+        || !state.posture().permits_mutation()
+        || !state.geometry.drop_fits()
+        || state.tables.selects_many()
+    {
+        return;
+    }
+
+    let Some((tables, schema)) = state.tables_and_schema() else {
+        return;
+    };
+    // The cursor, not the range: `v` selects rows for `y`, and this slice
+    // does not give it a second meaning (design §1).
+    let target = match tables.selected(schema) {
+        Some(Node::Keyspace { keyspace, .. }) => Target::Keyspace(keyspace.name.clone()),
+        Some(Node::Table { keyspace, table }) => {
+            Target::Table(TableRef::new(&keyspace.name, &table.name))
+        }
+        None => return,
+    };
+
+    state.overlay = Some(Overlay::Drop(DropPrompt::opened(target, state.posture())));
+    state.dirty = true;
+}
+
+/// Every key the drop confirmation claims.
+///
+/// The two spellings answer differently and this is the one place that says
+/// so: `y` runs the yes/no question, and `⏎` runs the typed one only once the
+/// name matches — a keystroke landing in a field that does not yet say what
+/// it was asked to say must not drop anything (drop design §2.1).
+fn drop_key(state: &mut State, key: Key) -> Vec<Effect> {
+    let decision = {
+        let Some(Overlay::Drop(prompt)) = &mut state.overlay else {
+            return Vec::new();
+        };
+
+        if prompt.takes_text() {
+            typed_key(prompt, key)
+        } else {
+            yes_no_key(key)
+        }
+    };
+
+    state.dirty = true;
+
+    match decision {
+        Decision::Nothing => Vec::new(),
+        Decision::Close => {
+            state.overlay = None;
+            Vec::new()
+        }
+        Decision::Run => start_drop(state),
+    }
+}
+
+/// The yes/no spelling. Everything it does not use is inert rather than
+/// dismissing, the rule the palette already follows (command palette design
+/// §7).
+const fn yes_no_key(key: Key) -> Decision {
+    match key {
+        Key::Char('y') => Decision::Run,
+        Key::Char('n') | Key::Escape => Decision::Close,
+        _ => Decision::Nothing,
+    }
+}
+
+/// The typed spelling. The catch-all is last and unguarded: every printable
+/// key is text here, `n` included — a keyspace named `nation` could not be
+/// typed otherwise (drop design §2.1).
+fn typed_key(prompt: &mut DropPrompt, key: Key) -> Decision {
+    match key {
+        Key::Escape => Decision::Close,
+        Key::Enter if prompt.confirmed() => Decision::Run,
+        Key::Enter => Decision::Nothing,
+        _ => {
+            if let Some(line) = prompt.typed_mut() {
+                edit_line(line, key);
+            }
+            Decision::Nothing
+        }
+    }
+}
+
+/// Turns the answered confirmation into the statement it was asking about.
+///
+/// `submit` is where the posture guard lives, so [`open_drop`]'s own gate is
+/// convenience rather than enforcement and a posture that changed under a
+/// held-open confirmation is still refused here (drop design §3).
+fn start_drop(state: &mut State) -> Vec<Effect> {
+    let Some(Overlay::Drop(prompt)) = state.overlay.take() else {
+        return Vec::new();
+    };
+
+    let target = prompt.target().clone();
+    let stmt = prompt.statement();
+    let log_subject = statement_subject(&stmt);
+
+    match submit(state, stmt) {
+        Ok((query, effects)) => {
+            state.dropping = Some(Dropping::started(query, target));
+            effects
+        }
+        Err(error) => {
+            // Logged before the modal, not instead of it: the modal is gone
+            // the moment it is dismissed, and the trail is where the reason
+            // survives (query log design §1, design §5).
+            logged(
+                state,
+                log_subject,
+                Outcome::Rejected {
+                    reason: error.to_string(),
+                },
+            );
+            raise(
+                state,
+                Message {
+                    title: "Not dropped".to_owned(),
+                    message: error.to_string(),
+                    severity: Severity::Danger,
+                },
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// A drop ended. `error` is `None` on the success the cluster reported.
+///
+/// Dropped where `query` is not the drop that is outstanding, which is every
+/// ordinary read: this is called from both result arms, and the id is the
+/// only thing that separates a drop's answer from a grid's
+/// (architecture.md §3).
+///
+/// The success arm re-issues `Effect::LoadSchema`: the tree named a node that
+/// no longer exists the moment the statement succeeded, and `schema_loaded`
+/// clamps the cursor to what is left (drop design §4). Nothing is reloaded on
+/// a failure — the schema did not change.
+fn finish_drop(state: &mut State, query: QueryId, error: Option<&DbError>) -> Vec<Effect> {
+    if state.dropping.as_ref().map(Dropping::query) != Some(query) {
+        return Vec::new();
+    }
+    let Some(dropped) = state.dropping.take() else {
+        return Vec::new();
+    };
+    state.dirty = true;
+
+    if let Some(error) = error {
+        raise(
+            state,
+            Message {
+                title: "Not dropped".to_owned(),
+                message: error.to_string(),
+                severity: Severity::Danger,
+            },
+        );
+        return Vec::new();
+    }
+
+    raise(
+        state,
+        Message {
+            title: "Dropped".to_owned(),
+            message: format!("{} is gone", dropped.target().qualified()),
+            severity: Severity::Info,
+        },
+    );
+
+    let Some(conn) = state.conn_id() else {
+        return Vec::new();
+    };
+    logged(
+        state,
+        sentence("Reading schema"),
+        Outcome::Pending {
+            trace: Trace::Schema(conn),
+        },
+    );
+
+    vec![Effect::LoadSchema(conn)]
+}
+
 /// `ctrl-d`/`ctrl-u`, dispatched to whatever `key` would reach unmodified.
 ///
 /// Delegating rather than paging here is what keeps the two spellings from
@@ -2590,11 +2811,16 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does;
-        // the form and the filter modal have nothing paged either. `Fatal` is
-        // unreachable here for `takes_text`'s reason.
-        Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_) | Overlay::Filter(_)) => {
-            Vec::new()
-        }
+        // the form and the filter modal have nothing paged either, and the
+        // confirmation drives no list. `Fatal` is unreachable here for
+        // `takes_text`'s reason.
+        Some(
+            Overlay::Fatal(_)
+            | Overlay::Search(_)
+            | Overlay::Export(_)
+            | Overlay::Filter(_)
+            | Overlay::Drop(_),
+        ) => Vec::new(),
         Some(Overlay::Message(_)) | None => {
             if state.takes_text() {
                 edit(state, key);
@@ -2889,6 +3115,14 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         state.mark_dirty();
     }
 
+    // The confirmation answers for its own shrink, on its own threshold, for
+    // the reason the picker does not borrow the palette's: it is a different
+    // block and fits where the form does not (drop design §1).
+    if !geometry.drop_fits() && matches!(state.overlay, Some(Overlay::Drop(_))) {
+        state.overlay = None;
+        state.mark_dirty();
+    }
+
     Vec::new()
 }
 
@@ -3064,8 +3298,11 @@ fn run(state: &mut State) -> Vec<Effect> {
     let stmt = Statement::typed(cql);
 
     // Refused rather than executed: vision.md §4 principle 6 makes typed
-    // confirmation the condition on these running at all, and the flow that
-    // asks for it is unbuilt. This call site becomes the prompt (design §5).
+    // confirmation the condition on these running at all, and the tree's `d`
+    // is the only place that confirmation exists. A statement typed by hand
+    // names its target in text this program does not parse, so there is
+    // nothing to ask the user to type back (drop design's preamble). This
+    // call site becomes the prompt once there is (design §5).
     if stmt.kind.is_destructive() {
         // Logged before the modal, not instead of it: the modal is gone the
         // moment it is dismissed, and the trail is where the reason survives
@@ -3074,8 +3311,8 @@ fn run(state: &mut State) -> Vec<Effect> {
             state,
             statement_subject(&stmt),
             Outcome::Rejected {
-                reason: "dropping and truncating wait on a typed confirmation, which is not \
-                         built yet"
+                reason: "dropping and truncating from the buffer wait on a typed \
+                         confirmation this statement gives nothing to type"
                     .to_owned(),
             },
         );
@@ -3083,9 +3320,10 @@ fn run(state: &mut State) -> Vec<Effect> {
             state,
             Message {
                 title: "Not run".to_owned(),
-                message:
-                    "Dropping and truncating wait on a typed confirmation, which is not built yet."
-                        .to_owned(),
+                message: "Dropping and truncating from the buffer wait on a typed \
+                          confirmation. Drop a keyspace or a table with `d` on the Tables \
+                          panel, which asks for one."
+                    .to_owned(),
                 severity: Severity::Danger,
             },
         );
@@ -4185,6 +4423,7 @@ mod tests {
             | Overlay::Diagnostics(_)
             | Overlay::Export(_)
             | Overlay::Filter(_)
+            | Overlay::Drop(_)
             | Overlay::Fatal(_) => None,
         }
     }
@@ -10344,6 +10583,19 @@ mod tests {
         searched.geometry = geometry;
         searched.apply_search(Searched::Tables, Search::new("o"));
 
+        // The two fixtures the `Drop` group needs: one where `d` opens a
+        // question, and one with that question open, so the negative sweep
+        // sees what the confirmation captures. The typed spelling is left
+        // out for the reason the editor is — every printable key is text
+        // there, which would tell the negative sweep the palette is missing
+        // the alphabet (`the_typed_confirmation_takes_text` covers it).
+        let mut droppable = droppable_tree();
+        press(&mut droppable, Key::Char('j'));
+
+        let mut dropping = droppable_tree();
+        press(&mut dropping, Key::Char('j'));
+        press(&mut dropping, Key::Char('d'));
+
         // The one state `[`/`]` do anything in: the DDL panel focused with a
         // table under the tree cursor, so its strip draws two tabs.
         let mut tabbed = browsing_a_table();
@@ -10360,9 +10612,33 @@ mod tests {
             grid,
             columnar,
             export_open,
+            droppable,
+            dropping,
             searched,
             tabbed,
         ]
+    }
+
+    /// A writable connection with a table under the tree, on a frame with
+    /// room for the confirmation: the state `d` answers in (drop design §1).
+    /// The cursor starts on the keyspace row, so `j` reaches the table.
+    fn droppable_tree() -> State {
+        let mut state = connected(Posture::Writable);
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(tabled_schema(&[("shop", &["orders"])])),
+                took: Duration::ZERO,
+            },
+        );
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14)
+            .with_theme_rows(20)
+            .with_drop_fits(true);
+        // Unfolded, so the row below the keyspace is its table.
+        press(&mut state, Key::Char('l'));
+        state
     }
 
     /// Whether pressing `key` changes anything a user could observe.
@@ -10458,6 +10734,407 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Dropping (docs/superpowers/specs/2026-08-31-drop-design.md)
+    // ------------------------------------------------------------------
+
+    fn dropping(state: &State) -> Option<&DropPrompt> {
+        match &state.overlay {
+            Some(Overlay::Drop(prompt)) => Some(prompt),
+            _ => None,
+        }
+    }
+
+    fn type_in(state: &mut State, text: &str) {
+        for character in text.chars() {
+            press(state, Key::Char(character));
+        }
+    }
+
+    /// The cursor on the keyspace row of `droppable_tree`.
+    fn on_keyspace() -> State {
+        droppable_tree()
+    }
+
+    /// The cursor on the table row below it.
+    fn on_table() -> State {
+        let mut state = droppable_tree();
+        press(&mut state, Key::Char('j'));
+        state
+    }
+
+    #[test]
+    fn d_on_a_keyspace_asks_for_its_name() {
+        let mut state = on_keyspace();
+
+        press(&mut state, Key::Char('d'));
+
+        let prompt = dropping(&state).expect("the confirmation is up");
+        assert_eq!(prompt.target(), &Target::Keyspace("shop".to_owned()));
+        assert!(prompt.takes_text(), "a keyspace is always typed back");
+    }
+
+    #[test]
+    fn d_on_a_table_asks_yes_or_no() {
+        let mut state = on_table();
+
+        press(&mut state, Key::Char('d'));
+
+        let prompt = dropping(&state).expect("the confirmation is up");
+        assert_eq!(
+            prompt.target(),
+            &Target::Table(TableRef::new("shop", "orders"))
+        );
+        assert!(!prompt.takes_text());
+    }
+
+    #[test]
+    fn a_protected_connection_types_a_table_name_back() {
+        let mut state = on_table();
+        let ConnectionState::Connected(connection) = &mut state.connection else {
+            panic!("the fixture is connected");
+        };
+        connection.posture = Posture::Protected;
+
+        press(&mut state, Key::Char('d'));
+
+        assert!(
+            dropping(&state)
+                .expect("the confirmation is up")
+                .takes_text(),
+            "a protected connection needs the name typed, whatever the target"
+        );
+    }
+
+    #[test]
+    fn y_drops_the_table() {
+        let mut state = on_table();
+        press(&mut state, Key::Char('d'));
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(state.overlay.is_none(), "the question is answered");
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::Execute { stmt, .. } if stmt.cql == "DROP TABLE \"shop\".\"orders\""
+            )),
+            "{effects:?}"
+        );
+        assert!(state.dropping.is_some(), "the drop is outstanding");
+    }
+
+    #[test]
+    fn n_abandons_the_drop() {
+        let mut state = on_table();
+        press(&mut state, Key::Char('d'));
+
+        let effects = press(&mut state, Key::Char('n'));
+
+        assert!(state.overlay.is_none());
+        assert!(effects.is_empty(), "nothing reaches the cluster");
+        assert!(state.dropping.is_none());
+    }
+
+    #[test]
+    fn esc_abandons_the_drop_on_either_spelling() {
+        for mut state in [on_table(), on_keyspace()] {
+            press(&mut state, Key::Char('d'));
+            let effects = press(&mut state, Key::Escape);
+
+            assert!(state.overlay.is_none());
+            assert!(effects.is_empty());
+        }
+    }
+
+    #[test]
+    fn enter_on_a_mismatched_name_does_nothing() {
+        let mut state = on_keyspace();
+        press(&mut state, Key::Char('d'));
+        type_in(&mut state, "sho");
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(effects.is_empty(), "a half-typed name drops nothing");
+        assert!(
+            dropping(&state).is_some(),
+            "and the question is still being asked"
+        );
+    }
+
+    #[test]
+    fn enter_on_the_typed_name_drops_the_keyspace() {
+        let mut state = on_keyspace();
+        press(&mut state, Key::Char('d'));
+        type_in(&mut state, "shop");
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::Execute { stmt, .. } if stmt.cql == "DROP KEYSPACE \"shop\""
+            )),
+            "{effects:?}"
+        );
+    }
+
+    /// `n` cannot be a cancel where a name holding one has to be typeable
+    /// (design §2.1).
+    #[test]
+    fn n_is_text_on_a_typed_confirmation() {
+        let mut state = connected(Posture::Writable);
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(tabled_schema(&[("nation", &["orders"])])),
+                took: Duration::ZERO,
+            },
+        );
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_drop_fits(true);
+
+        press(&mut state, Key::Char('d'));
+        type_in(&mut state, "nation");
+
+        let effects = press(&mut state, Key::Enter);
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::Execute { stmt, .. } if stmt.cql == "DROP KEYSPACE \"nation\""
+            )),
+            "every `n` typed itself; {effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_typed_confirmation_takes_text_rather_than_quitting_or_moving() {
+        let mut state = on_keyspace();
+        press(&mut state, Key::Char('d'));
+        let before = state.tables.cursor.index();
+
+        for key in ['q', 'j', 'G', 'y', '1'] {
+            press(&mut state, Key::Char(key));
+        }
+
+        assert!(!state.should_quit, "`q` is a character here");
+        assert_eq!(state.tables.cursor.index(), before);
+        assert_eq!(state.focus(), Panel::Tables);
+        assert_eq!(
+            dropping(&state).and_then(DropPrompt::typed).map(Line::text),
+            Some("qjGy1")
+        );
+    }
+
+    #[test]
+    fn a_yes_no_confirmation_swallows_the_keys_it_does_not_use() {
+        let mut state = on_table();
+        press(&mut state, Key::Char('d'));
+        let before = crate::view::view_model(&state);
+
+        for key in ['q', 'j', '?', 'v', 'm'] {
+            press(&mut state, Key::Char(key));
+        }
+
+        assert!(!state.should_quit);
+        assert_eq!(crate::view::view_model(&state), before);
+    }
+
+    #[test]
+    fn d_is_inert_on_a_read_only_connection() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.geometry = state.geometry.with_drop_fits(true);
+
+        press(&mut state, Key::Char('d'));
+
+        assert!(
+            state.overlay.is_none(),
+            "a question the statement's own guard would refuse is not asked"
+        );
+    }
+
+    #[test]
+    fn d_is_inert_where_the_frame_cannot_draw_the_block() {
+        let mut state = on_table();
+        state.geometry = state.geometry.with_drop_fits(false);
+
+        press(&mut state, Key::Char('d'));
+
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn d_is_inert_while_a_drop_is_running() {
+        let mut state = on_table();
+        press(&mut state, Key::Char('d'));
+        press(&mut state, Key::Char('y'));
+        assert!(state.dropping.is_some(), "one is outstanding");
+
+        press(&mut state, Key::Escape);
+        press(&mut state, Key::Char('d'));
+
+        assert!(state.overlay.is_none(), "the second would race the first");
+    }
+
+    #[test]
+    fn d_is_inert_over_a_multi_row_selection() {
+        let mut state = on_keyspace();
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        press(&mut state, Key::Char('d'));
+
+        assert!(
+            state.overlay.is_none(),
+            "'drop these two' is a different question"
+        );
+    }
+
+    #[test]
+    fn d_does_nothing_outside_the_tree() {
+        for panel in [Panel::Ddl, Panel::Contents] {
+            let mut state = on_table();
+            state.focus_on(panel);
+
+            press(&mut state, Key::Char('d'));
+
+            assert!(state.overlay.is_none(), "{panel:?} answers no drop");
+        }
+    }
+
+    #[test]
+    fn a_completed_drop_re_reads_the_schema() {
+        let mut state = on_table();
+        press(&mut state, Key::Char('d'));
+        press(&mut state, Key::Char('y'));
+        let query = state
+            .dropping
+            .as_ref()
+            .expect("the drop is outstanding")
+            .query();
+
+        let effects = update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page::default()),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert_eq!(effects, vec![Effect::LoadSchema(current_conn(&state))]);
+        assert!(state.dropping.is_none(), "the round trip is over");
+        assert!(
+            matches!(&state.overlay, Some(Overlay::Message(message))
+                if message.message.contains("shop.orders")),
+            "the modal names what is gone"
+        );
+    }
+
+    #[test]
+    fn a_failed_drop_reloads_nothing_and_says_why() {
+        let mut state = on_table();
+        press(&mut state, Key::Char('d'));
+        press(&mut state, Key::Char('y'));
+        let query = state
+            .dropping
+            .as_ref()
+            .expect("the drop is outstanding")
+            .query();
+
+        let effects = update(
+            &mut state,
+            Msg::Failed {
+                query,
+                error: DbError::Unreachable("no route".to_owned()),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert!(effects.is_empty(), "the schema did not change");
+        assert!(state.dropping.is_none());
+        assert!(
+            matches!(&state.overlay, Some(Overlay::Message(message))
+                if message.severity == Severity::Danger && message.message.contains("no route")),
+            "the cluster's own reason is what is raised"
+        );
+    }
+
+    /// The trail is where the reason survives the modal (design §5).
+    #[test]
+    fn a_drop_the_posture_refuses_is_logged_and_raised() {
+        let mut state = on_table();
+        press(&mut state, Key::Char('d'));
+        // Between the question and the answer the connection turns read-only.
+        let ConnectionState::Connected(connection) = &mut state.connection else {
+            panic!("the fixture is connected");
+        };
+        connection.posture = Posture::ReadOnly;
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(effects.is_empty(), "the posture guard is in `submit`");
+        assert!(matches!(&state.overlay, Some(Overlay::Message(_))));
+        assert!(
+            state
+                .log
+                .entries()
+                .any(|entry| matches!(entry.outcome(), Outcome::Rejected { .. })),
+            "the trail keeps the refusal the modal loses"
+        );
+    }
+
+    /// A result for a drop that is no longer outstanding must not reload the
+    /// schema behind a user who has moved on (architecture.md §3).
+    #[test]
+    fn a_page_for_an_ordinary_read_reloads_nothing() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the panel is waiting");
+
+        let effects = update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(page_of(3)),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn a_frame_that_shrank_past_the_drop_block_closes_it() {
+        let mut state = on_table();
+        press(&mut state, Key::Char('d'));
+
+        let shrunk = state.geometry.with_drop_fits(false);
+        update(&mut state, Msg::Measured(shrunk));
+
+        assert!(
+            state.overlay.is_none(),
+            "a mode nothing draws still capturing every key is the failure this prevents"
+        );
+    }
+
+    #[test]
+    fn a_second_d_leaves_the_open_confirmation_as_it_was() {
+        let mut state = on_keyspace();
+        press(&mut state, Key::Char('d'));
+        type_in(&mut state, "sho");
+
+        press(&mut state, Key::Char('d'));
+
+        assert_eq!(
+            dropping(&state).and_then(DropPrompt::typed).map(Line::text),
+            Some("shod"),
+            "`d` is a character in the field, not a second opener"
+        );
     }
 
     fn searching(state: &State) -> Option<&Prompt> {
@@ -11352,7 +12029,7 @@ mod tests {
         let Outcome::Rejected { reason } = state.log.entries().last().unwrap().outcome() else {
             panic!("the destructive statement was refused");
         };
-        assert!(reason.contains("not built yet"), "{reason}");
+        assert!(reason.contains("typed confirmation"), "{reason}");
     }
 
     #[test]

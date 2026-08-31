@@ -12,6 +12,7 @@ use crate::commands::CommandsPanel;
 use crate::config::{Config, Diagnostic};
 use crate::contents::{ContentsPanel, Filter, SelectionMode};
 use crate::ddl::DdlPanel;
+use crate::drop::{DropPrompt, Target};
 use crate::export::ExportForm;
 use crate::log::{Log, Outcome};
 use crate::model::{ConnId, DbError, JobId, Key, QueryId, Schema, Statement};
@@ -73,6 +74,10 @@ pub struct State {
     pub cwd: PathBuf,
     /// The one export in flight, if any. One at a time (export design §5).
     pub export: Option<ExportJob>,
+    /// The one drop in flight, if any. One at a time for the reason an export
+    /// is, and for one more: a second would race the schema reload the first
+    /// owes (drop design §1, §4).
+    pub dropping: Option<Dropping>,
     /// The prefix the last press armed, if it armed one. Spent by the next
     /// key whatever that key is, so `g` followed by anything but `g` is that
     /// key on its own (docs/shortcuts.md §1).
@@ -151,6 +156,35 @@ impl ExportJob {
     #[must_use]
     pub fn into_parts(self) -> (ExportForm, Source) {
         (self.form, self.source)
+    }
+}
+
+/// A drop that has reached the cluster and not yet come back.
+///
+/// The [`QueryId`] alone would not do: the tree the target was read from is
+/// live for the whole round trip, so what the message names when the answer
+/// arrives is carried here rather than read again (the argument
+/// [`ExportJob::source`] already makes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dropping {
+    query: QueryId,
+    target: Target,
+}
+
+impl Dropping {
+    #[must_use]
+    pub const fn started(query: QueryId, target: Target) -> Self {
+        Self { query, target }
+    }
+
+    #[must_use]
+    pub const fn query(&self) -> QueryId {
+        self.query
+    }
+
+    #[must_use]
+    pub const fn target(&self) -> &Target {
+        &self.target
     }
 }
 
@@ -272,6 +306,12 @@ pub enum Overlay {
     /// rather than a sixth variant here, so "a confirmation with nothing
     /// behind it" cannot be written down (export design §7).
     Export(ExportForm),
+    /// The drop confirmation. Whether it is answered with `y` or with the
+    /// target's name typed back is a field on the prompt rather than two
+    /// variants here: it is one question with two spellings, and every other
+    /// consequence of being this overlay is the same either way
+    /// (drop design §2).
+    Drop(DropPrompt),
     /// A startup failure: the connection or the schema read, either of which
     /// happens before there is an application to put a trail in. Its only
     /// exit is `Effect::Quit`.
@@ -404,6 +444,13 @@ const TABLES_HINTS: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('/'))],
         action: "search",
+    },
+    // Greyed rather than dropped where the statement could not run — a
+    // read-only connection, a frame with no room for the block — the same
+    // promise `ctrl-e` keeps over an empty grid (drop design §1).
+    Binding {
+        keys: &[Stroke::key(Key::Char('d'))],
+        action: "drop",
     },
     Binding {
         keys: &[Stroke::key(Key::Char('v'))],
@@ -1150,6 +1197,11 @@ pub struct Geometry {
     /// block — so it satisfies §3's rule that geometry never depends on the
     /// offsets it bounds (export design §2).
     export_fits: bool,
+    /// Whether the frame is big enough for the renderer to draw the drop
+    /// confirmation. Measured apart from [`Self::export_fits`] because the
+    /// two blocks are different sizes, and each gate has to read its own
+    /// (drop design §1).
+    drop_fits: bool,
     /// Character columns the Contents grid's body has, gutter included. A
     /// function of the terminal size alone, which is what keeps §3's
     /// measurement loop open (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
@@ -1174,6 +1226,7 @@ impl Geometry {
             log_selection: Span { first: 0, lines: 0 },
             command_rows,
             export_fits: false,
+            drop_fits: false,
             grid_width: 0,
             theme_rows: 0,
         }
@@ -1240,6 +1293,18 @@ impl Geometry {
             export_fits,
             ..self
         }
+    }
+
+    #[must_use]
+    pub const fn drop_fits(self) -> bool {
+        self.drop_fits
+    }
+
+    /// Whether the frame could draw the drop confirmation. Split from
+    /// [`Self::new`] for [`Self::with_export_fits`]'s reason.
+    #[must_use]
+    pub const fn with_drop_fits(self, drop_fits: bool) -> Self {
+        Self { drop_fits, ..self }
     }
 
     /// The span the frame drew the Ddl selection at.

@@ -50,6 +50,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count(None));
     let theme_rows = crate::themes::visible_rows(frame.area());
     let export_fits = crate::export::fits(frame.area());
+    let drop_fits = crate::drop::fits(frame.area());
     let rects = match layout(frame.area(), queries_height(view)) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
@@ -163,6 +164,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_ddl_selection(ddl_selection)
             .with_log(log_lines, log_selection)
             .with_export_fits(export_fits)
+            .with_drop_fits(drop_fits)
             .with_grid_width(grid_width)
             .with_theme_rows(theme_rows),
         map: FrameMap::new(hits),
@@ -224,6 +226,7 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
         Some(OverlayView::Filter { column, query }) => {
             crate::filter::render(frame, column, query, theme);
         }
+        Some(OverlayView::Drop(view)) => crate::drop::render(frame, view, theme),
         None => {}
     }
 }
@@ -286,7 +289,11 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             | OverlayView::Fatal(_)
             | OverlayView::Commands { .. }
             | OverlayView::Themes { .. }
-            | OverlayView::Diagnostics { .. },
+            | OverlayView::Diagnostics { .. }
+            // A modal that owns the frame. Unlike the export form, which is
+            // asking about the grid beneath it, a drop is asking about one
+            // row its own title already names (drop design §2).
+            | OverlayView::Drop(_),
         ) => true,
         // The filter modal is not one either, for the export form's reason:
         // it narrows the grid beneath it, and a modal that dimmed its own
@@ -890,7 +897,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            " ⏎ open | / search | v select | tab panel | q quit",
+            " ⏎ open | / search | d drop | v select | tab panel | q quit",
             "the whole row is the bar's: the loader draws on panel borders now"
         );
         assert!(
@@ -5005,8 +5012,9 @@ mod tests {
     #[test]
     fn a_rule_meets_the_block_it_divides() {
         // Tall enough that the whole catalogue fits, so no scrollbar owns the
-        // right border where the rule lands.
-        let buffer = with_palette(100, 90);
+        // right border where the rule lands. The block takes 70% of the
+        // frame, so this height tracks the catalogue as groups are added.
+        let buffer = with_palette(100, 120);
         let area = block_area(&buffer, "Commands");
         let symbol = |x: u16, y: u16| {
             buffer
@@ -5251,11 +5259,11 @@ mod tests {
             "a catalogue taller than the box gets a scrollbar"
         );
 
-        // At 100x90 the whole catalogue fits (design §10) — 70% of 90 rows
-        // clears the catalogue plus its two borders — so there is no
+        // At 100x120 the whole catalogue fits (design §10) — 70% of 120
+        // rows clears the catalogue plus its two borders — so there is no
         // scrollbar, and its absence is what says nothing is hidden.
         assert!(
-            !has_scrollbar(&with_palette(100, 90), "Commands"),
+            !has_scrollbar(&with_palette(100, 120), "Commands"),
             "a frame tall enough to hold the whole catalogue must draw no scrollbar"
         );
     }
@@ -5277,7 +5285,7 @@ mod tests {
 
     #[test]
     fn a_tall_frame_does_not_get_a_palette_full_of_blank_rows() {
-        let buffer = with_palette(100, 90);
+        let buffer = with_palette(100, 120);
         let (x, y) = top_border(&buffer, "Commands");
 
         let bottom = (y + 1..buffer.area.height)
@@ -5291,7 +5299,7 @@ mod tests {
         assert_eq!(
             usize::from(bottom - y) + 1,
             lc_domain::commands::row_count(None) + 2,
-            "the block ends where the catalogue does, not at 70% of 90 rows"
+            "the block ends where the catalogue does, not at 70% of 120 rows"
         );
     }
 

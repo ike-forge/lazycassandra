@@ -175,6 +175,34 @@ const TABLES: &[Command] = &[Command::new(
     Run::In(Panel::Tables),
 )];
 
+/// The confirmation's own keys. `y`, `n`, `⏎` and `esc` all appear elsewhere
+/// meaning something else, which is the same thing the `Export` group's rows
+/// do: the palette may not omit what a key does somewhere
+/// (docs/superpowers/specs/2026-08-09-command-palette-design.md §2).
+///
+/// `d` is the one live row. The other three mean something only inside the
+/// confirmation, and their keys mean something else outside it — `y` yanks,
+/// `n` walks to the next match — so a palette that pressed one would yank
+/// rather than confirm (palette execution design §5).
+const DROP: &[Command] = &[
+    Command::new(
+        &[Stroke::key(Key::Char('d'))],
+        "drop this",
+        Run::In(Panel::Tables),
+    ),
+    Command::new(&[Stroke::key(Key::Char('y'))], "yes, drop it", Run::Inert),
+    Command::new(
+        &[Stroke::key(Key::Enter)],
+        "drop the typed name",
+        Run::Inert,
+    ),
+    Command::new(
+        &[Stroke::key(Key::Char('n')), Stroke::key(Key::Escape)],
+        "cancel the drop",
+        Run::Inert,
+    ),
+];
+
 const CONTENTS: &[Command] = &[
     Command::new(
         &[Stroke::key(Key::Char('m'))],
@@ -300,6 +328,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Table contents",
         commands: CONTENTS,
+    },
+    Group {
+        heading: "Drop",
+        commands: DROP,
     },
     Group {
         heading: "Export",

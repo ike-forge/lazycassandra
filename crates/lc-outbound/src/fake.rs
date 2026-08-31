@@ -6,7 +6,7 @@
 //! (conventions.md §4).
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
@@ -24,6 +24,14 @@ pub struct FakeCluster {
     connect_error: Option<DbError>,
     /// What `describe` returns instead of succeeding.
     describe_error: Option<DbError>,
+    /// What `describe` hands back from its second call onward, for a session
+    /// that changes the cluster's shape and re-reads it — a drop, whose
+    /// success re-issues `Effect::LoadSchema` (drop design §4). `None` means
+    /// every call describes the same cluster.
+    re_described: Option<Schema>,
+    /// How many times `describe` has answered, so `re_described` knows which
+    /// call it is. Behind an atomic because the port takes `&self`.
+    describes: AtomicUsize,
     /// What `execute` returns instead of a page.
     execute_error: Option<DbError>,
     /// The statements `execute` was asked for, in order. Behind a lock
@@ -53,6 +61,15 @@ impl FakeCluster {
     #[must_use]
     pub fn returning(self, page: Page) -> Self {
         Self { page, ..self }
+    }
+
+    /// The shape `describe` reports from its second call onward.
+    #[must_use]
+    pub fn re_describing(self, schema: Schema) -> Self {
+        Self {
+            re_described: Some(schema),
+            ..self
+        }
     }
 
     /// A cluster that connects and describes itself but refuses to read.
@@ -128,9 +145,16 @@ impl Cluster for FakeCluster {
     }
 
     async fn describe(&self, _conn: ConnId) -> Result<Schema, DbError> {
-        self.describe_error
-            .clone()
-            .map_or_else(|| Ok(self.schema.clone()), Err)
+        if let Some(error) = self.describe_error.clone() {
+            return Err(error);
+        }
+
+        let first = self.describes.fetch_add(1, Ordering::Relaxed) == 0;
+
+        Ok(match &self.re_described {
+            Some(changed) if !first => changed.clone(),
+            _ => self.schema.clone(),
+        })
     }
 
     async fn execute(&self, _conn: ConnId, stmt: &Statement) -> Result<Page, DbError> {

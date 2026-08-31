@@ -182,6 +182,36 @@ pub(crate) const THEMES_GLOBAL: &[Binding] = &[
     },
 ];
 
+/// What the bar names while the drop confirmation is up. Two sets, because
+/// the two spellings are answered with different keys and a bar that named
+/// both would be lying in every frame (drop design §2.1).
+///
+/// `q` is not named on either: `drop_key` claims every key it does not use,
+/// quitting included, the same rule `DIAGNOSTICS_GLOBAL` follows.
+pub(crate) const DROP_YES_NO: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('y'))],
+        action: "drop it",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('n')), Stroke::key(Key::Escape)],
+        action: "cancel",
+    },
+];
+
+/// `⏎` is greyed until the field says the name it asked for — the promise
+/// every other greyed hint keeps (docs/shortcuts.md §2).
+pub(crate) const DROP_TYPED: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "drop it",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Escape)],
+        action: "cancel",
+    },
+];
+
 /// What the bar names while a prompt is up, and while the filter modal is —
 /// two text fields with the same two ways out, `⏎` writing what was typed and
 /// `esc` leaving what was there (grid sort and filter design §3). The panel
@@ -287,6 +317,10 @@ pub(crate) fn bar(state: &State) -> HintBar {
         };
     }
 
+    if let Some(Overlay::Drop(prompt)) = &state.overlay {
+        return drop_bar(prompt, export);
+    }
+
     // `?` promises a palette that draws; below `command_rows()` it would
     // not, so the bar drops the promise rather than make it (design §5.1).
     // Matched by key rather than sliced off the front, so a reorder of
@@ -339,6 +373,33 @@ pub(crate) fn bar(state: &State) -> HintBar {
     HintBar {
         panel,
         global,
+        export,
+    }
+}
+
+/// The confirmation's own bar. No panel group: the overlay claims every key,
+/// so the tree underneath answers to nothing — the rule `Search` and the
+/// export form already follow above.
+fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar {
+    let bindings = if prompt.takes_text() {
+        DROP_TYPED
+    } else {
+        DROP_YES_NO
+    };
+
+    HintBar {
+        panel: Vec::new(),
+        global: bindings
+            .iter()
+            .map(|binding| Hint {
+                liveness: if binding.keys == [Stroke::key(Key::Enter)] && !prompt.confirmed() {
+                    Liveness::Inert
+                } else {
+                    Liveness::Live
+                },
+                ..rendered(binding)
+            })
+            .collect(),
         export,
     }
 }
@@ -416,6 +477,15 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
             .filter(state.contents.column.index())
             .is_none()
     {
+        return Liveness::Inert;
+    }
+
+    // `d` is greyed on the two refusals a user cannot see for themselves: a
+    // connection that would not run the statement, and a frame with no room
+    // for the block (drop design §1). The other three — no schema, a drop
+    // already running, a range of more than one row — are visible on screen.
+    let drops = binding.keys == [Stroke::key(Key::Char('d'))];
+    if drops && (!state.posture().permits_mutation() || !state.geometry.drop_fits()) {
         return Liveness::Inert;
     }
 
@@ -1028,6 +1098,43 @@ mod tests {
         assert!(!bar(&state).panel.iter().any(|hint| hint.keys == "esc"));
     }
 
+    /// `fits()` is disconnected, so its posture is the read-only default and
+    /// `d` names a statement that would be refused. Both halves of the gate
+    /// are checked here, since neither is visible on screen (drop design §1).
+    #[test]
+    fn the_drop_hint_is_live_only_where_the_key_would_open_something() {
+        let drop_hint = |state: &State| {
+            bar(state)
+                .panel
+                .into_iter()
+                .find(|hint| hint.action == "drop")
+                .expect("Tables names it")
+                .liveness
+        };
+
+        let mut state = fits();
+        state.focus_on(Panel::Tables);
+        assert_eq!(
+            drop_hint(&state),
+            Liveness::Inert,
+            "a read-only connection would refuse the statement"
+        );
+
+        state.connection = crate::state::ConnectionState::Connected(crate::state::Connection {
+            id: crate::model::ConnId::next(),
+            posture: crate::Posture::Writable,
+            schema: crate::state::SchemaState::Loading,
+        });
+        assert_eq!(
+            drop_hint(&state),
+            Liveness::Inert,
+            "a frame with no room for the block draws no question"
+        );
+
+        state.geometry = state.geometry.with_drop_fits(true);
+        assert_eq!(drop_hint(&state), Liveness::Live);
+    }
+
     #[test]
     fn nothing_but_a_hint_that_would_do_nothing_is_ever_inert() {
         for panel in Panel::ALL {
@@ -1040,7 +1147,8 @@ mod tests {
                     hint.liveness == Liveness::Live
                         || hint.action == "run"
                         || hint.action == "format"
-                        || hint.action == "export",
+                        || hint.action == "export"
+                        || hint.action == "drop",
                     "{panel:?}'s '{} {}' is inert and nothing says why",
                     hint.keys,
                     hint.action
