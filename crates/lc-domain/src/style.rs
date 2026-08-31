@@ -129,6 +129,15 @@ pub enum Token {
     /// feedback. Swapping ground for text needs nothing new from a ported
     /// palette (docs/superpowers/specs/2026-08-14-visual-mode-design.md §6.1).
     Flash,
+    /// A sort or filter mark over a grid heading, while it is in force.
+    ///
+    /// Named for what it marks rather than for the colour it gets, like
+    /// [`Token::Match`]: the mark says this column is arranging what the grid
+    /// shows, and the theme decides how loudly. A mark that is *not* in force
+    /// is drawn [`Token::Faint`] — it is an affordance rather than a fact
+    /// about the page
+    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+    Marker,
     /// A keyspace the user made, in the Tables tree.
     Keyspace,
     /// A table the user made, in the Tables tree.

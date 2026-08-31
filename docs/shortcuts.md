@@ -530,6 +530,40 @@ row and its column, and column mode lights the column and its heading. Whichever
 still move the row cursor and `h`/`l` the column cursor exactly as the Motion
 table above says — the mode changes what is painted, not what a key does.
 
+Column mode binds three keys of its own, and they are bound *behind the mode*:
+each addresses the column the cursor is on, and column mode is the one mode
+whose cursor is a column. In row and cell mode the three are unbound letters,
+and the bar names them only where they answer.
+
+| Key | Action (column mode only) |
+|---|---|
+| `s` | Sort the fetched rows by this column: descending, then ascending, then the order the cluster returned. One column at a time. |
+| `f` | Open the filter prompt over this column, holding whatever filter already stands there. |
+| `c` | Clear this column's filter. Greyed until there is one. |
+
+Every heading carries two marks — a sort arrow and a funnel — drawn faint
+while idle and in the theme's focus colour while in force, so what a column is
+doing is on screen. Both are clickable (§7). Sorting and filtering reach the
+rows already fetched and never re-run the statement; a filter hides rows, and
+the panel title says how much of the page is left.
+See [grid sort and filter design](superpowers/specs/2026-08-31-grid-sort-filter-design.md).
+
+### The filter prompt
+
+`f` opens `Overlay::Filter` over a loaded grid in column mode. It is a modal
+over the panels rather than a prompt on the bar row, because it does something
+`/` does not: `/` marks matching cells and keeps every row, and this drops the
+rows it does not match. Like the export form it claims every key before the
+panel underneath sees one, `q` included.
+
+| Key | Effect |
+|---|---|
+| any printable key | Appends to the term. Nothing is applied until the prompt closes. |
+| `Backspace` | Removes the last character. Emptying the term is how a filter is cleared. |
+| `Enter` | Applies the term and closes. An empty term clears the column's filter. |
+| `Esc` | Closes, leaving the column filtered exactly as it was. |
+| anything else | Inert, `ctrl-d`/`ctrl-u` included: the modal has no list to page. |
+
 ### Queries panel
 
 Two tabs, Cql and Logs. This subsection is the Cql tab, the buffer the panel
@@ -870,9 +904,10 @@ panel takes — and the cursor row, the cursor cell and the washes around it are
 not drawn: a panel that still drew them would be claiming a press that cannot
 reach it. The hint bar recedes with them — every hint on it goes `Faint`, the
 weight an inert hint already carries, because the modal has claimed those keys
-and is listing them itself. The search prompt and the
-export form are excluded — the prompt reads against the panel it filters, and
-the form confirms what the grid beneath it has selected
+and is listing them itself. The search prompt, the
+export form and the filter prompt are excluded — the prompt reads against the
+panel it filters, the form confirms what the grid beneath it has selected, and
+the filter narrows that same grid
 ([command palette design](specs/2026-08-09-command-palette-design.md) §8).
 
 The search prompt sits at the same rank, entered deliberately with `/` and
@@ -935,16 +970,18 @@ mode design §4, overlay search design §1).
 
 ## 3. The key budget
 
-Taken, lowercase: `g` `h` `j` `k` `l` `m` `n` `q` `v` `y`, plus `?` and `/`.
+Taken, lowercase: `c` `f` `g` `h` `j` `k` `l` `m` `n` `q` `s` `v` `y`, plus `?`
+and `/`. `c`, `f` and `s` are taken by Table contents' column mode alone — a
+panel's claim on a letter stops at that panel's border, and this one stops at a
+mode's (§1's Table contents subsection).
 `g` is spent as a prefix rather than as a binding: it is the first half of
 `gg` and does nothing alone, which spends it just the same.
 Taken, digits: `1` `2` `3` `4`.
 Taken, punctuation: `[` and `]`.
 Taken, uppercase: `N` and `G` — the only shifted letters bound (§2).
 
-Free, lowercase: `a` `b` `c` `d` `e` `f` `i` `o` `p` `r` `s` `t` `u`
-`w` `x` `z`, the digits `5`–`9` and `0`, and every uppercase letter but `N`
-and `G`.
+Free, lowercase: `a` `b` `d` `e` `i` `o` `p` `r` `t` `u` `w` `x` `z`, the
+digits `5`–`9` and `0`, and every uppercase letter but `N` and `G`.
 
 `Space` is claimed for the first time, inside the export form only: it
 activates the focused stop there (§1's export-form subsection) and is free
@@ -958,8 +995,8 @@ editor and the export form's path stop bind.
 Ctrl taken: `ctrl-r`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
 `ctrl-t` everywhere, and `ctrl-d`/`ctrl-u` everywhere `PageDown`/`PageUp` do
-anything. The rest of the layer is free — including `r`, `e`, `t`, `d`, `u`,
-`f` and `p` as plain keys, which nothing binds. `n` is bound plain, to the next
+anything. The rest of the layer is free — including `r`, `e`, `t`, `d`, `u`
+and `p` as plain keys, which nothing binds. `n` is bound plain, to the next
 search match, and `ctrl-n` is a binding of its own rather than a synonym for
 it. Alt is not a layer and nothing may claim from it.
 
@@ -982,7 +1019,7 @@ which is a spec-level change.
 
 | Not bound | Why |
 |---|---|
-| `a` `b` `c` `d` `u` focus | Were the four panels and the Columns tab until §1 moved to `1`–`4`. A letter has to be learned per panel; four digits in frame order are one rule, and `[1]-` in the title tells a novice the whole binding. Free, and deliberately left so for a while — a finger that learnt one should find nothing rather than something else. |
+| `a` `b` `d` `u` focus | Were the four panels and the Columns tab until §1 moved to `1`–`4`. A letter has to be learned per panel; four digits in frame order are one rule, and `[1]-` in the title tells a novice the whole binding. Free, and deliberately left so for a while — a finger that learnt one should find nothing rather than something else. |
 | `A` `B` `C` `D` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. `T` opened the theme picker until the picker moved to `ctrl-t`, and is free again. |
 | `t` focus | Was Tables before either scheme (§1). Free for the same reason the letters above are. |
 | `Space` on a tree row | Was `Enter`'s synonym there. One key, one action (§2) — true still, even though `Space` is no longer unbound everywhere: it activates a stop inside the export form (§1), and a tree row is not one. |
@@ -1030,6 +1067,13 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The wash leaves a flavour's column colours, and a key column's heading colour, alone | `the_crosshair_leaves_a_flavours_column_colours_alone`, `a_key_columns_heading_keeps_its_colour_under_the_wash` (`inbound/render.rs`) |
 | The crosshair is fainter than the cursor row and flattens no colour the row keeps | `the_crosshair_is_fainter_than_the_cursor_row`, `the_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
 | The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render.rs`) |
+| `s` sorts the cursor's column, and only in column mode | `s_sorts_the_column_the_cursor_is_on`, `s_is_a_free_letter_outside_column_mode`, `sorting_a_column_walks_descending_then_ascending_then_back_to_the_page`, `sorting_a_second_column_starts_that_columns_own_cycle`, `rows_a_sort_cannot_separate_keep_the_order_they_arrived_in` (`contents.rs`) |
+| `f` filters the cursor's column, applied when the prompt closes | `f_opens_a_prompt_over_the_column_the_cursor_is_on`, `a_filter_is_applied_when_the_prompt_closes_and_not_before`, `escape_leaves_the_column_filtered_exactly_as_it_was`, `the_prompt_claims_every_printable_key_the_panel_would_have`, `a_filter_drops_the_rows_it_does_not_match`, `filters_on_two_columns_narrow_each_other` (`contents.rs`) |
+| Emptying the prompt clears a filter, and so does `c` | `the_prompt_opens_on_the_filter_already_standing_so_deleting_it_clears`, `c_clears_the_filter_on_the_column_the_cursor_is_on`, `emptying_a_filter_prompt_is_what_clears_the_filter` (`contents.rs`) |
+| One order is what every reader counts in | `a_column_yanks_the_rows_the_grid_is_showing`, `exporting_the_fetched_rows_writes_the_ones_the_grid_is_showing`, `a_filter_that_shrinks_the_grid_pulls_the_row_cursor_back`, `a_search_walks_the_rows_the_filter_left_and_not_the_ones_it_dropped`, `arranging_drops_the_range_v_was_holding` (`contents.rs`) |
+| Every heading carries its two marks, and one in force reads apart | `every_heading_carries_its_two_marks`, `a_sorted_column_wears_the_arrow_of_the_way_it_reads`, `a_mark_in_force_reads_apart_from_the_ones_that_are_not`, `a_filter_that_hides_rows_draws_only_the_ones_it_left`, `the_title_says_how_much_of_the_page_a_filter_left` (`inbound/render.rs`) |
+| A press on a mark is the key it stands for | `a_press_on_the_arrow_the_frame_drew_is_the_sort_key` (`inbound/render.rs`), `a_press_on_a_heading_mark_is_the_key_that_mark_stands_for` (`inbound/hit.rs`), `clicking_the_sort_mark_sorts_the_column_it_belongs_to`, `clicking_the_filter_mark_opens_the_prompt_over_that_column`, `a_mark_on_a_column_that_is_gone_is_dropped_rather_than_clamped` |
+| The bar names the column keys in column mode alone | `column_mode_is_the_one_bar_that_names_the_column_keys`, `the_clear_filter_hint_is_greyed_until_there_is_one_to_clear`, `the_bar_under_the_filter_prompt_names_the_two_ways_out_and_nothing_else` |
 | A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
 | The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something`, `the_catalogue_lists_the_selection_mode_key`, `the_catalogue_lists_every_key_a_panel_hints_at` (`commands.rs`) |
 | A repeated number keeps focus and walks the tabs | `a_repeated_number_keeps_focus_and_walks_the_panels_tabs`, `pressing_two_three_times_returns_to_the_first_tab` |
@@ -1303,6 +1347,8 @@ Bound, and spending nothing from §3's budget. See the
 | Left click | A table | Select it, read it into Contents, and focus **Contents** |
 | Left click | A Contents cell | Focus Contents, select its row and its column |
 | Left click | A Contents heading | Focus Contents, select that column, leave the row where it is |
+| Left click | A Contents heading's sort mark | Select that column and step it through the sort cycle — the `s` binding, reached by pointer |
+| Left click | A Contents heading's filter mark | Select that column and open the filter prompt over it — the `f` binding |
 | Left click | A DDL row | Focus DDL, select it |
 | Left click | A tab on a panel's top border | Whatever that tab's key does: focus the panel, and draw the tab |
 | Left click | Chrome | Focus that panel |
@@ -1330,6 +1376,12 @@ A click on a row's number is a click on that row, and names no column: the bar
 and the gutter share one widget column that is not a column of the page
 ([table display design](specs/2026-08-10-table-display-design.md) §8), so a
 press there moves the row cursor and leaves the column cursor alone.
+
+**The two heading marks answer a press in any selection mode**, unlike the
+keys they stand for. A press names the column it landed on, where a key has
+only the cursor to go on — so the mark needs no mode to disambiguate it, and it
+moves the column cursor to what was pressed before acting
+([grid sort and filter design](superpowers/specs/2026-08-31-grid-sort-filter-design.md) §5).
 
 **A click never changes the selection mode.** It names whatever cells it can
 reach — a cell names both cursors, a heading only the column — and which of them

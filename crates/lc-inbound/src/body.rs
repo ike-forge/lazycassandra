@@ -16,8 +16,8 @@
 //! several wrapped lines, which only the renderer that wrapped them can
 //! measure (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4).
 
-use lc_domain::contents::SelectionMode;
-use lc_domain::grid::{BAR, COLUMN_SPACING, available, fitting};
+use lc_domain::contents::{Order, SelectionMode};
+use lc_domain::grid::{BAR, COLUMN_SPACING, MARKS, available, fitting};
 use lc_domain::search::Search;
 use lc_domain::state::{Ranges, Span};
 use lc_domain::style::Token;
@@ -35,7 +35,7 @@ use ratatui::widgets::{
 };
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
-use crate::hit::Band;
+use crate::hit::{Band, MarkAt};
 use crate::theme::Theme;
 
 /// The limb a table hangs off its keyspace by, and the one that closes the
@@ -118,6 +118,10 @@ pub(crate) struct Body {
     /// Where each drawn column of a grid landed, naming its page index. Empty
     /// for every body that is not a grid.
     pub(crate) bands: Vec<Band<usize>>,
+    /// Where each drawn heading's two marks landed. Empty for every body that
+    /// is not a grid, and for a column too narrow to draw them in
+    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+    pub(crate) marks: Vec<Band<MarkAt>>,
     pub(crate) unit: Unit,
     /// Where the body drew its selection, in the unit [`Extent`] counts in.
     ///
@@ -246,16 +250,18 @@ pub(crate) fn render(
             ),
             columns: None,
             bands: Vec::new(),
+            marks: Vec::new(),
             unit: Unit::Lines { rows: Vec::new() },
             selection: Span::default(),
         }),
         PanelBody::Grid { .. } => {
-            let (extent, horizontal, bands) = grid(frame, chrome, &grid_view(body)?, theme);
+            let (extent, horizontal, bands, marks) = grid(frame, chrome, &grid_view(body)?, theme);
 
             Some(Body {
                 extent,
                 columns: Some(horizontal),
                 bands,
+                marks,
                 unit: Unit::Rows {
                     header: HEADER_ROWS,
                 },
@@ -300,6 +306,7 @@ fn log(frame: &mut Frame, area: Rect, view: &crate::logs::LogsView, theme: Theme
         extent,
         columns: None,
         bands: Vec::new(),
+        marks: Vec::new(),
         unit: Unit::Lines { rows },
         selection,
     }
@@ -311,6 +318,7 @@ fn tree_body(frame: &mut Frame, area: Rect, view: &TreeView, theme: Theme) -> Bo
         extent: tree(frame, area, view, theme),
         columns: None,
         bands: Vec::new(),
+        marks: Vec::new(),
         unit: Unit::Rows { header: 0 },
         selection: Span::default(),
     }
@@ -329,6 +337,7 @@ fn details_body(
         extent,
         columns: None,
         bands: Vec::new(),
+        marks: Vec::new(),
         unit: Unit::Lines { rows },
         selection,
     }
@@ -417,7 +426,7 @@ fn grid(
     chrome: Chrome,
     view: &GridView,
     theme: Theme,
-) -> (Extent, Extent, Vec<Band<usize>>) {
+) -> (Extent, Extent, Vec<Band<usize>>, Vec<Band<MarkAt>>) {
     let area = chrome.inner;
 
     let GridView {
@@ -531,19 +540,17 @@ fn grid(
     };
 
     if matches!(mode, SelectionMode::Cell) {
-        let at = selected_column.map(|_| column - first_column);
-        crosshair(
-            frame,
-            area,
-            row.map(|row| row - offset),
-            at.map(|at| (columns_at[at].start, drawn_widths[at])),
-            theme,
-        );
+        let at = selected_column
+            .map(|_| column - first_column)
+            .map(|at| (columns_at[at].start, drawn_widths[at]));
+        crosshair(frame, area, row.map(|row| row - offset), at, theme);
     }
 
     frame.render_stateful_widget(table, area, &mut state);
 
     heading_rule(frame, chrome);
+
+    let marks = mark_bands(&columns[drawn], &drawn_widths, &columns_at);
 
     (
         Extent {
@@ -557,6 +564,7 @@ fn grid(
             visible: shown,
         },
         columns_at,
+        marks,
     )
 }
 
@@ -814,11 +822,41 @@ fn heading_rule(frame: &mut Frame, chrome: Chrome) {
     }
 }
 
+/// The mark saying which way a column is sorted. The arrow points the way the
+/// column reads, and the two-headed one is the affordance: the mark is drawn
+/// whether or not the grid is sorted, so the key is discoverable and the
+/// glyph has somewhere to be clicked
+/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+const SORT_MARKS: [&str; 3] = ["\u{21c5}", "\u{2193}", "\u{2191}"];
+
+/// `nf-fa-filter`, the funnel. A Nerd Font codepoint like the tree's icons
+/// and drawn on the same terms (`icons.rs`).
+const FILTER_MARK: &str = "\u{f0b0}";
+
+const fn sort_mark(sort: Option<Order>) -> &'static str {
+    match sort {
+        None => SORT_MARKS[0],
+        Some(Order::Descending) => SORT_MARKS[1],
+        Some(Order::Ascending) => SORT_MARKS[2],
+    }
+}
+
+/// A mark in force is drawn in [`Token::Marker`] and an idle one faint: the
+/// column being sorted or filtered has to read apart from the eleven beside
+/// it that are not (design §5).
+const fn mark_token(active: bool) -> Token {
+    if active { Token::Marker } else { Token::Faint }
+}
+
 /// The grid's heading row: a blank cell over the bar and the gutter, then the
 /// drawn columns. `washed` names which of them the cursor is in — an index into
 /// what is drawn, not into the page — and the style to wash it with; `None`
 /// where the mode paints no band, or where the cursor's column is not one of
 /// these.
+///
+/// Each heading is its name, a blank, and its two marks — the [`MARKS`]
+/// columns the domain measured the heading with, so the marks never push the
+/// name out of its own column (design §5).
 fn heading(
     columns: &[GridColumn],
     widths: &[u16],
@@ -847,11 +885,72 @@ fn heading(
                         None => base,
                     };
 
-                    styled_cell(&column.name, Some(style), *width)
+                    heading_cell(column, *width, style, theme)
                 }),
         ),
     )
     .height(HEADER_ROWS)
+}
+
+/// One heading: the name in the column's own style, then the two marks in
+/// theirs. Below [`MARKS`] columns there is no room for them and the name has
+/// the cell to itself — a truncated funnel says nothing.
+fn heading_cell(column: &GridColumn, width: u16, style: Style, theme: Theme) -> Cell<'static> {
+    if width < MARKS {
+        return styled_cell(&column.name, Some(style), width);
+    }
+
+    let name = truncated(&column.name, width - MARKS);
+
+    // The marks patch onto the heading's own style rather than replacing it,
+    // so a column-mode wash still reads across the whole cell and only the
+    // foreground says whether the mark is in force.
+    Cell::from(Line::from(vec![
+        TextSpan::styled(format!("{name} "), style),
+        TextSpan::styled(
+            sort_mark(column.sort),
+            style.patch(theme.style(mark_token(column.sort.is_some()))),
+        ),
+        TextSpan::styled(
+            FILTER_MARK,
+            style.patch(theme.style(mark_token(column.filtered))),
+        ),
+    ]))
+}
+
+/// Where each drawn column's two marks landed, for a press to be resolved
+/// against — the same rule the column bands follow: assembled from what
+/// actually drew, never computed a second time (mouse input design §4).
+fn mark_bands(
+    columns: &[GridColumn],
+    widths: &[u16],
+    columns_at: &[Band<usize>],
+) -> Vec<Band<MarkAt>> {
+    columns
+        .iter()
+        .zip(widths)
+        .zip(columns_at)
+        .filter(|((_, width), _)| **width >= MARKS)
+        .flat_map(|((column, width), band)| {
+            let name = truncated(&column.name, width - MARKS).width();
+            let sort = band
+                .start
+                .saturating_add(u16::try_from(name).unwrap_or(0) + 1);
+
+            [
+                (sort, lc_domain::pointer::Mark::Sort),
+                (sort.saturating_add(1), lc_domain::pointer::Mark::Filter),
+            ]
+            .map(|(start, mark)| Band {
+                start,
+                end: start.saturating_add(1),
+                names: MarkAt {
+                    column: band.names,
+                    mark,
+                },
+            })
+        })
+        .collect()
 }
 
 /// A row's number, right-aligned in the gutter.

@@ -175,11 +175,33 @@ const TABLES: &[Command] = &[Command::new(
     Run::In(Panel::Tables),
 )];
 
-const CONTENTS: &[Command] = &[Command::new(
-    &[Stroke::key(Key::Char('m'))],
-    "cycle selection mode",
-    Run::In(Panel::Contents),
-)];
+const CONTENTS: &[Command] = &[
+    Command::new(
+        &[Stroke::key(Key::Char('m'))],
+        "cycle selection mode",
+        Run::In(Panel::Contents),
+    ),
+    // Inert for the export form's rows' reason: all three answer in column
+    // mode alone, and outside it the letters are unbound — so `⏎` here would
+    // focus the panel and press a key nothing claims. The rows are still
+    // listed, because the palette may not omit what a key does somewhere
+    // (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §6).
+    Command::new(
+        &[Stroke::key(Key::Char('s'))],
+        "sort by this column",
+        Run::Inert,
+    ),
+    Command::new(
+        &[Stroke::key(Key::Char('f'))],
+        "filter this column",
+        Run::Inert,
+    ),
+    Command::new(
+        &[Stroke::key(Key::Char('c'))],
+        "clear this filter",
+        Run::Inert,
+    ),
+];
 
 /// The form's own keys. `Tab` and `Esc` also appear under `Global` meaning
 /// something else, exactly as `l`/`h` appear under two panels: the palette may
@@ -1073,11 +1095,15 @@ mod tests {
                 .iter()
                 .all(|command| command.run == Run::In(Panel::Tables))
         );
+        // The column keys are the exception, and inert rather than mis-run:
+        // they answer in column mode alone, so the palette documents them
+        // without pressing them (grid sort and filter design §6).
         assert!(
             group("Table contents")
                 .commands
                 .iter()
-                .all(|command| command.run == Run::In(Panel::Contents))
+                .all(|command| command.run == Run::In(Panel::Contents)
+                    || command.run == Run::Inert)
         );
         assert!(
             group("Queries")

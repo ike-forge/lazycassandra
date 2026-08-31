@@ -328,6 +328,22 @@ impl Fetched {
         }
     }
 
+    /// The same question over an arranged grid: `fetched` is what the
+    /// cluster returned and `drawn` what the filters left of it.
+    ///
+    /// A filter makes the two scopes differ even where our limit did not: the
+    /// whole table and the rows on screen are different files as soon as one
+    /// row is hidden, so a filtered grid always offers the Fetched scope
+    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §4).
+    #[must_use]
+    pub const fn of_drawn(fetched: usize, drawn: usize) -> Self {
+        if fetched < ROW_LIMIT && drawn == fetched {
+            Self::Everything(drawn)
+        } else {
+            Self::Some(drawn)
+        }
+    }
+
     #[must_use]
     pub const fn count(self) -> usize {
         match self {
@@ -1132,5 +1148,24 @@ mod tests {
     #[test]
     fn a_fresh_form_is_not_confirming_anything() {
         assert_eq!(form(Fetched::Some(200)).confirm(), None);
+    }
+
+    #[test]
+    fn a_filtered_grid_offers_the_fetched_scope_even_where_the_limit_did_not() {
+        assert_eq!(
+            Fetched::of_drawn(12, 12),
+            Fetched::Everything(12),
+            "a short page drawn whole is both scopes at once"
+        );
+        assert_eq!(
+            Fetched::of_drawn(12, 5),
+            Fetched::Some(5),
+            "a filter makes the rows on screen a different file from the table"
+        );
+        assert_eq!(
+            Fetched::of_drawn(ROW_LIMIT, ROW_LIMIT),
+            Fetched::Some(ROW_LIMIT),
+            "and a page cut off at the limit still is"
+        );
     }
 }

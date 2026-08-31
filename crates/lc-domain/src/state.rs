@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::clock::Stamp;
 use crate::commands::CommandsPanel;
 use crate::config::{Config, Diagnostic};
-use crate::contents::ContentsPanel;
+use crate::contents::{ContentsPanel, Filter, SelectionMode};
 use crate::ddl::DdlPanel;
 use crate::export::ExportForm;
 use crate::log::{Log, Outcome};
@@ -263,6 +263,11 @@ pub enum Overlay {
     },
     /// What the config files got wrong, drawn over the panels at startup.
     Diagnostics(DiagnosticsPanel),
+    /// The filter prompt over one grid column. A modal like the export form
+    /// rather than a bar-row prompt like [`Overlay::Search`]: a filter drops
+    /// rows where a search only marks them, and the two must not read alike
+    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
+    Filter(Filter),
     /// The export form. Its overwrite confirmation is a field on the form
     /// rather than a sixth variant here, so "a confirmation with nothing
     /// behind it" cannot be written down (export design §7).
@@ -418,6 +423,46 @@ const DDL_HINTS: &[Binding] = &[
 ];
 
 const CONTENTS_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('e'))],
+        action: "export",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('m'))],
+        action: "mode",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('v'))],
+        action: "select",
+    },
+];
+
+/// What column mode adds, and what the bar names only there.
+///
+/// Three keys that address the column the cursor is on, so they are named in
+/// the one mode whose cursor *is* a column — the same rule that keeps `esc
+/// clear` off a bar with nothing to clear: a hint has to be true in the frame
+/// it is drawn in (docs/shortcuts.md §2,
+/// docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §6).
+const CONTENTS_COLUMN_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('s'))],
+        action: "sort",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('f'))],
+        action: "filter",
+    },
+    // Named apart from `esc clear`, which clears a search and a range: this
+    // one clears the filter on this column and nothing else (design §3).
+    Binding {
+        keys: &[Stroke::key(Key::Char('c'))],
+        action: "clear filter",
+    },
     Binding {
         keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "export",
@@ -1347,13 +1392,15 @@ impl State {
     /// reason `takes_text` moved here: the Queries panel's bindings depend on
     /// which tab is drawn, and `Panel::hints` cannot see that (query log
     /// design §5.1). Every other panel answers exactly what `Panel::hints`
-    /// already did.
+    /// already did — with the one further exception column mode makes over
+    /// Table contents, whose three column keys answer in that mode alone
+    /// (grid sort and filter design §6).
     #[must_use]
     pub fn hints(&self) -> &'static [Binding] {
-        if self.focus() == Panel::Queries && self.queries.tab() == QueriesTab::Logs {
-            LOGS_HINTS
-        } else {
-            self.focus().hints()
+        match self.focus() {
+            Panel::Queries if self.queries.tab() == QueriesTab::Logs => LOGS_HINTS,
+            Panel::Contents if self.contents.mode == SelectionMode::Column => CONTENTS_COLUMN_HINTS,
+            panel => panel.hints(),
         }
     }
 

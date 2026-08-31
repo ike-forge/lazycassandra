@@ -7,14 +7,14 @@
 use crate::clock::Stamp;
 use crate::commands::{CommandsPanel, Run};
 use crate::config::{Config, Diagnostic};
-use crate::contents::{ContentsState, SelectionMode, Subject, TableRef};
+use crate::contents::{ContentsState, Filter, SelectionMode, Subject, TableRef};
 use crate::cql;
 use crate::ddl::DdlTab;
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
 use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
-use crate::pointer::{Click, Pointer, Wheel};
+use crate::pointer::{Click, Mark, Pointer, Wheel};
 use crate::ports::ExportError;
 use crate::posture::Posture;
 use crate::queries::{QueriesTab, Refresh};
@@ -654,31 +654,35 @@ fn contents(state: &State) -> Option<String> {
     let ContentsState::Loaded { page, .. } = state.contents.state() else {
         return None;
     };
-    let page = page.page();
+    // The rows as the grid draws them, not as the cluster returned them: a
+    // yank copies what is on screen, so a filtered-out row is not in it and
+    // a sorted grid copies in the order it reads
+    // (grid sort and filter design §4).
+    let drawn: Vec<Row> = page.rows().cloned().collect();
     let (rows, columns) = grid_extent(state);
     let whole = |len: usize| Ranges::of(Range::new(0, len.saturating_sub(1)));
     let rows = if rows.is_empty() {
-        whole(page.rows.len())
+        whole(drawn.len())
     } else {
         rows
     };
     let columns = if columns.is_empty() {
-        whole(page.columns.len())
+        whole(page.page().columns.len())
     } else {
         columns
     };
 
     match state.contents.mode {
         SelectionMode::Cell if rows.rows() == 1 && columns.rows() == 1 => {
-            let row = page.rows.get(rows.first()?.first())?;
+            let row = drawn.get(rows.first()?.first())?;
             let value = row.values.get(columns.first()?.first())?;
 
             crate::yank::grid_cell(value)
         }
         SelectionMode::Row | SelectionMode::Cell => {
-            Some(crate::yank::grid_block(&page.rows, &rows, &columns))
+            Some(crate::yank::grid_block(&drawn, &rows, &columns))
         }
-        SelectionMode::Column => Some(crate::yank::grid_columns(&page.rows, &columns)),
+        SelectionMode::Column => Some(crate::yank::grid_columns(&drawn, &columns)),
     }
 }
 
@@ -848,6 +852,14 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return export_key(state, press.key);
     }
 
+    // A modal that is one text field claims every printable key, the same
+    // rule the prompt and the form follow
+    // (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
+    if matches!(state.overlay, Some(Overlay::Filter(_))) {
+        filter_key(state, press.key);
+        return Vec::new();
+    }
+
     // Focus is the mode. A panel that takes text claims every printable key
     // and the editing keys; what it does not claim keeps the global meaning
     // it has everywhere else (design §3). This is the rule shortcuts.md §2
@@ -886,6 +898,15 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
                 state.contents.mode = state.contents.mode.next();
             }
         }
+        // The three column keys. Answered in column mode alone: they address
+        // the column the cursor is on, and that cursor is what column mode
+        // *is* — outside it `s`, `f` and `c` are free letters the bar does
+        // not name (grid sort and filter design §6).
+        Key::Char('s') if columnar(state) => state.contents.cycle_sort(column_of(state)),
+        Key::Char('f') if columnar(state) => open_filter(state),
+        Key::Char('c') if columnar(state) => {
+            state.contents.set_filter(column_of(state), None);
+        }
         Key::Char('v') => toggle_visual(state),
         Key::Char('n') => next_match_key(state, Direction::Forwards),
         Key::Char('N') => next_match_key(state, Direction::Backwards),
@@ -911,7 +932,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
 /// (design §1, docs/shortcuts.md §2).
 fn takes_text(state: &State) -> bool {
     match &state.overlay {
-        Some(Overlay::Search(_) | Overlay::Export(_)) => true,
+        Some(Overlay::Search(_) | Overlay::Export(_) | Overlay::Filter(_)) => true,
         // A sift up makes the overlay itself a text field (overlay search
         // design §5): the letters that would otherwise move the cursor or
         // close the overlay type themselves instead.
@@ -953,7 +974,7 @@ fn goto(state: &mut State, edge: Edge) {
         }
         Some(Overlay::Message(_)) | None => scroll(state, edge.motion()),
         // Unreachable, for `takes_text`'s reason: `Fatal` never reaches here.
-        Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_)) => {}
+        Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_) | Overlay::Filter(_)) => {}
     }
 }
 
@@ -1025,6 +1046,28 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
     let (panel, row, column) = match click {
         Click::Row { panel, row, column } => (panel, Some(row), column),
         Click::Column { panel, column } => (panel, None, Some(column)),
+        // A mark is the `s`/`f` binding reached by pointer: it names its own
+        // column, so it moves the cursor there and acts, whatever mode the
+        // grid is in — a press says which column it means, where a key has
+        // only the cursor to go on (design §5).
+        Click::Mark {
+            panel,
+            column,
+            mark,
+        } => {
+            if panel == Panel::Contents && column < state.contents.column_count() {
+                state
+                    .contents
+                    .column
+                    .go_to(column, state.contents.column_count());
+
+                match mark {
+                    Mark::Sort => state.contents.cycle_sort(column),
+                    Mark::Filter => open_filter(state),
+                }
+            }
+            return Vec::new();
+        }
         // A tab is a place, and pressing it is how one is reached: this is
         // the `[`/`]` arm of `handle_key`, reached by pointer (design §1).
         Click::Tab { panel, tab } => {
@@ -1619,11 +1662,15 @@ fn escape(state: &mut State) {
             state.overlay = Some(Overlay::Commands(panel));
             return;
         }
+        // The filter prompt applies nothing on the way out: `esc` leaves the
+        // column filtered exactly as it was, and `⏎` is the one key that
+        // writes (grid sort and filter design §3).
         Some(
             Overlay::Message(_)
             | Overlay::Commands(_)
             | Overlay::Diagnostics(_)
-            | Overlay::Export(_),
+            | Overlay::Export(_)
+            | Overlay::Filter(_),
         ) => return,
         // Not dismissable: `handle_key` claims `Esc` for `Fatal` before this
         // function is reached, so the only caller left is a click routed
@@ -2104,6 +2151,7 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
                 | Overlay::Themes { .. }
                 | Overlay::Diagnostics(_)
                 | Overlay::Export(_)
+                | Overlay::Filter(_)
         )
     ) {
         return Vec::new();
@@ -2177,14 +2225,71 @@ fn open_export(state: &mut State) {
         return;
     };
 
-    let rows = page.page().rows.len();
+    let rows = page.len();
     if rows == 0 {
         return;
     }
 
-    let form = ExportForm::opened(subject.clone(), Fetched::of(rows), &state.cwd);
+    let form = ExportForm::opened(
+        subject.clone(),
+        Fetched::of_drawn(page.page().rows.len(), rows),
+        &state.cwd,
+    );
     state.overlay = Some(Overlay::Export(form));
     state.dirty = true;
+}
+
+/// Whether the three column keys answer this frame: Table contents focused,
+/// in column mode, over a page that has columns to address.
+///
+/// The mode is the gate rather than the panel, so `s`, `f` and `c` stay free
+/// letters everywhere else — including in row and cell mode, where the cursor
+/// names a row or a cell and a column key would have to guess
+/// (grid sort and filter design §6).
+fn columnar(state: &State) -> bool {
+    state.focus() == Panel::Contents
+        && state.contents.mode == SelectionMode::Column
+        && state.contents.column_count() > 0
+}
+
+/// The column the grid's cursor is on.
+fn column_of(state: &State) -> usize {
+    state.contents.column.index()
+}
+
+/// Opens the filter prompt over the column the cursor is on, seeded with
+/// whatever filter already stands there (design §3).
+fn open_filter(state: &mut State) {
+    let column = column_of(state);
+    let Some(page) = state.contents.loaded() else {
+        return;
+    };
+    let Some(name) = page.page().columns.get(column) else {
+        return;
+    };
+
+    let filter = Filter::opened(column, name, page.filter(column));
+    state.overlay = Some(Overlay::Filter(filter));
+}
+
+/// What the filter prompt responds to: text, `⏎` to apply and `esc` to leave
+/// it as it was (design §3).
+fn filter_key(state: &mut State, key: Key) {
+    let Some(Overlay::Filter(filter)) = &mut state.overlay else {
+        return;
+    };
+
+    match key {
+        Key::Char(character) => filter.push(character),
+        Key::Backspace => filter.pop(),
+        Key::Enter => {
+            let (column, search) = (filter.column(), filter.search());
+            state.overlay = None;
+            state.contents.set_filter(column, search);
+        }
+        Key::Escape => escape(state),
+        _ => {}
+    }
 }
 
 /// What [`export_key`]'s form-only match decided.
@@ -2369,9 +2474,13 @@ fn source(state: &State, form: &ExportForm) -> Option<Source> {
             Subject::Table(table) => Statement::select_everything(&table.keyspace, &table.table),
             Subject::Typed(cql) => Statement::typed(cql),
         }))),
+        // What the grid is showing, arrangement and all: a form opened over
+        // a filtered grid offering to write the rows behind the filter would
+        // be exporting something the user cannot see
+        // (grid sort and filter design §4).
         Scope::Fetched => Some(Source::Fetched {
             columns: page.page().columns.clone(),
-            rows: page.page().rows.clone(),
+            rows: page.rows().cloned().collect(),
         }),
     }
 }
@@ -2481,9 +2590,11 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does;
-        // the form has nothing paged either, whichever stop it is on. `Fatal`
-        // is unreachable here for `takes_text`'s reason.
-        Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_)) => Vec::new(),
+        // the form and the filter modal have nothing paged either. `Fatal` is
+        // unreachable here for `takes_text`'s reason.
+        Some(Overlay::Fatal(_) | Overlay::Search(_) | Overlay::Export(_) | Overlay::Filter(_)) => {
+            Vec::new()
+        }
         Some(Overlay::Message(_)) | None => {
             if state.takes_text() {
                 edit(state, key);
@@ -2865,6 +2976,9 @@ fn clamp_lists(state: &mut State) {
     state.tables.selection.clamp_to(tree_rows(state));
     state.ddl.selection.clamp_to(crate::view::ddl_rows(state));
 
+    // The row cursor as well as the ranges: a filter shrinks the grid under
+    // a cursor no page change reset (grid sort and filter design §4).
+    state.contents.cursor.clamp_to(state.contents.row_count());
     state.contents.rows.clamp_to(state.contents.row_count());
     state
         .contents
@@ -3061,7 +3175,7 @@ fn grid_columns(state: &State) -> Option<(&[u16], u16)> {
         return None;
     };
 
-    let gutter = grid::gutter(page.page().rows.len());
+    let gutter = grid::gutter(page.len());
     let width = u16::try_from(state.geometry.grid_width()).unwrap_or(u16::MAX);
 
     Some((page.widths(), grid::available(width, gutter)))
@@ -4070,6 +4184,7 @@ mod tests {
             | Overlay::Themes { .. }
             | Overlay::Diagnostics(_)
             | Overlay::Export(_)
+            | Overlay::Filter(_)
             | Overlay::Fatal(_) => None,
         }
     }
@@ -6333,11 +6448,12 @@ mod tests {
 
     #[test]
     fn the_column_viewport_follows_the_cell_cursor() {
-        // Four columns of width 2 ("c0" and a one-digit value) with two spaces
-        // between: 2+2+2 = 6 fits two columns in a grid 10 wide once the
-        // merged bar+gutter block (bar plus a one-digit gutter) and the
-        // spacing ahead of the values are taken off.
-        let mut state = grid_of(4, 10);
+        // Four columns of width 5 ("c0" plus the marks its heading carries,
+        // which outrun a one-digit value) with two spaces between: 5+2+5 = 12
+        // fits two columns in a grid 16 wide once the merged bar+gutter block
+        // (bar plus a one-digit gutter) and the spacing ahead of the values
+        // are taken off.
+        let mut state = grid_of(4, 16);
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
@@ -6368,7 +6484,7 @@ mod tests {
 
         update(
             &mut state,
-            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(10)),
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(16)),
         );
 
         assert_eq!(
@@ -6380,14 +6496,14 @@ mod tests {
 
     #[test]
     fn a_panel_that_grew_pulls_the_column_viewport_back() {
-        let mut state = grid_of(4, 10);
+        let mut state = grid_of(4, 16);
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
         assert_eq!(
             state.contents.column_scroll.first(),
             2,
-            "two of four fit at 10"
+            "two of four fit at 16"
         );
 
         update(
@@ -7944,6 +8060,387 @@ mod tests {
         assert_eq!(
             press(&mut state, Key::Char('y')),
             vec![Effect::Yank("shop.orders".to_owned())]
+        );
+    }
+
+    /// A grid in column mode with the cursor on `column`, over three rows
+    /// whose first column is out of lexicographic order — so a sort has
+    /// something to do and the order it produces is unambiguous.
+    fn columnar_grid(column: usize) -> State {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["name".to_owned(), "city".to_owned()],
+                rows: ["Bob", "Ada", "Cleo"]
+                    .into_iter()
+                    .zip(["Berlin", "Aarhus", "Berlin"])
+                    .map(|(name, city)| Row {
+                        values: vec![
+                            CqlValue::Text(name.to_owned()),
+                            CqlValue::Text(city.to_owned()),
+                        ],
+                    })
+                    .collect(),
+                next: None,
+            },
+        );
+        state.focus_on(Panel::Contents);
+        state.contents.mode = SelectionMode::Column;
+        state.contents.column.go_to(column, 2);
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
+        );
+        state
+    }
+
+    fn first_names(state: &State) -> Vec<String> {
+        state
+            .contents
+            .loaded()
+            .expect("a page is loaded")
+            .rows()
+            .map(|row| crate::cell::text(&row.values[0]))
+            .collect()
+    }
+
+    fn filter_prompt(state: &State) -> &Filter {
+        match state.overlay.as_ref() {
+            Some(Overlay::Filter(filter)) => filter,
+            _ => panic!("the filter prompt is up"),
+        }
+    }
+
+    #[test]
+    fn s_sorts_the_column_the_cursor_is_on() {
+        let mut state = columnar_grid(0);
+
+        press(&mut state, Key::Char('s'));
+
+        assert_eq!(first_names(&state), ["Cleo", "Bob", "Ada"]);
+    }
+
+    #[test]
+    fn s_is_a_free_letter_outside_column_mode() {
+        for mode in [SelectionMode::Row, SelectionMode::Cell] {
+            let mut state = columnar_grid(0);
+            state.contents.mode = mode;
+            let before = crate::view::view_model(&state);
+
+            let effects = press(&mut state, Key::Char('s'));
+
+            assert!(
+                effects.is_empty() && crate::view::view_model(&state) == before,
+                "{mode:?} has no column for a column key to address"
+            );
+        }
+    }
+
+    #[test]
+    fn f_opens_a_prompt_over_the_column_the_cursor_is_on() {
+        let mut state = columnar_grid(1);
+
+        press(&mut state, Key::Char('f'));
+
+        assert_eq!(filter_prompt(&state).column(), 1);
+        assert_eq!(filter_prompt(&state).name(), "city");
+        assert_eq!(filter_prompt(&state).query(), "");
+    }
+
+    #[test]
+    fn a_filter_is_applied_when_the_prompt_closes_and_not_before() {
+        let mut state = columnar_grid(1);
+        press(&mut state, Key::Char('f'));
+
+        type_into(&mut state, "berlin");
+        assert_eq!(
+            first_names(&state),
+            ["Bob", "Ada", "Cleo"],
+            "a hard filter must not rebuild the grid under the hands typing it"
+        );
+
+        press(&mut state, Key::Enter);
+
+        assert!(state.overlay.is_none());
+        assert_eq!(first_names(&state), ["Bob", "Cleo"]);
+    }
+
+    #[test]
+    fn escape_leaves_the_column_filtered_exactly_as_it_was() {
+        let mut state = columnar_grid(1);
+        state.contents.set_filter(1, Search::new("aarhus"));
+        press(&mut state, Key::Char('f'));
+
+        type_into(&mut state, "x");
+        press(&mut state, Key::Escape);
+
+        assert!(state.overlay.is_none());
+        assert_eq!(first_names(&state), ["Ada"], "the standing filter stands");
+    }
+
+    #[test]
+    fn the_prompt_opens_on_the_filter_already_standing_so_deleting_it_clears() {
+        let mut state = columnar_grid(1);
+        state.contents.set_filter(1, Search::new("berlin"));
+
+        press(&mut state, Key::Char('f'));
+        assert_eq!(filter_prompt(&state).query(), "berlin");
+
+        for _ in 0..6 {
+            press(&mut state, Key::Backspace);
+        }
+        press(&mut state, Key::Enter);
+
+        assert_eq!(first_names(&state), ["Bob", "Ada", "Cleo"]);
+        assert_eq!(state.contents.filter(1), None);
+    }
+
+    #[test]
+    fn c_clears_the_filter_on_the_column_the_cursor_is_on() {
+        let mut state = columnar_grid(1);
+        state.contents.set_filter(0, Search::new("a"));
+        state.contents.set_filter(1, Search::new("berlin"));
+
+        press(&mut state, Key::Char('c'));
+
+        assert_eq!(state.contents.filter(1), None);
+        assert!(
+            state.contents.filter(0).is_some(),
+            "and only that column's — `c` names the cursor's column and no other"
+        );
+    }
+
+    #[test]
+    fn the_prompt_claims_every_printable_key_the_panel_would_have() {
+        let mut state = columnar_grid(0);
+        press(&mut state, Key::Char('f'));
+
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(effects.is_empty(), "`q` types itself rather than quitting");
+        assert!(!state.should_quit);
+        assert_eq!(filter_prompt(&state).query(), "q");
+    }
+
+    #[test]
+    fn the_ctrl_layer_is_refused_while_the_filter_prompt_is_up() {
+        let mut state = columnar_grid(0);
+        state.geometry = state.geometry.with_export_fits(true).with_theme_rows(40);
+        press(&mut state, Key::Char('f'));
+
+        for key in ['t', 'e', 'r', 'f'] {
+            let effects = handle_key(&mut state, KeyPress::ctrl(Key::Char(key)));
+
+            assert!(effects.is_empty(), "ctrl-{key} is refused");
+            assert!(
+                matches!(state.overlay, Some(Overlay::Filter(_))),
+                "and leaves the prompt up rather than opening something over it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_filter_that_shrinks_the_grid_pulls_the_row_cursor_back() {
+        let mut state = columnar_grid(1);
+        state.contents.cursor.go_to(2, 3);
+
+        press(&mut state, Key::Char('f'));
+        type_into(&mut state, "aarhus");
+        press(&mut state, Key::Enter);
+
+        assert_eq!(
+            state.contents.cursor.index(),
+            0,
+            "one row is left, and the cursor may not point past it"
+        );
+    }
+
+    #[test]
+    fn a_column_yanks_the_rows_the_grid_is_showing() {
+        let mut state = columnar_grid(0);
+        state.contents.set_filter(1, Search::new("berlin"));
+        state.contents.cycle_sort(0);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(
+            yanked(&effects),
+            Some("Cleo,Bob"),
+            "filtered and in the order drawn, not the order returned"
+        );
+    }
+
+    #[test]
+    fn exporting_the_fetched_rows_writes_the_ones_the_grid_is_showing() {
+        // A full page, so the form has a Fetched scope to toggle to: under
+        // the limit the fetched rows *are* the whole table, and the radio has
+        // nowhere to go (export design §3).
+        let mut state = connected(Posture::ReadOnly);
+        state.geometry = Geometry::default().with_export_fits(true);
+        state.focus_on(Panel::Contents);
+        let query = QueryId::next();
+        state
+            .contents
+            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["kind".to_owned()],
+                rows: (0..ROW_LIMIT)
+                    .map(|row| Row {
+                        values: vec![CqlValue::Text(
+                            if row % 2 == 0 { "keep" } else { "drop" }.to_owned(),
+                        )],
+                    })
+                    .collect(),
+                next: None,
+            },
+        );
+        state.contents.set_filter(0, Search::new("keep"));
+
+        open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
+        for _ in 0..3 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        let [
+            Effect::Export {
+                source: Source::Fetched { rows, .. },
+                ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("one export effect carrying the rows");
+        };
+        assert_eq!(
+            rows.len(),
+            ROW_LIMIT / 2,
+            "a form may not write what the grid hides"
+        );
+    }
+
+    #[test]
+    fn clicking_the_sort_mark_sorts_the_column_it_belongs_to() {
+        let mut state = columnar_grid(1);
+
+        update(
+            &mut state,
+            Msg::Pointer(Pointer::Click(Click::Mark {
+                panel: Panel::Contents,
+                column: 0,
+                mark: Mark::Sort,
+            })),
+        );
+
+        assert_eq!(first_names(&state), ["Cleo", "Bob", "Ada"]);
+        assert_eq!(
+            state.contents.column.index(),
+            0,
+            "a press says which column it means, and the cursor follows it there"
+        );
+    }
+
+    #[test]
+    fn clicking_the_filter_mark_opens_the_prompt_over_that_column() {
+        let mut state = columnar_grid(0);
+
+        update(
+            &mut state,
+            Msg::Pointer(Pointer::Click(Click::Mark {
+                panel: Panel::Contents,
+                column: 1,
+                mark: Mark::Filter,
+            })),
+        );
+
+        assert_eq!(filter_prompt(&state).column(), 1);
+    }
+
+    #[test]
+    fn a_mark_on_a_column_that_is_gone_is_dropped_rather_than_clamped() {
+        let mut state = columnar_grid(0);
+
+        update(
+            &mut state,
+            Msg::Pointer(Pointer::Click(Click::Mark {
+                panel: Panel::Contents,
+                column: 9,
+                mark: Mark::Sort,
+            })),
+        );
+
+        assert_eq!(
+            state
+                .contents
+                .loaded()
+                .and_then(crate::contents::GridPage::sort),
+            None,
+            "the map a press was resolved against describes the previous frame"
+        );
+    }
+
+    #[test]
+    fn column_mode_is_the_one_bar_that_names_the_column_keys() {
+        let mut state = columnar_grid(0);
+        let named = |state: &State| -> Vec<&'static str> {
+            crate::view::hints::bar(state)
+                .panel
+                .iter()
+                .map(|hint| hint.action)
+                .collect()
+        };
+
+        let shown = named(&state);
+        assert!(shown.contains(&"sort") && shown.contains(&"filter"));
+
+        state.contents.mode = SelectionMode::Row;
+        let shown = named(&state);
+        assert!(
+            !shown.contains(&"sort") && !shown.contains(&"filter"),
+            "a hint has to be true in the frame it is drawn in"
+        );
+    }
+
+    #[test]
+    fn the_clear_filter_hint_is_greyed_until_there_is_one_to_clear() {
+        let mut state = columnar_grid(0);
+        let liveness = |state: &State| {
+            crate::view::hints::bar(state)
+                .panel
+                .into_iter()
+                .find(|hint| hint.action == "clear filter")
+                .expect("column mode names it")
+                .liveness
+        };
+
+        assert_eq!(liveness(&state), crate::view::Liveness::Inert);
+
+        state.contents.set_filter(0, Search::new("bob"));
+
+        assert_eq!(liveness(&state), crate::view::Liveness::Live);
+    }
+
+    #[test]
+    fn the_bar_under_the_filter_prompt_names_the_two_ways_out_and_nothing_else() {
+        let mut state = columnar_grid(0);
+        press(&mut state, Key::Char('f'));
+
+        let bar = crate::view::hints::bar(&state);
+
+        assert!(bar.panel.is_empty(), "the panel underneath answers nothing");
+        assert_eq!(
+            bar.global
+                .iter()
+                .map(|hint| hint.action)
+                .collect::<Vec<_>>(),
+            vec!["apply", "cancel"]
         );
     }
 
@@ -9819,6 +10316,18 @@ mod tests {
         // Measured, so the columns `m` cycles the highlight over are drawn.
         let grid = grid_of_rows(4, 5, 80);
 
+        // The one fixture the three column keys answer in: a grid in column
+        // mode, with a filter already standing on the column the cursor is on
+        // so that `c` has one to clear (grid sort and filter design §6).
+        let mut columnar = grid_of_rows(4, 5, 80);
+        press(&mut columnar, Key::Char('m'));
+        assert_eq!(
+            columnar.contents.mode,
+            SelectionMode::Column,
+            "the fixture is the one column mode reaches in a single press"
+        );
+        columnar.contents.set_filter(0, Search::new("1"));
+
         // The export form, open on its first stop. Every key `export_key`
         // claims there — `esc`, `tab`/`backtab`, `j`/`k`/`↓`/`↑`, `⏎` — is
         // already catalogued elsewhere (`Global`, `Motion`, `Tables`), so
@@ -9849,6 +10358,7 @@ mod tests {
             picker_open,
             yankable,
             grid,
+            columnar,
             export_open,
             searched,
             tabbed,

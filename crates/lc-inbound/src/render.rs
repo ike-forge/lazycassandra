@@ -221,6 +221,9 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
             crate::diagnostics::render(frame, rows, *selected, theme);
         }
         Some(OverlayView::Export(view)) => crate::export::render(frame, view, theme),
+        Some(OverlayView::Filter { column, query }) => {
+            crate::filter::render(frame, column, query, theme);
+        }
         None => {}
     }
 }
@@ -285,7 +288,12 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             | OverlayView::Themes { .. }
             | OverlayView::Diagnostics { .. },
         ) => true,
-        Some(OverlayView::Search { .. } | OverlayView::Export(_)) | None => false,
+        // The filter modal is not one either, for the export form's reason:
+        // it narrows the grid beneath it, and a modal that dimmed its own
+        // subject would ask the user to filter something it had stopped
+        // drawing (grid sort and filter design §3).
+        Some(OverlayView::Search { .. } | OverlayView::Export(_) | OverlayView::Filter { .. })
+        | None => false,
     }
 }
 
@@ -701,7 +709,7 @@ mod tests {
         ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, Key, Keyspace, Page,
         PrimaryKey, QueryId, Replication, Schema, Statement, Table, TableOptions,
     };
-    use lc_domain::pointer::Click;
+    use lc_domain::pointer::{Click, Mark};
     use lc_domain::posture::Posture;
     use lc_domain::search::{Prompt, Search, Searched};
     use lc_domain::state::{
@@ -1916,21 +1924,25 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop       ││    id  email                             │",
-            "the header leaves the bar+gutter block blank"
+            "│▌\u{f084} shop       ││    id \u{21c5}\u{f0b0}  email \u{21c5}\u{f0b0}                       │",
+            "the header leaves the bar+gutter block blank, and each name is \
+             followed by the two marks its column always carries"
         );
         assert_eq!(
             row(&buffer, 2),
             "│              │├──────────────────────────────────────────┤",
             "a rule under the headings keeps them from reading as a row"
         );
+        // The id column is as wide as its heading and marks, not as its
+        // one-digit values, so the email column starts three further right
+        // than the values alone would put it.
         assert_eq!(
             row(&buffer, 3),
-            "│              ││▌1  1   ada@example.com                   │"
+            "│              ││▌1  1      ada@example.com                │"
         );
         assert_eq!(
             row(&buffer, 4),
-            "╰──────────────╯│ 2  2   bob@example.com                   │"
+            "╰──────────────╯│ 2  2      bob@example.com                │"
         );
     }
 
@@ -1967,7 +1979,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop             ││    a                         b                                   │",
+            "│▌\u{f084} shop             ││    a \u{21c5}\u{f0b0}                      b \u{21c5}\u{f0b0}                                │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
@@ -2130,8 +2142,11 @@ mod tests {
                 .cell((x, grid_row_y(area, 0)))
                 .expect("inside the panel")
         };
-        let null_cell = cell(25);
-        let word_cell = cell(31);
+        // `id` is five columns (its name and marks outrun a one-digit value),
+        // `value` eight (`value` plus marks), each followed by the spacing —
+        // so the null draws seven columns in and the word seventeen.
+        let null_cell = cell(first_cell(area, 1) + 7);
+        let word_cell = cell(first_cell(area, 1) + 17);
 
         assert_eq!(
             null_cell.fg, word_cell.fg,
@@ -2871,11 +2886,26 @@ mod tests {
     /// column: six fit, so anything past the sixth has to be reached by
     /// scrolling.
     fn showing_column_path(path: &[usize]) -> State {
+        walked(22, path)
+    }
+
+    /// The same over the panel a 60-wide frame gives Contents, which is five
+    /// columns rather than two once each heading carries its marks — the
+    /// window the scrolling tests need to tell a drawn position from a page
+    /// index.
+    fn walked_wide(path: &[usize]) -> State {
+        walked(42, path)
+    }
+
+    /// The state the cursor reaches by visiting `path` in a Contents panel
+    /// `inner` columns wide. The width is the fixture's own, because the
+    /// viewport it walks has to be the one the frame it is drawn in draws.
+    fn walked(inner: u16, path: &[usize]) -> State {
         let page = sized_page(12, 3);
         let widths = lc_domain::grid::widths(&page);
         let mut state = showing(page);
         state.contents.mode = SelectionMode::Cell;
-        let available = lc_domain::grid::available(22, 1);
+        let available = lc_domain::grid::available(inner, 1);
 
         for column in path {
             state.contents.column.go_to(*column, widths.len());
@@ -2908,10 +2938,12 @@ mod tests {
         first_cell(area, gutter) + index * (width + COLUMN_SPACING)
     }
 
-    /// [`nth_cell`] for the fixtures `sized_page` builds: two-wide columns
-    /// over a page of fewer than ten rows.
+    /// [`nth_cell`] for the fixtures `sized_page` builds: two-character names
+    /// and two-character values over a page of fewer than ten rows, so the
+    /// heading's own marks are what set the width
+    /// (`lc_domain::grid::MARKS`).
     const fn drawn_column(area: Rect, index: u16) -> u16 {
-        nth_cell(area, 1, 2, index)
+        nth_cell(area, 1, 2 + lc_domain::grid::MARKS, index)
     }
 
     #[test]
@@ -2921,13 +2953,13 @@ mod tests {
         // sits in the middle of the drawn window rather than against its
         // right edge, where an index that ignored the offset would land on
         // the same cell and be indistinguishable.
-        let state = showing_column_path(&[8, 5]);
+        let state = walked_wide(&[8, 5]);
         assert!(
             state.contents.column_scroll.first() > 0,
             "the fixture must have scrolled sideways or this test proves nothing"
         );
 
-        let buffer = draw_state(40, 12, &state);
+        let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         let heading = block_row(&buffer, "Table contents", 0);
         let first = block_row(&buffer, "Table contents", 2);
@@ -2964,12 +2996,143 @@ mod tests {
         );
     }
 
+    /// A grid whose second column is sorted descending and whose first is
+    /// filtered, so every state a mark can be in is on screen at once.
+    fn marked_grid() -> State {
+        let mut state = showing(page_of(
+            &["id", "name"],
+            &[
+                &[CqlValue::Int(1), text("ada")],
+                &[CqlValue::Int(2), text("bob")],
+            ],
+        ));
+        state.contents.cycle_sort(1);
+        state.contents.set_filter(0, Search::new("1"));
+        state
+    }
+
+    #[test]
+    fn every_heading_carries_its_two_marks() {
+        let buffer = draw_state(60, 12, &showing(sized_page(2, 1)));
+
+        assert_eq!(
+            block_row(&buffer, "Table contents", 0).trim_end(),
+            "    c0 \u{21c5}\u{f0b0}  c1 \u{21c5}\u{f0b0}",
+            "an unsorted, unfiltered grid still says where the keys apply"
+        );
+    }
+
+    #[test]
+    fn a_sorted_column_wears_the_arrow_of_the_way_it_reads() {
+        let mut state = showing(sized_page(2, 1));
+        let arrow = |state: &State| {
+            let buffer = draw_state(60, 12, state);
+            block_row(&buffer, "Table contents", 0)
+                .chars()
+                .nth(7)
+                .expect("the first heading's sort mark")
+        };
+
+        assert_eq!(arrow(&state), '\u{21c5}', "unsorted, and an affordance");
+
+        state.contents.cycle_sort(0);
+        assert_eq!(arrow(&state), '\u{2193}', "descending first");
+
+        state.contents.cycle_sort(0);
+        assert_eq!(arrow(&state), '\u{2191}');
+    }
+
+    #[test]
+    fn a_mark_in_force_reads_apart_from_the_ones_that_are_not() {
+        let state = marked_grid();
+        let buffer = draw_state(60, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let fg = |x: u16| buffer.cell((x, area.y + 1)).expect("inside the heading").fg;
+        let marker = Theme::default()
+            .style(Token::Marker)
+            .fg
+            .expect("a marker spends a colour");
+        let faint = Theme::default()
+            .style(Token::Faint)
+            .fg
+            .expect("faint spends a colour");
+
+        // `id` is five columns wide — two for the name, one blank, two marks
+        // — so its sort mark sits third and its filter mark fourth.
+        let id = first_cell(area, 1);
+        assert_eq!(fg(id + 3), faint, "id is not sorted");
+        assert_eq!(fg(id + 4), marker, "and it is filtered");
+
+        let name = id + 5 + COLUMN_SPACING;
+        assert_eq!(fg(name + 5), marker, "name is sorted");
+        assert_eq!(fg(name + 6), faint, "and not filtered");
+    }
+
+    #[test]
+    fn a_filter_that_hides_rows_draws_only_the_ones_it_left() {
+        let buffer = draw_state(60, 12, &marked_grid());
+
+        assert!(
+            block_row(&buffer, "Table contents", 2).contains("ada"),
+            "the row the filter kept"
+        );
+        assert!(
+            !block_row(&buffer, "Table contents", 3).contains("bob"),
+            "and not the one it dropped"
+        );
+    }
+
+    #[test]
+    fn the_title_says_how_much_of_the_page_a_filter_left() {
+        // `top_border` panics unless some block's title says so, which is the
+        // assertion: a grid titled "1 row" would claim the cluster returned
+        // one.
+        // `top_border` panics unless some block's title says so, which is the
+        // assertion: a grid titled "1 row" would claim the cluster returned
+        // one. Widened past 60, where the title is cut before the count.
+        top_border(&draw_state(80, 12, &marked_grid()), "(1 of 2 rows)");
+    }
+
+    /// The prompt is a modal of its own, so a search prompt on the bar row and
+    /// a filter cannot be mistaken for each other (grid sort and filter
+    /// design §3).
+    #[test]
+    fn the_filter_prompt_draws_over_the_panels_naming_its_column() {
+        let mut state = marked_grid();
+        state.contents.mode = SelectionMode::Column;
+        state.contents.column.go_to(1, 2);
+        for key in ['f', 'a'] {
+            lc_domain::update(
+                &mut state,
+                lc_domain::update::Msg::Input(lc_domain::model::KeyPress::new(
+                    lc_domain::model::Key::Char(key),
+                )),
+            );
+        }
+
+        let buffer = draw_state(60, 12, &state);
+
+        // The modal says which column it will narrow, and `top_border` finds
+        // no block titled this unless it does.
+        top_border(&buffer, "Filter name");
+        // And it draws in the smallest frame the shell draws panels in, which
+        // is why `f` needs no measurement to gate it (design §3).
+        top_border(
+            &draw_state(crate::layout::MIN_W, crate::layout::MIN_H, &state),
+            "Filter",
+        );
+        assert!(
+            block_row(&buffer, "Filter name", 0).starts_with('a'),
+            "and holds the term typed so far"
+        );
+    }
+
     /// The trap `body.rs::grid` documents around `selected_column`: a range
     /// held over the *page*'s column indices must be tested against the page
     /// column a drawn cell names, not the position it happens to draw at.
     #[test]
     fn a_scrolled_grids_column_range_bands_the_page_column_not_the_drawn_position() {
-        let mut state = showing_column_path(&[8, 5]);
+        let mut state = walked_wide(&[8, 5]);
         assert_eq!(
             state.contents.column_scroll.first(),
             4,
@@ -2982,7 +3145,7 @@ mod tests {
         // at all in a window this size.
         state.contents.columns = held(6, 6);
 
-        let buffer = draw_state(40, 12, &state);
+        let buffer = draw_state(60, 12, &state);
         let area = block_area(&buffer, "Table contents");
         // Row 1, not the cursor's row 0: the cursor's own row carries the
         // crosshair under the band, and a row that is washed either way proves
@@ -4071,6 +4234,34 @@ mod tests {
         );
     }
 
+    /// The bands and the glyphs are built from the same widths, and this is
+    /// what pins them to each other: a press on the arrow the frame actually
+    /// drew has to be the sort key
+    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+    #[test]
+    fn a_press_on_the_arrow_the_frame_drew_is_the_sort_key() {
+        let (buffer, map) = draw_mapped(60, 12, &grid_state());
+        let sort = column_of(&buffer, 1, "\u{21c5}");
+
+        assert_eq!(
+            map.hit(sort, 1),
+            Some(Click::Mark {
+                panel: Panel::Contents,
+                column: 0,
+                mark: Mark::Sort
+            })
+        );
+        assert_eq!(
+            map.hit(sort + 1, 1),
+            Some(Click::Mark {
+                panel: Panel::Contents,
+                column: 0,
+                mark: Mark::Filter
+            }),
+            "and the funnel beside it is the filter key"
+        );
+    }
+
     #[test]
     fn the_map_resolves_every_cell_to_the_column_that_drew_it() {
         let (buffer, map) = draw_mapped(60, 12, &grid_state());
@@ -4815,7 +5006,7 @@ mod tests {
     fn a_rule_meets_the_block_it_divides() {
         // Tall enough that the whole catalogue fits, so no scrollbar owns the
         // right border where the rule lands.
-        let buffer = with_palette(100, 80);
+        let buffer = with_palette(100, 90);
         let area = block_area(&buffer, "Commands");
         let symbol = |x: u16, y: u16| {
             buffer
@@ -5060,10 +5251,11 @@ mod tests {
             "a catalogue taller than the box gets a scrollbar"
         );
 
-        // At 100x80 the whole catalogue fits (design §10), so there is no
-        // scrollbar — and its absence is what says nothing is hidden.
+        // At 100x90 the whole catalogue fits (design §10) — 70% of 90 rows
+        // clears the catalogue plus its two borders — so there is no
+        // scrollbar, and its absence is what says nothing is hidden.
         assert!(
-            !has_scrollbar(&with_palette(100, 80), "Commands"),
+            !has_scrollbar(&with_palette(100, 90), "Commands"),
             "a frame tall enough to hold the whole catalogue must draw no scrollbar"
         );
     }
@@ -5085,7 +5277,7 @@ mod tests {
 
     #[test]
     fn a_tall_frame_does_not_get_a_palette_full_of_blank_rows() {
-        let buffer = with_palette(100, 80);
+        let buffer = with_palette(100, 90);
         let (x, y) = top_border(&buffer, "Commands");
 
         let bottom = (y + 1..buffer.area.height)
@@ -5099,7 +5291,7 @@ mod tests {
         assert_eq!(
             usize::from(bottom - y) + 1,
             lc_domain::commands::row_count(None) + 2,
-            "the block ends where the catalogue does, not at 70% of 80 rows"
+            "the block ends where the catalogue does, not at 70% of 90 rows"
         );
     }
 

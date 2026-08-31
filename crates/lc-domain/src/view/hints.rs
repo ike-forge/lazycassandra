@@ -182,9 +182,12 @@ pub(crate) const THEMES_GLOBAL: &[Binding] = &[
     },
 ];
 
-/// What the bar names while a prompt is up. The panel group is empty: the
-/// focused panel responds to nothing, and naming its bindings would be the
-/// lie design §2 exists to prevent (panel search design §5.2).
+/// What the bar names while a prompt is up, and while the filter modal is —
+/// two text fields with the same two ways out, `⏎` writing what was typed and
+/// `esc` leaving what was there (grid sort and filter design §3). The panel
+/// group is empty for both: the focused panel responds to nothing, and naming
+/// its bindings would be the lie design §2 exists to prevent (panel search
+/// design §5.2).
 const SEARCH_GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
@@ -265,7 +268,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         };
     }
 
-    if matches!(state.overlay, Some(Overlay::Search(_))) {
+    if matches!(state.overlay, Some(Overlay::Search(_) | Overlay::Filter(_))) {
         return HintBar {
             panel: Vec::new(),
             global: SEARCH_GLOBAL.iter().map(rendered).collect(),
@@ -394,6 +397,25 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
 
     let exports = binding.action == "export";
     if exports && (state.contents.row_count() == 0 || !state.geometry.export_fits()) {
+        return Liveness::Inert;
+    }
+
+    // The three column keys are named in column mode and answer only over a
+    // page: `s` and `f` are greyed with no grid loaded, and `c` also with no
+    // filter on the column the cursor is on — a key that would clear nothing
+    // (grid sort and filter design §6).
+    let arranges = matches!(binding.action, "sort" | "filter");
+    if arranges && state.contents.loaded().is_none() {
+        return Liveness::Inert;
+    }
+
+    let clears = binding.action == "clear filter";
+    if clears
+        && state
+            .contents
+            .filter(state.contents.column.index())
+            .is_none()
+    {
         return Liveness::Inert;
     }
 

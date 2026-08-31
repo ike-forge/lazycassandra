@@ -5,7 +5,7 @@
 //! 8).
 
 use crate::cell;
-use crate::contents::{ContentsState, GridPage, SelectionMode, Subject, TableRef};
+use crate::contents::{ContentsState, GridPage, Order, SelectionMode, Subject, TableRef};
 use crate::model::{CqlValue, Schema};
 use crate::search::Search;
 use crate::state::{Panel, Ranges, State};
@@ -27,6 +27,14 @@ pub struct GridColumn {
     /// renderer so the fitting arithmetic can live beside the offsets it
     /// bounds (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
     pub width: u16,
+    /// Which way this column is sorted, `None` when the grid is not sorted on
+    /// it. What the mark over the heading says, and the marks are drawn on
+    /// every column whether or not one is in force — an affordance a user can
+    /// see and click before ever pressing `s`
+    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+    pub sort: Option<Order>,
+    /// Whether a filter is narrowing the grid by this column.
+    pub filtered: bool,
 }
 
 /// One value, already rendered.
@@ -52,9 +60,7 @@ pub(super) fn title(state: &State) -> Vec<Segment> {
         ContentsState::Loading { subject, .. } | ContentsState::Failed { subject, .. } => {
             named(BASE, subject, None)
         }
-        ContentsState::Loaded { subject, page } => {
-            named(BASE, subject, Some(rows(page.page().rows.len())))
-        }
+        ContentsState::Loaded { subject, page } => named(BASE, subject, Some(count(page))),
     }
 }
 
@@ -78,6 +84,20 @@ fn named(base: &str, subject: &Subject, count: Option<String>) -> Vec<Segment> {
     }
 
     segments
+}
+
+/// How much of the page is on screen. Under a filter that is two numbers,
+/// not one: a grid drawn as "3 rows" with seventeen more behind a filter says
+/// the cluster returned three
+/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
+fn count(page: &GridPage) -> String {
+    let shown = page.len();
+
+    if page.is_filtered() {
+        format!("{shown} of {}", rows(page.page().rows.len()))
+    } else {
+        rows(shown)
+    }
 }
 
 fn rows(count: usize) -> String {
@@ -109,6 +129,13 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
 
     if page.rows.is_empty() {
         return waiting("No rows");
+    }
+
+    // A filter that matched nothing is not an empty page: the panel says so
+    // in the words of the thing that emptied it, so the way back is the key
+    // that put it there (design §3).
+    if grid_page.is_empty() {
+        return waiting("No rows match the filter");
     }
 
     let flash = super::flash_over(state, Panel::Contents);
@@ -143,15 +170,20 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
             .iter()
             .zip(grid_page.widths())
             .zip(&tokens)
-            .map(|((name, width), token)| GridColumn {
+            .enumerate()
+            .map(|(index, ((name, width), token))| GridColumn {
                 name: name.clone(),
                 token: *token,
                 width: *width,
+                sort: grid_page
+                    .sort()
+                    .filter(|sort| sort.column == index)
+                    .map(|sort| sort.order),
+                filtered: grid_page.filter(index).is_some(),
             })
             .collect(),
-        rows: page
-            .rows
-            .iter()
+        rows: grid_page
+            .rows()
             .map(|row| {
                 row.values
                     .iter()
@@ -171,7 +203,7 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         first_column: state.contents.column_scroll.first(),
         column: state.contents.column.index(),
         mode: state.contents.mode,
-        gutter: crate::grid::gutter(page.rows.len()),
+        gutter: crate::grid::gutter(grid_page.len()),
         rows_ranges,
         columns_ranges,
         flash: flash.is_some(),
@@ -895,7 +927,9 @@ mod tests {
 
         assert_eq!(
             columns.iter().map(|c| c.width).collect::<Vec<_>>(),
-            vec![2, 5]
+            vec![2 + crate::grid::MARKS, 4 + crate::grid::MARKS],
+            "each heading is measured with the marks it carries, which is \
+             what widens `name` past the five columns \"alice\" needs"
         );
     }
 

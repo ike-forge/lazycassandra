@@ -34,6 +34,15 @@ pub enum Click {
     },
     /// A grid's heading cell: the column it names, and no row.
     Column { panel: Panel, column: usize },
+    /// One of the two marks a grid heading carries, and the column it belongs
+    /// to. A press here is the `s` or `f` binding, reached by pointer — the
+    /// rule every gesture follows (design §1,
+    /// docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+    Mark {
+        panel: Panel,
+        column: usize,
+        mark: Mark,
+    },
     /// A tab on a panel's top border, by its place in the strip that was
     /// drawn.
     ///
@@ -45,6 +54,13 @@ pub enum Click {
     /// Chrome: a border, blank space past the last row, or a body with no rows
     /// at all.
     Panel(Panel),
+}
+
+/// Which of a heading's two marks was pressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    Sort,
+    Filter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +76,7 @@ impl Click {
         match self {
             Self::Row { panel, .. }
             | Self::Column { panel, .. }
+            | Self::Mark { panel, .. }
             | Self::Tab { panel, .. }
             | Self::Panel(panel) => panel,
         }

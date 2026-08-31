@@ -116,6 +116,7 @@ mod tests {
                 inner: Rect::new(1, 1, 14, 5),
                 tabs: Vec::new(),
                 columns: Vec::new(),
+                marks: Vec::new(),
                 rows: Some(RowStrip::Rows {
                     top: 1,
                     first: 0,

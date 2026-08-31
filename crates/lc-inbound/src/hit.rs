@@ -6,7 +6,7 @@
 //! presses landing on the wrong row
 //! (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
 
-use lc_domain::pointer::Click;
+use lc_domain::pointer::{Click, Mark};
 use lc_domain::state::Panel;
 use ratatui::layout::{Position, Rect};
 
@@ -38,6 +38,17 @@ impl<T: Copy> Band<T> {
     }
 }
 
+/// One of a heading's marks, and the page column it belongs to.
+///
+/// What a [`Band`] over the two mark cells names, so resolving a press there
+/// needs no second description of which column it sat over
+/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MarkAt {
+    pub(crate) column: usize,
+    pub(crate) mark: Mark,
+}
+
 /// Where each panel's content ended up in the frame just drawn.
 ///
 /// The default is a frame with nothing in it, which nothing can be clicked in
@@ -60,6 +71,8 @@ pub(crate) struct PanelHit {
     pub(crate) tabs: Vec<Band<usize>>,
     /// The columns of a grid body, each naming its index in the page.
     pub(crate) columns: Vec<Band<usize>>,
+    /// The two marks each drawn heading carries, inside those columns.
+    pub(crate) marks: Vec<Band<MarkAt>>,
     pub(crate) rows: Option<RowStrip>,
 }
 
@@ -133,6 +146,7 @@ impl PanelHit {
             inner,
             tabs,
             columns: body.map(|body| body.bands.clone()).unwrap_or_default(),
+            marks: body.map(|body| body.marks.clone()).unwrap_or_default(),
             rows: RowStrip::of(inner, body),
         }
     }
@@ -164,6 +178,20 @@ impl PanelHit {
                 // heading: it names a column and no row, which is the `h`/`l`
                 // binding rather than a sort nobody asked for (design §1).
                 if position.y < *top {
+                    // The marks are asked before the column they sit inside,
+                    // the same order the tab strip is asked before the border
+                    // it sits on: a press on a mark is the `s`/`f` binding,
+                    // and a press anywhere else in the heading is still the
+                    // `h`/`l` one
+                    // (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+                    if let Some(at) = Band::at(&self.marks, position.x) {
+                        return Click::Mark {
+                            panel: self.panel,
+                            column: at.column,
+                            mark: at.mark,
+                        };
+                    }
+
                     return match column {
                         Some(column) => Click::Column {
                             panel: self.panel,
@@ -253,6 +281,7 @@ mod tests {
             inner,
             tabs: Vec::new(),
             columns: Vec::new(),
+            marks: Vec::new(),
             rows: Some(RowStrip::Rows {
                 top: inner.y + header,
                 first,
@@ -272,6 +301,7 @@ mod tests {
             inner,
             tabs: Vec::new(),
             columns: Vec::new(),
+            marks: Vec::new(),
             rows: Some(RowStrip::Lines {
                 top: inner.y,
                 first,
@@ -288,6 +318,7 @@ mod tests {
             inner: inner(area),
             tabs: Vec::new(),
             columns: Vec::new(),
+            marks: Vec::new(),
             rows: None,
         }
     }
@@ -319,6 +350,7 @@ mod tests {
             inner,
             tabs: Vec::new(),
             columns,
+            marks: Vec::new(),
             rows: Some(RowStrip::Rows {
                 top: inner.y + 1,
                 first: 0,
@@ -572,6 +604,67 @@ mod tests {
                 column: None
             }),
             "the bar and the row number are not a column of the page"
+        );
+    }
+
+    /// [`grid_map`] with the two marks of its first column laid over the
+    /// last two cells of that heading, as [`crate::body::mark_bands`] places
+    /// them.
+    fn marked_map() -> FrameMap {
+        let mut hit = gridded(Panel::Contents, Rect::new(16, 0, 24, 8), 2, 19, &[4, 4]);
+        hit.marks = [(21, Mark::Sort), (22, Mark::Filter)]
+            .into_iter()
+            .map(|(start, mark)| Band {
+                start,
+                end: start + 1,
+                names: MarkAt { column: 0, mark },
+            })
+            .collect();
+
+        FrameMap::new([
+            plain(Panel::Tables, Rect::new(0, 0, 16, 7)),
+            plain(Panel::Ddl, Rect::new(0, 7, 16, 4)),
+            hit,
+            plain(Panel::Queries, Rect::new(16, 8, 24, 3)),
+        ])
+    }
+
+    #[test]
+    fn a_press_on_a_heading_mark_is_the_key_that_mark_stands_for() {
+        let map = marked_map();
+
+        assert_eq!(
+            map.hit(21, 1),
+            Some(Click::Mark {
+                panel: Panel::Contents,
+                column: 0,
+                mark: Mark::Sort
+            })
+        );
+        assert_eq!(
+            map.hit(22, 1),
+            Some(Click::Mark {
+                panel: Panel::Contents,
+                column: 0,
+                mark: Mark::Filter
+            })
+        );
+        assert_eq!(
+            map.hit(19, 1),
+            Some(Click::Column {
+                panel: Panel::Contents,
+                column: 0
+            }),
+            "the name beside them is still the column, not a mark"
+        );
+        assert_eq!(
+            map.hit(21, 2),
+            Some(Click::Row {
+                panel: Panel::Contents,
+                row: 0,
+                column: Some(0)
+            }),
+            "and a mark's column below the heading is a row like any other"
         );
     }
 

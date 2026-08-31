@@ -6,7 +6,7 @@
 //! (architecture.md §11).
 
 use crate::grid::ColumnScroll;
-use crate::model::{KeyspaceKind, Page, QueryId};
+use crate::model::{KeyspaceKind, Page, QueryId, Row};
 use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
 use crate::style::{Segment, Token};
@@ -90,7 +90,45 @@ pub enum ContentsState {
     },
 }
 
-/// A page and the column widths measured from it.
+/// Which way a sorted column is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Order {
+    Descending,
+    Ascending,
+}
+
+/// The column a grid is sorted on, and which way.
+///
+/// One column at a time: sorting a second replaces the first rather than
+/// adding a tiebreak, so what the arrow over a heading claims is the whole
+/// order and not a term in it
+/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sort {
+    pub column: usize,
+    pub order: Order,
+}
+
+impl Sort {
+    /// The state `s` on `column` reaches when the sort key is pressed there:
+    /// unsorted, descending, ascending, unsorted (design §2). Landing on
+    /// another column starts that column's own cycle from the top.
+    #[must_use]
+    fn next(sort: Option<Self>, column: usize) -> Option<Self> {
+        let order = match sort {
+            Some(Self { column: at, order }) if at == column => match order {
+                Order::Descending => Order::Ascending,
+                Order::Ascending => return None,
+            },
+            _ => Order::Descending,
+        };
+
+        Some(Self { column, order })
+    }
+}
+
+/// A page, the column widths measured from it, and the arrangement the user
+/// is reading it through.
 ///
 /// One type rather than two fields because measuring is expensive and the
 /// answer never changes: [`crate::grid::widths`] runs [`crate::cell::text`]
@@ -102,18 +140,44 @@ pub enum ContentsState {
 ///
 /// The widths are a pure function of the page and are built with it, so the
 /// cache has no way to go stale. That is why there is no public constructor
-/// taking both.
+/// taking both. They are measured over the whole page and not over
+/// [`GridPage::order`]: a filter that narrowed the columns it left standing
+/// would resize the grid under every keystroke of the prompt that typed it
+/// (design §5).
+///
+/// The sort and the filters live here rather than on [`ContentsPanel`] so
+/// that they cannot outlive the page they address: a filter on column 3 says
+/// nothing about the next statement's third column, and a new page replaces
+/// this whole value (design §3).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GridPage {
     page: Page,
     widths: Vec<u16>,
+    sort: Option<Sort>,
+    /// One slot per column of the page, so a filter is addressed by the
+    /// column index the grid already counts in and no lookup can name a
+    /// column the page does not have.
+    filters: Vec<Option<Search>>,
+    /// Which rows of [`GridPage::page`] are drawn, in the order they are
+    /// drawn. The one place the arrangement is resolved: every reader counts
+    /// rows in this, so a cursor, a yank and an export cannot disagree about
+    /// which row is the third one (design §4).
+    order: Vec<usize>,
 }
 
 impl GridPage {
     fn new(page: Page) -> Self {
         let widths = crate::grid::widths(&page);
+        let filters = vec![None; page.columns.len()];
+        let order = (0..page.rows.len()).collect();
 
-        Self { page, widths }
+        Self {
+            page,
+            widths,
+            sort: None,
+            filters,
+            order,
+        }
     }
 
     #[must_use]
@@ -125,6 +189,186 @@ impl GridPage {
     #[must_use]
     pub fn widths(&self) -> &[u16] {
         &self.widths
+    }
+
+    /// The column the grid is sorted on, if any.
+    #[must_use]
+    pub const fn sort(&self) -> Option<Sort> {
+        self.sort
+    }
+
+    /// The filter standing on `column`, if any.
+    #[must_use]
+    pub fn filter(&self, column: usize) -> Option<&Search> {
+        self.filters.get(column)?.as_ref()
+    }
+
+    /// How many rows the arrangement leaves — what a cursor is bounded by,
+    /// and what the title counts.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+
+    /// Whether anything was filtered out, which is what lets the title say
+    /// how much of the page it is showing.
+    #[must_use]
+    pub fn is_filtered(&self) -> bool {
+        self.filters.iter().any(Option::is_some)
+    }
+
+    /// The rows the arrangement leaves, in the order they are drawn.
+    #[must_use]
+    pub fn rows(&self) -> impl ExactSizeIterator<Item = &Row> {
+        self.order.iter().map(|at| &self.page.rows[*at])
+    }
+
+    /// The `index`th drawn row, counted the way the cursor counts.
+    #[must_use]
+    pub fn row(&self, index: usize) -> Option<&Row> {
+        self.page.rows.get(*self.order.get(index)?)
+    }
+
+    /// Steps `column` through the sort cycle (design §2).
+    pub fn cycle_sort(&mut self, column: usize) {
+        if column >= self.page.columns.len() {
+            return;
+        }
+
+        self.sort = Sort::next(self.sort, column);
+        self.arrange();
+    }
+
+    /// Applies `filter` to `column`, `None` clearing it.
+    pub fn set_filter(&mut self, column: usize, filter: Option<Search>) {
+        let Some(slot) = self.filters.get_mut(column) else {
+            return;
+        };
+
+        *slot = filter;
+        self.arrange();
+    }
+
+    /// Rebuilds [`GridPage::order`]: every row that satisfies every filter,
+    /// in the sorted order.
+    ///
+    /// Sorted by the text the grid draws rather than by the value's own type,
+    /// which is what "lexicographic" means here: a column holds one CQL type,
+    /// so an order over the drawn text is an order the user can read off the
+    /// screen. The sort is stable, so rows the key cannot separate keep the
+    /// order the cluster returned them in (design §2).
+    fn arrange(&mut self) {
+        let mut order: Vec<usize> = (0..self.page.rows.len())
+            .filter(|at| self.kept(*at))
+            .collect();
+
+        if let Some(sort) = self.sort {
+            let keys: Vec<String> = order
+                .iter()
+                .map(|at| {
+                    self.page.rows[*at]
+                        .values
+                        .get(sort.column)
+                        .map(crate::cell::text)
+                        .unwrap_or_default()
+                })
+                .collect();
+            // Sorted alongside its keys rather than by a comparator that
+            // re-renders a cell on every comparison: `cell::text` allocates,
+            // and a blob column would hex-expand once per comparison.
+            let mut paired: Vec<(String, usize)> = keys.into_iter().zip(order).collect();
+            paired.sort_by(|(left, _), (right, _)| match sort.order {
+                Order::Ascending => left.cmp(right),
+                Order::Descending => right.cmp(left),
+            });
+            order = paired.into_iter().map(|(_, at)| at).collect();
+        }
+
+        self.order = order;
+    }
+
+    /// Whether row `at` satisfies every filter standing. Several filters are
+    /// conjunctive: each one narrows what the ones before it left (design §3).
+    fn kept(&self, at: usize) -> bool {
+        let row = &self.page.rows[at];
+
+        self.filters
+            .iter()
+            .enumerate()
+            .filter_map(|(column, filter)| Some((column, filter.as_ref()?)))
+            .all(|(column, filter)| {
+                row.values
+                    .get(column)
+                    .is_some_and(|value| filter.matches(&crate::cell::text(value)))
+            })
+    }
+}
+
+/// An open filter prompt: the column it will narrow, and the term typed so
+/// far.
+///
+/// A modal of its own rather than a second [`crate::search::Prompt`]: a
+/// search flags cells and keeps every row, and this drops the rows it does
+/// not match — the two mean different things and must not share a key or a
+/// type (design §3). The term is applied when the prompt closes rather than
+/// on each keystroke, because a hard filter re-seats the cursor and rebuilds
+/// the grid under the hands typing it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Filter {
+    column: usize,
+    /// The column's name, for the modal's own title. Captured at open: the
+    /// prompt claims every key, so the page underneath cannot change while it
+    /// is up.
+    name: String,
+    query: String,
+}
+
+impl Filter {
+    /// Opens over `column`, seeded with the filter already standing there —
+    /// which is what makes deleting the text the way to clear one (design §3).
+    #[must_use]
+    pub fn opened(column: usize, name: &str, standing: Option<&Search>) -> Self {
+        Self {
+            column,
+            name: name.to_owned(),
+            query: standing.map(Search::as_str).unwrap_or_default().to_owned(),
+        }
+    }
+
+    #[must_use]
+    pub const fn column(&self) -> usize {
+        self.column
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    /// What the query now means: `None` for an empty one, which clears the
+    /// filter rather than matching everything — [`Search::new`]'s own
+    /// invariant, and the reason this reuses it.
+    #[must_use]
+    pub fn search(&self) -> Option<Search> {
+        Search::new(&self.query)
+    }
+
+    pub fn push(&mut self, character: char) {
+        self.query.push(character);
+    }
+
+    pub fn pop(&mut self) {
+        self.query.pop();
     }
 }
 
@@ -242,9 +486,11 @@ impl ContentsPanel {
         let ContentsState::Loaded { page, .. } = &self.state else {
             return None;
         };
-        let page = page.page();
-        let columns = page.columns.len();
-        let len = page.rows.len().checked_mul(columns)?;
+        let columns = page.page().columns.len();
+        // Over the arrangement rather than the page: `n` walks the grid as it
+        // is drawn, so a row a filter dropped is not a match to land on
+        // (grid sort and filter design §4).
+        let len = page.len().checked_mul(columns)?;
 
         if len == 0 {
             return None;
@@ -259,9 +505,8 @@ impl ContentsPanel {
             })
             .find(|at| {
                 let (row, column) = (at / columns, at % columns);
-                page.rows[row]
-                    .values
-                    .get(column)
+                page.row(row)
+                    .and_then(|row| row.values.get(column))
                     .is_some_and(|value| search.matches(&crate::cell::text(value)))
             })
             .map(|at| (at / columns, at % columns))
@@ -320,13 +565,53 @@ impl ContentsPanel {
         self.state = ContentsState::Failed { subject };
     }
 
-    /// The rows on screen, for a cursor that must not run past them.
+    /// The rows on screen, for a cursor that must not run past them — what
+    /// the arrangement left, not what the cluster returned
+    /// (grid sort and filter design §4).
     #[must_use]
     pub fn row_count(&self) -> usize {
         match &self.state {
-            ContentsState::Loaded { page, .. } => page.page().rows.len(),
+            ContentsState::Loaded { page, .. } => page.len(),
             _ => 0,
         }
+    }
+
+    /// The loaded page, for the readers that count rows in the order it is
+    /// drawn: the projection, a yank, an export.
+    #[must_use]
+    pub const fn loaded(&self) -> Option<&GridPage> {
+        match &self.state {
+            ContentsState::Loaded { page, .. } => Some(page),
+            _ => None,
+        }
+    }
+
+    /// Steps `column` through the sort cycle, dropping the ranges `v` held.
+    ///
+    /// A range names rows by where they are drawn, so carrying one across a
+    /// re-ordering would address rows the user never chose — the argument `m`
+    /// already makes for the ranges it drops
+    /// (grid sort and filter design §4).
+    pub fn cycle_sort(&mut self, column: usize) {
+        if let ContentsState::Loaded { page, .. } = &mut self.state {
+            page.cycle_sort(column);
+            self.rows.clear();
+        }
+    }
+
+    /// Applies `filter` to `column`, `None` clearing it. Drops the ranges `v`
+    /// held, for [`ContentsPanel::cycle_sort`]'s reason.
+    pub fn set_filter(&mut self, column: usize, filter: Option<Search>) {
+        if let ContentsState::Loaded { page, .. } = &mut self.state {
+            page.set_filter(column, filter);
+            self.rows.clear();
+        }
+    }
+
+    /// The filter standing on `column`, if any.
+    #[must_use]
+    pub fn filter(&self, column: usize) -> Option<&Search> {
+        self.loaded()?.filter(column)
     }
 
     /// The columns on screen, for a cursor that must not run past them.
@@ -816,5 +1101,222 @@ mod tests {
 
         assert!(!panel.rows.is_active());
         assert!(!panel.columns.is_active());
+    }
+
+    /// Three rows over two columns, with a `name` column whose lexicographic
+    /// order is not the order the cluster returned and a `city` column two of
+    /// the three share — so a sort and a filter each have something to do.
+    fn arranged() -> ContentsPanel {
+        let (mut panel, query) = loading();
+        panel.page_ready(
+            query,
+            Page {
+                columns: vec!["name".to_owned(), "city".to_owned()],
+                rows: ["Bob", "Ada", "Cleo"]
+                    .into_iter()
+                    .zip(["Berlin", "Aarhus", "Berlin"])
+                    .map(|(name, city)| Row {
+                        values: vec![
+                            CqlValue::Text(name.to_owned()),
+                            CqlValue::Text(city.to_owned()),
+                        ],
+                    })
+                    .collect(),
+                next: None,
+            },
+        );
+        panel
+    }
+
+    fn drawn(panel: &ContentsPanel, column: usize) -> Vec<String> {
+        panel
+            .loaded()
+            .expect("a page is loaded")
+            .rows()
+            .map(|row| crate::cell::text(&row.values[column]))
+            .collect()
+    }
+
+    #[test]
+    fn sorting_a_column_walks_descending_then_ascending_then_back_to_the_page() {
+        let mut panel = arranged();
+
+        panel.cycle_sort(0);
+        assert_eq!(drawn(&panel, 0), ["Cleo", "Bob", "Ada"], "descending first");
+
+        panel.cycle_sort(0);
+        assert_eq!(drawn(&panel, 0), ["Ada", "Bob", "Cleo"], "then ascending");
+
+        panel.cycle_sort(0);
+        assert_eq!(
+            drawn(&panel, 0),
+            ["Bob", "Ada", "Cleo"],
+            "and then the order the cluster returned"
+        );
+        assert_eq!(panel.loaded().and_then(GridPage::sort), None);
+    }
+
+    #[test]
+    fn sorting_a_second_column_starts_that_columns_own_cycle() {
+        let mut panel = arranged();
+        panel.cycle_sort(0);
+        panel.cycle_sort(0);
+
+        panel.cycle_sort(1);
+
+        assert_eq!(
+            panel.loaded().and_then(GridPage::sort),
+            Some(Sort {
+                column: 1,
+                order: Order::Descending
+            }),
+            "one column is sorted at a time, and a new one starts descending"
+        );
+    }
+
+    #[test]
+    fn rows_a_sort_cannot_separate_keep_the_order_they_arrived_in() {
+        let mut panel = arranged();
+
+        panel.cycle_sort(1);
+
+        assert_eq!(
+            drawn(&panel, 0),
+            ["Bob", "Cleo", "Ada"],
+            "the two Berliners keep the page's own order between them"
+        );
+    }
+
+    #[test]
+    fn a_filter_drops_the_rows_it_does_not_match() {
+        let mut panel = arranged();
+
+        panel.set_filter(1, Search::new("berlin"));
+
+        assert_eq!(
+            drawn(&panel, 0),
+            ["Bob", "Cleo"],
+            "matching is the search's own, case folded and anywhere in the cell"
+        );
+        assert_eq!(
+            panel.row_count(),
+            2,
+            "the cursor is bounded by what is left"
+        );
+    }
+
+    #[test]
+    fn filters_on_two_columns_narrow_each_other() {
+        let mut panel = arranged();
+
+        panel.set_filter(1, Search::new("berlin"));
+        panel.set_filter(0, Search::new("cl"));
+
+        assert_eq!(drawn(&panel, 0), ["Cleo"]);
+    }
+
+    #[test]
+    fn clearing_a_filter_puts_its_rows_back() {
+        let mut panel = arranged();
+        panel.set_filter(1, Search::new("aarhus"));
+
+        panel.set_filter(1, None);
+
+        assert_eq!(drawn(&panel, 0), ["Bob", "Ada", "Cleo"]);
+        assert!(!panel.loaded().expect("a page").is_filtered());
+    }
+
+    #[test]
+    fn a_filter_and_a_sort_compose() {
+        let mut panel = arranged();
+
+        panel.set_filter(1, Search::new("berlin"));
+        panel.cycle_sort(0);
+
+        assert_eq!(
+            drawn(&panel, 0),
+            ["Cleo", "Bob"],
+            "the sort orders what the filter left"
+        );
+    }
+
+    #[test]
+    fn a_filter_matching_nothing_leaves_a_page_with_no_rows_to_draw() {
+        let mut panel = arranged();
+
+        panel.set_filter(0, Search::new("zzz"));
+
+        assert_eq!(panel.row_count(), 0);
+        assert!(panel.loaded().expect("a page").is_empty());
+        assert!(
+            panel.loaded().expect("a page").is_filtered(),
+            "which is what tells an emptied grid apart from an empty page"
+        );
+    }
+
+    #[test]
+    fn arranging_drops_the_range_v_was_holding() {
+        let mut panel = arranged();
+        panel.rows.start(0);
+        panel.rows.stop(2);
+
+        panel.cycle_sort(0);
+
+        assert!(
+            !panel.rows.is_active(),
+            "a range names rows by where they are drawn, and they have moved"
+        );
+    }
+
+    #[test]
+    fn a_search_walks_the_rows_the_filter_left_and_not_the_ones_it_dropped() {
+        let mut panel = arranged();
+        panel.set_filter(1, Search::new("berlin"));
+        panel.set_search(Search::new("cleo"));
+
+        assert_eq!(
+            panel.next_match((0, 0), Direction::Forwards),
+            Some((1, 0)),
+            "Cleo is the third row of the page and the second of the grid"
+        );
+    }
+
+    #[test]
+    fn an_arrangement_of_a_page_with_no_columns_addresses_nothing() {
+        let (mut panel, query) = loading();
+        panel.page_ready(
+            query,
+            Page {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                next: None,
+            },
+        );
+
+        panel.cycle_sort(0);
+        panel.set_filter(0, Search::new("x"));
+
+        assert_eq!(panel.loaded().and_then(GridPage::sort), None);
+        assert_eq!(panel.filter(0), None);
+    }
+
+    #[test]
+    fn a_filter_prompt_opens_on_the_term_already_standing() {
+        let filter = Filter::opened(1, "city", Search::new("berlin").as_ref());
+
+        assert_eq!(filter.query(), "berlin");
+        assert_eq!(filter.name(), "city");
+        assert_eq!(filter.column(), 1);
+    }
+
+    #[test]
+    fn emptying_a_filter_prompt_is_what_clears_the_filter() {
+        let mut filter = Filter::opened(0, "name", Search::new("ada").as_ref());
+
+        for _ in 0..3 {
+            filter.pop();
+        }
+
+        assert_eq!(filter.search(), None, "an empty term is no filter at all");
     }
 }

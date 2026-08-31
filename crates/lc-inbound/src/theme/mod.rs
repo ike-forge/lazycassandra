@@ -296,6 +296,15 @@ impl Theme {
             Token::Crosshair => crosshair(&palette),
             Token::Ranged => ranged(&palette),
             Token::Match => fg(palette.match_).add_modifier(Modifier::BOLD),
+            // `focus`, the colour the frame already spends on the thing that
+            // is answering: a sorted or filtered column is the one the grid is
+            // being read through. Unbolded, unlike `Token::Focused` — a mark
+            // is a glyph rather than a word, and weight on one cell reads as
+            // a different glyph rather than as emphasis. Not swept as
+            // emphasis either: an arrangement is a fact about the page rather
+            // than a mark saying where the cursor is, so it keeps its colour
+            // under a modal for `Token::Match`'s reason.
+            Token::Marker => fg(palette.focus),
             // A modifier rather than a colour, because it has to read
             // *against* the highlighted row whatever colour that row is.
             Token::SelectedCell => Style::new()

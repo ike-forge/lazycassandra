@@ -106,6 +106,14 @@ pub enum OverlayView {
         rows: Vec<DiagnosticRow>,
         selected: usize,
     },
+    /// The filter prompt: the column it will narrow, and the term typed so
+    /// far. The name rather than the index — the modal says which column it
+    /// is filtering, and an index is not a name
+    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
+    Filter {
+        column: String,
+        query: String,
+    },
     /// Boxed: `OverlayView`'s other variants are small, and clippy's
     /// `large_enum_variant` is denied.
     Export(Box<ExportView>),
@@ -231,6 +239,10 @@ fn overlay(state: &State) -> Option<OverlayView> {
             stop: form.stop(),
             confirm: form.confirm(),
         }))),
+        Overlay::Filter(filter) => Some(OverlayView::Filter {
+            column: filter.name().to_owned(),
+            query: filter.query().to_owned(),
+        }),
         Overlay::Fatal(message) => Some(OverlayView::Fatal(message.clone())),
     }
 }
