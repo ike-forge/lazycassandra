@@ -166,7 +166,7 @@ border. The catalogue this table draws gained no row of its own for `/`: a
 row saying `/` searches the palette would be a row about the palette inside
 the palette, so the hint bar names the key instead — a mode names its own
 keys
-([palette filter design](superpowers/specs/2026-08-31-palette-filter-design.md) §1, §2,
+([overlay filter design](superpowers/specs/2026-08-31-overlay-filter-design.md) §1, §2,
 [overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §6, §8).
 
 ### The search prompt
@@ -242,13 +242,17 @@ was before config existed.
 | `Enter` | Closes, keeping whatever theme is set — and writes it to the config file it is read from, so the next launch opens on it ([theme persistence design](superpowers/specs/2026-08-22-theme-persistence-design.md) §2). |
 | `Esc` | Sets `State.theme` back to the theme the picker opened on, then closes. |
 | `q` | Quits, as everywhere else. The picker takes motion, not text, so it leaves `q` alone — the palette's rule (§2). |
-| `/` | Search the list: typing walks the cursor to the next matching row, marking the hit and previewing it. `⏎` keeps the theme, `Esc` puts it back. |
+| `/` | Filter the list: typing keeps the themes that match, marking the hit and previewing the row it seats on. `⏎` keeps the theme and widens the list back out, `Esc` puts both back. |
 
 Search here previews the same way motion already does: the cursor is what
-sets `State.theme`, so walking it with `/` walks the preview too. A term
-matching nothing leaves the cursor, and so the preview, right where the
-prompt opened — see §2's rule below for the key itself
-([overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §5, §6).
+sets `State.theme`, so the row a filter seats it on is the theme in force.
+The list narrows to what matches, in a block every theme still sizes, and a
+term matching nothing draws one faint line saying so and leaves the preview
+on whatever it last showed — reverting per keystroke would flash the
+terminal's colours at a half-typed word, and `Esc` is what puts a preview
+back. See §2's rule below for the key itself
+([overlay filter design](superpowers/specs/2026-08-31-overlay-filter-design.md) §1, §4,
+[overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §5, §6).
 
 The ends are reachable here as they are in every other list. Paging does land
 on either end in one press — the list is every theme there is and always
@@ -897,16 +901,15 @@ either's is up the overlay it belongs to stops taking motion and takes text
 instead — the panel-that-takes-text rule, applied a second time, inside an
 overlay that already claimed every key once. Every printable key types
 itself there, `q` included, the same swap the search prompt already makes
-of the palette and the picker's own `q`-quits rule. The two differ in what
-the list does under it: the palette narrows to the rows that match, while
-the picker's cursor walks to the match with every theme left on screen —
-the same live-as-you-type preview the search prompt gives Tables, DDL and
-Table contents, and the reason the picker keeps it is that its cursor is the
-preview. Either way nothing of the search outlives the prompt: `⏎` keeps
-only the row the cursor found, `Esc` puts the cursor back where the prompt
-opened, and the query itself is gone once the prompt closes, with no
+of the palette and the picker's own `q`-quits rule. Both lists narrow to
+the rows the term matched, marking the hit where it sits, in a block the
+unfiltered list still sizes — and in the picker the row the filter seats on
+is the theme previewed, since its cursor is the preview. Nothing of the
+search outlives the prompt: `⏎` keeps only the row the cursor found and
+widens the list back out around it, `Esc` puts the cursor back where the
+prompt opened, and the query itself is gone once the prompt closes, with no
 highlight and no `n`/`N` left to walk
-([palette filter design](superpowers/specs/2026-08-31-palette-filter-design.md) §1,
+([overlay filter design](superpowers/specs/2026-08-31-overlay-filter-design.md) §1, §4,
 [overlay search design](superpowers/specs/2026-08-16-overlay-search-design.md) §5, §6).
 
 **`Esc` resolves in one order, first hit wins.** A live sift inside an
@@ -1062,6 +1065,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A message over an open picker restores the theme | `a_message_arriving_over_an_open_picker_restores_the_theme` |
 | A click dismisses the picker and restores the theme | `a_click_dismisses_the_picker_and_restores_the_theme` |
 | The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
+| `/` narrows the picker to the themes that match, previewing the row it seats on | `typing_in_the_picker_narrows_the_list_to_the_matches`, `a_term_matching_only_above_the_origin_seats_on_the_last_match`, `a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview`, `enter_closes_the_pickers_sift_and_keeps_the_row`, `a_searched_row_previews_its_theme` (`update.rs`), `a_matched_span_is_marked_in_a_label`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/themes.rs`) |
 | The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
 | The cursor row, its crosshair and a range are the only tokens that paint a background, and none spends a foreground | `the_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
 | A range reads louder than the crosshair and quieter than the cursor row | `the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row` (`inbound/theme/mod.rs`) |

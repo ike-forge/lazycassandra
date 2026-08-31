@@ -201,12 +201,14 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
         }
         Some(OverlayView::Themes {
             labels,
+            total,
             selected,
             sift,
         }) => {
             crate::themes::render(
                 frame,
                 labels,
+                *total,
                 *selected,
                 sift.as_ref().and_then(|sift| sift.search.as_ref()),
                 theme,

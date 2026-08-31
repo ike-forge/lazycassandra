@@ -1854,12 +1854,17 @@ pub(crate) fn theme_labels(config: &Config) -> Vec<String> {
         .collect()
 }
 
-/// The first row at or after `origin` whose label matches, wrapping once past
-/// the end, or `None` when nothing does.
-fn seat_from(labels: &[String], search: &Search, origin: usize) -> Option<usize> {
-    (0..labels.len())
-        .map(|step| (origin + step) % labels.len())
-        .find(|index| search.matches(&labels[*index]))
+/// The rows the picker draws under `search`, as indices into the unfiltered
+/// list — the numbering [`theme_at_picker_index`] counts in, and the one a
+/// cursor is put back into when the prompt closes
+/// (docs/superpowers/specs/2026-08-31-overlay-filter-design.md §4).
+pub(crate) fn picker_matches(labels: &[String], search: Option<&Search>) -> Vec<usize> {
+    labels
+        .iter()
+        .enumerate()
+        .filter(|(_, label)| search.is_none_or(|search| search.matches(label)))
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// `ctrl-t` opens the theme picker, seated on the theme in force.
@@ -1960,10 +1965,22 @@ fn themes_key(state: &mut State, key: Key) -> Vec<Effect> {
 
 /// The picker's cursor is the preview: the theme it sits on is the theme in
 /// force, and every motion that moves it says so (themes design §6).
+///
+/// The cursor counts in the rows a live sift left, so the row it holds is
+/// resolved through those before the config is asked for a theme. A term that
+/// matched nothing holds no row, and the preview stays where it was.
 fn preview_theme(state: &mut State) {
-    if let Some(Overlay::Themes { cursor, .. }) = &state.overlay
-        && let Some(choice) = theme_at_picker_index(&state.config, cursor.index())
-    {
+    let Some(Overlay::Themes { cursor, sift, .. }) = &state.overlay else {
+        return;
+    };
+    let labels = theme_labels(&state.config);
+    let search = sift.as_ref().and_then(Sift::search);
+    let choice = picker_matches(&labels, search.as_ref())
+        .get(cursor.index())
+        .copied()
+        .and_then(|at| theme_at_picker_index(&state.config, at));
+
+    if let Some(choice) = choice {
         state.theme = choice;
     }
 }
@@ -1992,24 +2009,37 @@ fn themes_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char(character) => open.push(character),
         Key::Backspace => {
+            // An empty query is no search, so the list the cursor is counting
+            // in is already the whole one: closing here moves nothing.
             if !open.pop() {
                 *sift = None;
                 return Vec::new();
             }
         }
         Key::Enter => {
+            let at = picker_matches(&labels, open.search().as_ref())
+                .get(cursor.index())
+                .copied();
             *sift = None;
+
+            if let Some(index) = at {
+                cursor.go_to(index, labels.len());
+            }
             return Vec::new();
         }
         _ => return Vec::new(),
     }
 
+    // The first surviving row at or beyond the one the prompt opened on, and
+    // the last one when the term kept nothing beyond it (overlay filter
+    // design §1).
     let origin = open.origin();
-    let seat = open
-        .search()
-        .and_then(|search| seat_from(&labels, &search, origin))
-        .unwrap_or(origin);
-    cursor.go_to(seat, labels.len());
+    let matches = picker_matches(&labels, open.search().as_ref());
+    let seat = matches
+        .iter()
+        .position(|at| *at >= origin)
+        .unwrap_or_else(|| matches.len().saturating_sub(1));
+    cursor.go_to(seat, matches.len());
 
     preview_theme(state);
 
@@ -4065,17 +4095,37 @@ mod tests {
             .expect("a built-in with that label")
     }
 
-    /// Overlay search design §1: typing walks the picker's cursor to the
-    /// first match at or after the row the prompt opened on.
+    /// The rows the renderer is told to draw, which is what the picker's
+    /// cursor counts in once a sift is up.
+    fn picker_labels(state: &State) -> Vec<String> {
+        let Some(OverlayView::Themes { labels, .. }) = crate::view::view_model(state).overlay
+        else {
+            panic!("the picker is up");
+        };
+
+        labels
+    }
+
+    /// Overlay filter design §1 and §4: typing keeps the rows
+    /// that match and seats the cursor — and so the preview — on the first of
+    /// them at or beyond the row the prompt opened on.
     #[test]
-    fn typing_in_the_picker_walks_the_cursor_to_a_match() {
+    fn typing_in_the_picker_narrows_the_list_to_the_matches() {
         let mut state = measured(&["a"]);
         press_binding(&mut state, KeyPress::ctrl(Key::Char('t')));
 
         press(&mut state, Key::Char('/'));
         type_into(&mut state, "quill");
 
-        assert_eq!(theme_picker(&state), Some(label_index("Quill dark")));
+        let labels = picker_labels(&state);
+        assert!(
+            labels
+                .iter()
+                .all(|label| label.to_lowercase().contains("quill")),
+            "{labels:?} keeps a row the term did not match"
+        );
+        assert!(labels.len() < BuiltIn::ALL.len(), "nothing was dropped");
+        assert_eq!(state.theme.label(), "Quill dark");
     }
 
     /// The cursor is what sets the previewed theme, so a search previews as
@@ -4091,17 +4141,27 @@ mod tests {
         assert_eq!(state.theme.label(), "Quill dark");
     }
 
-    /// Design §6: the scan wraps once past the end of the list.
+    /// Overlay filter design §1: a term whose matches all sit above the row the
+    /// prompt opened on seats on the last of them rather than on nothing.
     #[test]
-    fn the_pickers_search_wraps_past_the_end() {
+    fn a_term_matching_only_above_the_origin_seats_on_the_last_match() {
         let mut state = measured(&["a"]);
         state.theme = ThemeChoice::from(BuiltIn::Ported(Ported::CatppuccinMocha));
         press_binding(&mut state, KeyPress::ctrl(Key::Char('t')));
+        assert!(
+            theme_picker(&state).expect("an open picker") > label_index("Ash dark"),
+            "the origin has to sit below every match for this to be the case"
+        );
 
         press(&mut state, Key::Char('/'));
         type_into(&mut state, "ash");
 
-        assert_eq!(theme_picker(&state), Some(label_index("Ash dark")));
+        let labels = picker_labels(&state);
+        assert_eq!(
+            Some(state.theme.label()),
+            labels.last().cloned(),
+            "the last row the term kept"
+        );
     }
 
     /// Design §6: every keystroke searches from the origin, so extending a
@@ -4113,24 +4173,26 @@ mod tests {
 
         press(&mut state, Key::Char('/'));
         type_into(&mut state, "catppuccin");
-        assert_eq!(theme_picker(&state), Some(label_index("Catppuccin Latte")));
+        assert_eq!(state.theme.label(), "Catppuccin Latte");
 
         type_into(&mut state, " mocha");
-        assert_eq!(theme_picker(&state), Some(label_index("Catppuccin Mocha")));
+        assert_eq!(state.theme.label(), "Catppuccin Mocha");
     }
 
-    /// Design §6: a term that matches nothing leaves the cursor on the
-    /// origin. There is no failure state to render.
+    /// Overlay filter design §4: a term that matches nothing leaves no row to hold,
+    /// so the list is empty and the preview stays where it was. There is no
+    /// failure state to render.
     #[test]
-    fn a_term_that_matches_nothing_leaves_the_picker_where_it_was() {
+    fn a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview() {
         let mut state = measured(&["a"]);
         press_binding(&mut state, KeyPress::ctrl(Key::Char('t')));
-        let origin = theme_picker(&state).expect("an open picker");
+        let previewed = state.theme.clone();
 
         press(&mut state, Key::Char('/'));
         type_into(&mut state, "zzz");
 
-        assert_eq!(theme_picker(&state), Some(origin));
+        assert!(picker_labels(&state).is_empty());
+        assert_eq!(state.theme, previewed);
     }
 
     /// Overlay search design §1: `theme_labels` is the order the search
@@ -4173,8 +4235,16 @@ mod tests {
         press(&mut state, Key::Char('j'));
 
         assert!(!state.should_quit, "q is text while a sift is up");
-        assert_eq!(theme_picker(&state), Some(origin), "j is text too");
         assert_eq!(picker_sift(&state).map(Sift::query), Some("qj"));
+        assert!(
+            picker_labels(&state).is_empty(),
+            "j filtered rather than moving"
+        );
+
+        press(&mut state, Key::Backspace);
+        press(&mut state, Key::Backspace);
+        press(&mut state, Key::Backspace);
+        assert_eq!(theme_picker(&state), Some(origin), "and moved nothing");
     }
 
     /// `gg`/`G` are decided above the overlays (docs/shortcuts.md §1), but
@@ -4191,11 +4261,14 @@ mod tests {
         press(&mut state, Key::Char('G'));
 
         assert_eq!(picker_sift(&state).map(Sift::query), Some("gG"));
-        assert_eq!(
-            theme_picker(&state),
-            Some(origin),
-            "the cursor did not move"
+        assert!(
+            picker_labels(&state).is_empty(),
+            "neither letter jumped the cursor; both were typed"
         );
+
+        press(&mut state, Key::Backspace);
+        press(&mut state, Key::Backspace);
+        assert_eq!(theme_picker(&state), Some(origin), "and jumped nothing");
     }
 
     /// Design §5: `backspace` on an empty query closes the prompt and leaves
@@ -4227,7 +4300,16 @@ mod tests {
         press(&mut state, Key::Enter);
 
         assert!(picker_sift(&state).is_none());
-        assert_eq!(theme_picker(&state), Some(label_index("Quill dark")));
+        assert_eq!(
+            picker_labels(&state).len(),
+            BuiltIn::ALL.len(),
+            "the list widens back out"
+        );
+        assert_eq!(
+            theme_picker(&state),
+            Some(label_index("Quill dark")),
+            "with the cursor still on the row the filter found"
+        );
     }
 
     /// Design §10: `q` quits the moment a sift closes — the letter goes back

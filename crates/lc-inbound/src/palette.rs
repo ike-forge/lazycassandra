@@ -63,7 +63,7 @@ fn percent(value: u16, share: u16) -> u16 {
 
 /// `total` is the unfiltered catalogue's row count, and what the block is
 /// sized from: a filter narrows the list inside a block that does not move
-/// (docs/superpowers/specs/2026-08-31-palette-filter-design.md §2).
+/// (docs/superpowers/specs/2026-08-31-overlay-filter-design.md §2).
 pub(crate) fn render(
     frame: &mut Frame,
     rows: &[CommandRow],
@@ -97,7 +97,7 @@ pub(crate) fn render(
         .collect();
     // A cursor on nothing is not a cursor: the empty line a term that matched
     // nothing leaves is not a row `⏎` can run, and does not wear the ground
-    // that says it is (palette filter design §3).
+    // that says it is (overlay filter design §3).
     let landed = matches!(rows.get(selected), Some(CommandRow::Command { .. }));
     let mut state = ListState::default().with_selected(landed.then_some(selected));
 
@@ -340,7 +340,7 @@ mod tests {
         );
     }
 
-    /// Palette filter design §2: the block is sized from the whole catalogue,
+    /// Overlay filter design §2: the block is sized from the whole catalogue,
     /// so narrowing the list moves no border.
     #[test]
     fn a_filtered_palette_keeps_the_block_the_catalogue_gives_it() {
@@ -373,7 +373,7 @@ mod tests {
         );
     }
 
-    /// Palette filter design §3: a term that matched nothing says so, on a row
+    /// Overlay filter design §3: a term that matched nothing says so, on a row
     /// that wears neither the selection ground nor a promise that `⏎` runs it.
     #[test]
     fn a_term_that_matches_nothing_draws_a_line_saying_so() {

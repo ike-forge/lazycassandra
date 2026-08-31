@@ -92,7 +92,12 @@ pub enum OverlayView {
     },
     /// The theme picker's rows and where its cursor is.
     Themes {
+        /// The rows a live sift left, and the whole list when there is none.
         labels: Vec<String>,
+        /// Every theme there is, matching or not: the block is sized from
+        /// this, so a filter moves no border
+        /// (docs/superpowers/specs/2026-08-31-overlay-filter-design.md §2).
+        total: usize,
         selected: usize,
         sift: Option<SiftView>,
     },
@@ -201,11 +206,20 @@ fn overlay(state: &State) -> Option<OverlayView> {
         Overlay::Search(prompt) => Some(OverlayView::Search {
             query: prompt.query().to_owned(),
         }),
-        Overlay::Themes { cursor, sift, .. } => Some(OverlayView::Themes {
-            labels: crate::update::theme_labels(&state.config),
-            selected: cursor.index(),
-            sift: sift.as_ref().map(sift_view),
-        }),
+        Overlay::Themes { cursor, sift, .. } => {
+            let labels = crate::update::theme_labels(&state.config);
+            let search = sift.as_ref().and_then(Sift::search);
+
+            Some(OverlayView::Themes {
+                total: labels.len(),
+                labels: crate::update::picker_matches(&labels, search.as_ref())
+                    .into_iter()
+                    .map(|at| labels[at].clone())
+                    .collect(),
+                selected: cursor.index(),
+                sift: sift.as_ref().map(sift_view),
+            })
+        }
         Overlay::Export(form) => Some(OverlayView::Export(Box::new(ExportView {
             title: form.title(),
             scope_labels: form.scope_labels(),
@@ -889,6 +903,7 @@ mod tests {
                     .iter()
                     .map(|built_in| built_in.label().to_owned())
                     .collect(),
+                total: BuiltIn::ALL.len(),
                 selected: index,
                 sift: None,
             })

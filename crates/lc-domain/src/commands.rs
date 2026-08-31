@@ -310,7 +310,7 @@ pub enum CommandRow {
     /// What a term that matched nothing leaves behind. A row rather than an
     /// empty block: a search still typing towards its first match is not a
     /// failure state, and an empty bordered box reads as one
-    /// (docs/superpowers/specs/2026-08-31-palette-filter-design.md §3).
+    /// (docs/superpowers/specs/2026-08-31-overlay-filter-design.md §3).
     Empty,
 }
 
@@ -318,7 +318,7 @@ pub enum CommandRow {
 ///
 /// The two numberings share exactly this: the index is what puts a cursor
 /// seated in a filtered list back into the full one when the prompt closes
-/// (palette filter design §3).
+/// (overlay filter design §3).
 #[derive(Clone, Copy)]
 enum Slot {
     Separator,
@@ -419,7 +419,7 @@ pub fn rows(search: Option<&Search>) -> Vec<CommandRow> {
 
 /// How many rows [`rows`] produces. The block's geometry is derived from
 /// `row_count(None)` rather than from this call's answer, so a filter moves
-/// no border (palette filter design §2).
+/// no border (overlay filter design §2).
 #[must_use]
 pub fn row_count(search: Option<&Search>) -> usize {
     slots(search).len().max(1)
@@ -509,7 +509,7 @@ impl CommandsPanel {
     }
 
     /// Drops the search, putting the cursor back on the same command in the
-    /// list the palette widens back out to (palette filter design §1).
+    /// list the palette widens back out to (overlay filter design §1).
     pub fn close_sift(&mut self) {
         let at = self
             .slots()
@@ -554,7 +554,7 @@ impl CommandsPanel {
     /// The first surviving command at or beyond the row the prompt opened on,
     /// and the last one when the term kept nothing beyond it — so backspacing
     /// back to an empty term returns the reader to where they started
-    /// (palette filter design §1).
+    /// (overlay filter design §1).
     fn reseat(&mut self) {
         let Some(sift) = &self.sift else {
             return;
@@ -1198,7 +1198,7 @@ mod tests {
             .collect()
     }
 
-    /// Palette filter design §1: a group keeps the commands that match, and a
+    /// Overlay filter design §1: a group keeps the commands that match, and a
     /// group that keeps none is dropped whole — its heading and rule with it.
     #[test]
     fn a_search_narrows_the_palette_to_the_rows_that_match() {

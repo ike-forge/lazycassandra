@@ -8,7 +8,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState};
 
 use lc_domain::search::Search;
@@ -48,14 +48,18 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
     usize::from(area.height - 2)
 }
 
+/// `total` is every theme there is, and what the block is sized from: a live
+/// sift narrows the list inside a block that does not move
+/// (docs/superpowers/specs/2026-08-31-overlay-filter-design.md §2).
 pub(crate) fn render(
     frame: &mut Frame,
     labels: &[String],
+    total: usize,
     selected: usize,
     search: Option<&Search>,
     theme: Theme,
 ) {
-    let Some(area) = rect(frame.area(), labels.len()) else {
+    let Some(area) = rect(frame.area(), total) else {
         return;
     };
 
@@ -71,6 +75,20 @@ pub(crate) fn render(
     frame.render_widget(Clear, area);
     frame.buffer_mut().set_style(area, theme.overlay_ground());
     frame.render_widget(block, area);
+
+    // A term that matched nothing leaves no row to hold, so the picker says so
+    // rather than drawing an empty box, and nothing wears the cursor's ground
+    // — there is no theme under it to preview (overlay filter design §3, §4).
+    if labels.is_empty() {
+        frame.render_widget(
+            List::new([ListItem::new(Line::from(Span::styled(
+                "no theme matches",
+                theme.style(Token::Faint),
+            )))]),
+            inner,
+        );
+        return;
+    }
 
     let items: Vec<ListItem> = labels
         .iter()
@@ -96,7 +114,7 @@ pub(crate) fn render(
 mod tests {
     use lc_domain::state::{Cursor, Overlay, State};
     use lc_domain::view::view_model;
-    use lc_domain::{BuiltIn, Ours, Ported, ThemeChoice};
+    use lc_domain::{BuiltIn, Ported, ThemeChoice};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Cell;
@@ -161,41 +179,102 @@ mod tests {
         );
     }
 
+    fn every_label() -> Vec<String> {
+        BuiltIn::ALL
+            .iter()
+            .map(|built_in| built_in.label().to_owned())
+            .collect()
+    }
+
     /// Design §7: the picker marks the matched span in a label. Pinned to the
     /// matched label's own cell, the way `palette.rs`'s equivalent test does
     /// — asserting that some cell somewhere carries the mark would still pass
     /// if an unrelated glyph happened to share `Token::Match`'s colour.
+    ///
+    /// Overlay filter design §1: the rows drawn are the ones the term kept, in a block
+    /// the whole list still sizes, so the first of them sits on the first row.
     #[test]
     fn a_matched_span_is_marked_in_a_label() {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
         let choice = ThemeChoice::default();
         let search = Search::new("quill");
-        let labels: Vec<String> = BuiltIn::ALL
-            .iter()
-            .map(|built_in| built_in.label().to_owned())
+        let total = every_label().len();
+        let kept: Vec<String> = every_label()
+            .into_iter()
+            .filter(|label| search.as_ref().expect("non-empty").matches(label))
             .collect();
-        let area = rect(terminal.get_frame().area(), labels.len()).expect("fits this frame");
-        let row = index_of(BuiltIn::Ours(Ours::QuillDark));
+        let area = rect(terminal.get_frame().area(), total).expect("fits this frame");
         let x = area.x + 1 + PAD;
-        let y = area.y + 1 + u16::try_from(row).expect("small row index");
+        let y = area.y + 1;
 
         terminal
-            .draw(|frame| render(frame, &labels, 0, search.as_ref(), Theme::of(&choice)))
+            .draw(|frame| render(frame, &kept, total, 0, search.as_ref(), Theme::of(&choice)))
             .expect("a frame");
 
+        let buffer = terminal.backend().buffer().clone();
         let matched = Theme::of(&choice)
             .style(Token::Match)
             .fg
             .expect("a mark spends a colour");
+
+        assert!(
+            kept.len() < total,
+            "the term has to leave something out for this to be a filter"
+        );
         assert_eq!(
-            terminal
-                .backend()
-                .buffer()
-                .cell((x, y))
-                .expect("inside the block")
-                .fg,
+            buffer.cell((x, y)).expect("inside the block").fg,
             matched,
             "the matched label's own cell wears the mark"
+        );
+        assert_eq!(
+            buffer
+                .cell((area.x, area.y + u16::try_from(total).expect("small") + 1))
+                .expect("the block's own corner")
+                .symbol(),
+            "╰",
+            "and the block is the height the whole list gives it"
+        );
+    }
+
+    /// Overlay filter design §4: a term that matched nothing says so, on a row wearing
+    /// neither the cursor's ground nor a theme to preview.
+    #[test]
+    fn a_term_that_matches_nothing_draws_a_line_saying_so() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
+        let choice = ThemeChoice::default();
+        let total = every_label().len();
+        let area = rect(terminal.get_frame().area(), total).expect("fits this frame");
+        let theme = Theme::of(&choice);
+
+        terminal
+            .draw(|frame| render(frame, &[], total, 0, Search::new("zzz").as_ref(), theme))
+            .expect("a frame");
+
+        let buffer = terminal.backend().buffer().clone();
+        let x = area.x + 1 + PAD;
+        let y = area.y + 1;
+        let drawn: String = (0..16)
+            .map(|offset| {
+                buffer
+                    .cell((x + offset, y))
+                    .expect("inside the block")
+                    .symbol()
+                    .to_owned()
+            })
+            .collect();
+
+        assert_eq!(drawn, "no theme matches");
+        assert_eq!(
+            buffer.cell((x, y)).expect("inside the block").fg,
+            theme.style(Token::Faint).fg.expect("faint spends a colour")
+        );
+        assert_ne!(
+            buffer.cell((x, y)).expect("inside the block").bg,
+            theme
+                .style(Token::Selected)
+                .bg
+                .expect("the selection spends a ground"),
+            "a cursor on nothing is not a cursor"
         );
     }
 
