@@ -8315,14 +8315,13 @@ mod tests {
     }
 
     #[test]
-    fn y_still_yanks_the_row_under_the_cursor_when_the_search_matches_nothing() {
+    fn y_yanks_nothing_when_the_search_kept_no_row() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         state.apply_search(Searched::Tables, Search::new("zzz"));
 
-        assert_eq!(
-            press(&mut state, Key::Char('y')),
-            vec![Effect::Yank("shop".to_owned())],
-            "a search drops no row, so the cursor still sits on one"
+        assert!(
+            press(&mut state, Key::Char('y')).is_empty(),
+            "the tree is empty, so there is no row under the cursor to yank"
         );
     }
 
@@ -11678,7 +11677,7 @@ mod tests {
     }
 
     #[test]
-    fn a_term_that_matches_nothing_leaves_the_cursor_where_it_was() {
+    fn a_term_that_matches_nothing_leaves_the_cursor_on_the_empty_tree() {
         let mut state = loaded();
         state.focus_on(Panel::Tables);
         state.tables.cursor.go_to(1, tree_rows(&state));
@@ -11687,6 +11686,26 @@ mod tests {
         for character in "zzz".chars() {
             press(&mut state, Key::Char(character));
         }
+
+        assert_eq!(tree_rows(&state), 0, "no keyspace survives the term");
+        assert_eq!(
+            state.tables.cursor.index(),
+            0,
+            "there is no row 1 left to sit on; Esc is what puts the cursor back"
+        );
+    }
+
+    #[test]
+    fn escape_puts_the_cursor_back_on_the_row_a_matchless_term_emptied_out() {
+        let mut state = loaded();
+        state.focus_on(Panel::Tables);
+        state.tables.cursor.go_to(1, tree_rows(&state));
+        press(&mut state, Key::Char('/'));
+        for character in "zzz".chars() {
+            press(&mut state, Key::Char(character));
+        }
+
+        press(&mut state, Key::Escape);
 
         assert_eq!(state.tables.cursor.index(), 1);
     }
@@ -11712,16 +11731,21 @@ mod tests {
         }
         assert_eq!(
             state.tables.cursor.index(),
-            4,
-            "orders matches orders_ks, the fifth row"
+            0,
+            "orders_ks is the one keyspace the term keeps, so it is the only row"
         );
 
         press(&mut state, Key::Char('x'));
 
+        assert_eq!(tree_rows(&state), 0, "ordersx keeps nothing");
+        assert_eq!(state.tables.cursor.index(), 0);
+
+        press(&mut state, Key::Escape);
+
         assert_eq!(
             state.tables.cursor.index(),
             1,
-            "ordersx matches nothing, so the cursor snaps back to origin"
+            "the abandoned prompt leaves the panel on the row it opened on"
         );
     }
 
@@ -11741,7 +11765,7 @@ mod tests {
         for character in "ordersx".chars() {
             press(&mut state, Key::Char(character));
         }
-        assert_eq!(state.tables.cursor.index(), 1, "ordersx matches nothing");
+        assert_eq!(tree_rows(&state), 0, "ordersx matches nothing");
 
         for _ in 0.."ordersx".chars().count() {
             press(&mut state, Key::Backspace);
@@ -11790,33 +11814,25 @@ mod tests {
     fn n_walks_to_the_next_match_and_wraps() {
         let mut state = loaded();
         state.focus_on(Panel::Tables);
-        // "o" rather than "orders": the tree has two rows carrying an "o" —
-        // the "shop" keyspace (row 1) and the "orders" table it holds
-        // (row 2) — against "billing" (row 0), which holds neither letter.
-        // Exact indices, not a before/after comparison, so the third press
-        // pins the wrap past row 0 rather than merely staying in bounds by
-        // accident.
+        // "o" rather than "orders": "billing" carries neither letter and is
+        // dropped, leaving the "shop" keyspace (row 0) and the "orders"
+        // table it holds (row 1), both matches. Exact indices, not a
+        // before/after comparison, so the second press pins the wrap rather
+        // than merely staying in bounds by accident.
         state.apply_search(Searched::Tables, Search::new("o"));
 
         press(&mut state, Key::Char('n'));
         assert_eq!(
             state.tables.cursor.index(),
             1,
-            "\"shop\" is the first match after row 0"
+            "\"orders\" is the first match after row 0"
         );
 
         press(&mut state, Key::Char('n'));
         assert_eq!(
             state.tables.cursor.index(),
-            2,
-            "\"orders\" is the second match"
-        );
-
-        press(&mut state, Key::Char('n'));
-        assert_eq!(
-            state.tables.cursor.index(),
-            1,
-            "the last match wraps past row 0 back to the first"
+            0,
+            "the last match wraps back to \"shop\""
         );
     }
 

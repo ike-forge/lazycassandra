@@ -77,7 +77,15 @@ fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<&Flash>) -> PanelBo
         .collect();
 
     if rows.is_empty() {
-        return waiting("No keyspaces");
+        // A search that kept nothing is not a cluster without keyspaces, and
+        // an empty panel with the term on its border would leave the reader
+        // to work out which of the two they are looking at
+        // (docs/superpowers/specs/2026-08-31-tables-filter-design.md §2).
+        return waiting(if tables.search().is_some() {
+            "No match"
+        } else {
+            "No keyspaces"
+        });
     }
 
     PanelBody::Tree {
@@ -281,15 +289,34 @@ mod tests {
     }
 
     #[test]
-    fn a_search_that_matches_nothing_still_draws_the_tree() {
+    fn a_search_that_matches_nothing_says_so_rather_than_naming_the_cluster_empty() {
         let mut state = tabled(&[("shop", &["orders"])]);
         state.apply_search(Searched::Tables, Search::new("zzz"));
 
+        assert_eq!(
+            tables_body(&state),
+            PanelBody::Notice {
+                text: "No match".to_owned(),
+                token: Some(Token::Muted),
+            }
+        );
+    }
+
+    #[test]
+    fn a_search_keeps_the_keyspaces_it_reaches() {
+        let mut state = tabled(&[("shop", &["orders"]), ("logs", &["spans"])]);
+        state.apply_search(Searched::Tables, Search::new("orders"));
+
         let PanelBody::Tree { rows, .. } = tables_body(&state) else {
-            panic!("a search must not turn the tree into a notice");
+            panic!("a search that matches must leave a tree");
         };
 
-        assert!(!rows.is_empty());
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.label.as_str())
+                .collect::<Vec<_>>(),
+            ["shop", "orders"]
+        );
     }
 
     #[test]

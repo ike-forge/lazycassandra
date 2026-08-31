@@ -202,9 +202,12 @@ A chord the layer has no member for is still refused rather than typed: ctrl
 is a layer of its own, and `ctrl-n` is not an `n`.
 
 Searching is live: every edit re-applies the search, so the panel underneath
-is the preview — Tables and Table contents highlight where a match sits
-rather than narrowing to it, and so does Table DDL; neither panel drops a
-row for a term that fails to match it. `Enter` on an empty query therefore
+is the preview — Table DDL and Table contents highlight where a match sits
+rather than narrowing to it, and neither drops a row for a term that fails to
+match it. Tables narrows: a keyspace the term reaches neither by its own name
+nor by one of its tables' is not a row, and one it does reach is drawn open
+with all of its tables. A term that reaches no keyspace leaves the panel
+saying `No match`. `Enter` on an empty query therefore
 clears the search — there is no separate binding for that, only the empty
 query the invariant already turns into "no search". The jump is measured
 from `origin`, the cursor position the prompt opened on, rather than from
@@ -215,8 +218,9 @@ that keystroke is the prompt's first or one that walks a term that used to
 match into one that no longer does. `Esc` restores `origin` alongside the
 search it restores, so an abandoned prompt leaves the panel exactly as it
 was found.
-See [panel search design](specs/2026-08-10-panel-search-design.md) §3 and
-[search that highlights rather than hides](specs/2026-08-15-search-highlight-design.md) §5.2.
+See [panel search design](specs/2026-08-10-panel-search-design.md) §3,
+[search that highlights rather than hides](specs/2026-08-15-search-highlight-design.md) §5.2
+and [Tables drops the keyspaces a search never reaches](specs/2026-08-31-tables-filter-design.md) §1.
 
 ### The theme picker
 
