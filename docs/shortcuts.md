@@ -469,8 +469,8 @@ Queries moves the cursor through its buffer.
 |---|---|
 | `j` / `↓` | Down one row (in Queries, `↓` only — `j` is text; with a completion popup up, the next candidate). |
 | `k` / `↑` | Up one (in Queries, `↑` only — `k` is text; with a popup up, the previous candidate). |
-| `l` / `→` | Right one column in Contents; unfold the selected keyspace in Tables. |
-| `h` / `←` | Left one column in Contents; fold it in Tables, stepping out from a table row first. |
+| `l` / `→` | Right one column in Contents — the cell cursor in cell and column mode, the window itself in row mode; unfold the selected keyspace in Tables. |
+| `h` / `←` | Left one column in Contents, the same way; fold it in Tables, stepping out from a table row first. |
 | `PageDown` / `ctrl-d` | Down one panel height. |
 | `PageUp` / `ctrl-u` | Up one panel height. |
 | `Home`, `gg` | To the start (to the **line**'s start in Queries — §2). |
@@ -516,6 +516,16 @@ everywhere else; the column cursor moves one column at a time or not at all, and
 §4 says why ([table display design](specs/2026-08-10-table-display-design.md) §2).
 The column offset follows the cell the way the row offset follows the row, and
 the panel's bottom border grows a scrollbar exactly when a column is off screen.
+
+Row mode is the one place the pair works the other way round. It paints no
+column, so a press that only moved the cursor between two drawn columns would
+be a key that visibly did nothing — ten presses on a grid drawing ten columns
+before the grid first moved. There the four keys move the **window** by a
+column instead and the invisible cursor rides along on the column just
+revealed, so every press scrolls and a press against either edge of the page
+moves nothing
+([selection modes design](superpowers/specs/2026-08-13-selection-modes-design.md),
+2026-09-02 amendment).
 
 ### Visual mode
 
@@ -656,8 +666,10 @@ below.
 The panel opens in row mode, which lights the whole row: reading a table is
 reading rows. Cell mode draws the selected cell over a faint wash across its
 row and its column, and column mode lights the column and its heading. Whichever mode is up, `j`/`k`
-still move the row cursor and `h`/`l` the column cursor exactly as the Motion
-table above says — the mode changes what is painted, not what a key does.
+still move the row cursor and `h`/`l` still go a column left or right exactly
+as the Motion table above says — the mode changes what is painted, and, for
+`h`/`l` in row mode alone, whether the column that moves is the cursor's or
+the window's.
 
 Column mode binds three keys of its own, and they are bound *behind the mode*:
 each addresses the column the cursor is on, and column mode is the one mode
@@ -1013,10 +1025,14 @@ held only until the Queries panel took text.
 
 The Table contents selection mode does not touch this. `m` changes what the
 grid highlights — a row, a column, or the cell they cross — and no key changes
-meaning: `j`/`k` move the row cursor and `h`/`l` the column cursor in all three
-modes, exactly as they did when there was only one way to draw them
-([design](specs/2026-08-13-selection-modes-design.md) §3). A mode that rebound
-those keys would break this rule, and is not what this is.
+meaning: `j`/`k` move the row cursor and `h`/`l` go one column left or right in
+all three modes, exactly as they did when there was only one way to draw them
+([design](specs/2026-08-13-selection-modes-design.md) §3). Row mode spends that
+column on the window rather than on the cursor it does not paint (the design's
+2026-09-02 amendment), which is the same key with the same meaning resolved in
+the vocabulary of what is on screen — the shape §2 already gives `h`/`l` across
+panels. A mode that rebound those keys — to reorder columns, say — would break
+this rule, and is not what this is.
 
 The command palette sits above that. It is opened deliberately with `?`, closes
 with either `?` or `esc` — both named on its bar
@@ -1193,6 +1209,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `h` steps out before folding | `h_from_a_table_steps_out_to_its_keyspace_before_folding` |
 | Tree keys are Tables-only | `a_tree_transition_belongs_to_the_focused_panel_only`, `enter_outside_the_tree_reads_nothing` |
 | `l`/`h` walk the grid's columns | `l_and_right_move_the_grid_cursor_one_column`, `h_and_left_move_the_grid_cursor_back_one_column` |
+| In row mode they scroll the window a column per press instead | `row_mode_scrolls_the_grid_a_column_per_press`, `row_mode_stops_the_grid_at_either_end_of_the_page`, `row_mode_moves_nothing_over_a_page_that_fits`, `the_column_the_grid_scrolled_to_is_the_one_cell_mode_opens_on` |
 | The cell cursor stops at either edge | `the_grid_cursor_cannot_run_off_either_edge_of_a_page`, `a_grid_with_no_page_swallows_horizontal_motion` |
 | Horizontal motion is the focused panel's only | `horizontal_motion_belongs_to_the_focused_panel_only` |
 | `Home`/`End` keep the row axis in a grid | `home_and_end_still_reach_the_ends_of_the_row_list` |
