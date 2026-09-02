@@ -86,11 +86,11 @@
 # replaces `username` and `password` rather than defaulting them: stating it
 # beside either is reported, not silently resolved one way.
 #
-# A cqlshrc written for cqlsh running inside a pod names a credentials path
-# that does not exist out here (`/cassandra-conf/credentials`). When the
-# stated path cannot be read, the `credentials` file beside the cqlshrc is
-# used instead — cqlsh itself would not do this, so a failure names both
-# paths.
+# The credentials path is cqlsh's own rule and nothing more: the one the file
+# states, or `~/.cassandra/credentials` when it states none. A cqlshrc written
+# for cqlsh running in a container names a path this host does not have, and
+# that is a configuration to fix where it is written — mount the directory at
+# the same path inside and out, and the one file serves both.
 # [[connections]]
 # name      = "preprod"
 # hosts     = ["127.0.0.1:9043"]

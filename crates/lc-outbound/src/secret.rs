@@ -72,7 +72,7 @@ async fn cqlshrc(path: &Path) -> Result<(String, String), ConfigError> {
         return Ok((username, password));
     }
 
-    let (credentials, text) = credentials_beside(path, &text).await?;
+    let (credentials, text) = credentials(&text).await?;
 
     let password = value(&text, "PlainTextAuthProvider", "password")
         .or_else(|| value(&text, "plain_text_auth", "password"))
@@ -86,40 +86,25 @@ async fn cqlshrc(path: &Path) -> Result<(String, String), ConfigError> {
     Ok((username, password))
 }
 
-/// The credentials file a `cqlshrc` points at, or the one beside it.
+/// The credentials file a `cqlshrc` points at.
 ///
-/// The stated path is tried first and is usually right. It is commonly a
-/// container path — a `cqlshrc` written for cqlsh running inside a pod names
-/// something like `/cassandra-conf/credentials`, which does not exist on the
-/// machine running this tool — so a `credentials` file sitting next to the
-/// `cqlshrc` is read instead. cqlsh itself would not do this, which is why a
-/// failure names both paths rather than only the last one tried.
-async fn credentials_beside(cqlshrc: &Path, text: &str) -> Result<(PathBuf, String), ConfigError> {
-    let stated =
-        value(text, "authentication", "credentials").map(|path| expand_home(Path::new(&path)));
-    let sibling = cqlshrc
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("credentials");
+/// cqlsh's own rule, and nothing more: the stated path when there is one, and
+/// `~/.cassandra/credentials` when there is not. A `cqlshrc` naming a path
+/// this host does not have — one written for cqlsh running inside a
+/// container, say — is a broken configuration to fix where it is written,
+/// not something to guess around here.
+async fn credentials(cqlshrc: &str) -> Result<(PathBuf, String), ConfigError> {
+    let path = value(cqlshrc, "authentication", "credentials")
+        .map_or_else(default_credentials, |stated| {
+            expand_home(Path::new(&stated))
+        });
+    let text = read(&path).await?;
 
-    if let Some(stated) = stated {
-        if let Ok(text) = read(&stated).await {
-            return Ok((stated, text));
-        }
+    Ok((path, text))
+}
 
-        return match read(&sibling).await {
-            Ok(text) => Ok((sibling, text)),
-            Err(_) => Err(ConfigError::Unresolvable(format!(
-                "neither {} nor {} could be read",
-                stated.display(),
-                sibling.display()
-            ))),
-        };
-    }
-
-    let text = read(&sibling).await?;
-
-    Ok((sibling, text))
+fn default_credentials() -> PathBuf {
+    expand_home(Path::new("~/.cassandra/credentials"))
 }
 
 async fn read(path: &Path) -> Result<String, ConfigError> {

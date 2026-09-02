@@ -57,20 +57,7 @@ credentials = /cassandra-conf/credentials
 const CREDENTIALS: &str = "[PlainTextAuthProvider]\npassword = hunter2\n";
 
 #[tokio::test]
-async fn a_cqlshrc_naming_a_container_path_falls_back_to_the_file_beside_it() {
-    let path = cqlsh_dir("container", SPLIT, Some(CREDENTIALS));
-
-    let resolved = Secrets.credentials(&Credentials::Cqlshrc(path)).await;
-
-    assert_eq!(
-        resolved,
-        Ok(("cassandra-superuser".to_owned(), "hunter2".to_owned())),
-        "a cqlshrc written for cqlsh inside a pod names a path this host does not have"
-    );
-}
-
-#[tokio::test]
-async fn a_cqlshrc_naming_a_path_that_exists_uses_it_rather_than_the_sibling() {
+async fn a_cqlshrc_naming_a_credentials_path_reads_it() {
     let elsewhere = scratch("stated-credentials");
     std::fs::write(&elsewhere, "[PlainTextAuthProvider]\npassword = stated\n")
         .expect("the file is written");
@@ -100,17 +87,19 @@ async fn an_older_cqlshrc_holding_both_halves_itself_needs_no_second_file() {
 }
 
 #[tokio::test]
-async fn a_cqlshrc_with_no_readable_password_names_both_paths_it_tried() {
-    let path = cqlsh_dir("neither", SPLIT, None);
+async fn a_cqlshrc_naming_a_path_this_host_does_not_have_says_so() {
+    let path = cqlsh_dir("container", SPLIT, Some(CREDENTIALS));
 
     let Err(ConfigError::Unresolvable(message)) =
         Secrets.credentials(&Credentials::Cqlshrc(path)).await
     else {
-        panic!("a cqlshrc with no password anywhere is unresolvable");
+        panic!("a cqlshrc naming an unreadable credentials path is unresolvable");
     };
 
-    assert!(message.contains("/cassandra-conf/credentials"), "{message}");
-    assert!(message.contains("credentials"), "{message}");
+    assert!(
+        message.contains("/cassandra-conf/credentials"),
+        "the path the file states is the one to fix, so it is the one named: {message}"
+    );
 }
 
 #[tokio::test]
@@ -190,3 +179,4 @@ async fn an_environment_credential_is_read_from_the_environment() {
 
     assert_eq!(resolved, Ok(expected));
 }
+
