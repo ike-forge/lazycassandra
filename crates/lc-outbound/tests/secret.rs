@@ -179,4 +179,3 @@ async fn an_environment_credential_is_read_from_the_environment() {
 
     assert_eq!(resolved, Ok(expected));
 }
-
