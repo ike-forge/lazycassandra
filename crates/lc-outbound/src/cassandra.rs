@@ -13,7 +13,7 @@ use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Keyspace, Page, PagingState,
     PrimaryKey, Replication, Row, Schema, Statement, Table, TableOptions,
 };
-use lc_domain::ports::{Cluster, SecretResolver};
+use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -127,12 +127,12 @@ impl Cluster for CassandraCluster {
         if let Some(credentials) = &target.credentials {
             // Resolved here rather than in the effect runtime so the plaintext
             // never crosses into `lc-domain` (secret.rs).
-            let password = Secrets
-                .resolve(&credentials.password)
+            let (username, password) = Secrets
+                .credentials(credentials)
                 .await
                 .map_err(|error| DbError::Unreachable(error.to_string()))?;
 
-            builder = builder.user(&credentials.username, password);
+            builder = builder.user(username, password);
         }
 
         if target.discovery == Discovery::ContactPoints {

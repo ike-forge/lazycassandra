@@ -64,7 +64,7 @@
 # discovery  = "cluster"                     # cluster | contact-points
 # datacenter = "eu-west-1"                   # without this the driver will
 #                                            # happily cross a region
-# username   = "cassandra"                  # both, or neither: a cluster is
+# username   = "cassandra"                   # both, or neither: a cluster is
 #                                            # sent the pair
 # password   = "hunter2"                     # or { env = "CASSANDRA_PW" }
 #                                            # or { file = "~/.cassandra/pw" }
@@ -78,6 +78,24 @@
 # reports onto the single host stated above, so `hosts` must name exactly one.
 # The cost is token-aware routing, which is worth less than a session that
 # works.
+
+# `cqlshrc` takes both halves from a file cqlsh already owns, so a password
+# lives in one place rather than two. The username comes from
+# `[auth_provider]` — or `[authentication]`, on older cqlsh — and the password
+# from the mode-600 credentials file, under `[PlainTextAuthProvider]`. It
+# replaces `username` and `password` rather than defaulting them: stating it
+# beside either is reported, not silently resolved one way.
+#
+# A cqlshrc written for cqlsh running inside a pod names a credentials path
+# that does not exist out here (`/cassandra-conf/credentials`). When the
+# stated path cannot be read, the `credentials` file beside the cqlshrc is
+# used instead — cqlsh itself would not do this, so a failure names both
+# paths.
+# [[connections]]
+# name      = "preprod"
+# hosts     = ["127.0.0.1:9043"]
+# discovery = "contact-points"
+# cqlshrc   = "~/.cassandra/preprod/cqlshrc"
 
 # ── custom themes ─────────────────────────────────────────────
 # [[themes]]

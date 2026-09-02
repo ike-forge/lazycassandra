@@ -295,14 +295,23 @@ impl Discovery {
 
 /// What a cluster running `PasswordAuthenticator` is told.
 ///
-/// One type rather than two `Option` fields on [`ConnectionConfig`]: a
-/// username with no password authenticates nothing and a password with no
-/// username names nobody, so the pair is stated together or not at all
-/// (conventions.md §1).
+/// One type rather than independent `Option` fields on [`ConnectionConfig`]:
+/// a username with no password authenticates nothing and a password with no
+/// username names nobody, so a pair is stated whole or not at all
+/// (conventions.md §1). `Cqlshrc` is the same pair sourced from a file cqlsh
+/// already owns, which is why it is a variant here rather than a third
+/// [`Credential`] — a cqlsh configuration supplies both halves, and
+/// `Credential` names only a password.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Credentials {
-    pub username: String,
-    pub password: Credential,
+pub enum Credentials {
+    Stated {
+        username: String,
+        password: Credential,
+    },
+    /// A `cqlshrc`, read at connect time. Held as written rather than
+    /// canonicalised: `~` is expanded where the file is read, so the domain
+    /// neither reads an environment nor holds a path that depends on one.
+    Cqlshrc(PathBuf),
 }
 
 /// One cluster to connect to, as a config file names it under `[[connections]]`.

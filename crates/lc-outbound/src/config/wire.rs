@@ -172,6 +172,7 @@ pub(crate) struct ConnectionLayer {
     pub(crate) datacenter: Option<String>,
     pub(crate) username: Option<String>,
     pub(crate) password: Option<CredentialLayer>,
+    pub(crate) cqlshrc: Option<String>,
     #[serde(flatten)]
     pub(crate) unknown: Unknown,
 }

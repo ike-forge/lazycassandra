@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use lc_domain::config::Credential;
+use lc_domain::config::{Credential, Credentials};
 use lc_domain::ports::{ConfigError, SecretResolver};
 use lc_outbound::secret::Secrets;
 
@@ -21,6 +21,109 @@ fn scratch(name: &str) -> PathBuf {
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("secret");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     path.join(name)
+}
+
+/// A directory holding a `cqlshrc` and, optionally, the `credentials` file
+/// beside it — the layout Cassandra 4.x cqlsh writes.
+#[allow(
+    clippy::expect_used,
+    reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
+)]
+fn cqlsh_dir(name: &str, cqlshrc: &str, credentials: Option<&str>) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("cqlsh")
+        .join(name);
+    let _ignored = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("cqlshrc"), cqlshrc).expect("the cqlshrc is written");
+
+    if let Some(credentials) = credentials {
+        std::fs::write(dir.join("credentials"), credentials).expect("the credentials are written");
+    }
+
+    dir.join("cqlshrc")
+}
+
+const SPLIT: &str = "\
+[auth_provider]
+module = cassandra.auth
+classname = PlainTextAuthProvider
+username = cassandra-superuser
+
+[authentication]
+credentials = /cassandra-conf/credentials
+";
+
+const CREDENTIALS: &str = "[PlainTextAuthProvider]\npassword = hunter2\n";
+
+#[tokio::test]
+async fn a_cqlshrc_naming_a_container_path_falls_back_to_the_file_beside_it() {
+    let path = cqlsh_dir("container", SPLIT, Some(CREDENTIALS));
+
+    let resolved = Secrets.credentials(&Credentials::Cqlshrc(path)).await;
+
+    assert_eq!(
+        resolved,
+        Ok(("cassandra-superuser".to_owned(), "hunter2".to_owned())),
+        "a cqlshrc written for cqlsh inside a pod names a path this host does not have"
+    );
+}
+
+#[tokio::test]
+async fn a_cqlshrc_naming_a_path_that_exists_uses_it_rather_than_the_sibling() {
+    let elsewhere = scratch("stated-credentials");
+    std::fs::write(&elsewhere, "[PlainTextAuthProvider]\npassword = stated\n")
+        .expect("the file is written");
+
+    let cqlshrc = format!(
+        "[auth_provider]\nusername = u\n\n[authentication]\ncredentials = {}\n",
+        elsewhere.display()
+    );
+    let path = cqlsh_dir("stated", &cqlshrc, Some(CREDENTIALS));
+
+    let resolved = Secrets.credentials(&Credentials::Cqlshrc(path)).await;
+
+    assert_eq!(resolved, Ok(("u".to_owned(), "stated".to_owned())));
+}
+
+#[tokio::test]
+async fn an_older_cqlshrc_holding_both_halves_itself_needs_no_second_file() {
+    let path = cqlsh_dir(
+        "legacy",
+        "[authentication]\nusername = legacy\npassword = hunter2\n",
+        None,
+    );
+
+    let resolved = Secrets.credentials(&Credentials::Cqlshrc(path)).await;
+
+    assert_eq!(resolved, Ok(("legacy".to_owned(), "hunter2".to_owned())));
+}
+
+#[tokio::test]
+async fn a_cqlshrc_with_no_readable_password_names_both_paths_it_tried() {
+    let path = cqlsh_dir("neither", SPLIT, None);
+
+    let Err(ConfigError::Unresolvable(message)) =
+        Secrets.credentials(&Credentials::Cqlshrc(path)).await
+    else {
+        panic!("a cqlshrc with no password anywhere is unresolvable");
+    };
+
+    assert!(message.contains("/cassandra-conf/credentials"), "{message}");
+    assert!(message.contains("credentials"), "{message}");
+}
+
+#[tokio::test]
+async fn a_cqlshrc_with_no_username_says_which_sections_were_looked_at() {
+    let path = cqlsh_dir("nameless", "[authentication]\npassword = p\n", None);
+
+    let Err(ConfigError::Unresolvable(message)) =
+        Secrets.credentials(&Credentials::Cqlshrc(path)).await
+    else {
+        panic!("a cqlshrc with no username is unresolvable");
+    };
+
+    assert!(message.contains("username"), "{message}");
 }
 
 #[tokio::test]

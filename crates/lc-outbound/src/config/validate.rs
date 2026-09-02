@@ -463,21 +463,12 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
             }
         });
 
-        let credentials = match (layer.username, password) {
-            (None, None) => None,
-            (Some(username), Some(password)) => Some(Credentials { username, password }),
-            (username, _) => {
-                let stated = if username.is_some() {
-                    "username"
-                } else {
-                    "password"
-                };
+        let credentials = match credentials(layer.cqlshrc, layer.username, password) {
+            Ok(credentials) => credentials,
+            Err(reason) => {
                 report.error(
                     &layer.name,
-                    format!(
-                        "connection `{}`: {stated} stated without the other — a cluster is sent both or neither",
-                        name.as_str()
-                    ),
+                    format!("connection `{}`: {reason}", name.as_str()),
                 );
                 continue;
             }
@@ -494,6 +485,35 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
     }
 
     connections
+}
+
+/// The pair a connection authenticates with, or why it has none the cluster
+/// would accept.
+///
+/// Separate from [`connections`] so each source of a credential is refused in
+/// one place: `cqlshrc` supplies both halves, so anything stated beside it is
+/// a second answer to a question already answered rather than an override.
+fn credentials(
+    cqlshrc: Option<String>,
+    username: Option<String>,
+    password: Option<Credential>,
+) -> Result<Option<Credentials>, &'static str> {
+    match (cqlshrc, username, password) {
+        (None, None, None) => Ok(None),
+        (None, Some(username), Some(password)) => {
+            Ok(Some(Credentials::Stated { username, password }))
+        }
+        (Some(path), None, None) => Ok(Some(Credentials::Cqlshrc(PathBuf::from(path)))),
+        (Some(_), _, _) => {
+            Err("`cqlshrc` supplies the username and the password, so neither is stated beside it")
+        }
+        (None, Some(_), None) => {
+            Err("username stated without a password — a cluster is sent both or neither")
+        }
+        (None, None, Some(_)) => {
+            Err("password stated without a username — a cluster is sent both or neither")
+        }
+    }
 }
 
 fn theme(
@@ -836,14 +856,14 @@ mod tests {
 
         assert_eq!(
             config.connections[0].credentials,
-            Some(Credentials {
+            Some(Credentials::Stated {
                 username: "u".to_owned(),
                 password: Credential::Literal("hunter2".to_owned()),
             })
         );
         assert_eq!(
             config.connections[1].credentials,
-            Some(Credentials {
+            Some(Credentials::Stated {
                 username: "u".to_owned(),
                 password: Credential::Env("DEV_PW".to_owned()),
             })
@@ -895,6 +915,38 @@ mod tests {
             diagnostics
                 .iter()
                 .any(|d| d.message.contains("half") && d.message.contains("password"))
+        );
+    }
+
+    #[test]
+    fn a_cqlshrc_is_taken_as_the_whole_pair() {
+        let (config, diagnostics) = config_of(&["[[connections]]\nname = \"prod\"\n\
+             hosts = [\"h:9042\"]\ncqlshrc = \"~/.cassandra/prod/cqlshrc\"\n"]);
+
+        assert!(diagnostics.is_empty());
+        assert_eq!(
+            config.connections[0].credentials,
+            Some(Credentials::Cqlshrc(PathBuf::from(
+                "~/.cassandra/prod/cqlshrc"
+            ))),
+            "the path is kept as written; `~` is expanded where the file is read"
+        );
+    }
+
+    #[test]
+    fn a_cqlshrc_beside_a_stated_username_is_dropped_rather_than_one_winning() {
+        let (config, diagnostics) = config_of(&["[[connections]]\nname = \"prod\"\n\
+             hosts = [\"h:9042\"]\ncqlshrc = \"rc\"\nusername = \"u\"\npassword = \"p\"\n"]);
+
+        assert!(
+            config.connections.is_empty(),
+            "a silent precedence rule between two sources of one password is worth less than \
+             being told the file states both"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("prod") && d.message.contains("cqlshrc"))
         );
     }
 
