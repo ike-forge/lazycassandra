@@ -524,8 +524,7 @@ async fn dropping_a_keyspace_takes_its_name_typed_back() {
         Posture::Writable,
     )
     .re_describing(tabled_schema_of(&[("shop", &["orders"])]));
-    let conn = ConnId::next();
-    let (mut state, effects) = init(conn, Config::default(), Vec::new(), Stamp::default());
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
     run(&cluster, &mut state, effects).await;
     state.geometry = state.geometry.with_drop_fits(true);
 

@@ -105,7 +105,12 @@ mod tests {
             "if this matches the default the uncommenter stopped working and the test above it \
              is the only one still doing anything"
         );
-        assert_eq!(config.connections.len(), 1);
+        assert_eq!(
+            config.connections.len(),
+            2,
+            "both credential shapes are shown, and each is a whole entry: `cqlshrc` and \
+             `username`/`password` cannot share one"
+        );
         assert_eq!(config.themes.len(), 1);
         assert!(
             config.default_connection.is_some(),
