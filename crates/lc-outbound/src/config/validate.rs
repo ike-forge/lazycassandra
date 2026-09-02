@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use lc_domain::config::{
     Background, Compression, Config, ConnectionConfig, ConnectionName, Consistency, Credential,
-    CustomTheme, Diagnostic, DriverConfig, ExportConfig, GridConfig, Icons, MaxColumnWidth, Millis,
-    Mouse, Origin, OutOfRange, PageSize, PanelRatios, Rgb, RowLimit, Span,
+    CustomTheme, Diagnostic, Discovery, DriverConfig, ExportConfig, GridConfig, Icons,
+    MaxColumnWidth, Millis, Mouse, Origin, OutOfRange, PageSize, PanelRatios, Rgb, RowLimit, Span,
 };
 use lc_domain::posture::Posture;
 use lc_domain::style::Severity;
@@ -425,6 +425,24 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
             },
         };
 
+        let discovery = match layer.discovery {
+            None => Discovery::default(),
+            Some(located) => match located.value.as_str() {
+                "cluster" => Discovery::Cluster,
+                "contact-points" => Discovery::ContactPoints,
+                other => {
+                    report.error(
+                        &located,
+                        format!(
+                            "connection `{}`: discovery `{other}` unknown",
+                            name.as_str()
+                        ),
+                    );
+                    continue;
+                }
+            },
+        };
+
         let password = layer.password.map(|credential| match credential {
             CredentialLayer::Literal(value) => Credential::Literal(value),
             CredentialLayer::Reference(CredentialSource::Env(name)) => Credential::Env(name),
@@ -437,6 +455,7 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
             name,
             hosts,
             posture,
+            discovery,
             datacenter: layer.datacenter,
             username: layer.username,
             password,
@@ -537,6 +556,37 @@ mod tests {
             diagnostics
                 .iter()
                 .any(|d| d.message.contains("dev") && d.message.contains("posture"))
+        );
+    }
+
+    #[test]
+    fn discovery_is_read_per_connection_and_defaults_to_cluster() {
+        let (config, diagnostics) =
+            config_of(
+                &["[[connections]]\nname = \"direct\"\nhosts = [\"a:9042\"]\n\
+             [[connections]]\nname = \"tunnelled\"\nhosts = [\"127.0.0.1:9042\"]\n\
+             discovery = \"contact-points\"\n"],
+            );
+
+        assert!(diagnostics.is_empty());
+        assert_eq!(config.connections[0].discovery, Discovery::Cluster);
+        assert_eq!(config.connections[1].discovery, Discovery::ContactPoints);
+    }
+
+    #[test]
+    fn a_connection_with_an_unknown_discovery_is_dropped_rather_than_defaulted() {
+        let (config, diagnostics) = config_of(&["[[connections]]\nname = \"dev\"\n\
+             hosts = [\"a:9042\"]\ndiscovery = \"single\"\n"]);
+
+        assert!(
+            config.connections.is_empty(),
+            "silently pooling to every node in a cluster the user meant to reach through one \
+             tunnel is the failure this key exists to prevent"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("dev") && d.message.contains("discovery"))
         );
     }
 

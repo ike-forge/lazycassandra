@@ -959,6 +959,7 @@ mod tests {
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             hosts: vec!["127.0.0.1:9042".to_owned()],
             posture: crate::posture::Posture::ReadOnly,
+            discovery: crate::config::Discovery::default(),
             datacenter: None,
             username: None,
             password: None,

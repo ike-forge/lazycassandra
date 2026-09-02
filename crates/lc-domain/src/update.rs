@@ -3913,7 +3913,9 @@ mod tests {
     use super::*;
     use crate::clock::Stamp;
     use crate::commands::{CATALOGUE, CommandsPanel, Run};
-    use crate::config::{Config, ConnectionName, Diagnostic, Icons, Origin, Span as ConfigSpan};
+    use crate::config::{
+        Config, ConnectionName, Diagnostic, Discovery, Icons, Origin, Span as ConfigSpan,
+    };
     use crate::contents::{ContentsState, SelectionMode};
     use crate::model::{CqlValue, Modifiers, Row, StatementKind};
     use crate::pointer::{Click, Pointer, Wheel};
@@ -3942,6 +3944,7 @@ mod tests {
                 name: name.clone(),
                 hosts: vec!["127.0.0.1:9042".to_owned()],
                 posture: Posture::ReadOnly,
+                discovery: Discovery::default(),
                 datacenter: None,
                 username: None,
                 password: None,
@@ -4485,6 +4488,7 @@ mod tests {
                     name: ConnectionName::try_new(name).expect("a valid name"),
                     hosts: vec![format!("{name}.example:9042")],
                     posture: Posture::ReadOnly,
+                    discovery: Discovery::default(),
                     datacenter: None,
                     username: None,
                     password: None,

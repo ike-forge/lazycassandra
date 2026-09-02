@@ -61,11 +61,21 @@
 # name       = "prod"                        # required; no whitespace
 # hosts      = ["10.0.0.1:9042", "10.0.0.2:9042"]
 # posture    = "read-only"                   # read-only | writable | protected
+# discovery  = "cluster"                     # cluster | contact-points
 # datacenter = "eu-west-1"                   # without this the driver will
 #                                            # happily cross a region
 # username   = "cassandra"
 # password   = "hunter2"                     # or { env = "CASSANDRA_PW" }
 #                                            # or { file = "~/.cassandra/pw" }
+
+# `discovery = "contact-points"` is for a cluster reached through a tunnel —
+# a `kubectl port-forward`, an SSH forward, a bastion. Left at "cluster" the
+# driver reads system.peers and pools to every node it names, and those are
+# `inet` columns: raw in-cluster addresses no /etc/hosts entry can redirect.
+# Through a tunnel they are unreachable, so every peer but the forwarded one
+# sits permanently down. "contact-points" uses exactly the `hosts` above and
+# ignores the topology. The cost is token-aware routing, which is worth less
+# than a session that works.
 
 # ── custom themes ─────────────────────────────────────────────
 # [[themes]]

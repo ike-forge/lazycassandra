@@ -29,6 +29,7 @@ fn fixture() -> ConnectionConfig {
         name: ConnectionName::try_new("fixture").expect("a valid name"),
         hosts: vec![format!("127.0.0.1:{port}")],
         posture: Posture::ReadOnly,
+        discovery: lc_domain::config::Discovery::default(),
         datacenter: None,
         username: None,
         password: None,

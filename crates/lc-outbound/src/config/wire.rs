@@ -114,6 +114,7 @@ impl Layer {
         for connection in &mut self.connections {
             connection.name.locate(source, origin);
             at(connection.posture.as_mut(), source, origin);
+            at(connection.discovery.as_mut(), source, origin);
         }
         for theme in &mut self.themes {
             theme.name.locate(source, origin);
@@ -167,6 +168,7 @@ pub(crate) struct ConnectionLayer {
     pub(crate) name: Located<String>,
     pub(crate) hosts: Option<Vec<String>>,
     pub(crate) posture: Option<Located<String>>,
+    pub(crate) discovery: Option<Located<String>>,
     pub(crate) datacenter: Option<String>,
     pub(crate) username: Option<String>,
     pub(crate) password: Option<CredentialLayer>,

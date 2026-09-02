@@ -91,6 +91,7 @@ pub(crate) fn connected_config() -> lc_domain::Config {
             name: name.clone(),
             hosts: vec!["127.0.0.1:9042".to_owned()],
             posture: Posture::ReadOnly,
+            discovery: lc_domain::config::Discovery::default(),
             datacenter: None,
             username: None,
             password: None,

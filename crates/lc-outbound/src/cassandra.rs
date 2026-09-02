@@ -4,10 +4,11 @@
 //! vocabulary (architecture.md §5).
 
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use lc_domain::config::ConnectionConfig;
+use lc_domain::config::{ConnectionConfig, Discovery};
 use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Keyspace, Page, PagingState,
     PrimaryKey, Replication, Row, Schema, Statement, Table, TableOptions,
@@ -18,6 +19,7 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::metadata::{Keyspace as DriverKeyspace, Strategy};
+use scylla::policies::host_filter::AllowListHostFilter;
 use scylla::value::{CqlValue as DriverValue, Row as DriverRow};
 use tokio::sync::RwLock;
 
@@ -70,9 +72,22 @@ impl CassandraCluster {
 #[async_trait]
 impl Cluster for CassandraCluster {
     async fn connect(&self, conn: ConnId, target: &ConnectionConfig) -> Result<Posture, DbError> {
+        let mut builder = SessionBuilder::new().known_nodes(&target.hosts);
+
+        if target.discovery == Discovery::ContactPoints {
+            // An empty allow list, not a list of the contact points: a
+            // contact point is a `NodeAddr::Untranslatable` the filter
+            // accepts unconditionally, so the list only ever has to name the
+            // peers to keep — and there are none.
+            builder = builder.host_filter(Arc::new(
+                AllowListHostFilter::new(std::iter::empty::<SocketAddr>())
+                    .map_err(|error| DbError::Unreachable(format!("host filter: {error}")))?,
+            ));
+        }
+
         // Boxed to satisfy clippy::large_futures: SessionBuilder::build's
         // future is large enough to be worth moving off this async fn's stack.
-        let session = Box::pin(SessionBuilder::new().known_nodes(&target.hosts).build())
+        let session = Box::pin(builder.build())
             .await
             .map_err(|error| DbError::Unreachable(error.to_string()))?;
 

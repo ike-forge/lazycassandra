@@ -262,12 +262,44 @@ pub enum Credential {
     File(PathBuf),
 }
 
+/// Which nodes the driver opens connections to.
+///
+/// `Cluster` is what a driver does by default: dial a contact point, read
+/// `system.peers`, then pool to every node it names. Those names are `inet`
+/// columns — raw addresses, never hostnames — so a cluster reached through a
+/// tunnel reports addresses that only resolve inside the cluster, and every
+/// peer beyond the tunnelled one is permanently down.
+///
+/// `ContactPoints` is the escape hatch: use exactly the hosts stated here and
+/// ignore the topology. It costs token-aware routing, which a browsing tool
+/// does not spend, and it buys a working session over a single
+/// `kubectl port-forward`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Discovery {
+    #[default]
+    Cluster,
+    ContactPoints,
+}
+
+impl Discovery {
+    /// How a config file spells this, and the one spelling — the same rule
+    /// [`Posture::label`] follows.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Cluster => "cluster",
+            Self::ContactPoints => "contact-points",
+        }
+    }
+}
+
 /// One cluster to connect to, as a config file names it under `[[connections]]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionConfig {
     pub name: ConnectionName,
     pub hosts: Vec<String>,
     pub posture: Posture,
+    pub discovery: Discovery,
     pub datacenter: Option<String>,
     pub username: Option<String>,
     pub password: Option<Credential>,
@@ -446,6 +478,17 @@ mod tests {
         assert!(ConnectionName::try_new("").is_err());
         assert!(ConnectionName::try_new("  ").is_err());
         assert!(ConnectionName::try_new("my prod").is_err());
+    }
+
+    #[test]
+    fn a_connection_that_states_no_discovery_uses_the_whole_cluster() {
+        assert_eq!(Discovery::default(), Discovery::Cluster);
+    }
+
+    #[test]
+    fn discovery_spells_itself_the_way_a_config_file_does() {
+        assert_eq!(Discovery::Cluster.label(), "cluster");
+        assert_eq!(Discovery::ContactPoints.label(), "contact-points");
     }
 
     #[test]
