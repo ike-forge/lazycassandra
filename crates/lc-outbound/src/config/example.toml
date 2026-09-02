@@ -74,9 +74,10 @@
 # driver reads system.peers and pools to every node it names, and those are
 # `inet` columns: raw in-cluster addresses no /etc/hosts entry can redirect.
 # Through a tunnel they are unreachable, so every peer but the forwarded one
-# sits permanently down. "contact-points" uses exactly the `hosts` above and
-# ignores the topology. The cost is token-aware routing, which is worth less
-# than a session that works.
+# sits permanently down. "contact-points" folds every address the cluster
+# reports onto the single host stated above, so `hosts` must name exactly one.
+# The cost is token-aware routing, which is worth less than a session that
+# works.
 
 # ── custom themes ─────────────────────────────────────────────
 # [[themes]]

@@ -443,6 +443,18 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
             },
         };
 
+        if discovery == Discovery::ContactPoints && hosts.len() != 1 {
+            report.error(
+                &layer.name,
+                format!(
+                    "connection `{}`: discovery `contact-points` reaches exactly one host, {} stated",
+                    name.as_str(),
+                    hosts.len()
+                ),
+            );
+            continue;
+        }
+
         let password = layer.password.map(|credential| match credential {
             CredentialLayer::Literal(value) => Credential::Literal(value),
             CredentialLayer::Reference(CredentialSource::Env(name)) => Credential::Env(name),
@@ -835,6 +847,22 @@ mod tests {
                 username: "u".to_owned(),
                 password: Credential::Env("DEV_PW".to_owned()),
             })
+        );
+    }
+
+    #[test]
+    fn a_tunnelled_connection_stating_more_than_one_host_is_dropped() {
+        let (config, diagnostics) = config_of(&["[[connections]]\nname = \"two\"\n\
+             hosts = [\"127.0.0.1:9043\", \"127.0.0.1:9044\"]\ndiscovery = \"contact-points\"\n"]);
+
+        assert!(
+            config.connections.is_empty(),
+            "every peer folds onto one endpoint, so a second host names a tunnel nothing reaches"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("two") && d.message.contains("one host"))
         );
     }
 

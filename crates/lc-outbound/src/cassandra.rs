@@ -19,7 +19,8 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::metadata::{Keyspace as DriverKeyspace, Strategy};
-use scylla::policies::host_filter::AllowListHostFilter;
+use scylla::errors::TranslationError;
+use scylla::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use scylla::value::{CqlValue as DriverValue, Row as DriverRow};
 use tokio::sync::RwLock;
 
@@ -41,6 +42,54 @@ use crate::value::to_value;
 #[derive(Debug, Default)]
 pub struct CassandraCluster {
     open: RwLock<Option<Open>>,
+}
+
+/// Folds every address the cluster reports onto the one endpoint the user can
+/// reach.
+///
+/// A host filter cannot do this job. Every peer read from `system.local` and
+/// `system.peers` is a `NodeAddr::Translatable` — the node holding the control
+/// connection included (`cluster/metadata/fetching.rs`) — so a filter narrow
+/// enough to keep only the tunnelled node rejects that node too, and the load
+/// balancing policy is left with an empty plan. Translation is the only
+/// mechanism the driver offers: there is no knob that turns topology discovery
+/// off.
+///
+/// The cluster still reports every node, so the driver holds one `Node` per
+/// peer and pools each to the same socket. Redundant, and the honest price of
+/// reaching a cluster through a single tunnel — the alternative is naming
+/// every pod's in-cluster address in the config file, where it would rot on
+/// the next reschedule.
+#[derive(Debug)]
+struct ToTunnel(SocketAddr);
+
+#[async_trait]
+impl AddressTranslator for ToTunnel {
+    async fn translate_address(
+        &self,
+        _peer: &UntranslatedPeer,
+    ) -> Result<SocketAddr, TranslationError> {
+        Ok(self.0)
+    }
+}
+
+/// The one host a tunnelled connection states, resolved.
+///
+/// Resolved here rather than held as a `SocketAddr` in the config: a tunnel is
+/// as likely to be named `localhost` as written as an address, and the
+/// translator owes the driver a `SocketAddr`.
+async fn tunnel(target: &ConnectionConfig) -> Result<SocketAddr, DbError> {
+    let [host] = target.hosts.as_slice() else {
+        return Err(DbError::Unreachable(
+            "a tunnelled connection reaches exactly one host".to_owned(),
+        ));
+    };
+
+    tokio::net::lookup_host(host)
+        .await
+        .map_err(|error| DbError::Unreachable(format!("{host}: {error}")))?
+        .next()
+        .ok_or_else(|| DbError::Unreachable(format!("{host} resolved to no address")))
 }
 
 /// The session in hand, and the id it answers to.
@@ -87,14 +136,7 @@ impl Cluster for CassandraCluster {
         }
 
         if target.discovery == Discovery::ContactPoints {
-            // An empty allow list, not a list of the contact points: a
-            // contact point is a `NodeAddr::Untranslatable` the filter
-            // accepts unconditionally, so the list only ever has to name the
-            // peers to keep — and there are none.
-            builder = builder.host_filter(Arc::new(
-                AllowListHostFilter::new(std::iter::empty::<SocketAddr>())
-                    .map_err(|error| DbError::Unreachable(format!("host filter: {error}")))?,
-            ));
+            builder = builder.address_translator(Arc::new(ToTunnel(tunnel(target).await?)));
         }
 
         // Boxed to satisfy clippy::large_futures: SessionBuilder::build's
