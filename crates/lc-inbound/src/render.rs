@@ -5199,7 +5199,7 @@ mod tests {
         // "q quit" along the bottom row, so asserting on "quit" would pass
         // with no palette at all.
         assert!(drawn.contains("Global"));
-        assert!(drawn.contains("dismiss the overlay"));
+        assert!(drawn.contains("back out one step"));
         assert!(drawn.contains("focus Table contents"));
         assert!(drawn.contains("right, unfold, read"));
     }

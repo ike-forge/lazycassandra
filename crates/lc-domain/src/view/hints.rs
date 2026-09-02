@@ -302,6 +302,15 @@ const CLEAR: Binding = Binding {
     action: "clear",
 };
 
+/// What `esc` does once nothing nearer claims it: every panel but Tables
+/// hands focus back to Tables, so the bar says so in exactly those frames.
+/// [`CLEAR`] wins where both would be true — one key gets one hint, and the
+/// rung that fires first is the one worth naming (docs/shortcuts.md §2).
+const LEAVE: Binding = Binding {
+    keys: &[Stroke::key(Key::Escape)],
+    action: "leave",
+};
+
 /// Named on the same condition as [`CLEAR`]: `n`/`N` are inert without a
 /// search applied, and a hint that would do nothing this frame is a lie
 /// (docs/shortcuts.md §2, design §5.3).
@@ -452,6 +461,8 @@ pub(crate) fn bar(state: &State) -> HintBar {
     }
     if target.is_some() || selected(state) {
         panel.push(rendered(&CLEAR));
+    } else if state.focus() != Panel::default() {
+        panel.push(rendered(&LEAVE));
     }
 
     HintBar {
@@ -763,9 +774,9 @@ mod tests {
 
     // I2: the Logs tab is read-only and takes no text, so its bar must not
     // carry the Cql tab's editor bindings — `⏎ newline` types nothing there
-    // and `esc leave` leaves nothing, since `takes_text` is false on this
-    // tab (query log design §5.1) — and it must carry what the tab actually
-    // does, the same `/`/`v` the other list panels advertise.
+    // (query log design §5.1) — and it must carry what the tab actually
+    // does, the same `/`/`v` the other list panels advertise, plus the
+    // `esc leave` every panel but Tables answers to.
     #[test]
     fn the_logs_tabs_bar_advertises_a_list_not_an_editor() {
         let mut state = State::default();
@@ -780,8 +791,8 @@ mod tests {
             bar.panel
         );
         assert!(
-            bar.panel.iter().all(|hint| hint.action != "leave"),
-            "esc leaves nothing on the Logs tab, unlike Cql's: {:?}",
+            bar.panel.iter().any(|hint| hint.action == "leave"),
+            "esc leaves the panel here as it does on Cql: {:?}",
             bar.panel
         );
         assert!(

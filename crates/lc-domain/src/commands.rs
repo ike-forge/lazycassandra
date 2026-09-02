@@ -137,11 +137,12 @@ const GLOBAL: &[Command] = &[
     ),
     Command::new(&[Stroke::key(Key::Char('n'))], "next match", Run::Here),
     Command::new(&[Stroke::key(Key::Char('N'))], "previous match", Run::Here),
-    Command::new(
-        &[Stroke::key(Key::Escape)],
-        "dismiss the overlay",
-        Run::Here,
-    ),
+    // One row for the whole chain, named by what every rung of it has in
+    // common: the overlay, then the range, then the search, then the panel
+    // itself (docs/shortcuts.md §2). Naming only the overlay would leave the
+    // rung a reader reaches for most — the way back to Tables — listed
+    // nowhere, and the column has no room to spell all four.
+    Command::new(&[Stroke::key(Key::Escape)], "back out one step", Run::Here),
     Command::new(&[Stroke::key(Key::Tab)], "next panel", Run::Here),
     Command::new(&[Stroke::key(Key::BackTab)], "previous panel", Run::Here),
     Command::new(&[Stroke::key(Key::Char('1'))], "focus Tables", Run::Here),
@@ -375,11 +376,6 @@ const QUERIES: &[Command] = &[
     Command::new(
         &[Stroke::key(Key::End)],
         "line end",
-        Run::In(Panel::Queries),
-    ),
-    Command::new(
-        &[Stroke::key(Key::Escape)],
-        "leave the editor",
         Run::In(Panel::Queries),
     ),
 ];

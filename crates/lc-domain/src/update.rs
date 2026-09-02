@@ -1699,10 +1699,15 @@ fn search_key(state: &mut State, key: Key) -> Vec<Effect> {
 
 /// `Esc` resolves in one order, first hit wins: a live sift inside an
 /// overlay; then the overlay itself; then freezing an extending range; then
-/// clearing a frozen range; then the focused panel's search; then leaving a
-/// panel that takes text (Queries hands focus back to Tables). One press does
-/// one of the six, never two — the thing most recently put on screen comes
-/// off first (panel search design §6, overlay search design §1).
+/// clearing a frozen range; then the focused panel's search; then the panel
+/// itself, which hands focus back to Tables. One press does one of the six,
+/// never two — the thing most recently put on screen comes off first (panel
+/// search design §6, overlay search design §1).
+///
+/// The last rung is every panel, not just the one that takes text: a key that
+/// backs out of Queries but sits inert in DDL beside it is the same key
+/// meaning two things (docs/shortcuts.md §2). On Tables it is already the
+/// last rung's destination, so it does nothing there.
 fn escape(state: &mut State) {
     // Read before the `take()` below empties it: a click is the one path
     // that reaches `Overlay::Export`'s arm here rather than `export_key`,
@@ -1802,9 +1807,7 @@ fn escape(state: &mut State) {
         return;
     }
 
-    if state.takes_text() {
-        state.focus_on(Panel::default());
-    }
+    state.focus_on(Panel::default());
 }
 
 /// `?` opens the palette, replacing whatever overlay was up.
@@ -7055,6 +7058,20 @@ mod tests {
         assert_eq!(state.queries.text(), "SELECT", "leaving keeps the buffer");
     }
 
+    /// The last rung is the panel, not the editor: a key that backs out of
+    /// Queries and sits inert in DDL beside it means two things
+    /// (docs/shortcuts.md §2).
+    #[test]
+    fn escape_leaves_every_panel_for_tables() {
+        for panel in Panel::ALL {
+            let mut state = populated(panel);
+
+            press(&mut state, Key::Escape);
+
+            assert_eq!(state.focus(), Panel::Tables, "esc from {panel:?}");
+        }
+    }
+
     #[test]
     fn escape_dismisses_the_overlay_before_it_leaves_the_editor() {
         let mut state = editing("SELECT");
@@ -10532,12 +10549,14 @@ mod tests {
     /// the opposite of what the bar says.
     ///
     /// `hints::bar` renders the panel's bindings in order, which is what lets
-    /// the two be zipped.
+    /// the two be zipped. The bar appends `esc leave` after them on every
+    /// panel but Tables; `escape_leaves_every_panel_for_tables` presses it.
     #[test]
     fn every_hint_the_bar_shows_does_something() {
         for panel in Panel::ALL {
             let shown = crate::view::hints::bar(&populated(panel)).panel;
-            assert_eq!(shown.len(), panel.hints().len());
+            let leave = usize::from(panel != Panel::default());
+            assert_eq!(shown.len(), panel.hints().len() + leave);
 
             for (binding, hint) in panel.hints().iter().zip(&shown) {
                 if hint.liveness == crate::view::Liveness::Inert {

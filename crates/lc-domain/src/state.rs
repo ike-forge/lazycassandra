@@ -563,8 +563,9 @@ const CONTENTS_COLUMN_HINTS: &[Binding] = &[
 ];
 
 const QUERIES_HINTS: &[Binding] = &[
-    // First: it is what the panel is for. `⏎ newline` and `esc leave` are what
-    // it does on the way there.
+    // First: it is what the panel is for. `⏎ newline` is what it does on the
+    // way there, and `esc leave` — appended by the bar, on the frames no
+    // search or range claims `esc` first — is the way back out.
     Binding {
         keys: &[Stroke::ctrl(Key::Char('r'))],
         action: "run",
@@ -586,20 +587,15 @@ const QUERIES_HINTS: &[Binding] = &[
         keys: &[Stroke::key(Key::Enter)],
         action: "newline",
     },
-    // Named here and nowhere else: `Esc` only leaves a panel that takes text,
-    // so this is the one bar where saying so is true (hint bar design §3).
-    Binding {
-        keys: &[Stroke::key(Key::Escape)],
-        action: "leave",
-    },
 ];
 
 /// The Logs tab's own bar, once its trail is drawn rather than the CQL
 /// buffer beside it (query log design §5.1). It is read-only and takes no
 /// text, so it advertises like the other list panels — `/` and `v`, not
-/// `⏎`/`esc`, neither of which does anything here: `Enter` only reaches
-/// `activate`, which is gated to Tables, and `Esc` leaves nothing, because
-/// the tab is not the panel that `takes_text` (docs/shortcuts.md's Logs
+/// `⏎ newline`, which types nothing here: `Enter` only reaches `activate`,
+/// which is gated to Tables. `esc` is not listed here either, for the reason
+/// no list panel lists it: the bar appends it itself, as `clear` or as
+/// `leave`, whichever is true of the frame (docs/shortcuts.md's Logs
 /// subsection).
 const LOGS_HINTS: &[Binding] = &[
     Binding {

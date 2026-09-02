@@ -34,7 +34,7 @@ layer is dispatched above the panel that takes text (§2).
 | `N`¹ | Move to the previous match of the focused panel's search, wrapping. |
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
-| `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's search, or leave the editor for Tables — first hit wins (§2). |
+| `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's search, or leave the panel for Tables — first hit wins (§2). |
 | `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns tab where one is drawn; Table contents; Queries' Cql tab; Queries' Logs tab. This is how the Logs tab is reached. |
 | `Shift-Tab` | The same stops, walked backwards. |
 | `1`¹ | Focus Tables. |
@@ -553,7 +553,7 @@ overlay dismisses; failing that, an extending range freezes exactly the way
 a second `v` would, so a reflex `esc` never discards a range still growing;
 failing that, the selection clears — every group at once, however many there
 are, rather than one at a time; failing that, the focused panel's search
-clears; failing that, Queries hands focus back to Tables. §2 restates this as
+clears; failing that, the panel hands focus back to Tables. §2 restates this as
 the rule it now is.
 
 In Table contents, which axis `v` extends is `m`'s to say: cell mode grows
@@ -740,7 +740,7 @@ meaning.
 | `←` `→` `↑` `↓` | Move the cursor. `←`/`→` wrap between lines, and stay motions under a popup — which is what takes it down. |
 | `Home` / `End` | To the start / end of the **line**. |
 | `PageUp` / `PageDown`, `ctrl-u` / `ctrl-d` | Up / down one panel height. |
-| `Esc`³ | Take the completion popup down; with none up, leave the editor for Tables. |
+| `Esc`³ | Take the completion popup down; with none up, leave the panel for Tables. |
 
 ³ The five keys the completion popup claims, and it claims them only while it
 is drawn. All five are exceptions to §2's *the same key means the same thing
@@ -815,10 +815,11 @@ would not be a trail (query log design §5.3). Leaving the panel — by `Tab`,
 `Shift-Tab`, another panel's number, or a click — reverts the tab to Cql,
 because the panel's unfocused height is a function of the CQL buffer it
 hugs, not of the trail (query log design §5.2); returning to Logs costs
-`Tab`/`Shift-Tab` walking the cycle again, or `4` then `Tab` once. The
-trail's own search does not outlive the tab being drawn either — switching
-to Cql clears it, since the hint bar cannot advertise `n` while `n` is
-literal text there.
+`Tab`/`Shift-Tab` walking the cycle again, or `4` then `Tab` once. `Esc`
+leaves it for Tables the way it leaves any other panel (§2), reverting the
+tab on the way out like every other route off it. The trail's own search does
+not outlive the tab being drawn either — switching to Cql clears it, since the
+hint bar cannot advertise `n` while `n` is literal text there.
 
 ---
 
@@ -983,13 +984,13 @@ ambient. Each panel's title opens with the key that reaches it; the hint bar alo
 the bottom row names each focused panel's principal bindings, not its full
 surface — the bar has never claimed to be the complete list
 ([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` is named wherever it
-is unconditionally true, in that frame, that pressing it does something:
-Queries, where it leaves the editor for Tables; an open palette or search
-prompt, where it closes it; and a panel carrying a search, where it clears
-one (panel search design §5.3). It stays out of a panel with neither an
-overlay up nor a search applied, where it still only does something
-conditionally, and naming it there would still be a lie in most frames
-(design §3). A binding that is in none of a title, the bar, or the palette is
+is unconditionally true, in that frame, that pressing it does something —
+which, since the chain's last rung became every panel rather than the editor
+alone, is every frame but Tables' own. The bar names the rung that would fire:
+`esc clear` on a panel carrying a search or a live range, `esc leave` on any
+other panel but Tables, and `esc close` on an open palette or search prompt.
+It stays out of Tables with neither an overlay up nor a search applied, where
+it still does nothing at all, and naming it there would be a lie (design §3). A binding that is in none of a title, the bar, or the palette is
 a binding only this file knows about.
 
 **Motion is assumed, not taught.** `j`/`k`, `h`/`l`, `Home`/`End`, the arrows
@@ -1127,9 +1128,11 @@ palette just closes. Failing that, an extending
 range in the focused panel freezes, the way a second `v` would, so `Esc`
 never discards a range that is still growing. Failing that, the selection
 clears — every group at once, however many are held. Failing that, the
-focused panel's search, if it has one, clears. Failing that, Queries hands
-focus back to Tables. Failing all
-six, `Esc` does nothing. The first rung preserves
+focused panel's search, if it has one, clears. Failing that, the focused
+panel hands focus back to Tables — every panel, not the editor alone: a key
+that backs out of Queries and sits inert in DDL beside it is one key meaning
+two things (§2). On Tables, which is where that rung lands, `Esc` does
+nothing. The first rung preserves
 `escape_dismisses_the_overlay_before_it_leaves_the_editor`; extending it down
 the chain is what "the thing most recently put on screen comes off first"
 means once a panel can carry state of its own (panel search design §6, visual
@@ -1343,7 +1346,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `?` is a bind marker in the editor, not the palette | `a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette` |
 | An open palette outranks a panel that takes text | `an_open_palette_outranks_a_panel_that_takes_text` |
 | Quitting is not reachable from the editor | `q_does_not_quit_while_the_editor_has_focus` |
-| `Esc` prefers the overlay, then leaves | `escape_dismisses_the_overlay_before_it_leaves_the_editor`, `escape_leaves_the_editor_for_tables` |
+| `Esc` prefers the overlay, then leaves | `escape_dismisses_the_overlay_before_it_leaves_the_editor`, `escape_leaves_the_editor_for_tables`, `escape_leaves_every_panel_for_tables` |
 | `Tab` still leaves | `tab_still_leaves_the_editor` |
 | Ctrl is still not text | `a_modified_key_is_still_not_text` |
 | The editing keys reach the buffer | `the_editing_keys_reach_the_buffer` |
