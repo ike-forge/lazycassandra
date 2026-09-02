@@ -34,6 +34,11 @@ Two TOML files, layered lowest to highest: a user-level
 committed to git**, so a teammate clones the repo, runs `lazycassandra`, and
 is connected. Both are optional.
 
+A first run writes the user-level file if nothing is there: every setting
+commented out at its default, with a line on what each one does. Delete it for
+a fresh copy. Only the theme picker ever writes to it again, and only the
+`theme` key.
+
 ```toml
 theme = "default-dark"
 
