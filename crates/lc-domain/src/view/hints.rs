@@ -961,8 +961,7 @@ mod tests {
             posture: crate::posture::Posture::ReadOnly,
             discovery: crate::config::Discovery::default(),
             datacenter: None,
-            username: None,
-            password: None,
+            credentials: None,
         }
     }
 

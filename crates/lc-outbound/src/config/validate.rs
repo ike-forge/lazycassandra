@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use lc_domain::config::{
     Background, Compression, Config, ConnectionConfig, ConnectionName, Consistency, Credential,
-    CustomTheme, Diagnostic, Discovery, DriverConfig, ExportConfig, GridConfig, Icons,
+    Credentials, CustomTheme, Diagnostic, Discovery, DriverConfig, ExportConfig, GridConfig, Icons,
     MaxColumnWidth, Millis, Mouse, Origin, OutOfRange, PageSize, PanelRatios, Rgb, RowLimit, Span,
 };
 use lc_domain::posture::Posture;
@@ -451,14 +451,33 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
             }
         });
 
+        let credentials = match (layer.username, password) {
+            (None, None) => None,
+            (Some(username), Some(password)) => Some(Credentials { username, password }),
+            (username, _) => {
+                let stated = if username.is_some() {
+                    "username"
+                } else {
+                    "password"
+                };
+                report.error(
+                    &layer.name,
+                    format!(
+                        "connection `{}`: {stated} stated without the other — a cluster is sent both or neither",
+                        name.as_str()
+                    ),
+                );
+                continue;
+            }
+        };
+
         connections.push(ConnectionConfig {
             name,
             hosts,
             posture,
             discovery,
             datacenter: layer.datacenter,
-            username: layer.username,
-            password,
+            credentials,
         });
     }
 
@@ -798,18 +817,65 @@ mod tests {
 
     #[test]
     fn a_password_is_read_as_a_literal_or_as_a_reference() {
-        let (config, _) = config_of(&[
-            "[[connections]]\nname = \"a\"\nhosts = [\"h:9042\"]\npassword = \"hunter2\"\n\
-             [[connections]]\nname = \"b\"\nhosts = [\"h:9042\"]\npassword = { env = \"DEV_PW\" }\n",
-        ]);
+        let (config, _) = config_of(&["[[connections]]\nname = \"a\"\nhosts = [\"h:9042\"]\n\
+             username = \"u\"\npassword = \"hunter2\"\n\
+             [[connections]]\nname = \"b\"\nhosts = [\"h:9042\"]\n\
+             username = \"u\"\npassword = { env = \"DEV_PW\" }\n"]);
 
         assert_eq!(
-            config.connections[0].password,
-            Some(Credential::Literal("hunter2".to_owned()))
+            config.connections[0].credentials,
+            Some(Credentials {
+                username: "u".to_owned(),
+                password: Credential::Literal("hunter2".to_owned()),
+            })
         );
         assert_eq!(
-            config.connections[1].password,
-            Some(Credential::Env("DEV_PW".to_owned()))
+            config.connections[1].credentials,
+            Some(Credentials {
+                username: "u".to_owned(),
+                password: Credential::Env("DEV_PW".to_owned()),
+            })
         );
+    }
+
+    #[test]
+    fn a_connection_stating_a_username_without_a_password_is_dropped() {
+        let (config, diagnostics) = config_of(&[
+            "[[connections]]\nname = \"half\"\nhosts = [\"h:9042\"]\nusername = \"u\"\n",
+        ]);
+
+        assert!(
+            config.connections.is_empty(),
+            "a connection that would reach the cluster as an anonymous session is not what the \
+             file asked for"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("half") && d.message.contains("username"))
+        );
+    }
+
+    #[test]
+    fn a_connection_stating_a_password_without_a_username_is_dropped() {
+        let (config, diagnostics) = config_of(&[
+            "[[connections]]\nname = \"half\"\nhosts = [\"h:9042\"]\npassword = \"hunter2\"\n",
+        ]);
+
+        assert!(config.connections.is_empty());
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("half") && d.message.contains("password"))
+        );
+    }
+
+    #[test]
+    fn a_connection_stating_neither_needs_no_credentials() {
+        let (config, diagnostics) =
+            config_of(&["[[connections]]\nname = \"open\"\nhosts = [\"h:9042\"]\n"]);
+
+        assert!(diagnostics.is_empty());
+        assert_eq!(config.connections[0].credentials, None);
     }
 }

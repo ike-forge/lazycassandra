@@ -3946,8 +3946,7 @@ mod tests {
                 posture: Posture::ReadOnly,
                 discovery: Discovery::default(),
                 datacenter: None,
-                username: None,
-                password: None,
+                credentials: None,
             }],
             default_connection: Some(name),
             ..Config::default()
@@ -4490,8 +4489,7 @@ mod tests {
                     posture: Posture::ReadOnly,
                     discovery: Discovery::default(),
                     datacenter: None,
-                    username: None,
-                    password: None,
+                    credentials: None,
                 })
                 .collect(),
             ..Config::default()

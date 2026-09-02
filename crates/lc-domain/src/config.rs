@@ -293,6 +293,18 @@ impl Discovery {
     }
 }
 
+/// What a cluster running `PasswordAuthenticator` is told.
+///
+/// One type rather than two `Option` fields on [`ConnectionConfig`]: a
+/// username with no password authenticates nothing and a password with no
+/// username names nobody, so the pair is stated together or not at all
+/// (conventions.md §1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Credentials {
+    pub username: String,
+    pub password: Credential,
+}
+
 /// One cluster to connect to, as a config file names it under `[[connections]]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionConfig {
@@ -301,8 +313,7 @@ pub struct ConnectionConfig {
     pub posture: Posture,
     pub discovery: Discovery,
     pub datacenter: Option<String>,
-    pub username: Option<String>,
-    pub password: Option<Credential>,
+    pub credentials: Option<Credentials>,
 }
 
 /// How the Contents grid renders and pages what it reads.

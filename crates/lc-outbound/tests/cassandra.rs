@@ -31,8 +31,7 @@ fn fixture() -> ConnectionConfig {
         posture: Posture::ReadOnly,
         discovery: lc_domain::config::Discovery::default(),
         datacenter: None,
-        username: None,
-        password: None,
+        credentials: None,
     }
 }
 

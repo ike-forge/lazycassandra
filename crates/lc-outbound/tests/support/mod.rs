@@ -93,8 +93,7 @@ pub(crate) fn connected_config() -> lc_domain::Config {
             posture: Posture::ReadOnly,
             discovery: lc_domain::config::Discovery::default(),
             datacenter: None,
-            username: None,
-            password: None,
+            credentials: None,
         }],
         default_connection: Some(name),
         ..lc_domain::Config::default()

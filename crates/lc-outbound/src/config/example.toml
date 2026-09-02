@@ -64,7 +64,8 @@
 # discovery  = "cluster"                     # cluster | contact-points
 # datacenter = "eu-west-1"                   # without this the driver will
 #                                            # happily cross a region
-# username   = "cassandra"
+# username   = "cassandra"                  # both, or neither: a cluster is
+#                                            # sent the pair
 # password   = "hunter2"                     # or { env = "CASSANDRA_PW" }
 #                                            # or { file = "~/.cassandra/pw" }
 
