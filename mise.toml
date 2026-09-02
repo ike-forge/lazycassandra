@@ -45,6 +45,10 @@ run = "cargo nextest run --workspace"
 description = "Integration tier against a real Cassandra (requires a container)"
 run = "cargo nextest run --workspace --features integration"
 
+[tasks.install]
+description = "Build the release binary and link it into ~/.local/bin so `lazycassandra` works from anywhere (local testing)"
+run = "cargo build --release --package lc-app && mkdir -p ~/.local/bin && ln -sf $PWD/target/release/lazycassandra ~/.local/bin/lazycassandra"
+
 [tasks.ci]
 description = "Everything CI gates on"
 depends = ["check", "test"]
