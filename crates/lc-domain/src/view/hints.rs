@@ -518,8 +518,9 @@ fn selected(state: &State) -> bool {
 /// `ctrl-r` on an empty or whitespace-only buffer submits nothing, silently
 /// (query execution design §3), and an empty buffer is the panel's starting
 /// state — so the hint the panel leads with would otherwise be a lie in the
-/// first frame the user sees. Matched by press rather than by action, for the
-/// same reason `?` is above.
+/// first frame the user sees. It is greyed against the connection's posture
+/// too, on the buffer as typed. Matched by press rather than by action, for
+/// the same reason `?` is above.
 ///
 /// `ctrl-f` is greyed on the same rule, against a buffer the formatter would
 /// leave alone — which an empty one is (query editor design §4.3).
@@ -529,8 +530,22 @@ fn selected(state: &State) -> bool {
 /// (export design §1).
 fn liveness(state: &State, binding: &Binding) -> Liveness {
     let runs = binding.keys == [Stroke::ctrl(Key::Char('r'))];
-    if runs && state.queries.text().trim().is_empty() {
-        return Liveness::Inert;
+    if runs {
+        let cql = state.queries.text();
+        let cql = cql.trim();
+
+        // Greyed against the posture as well as against an empty buffer: a
+        // buffer holding a write on a read-only connection would be refused,
+        // and the bar may not promise what `submit` will not do. Unlike `d`
+        // this is not a property of the key — the same key runs a `SELECT`
+        // in the same frame — so the hint follows the buffer as it is typed
+        // (posture design §3).
+        let refused =
+            !state.posture().permits_mutation() && crate::model::Statement::typed(cql).mutates();
+
+        if cql.is_empty() || refused {
+            return Liveness::Inert;
+        }
     }
 
     let formats = binding.keys == [Stroke::ctrl(Key::Char('f'))];
@@ -1255,6 +1270,48 @@ mod tests {
             run_hint(&queries_bar("SELECT * FROM shop.orders")).liveness,
             Liveness::Live
         );
+    }
+
+    /// The buffer as typed, against the connection as opened: the same key in
+    /// the same frame runs a `SELECT` and would be refused a `DELETE`, so the
+    /// hint follows the text rather than the binding (posture design §3).
+    #[test]
+    fn the_run_hint_greys_against_a_buffer_the_posture_would_refuse() {
+        for (posture, cql, expected) in [
+            (
+                crate::Posture::ReadOnly,
+                "SELECT * FROM shop.orders",
+                Liveness::Live,
+            ),
+            (
+                crate::Posture::ReadOnly,
+                "DELETE FROM shop.orders WHERE id = 1",
+                Liveness::Inert,
+            ),
+            (
+                crate::Posture::ReadOnly,
+                "DROP TABLE shop.orders",
+                Liveness::Inert,
+            ),
+            (
+                crate::Posture::Writable,
+                "DELETE FROM shop.orders WHERE id = 1",
+                Liveness::Live,
+            ),
+        ] {
+            let mut state = connected(posture, crate::state::SchemaState::Loading);
+            state.focus_on(Panel::Queries);
+            for character in cql.chars() {
+                state.queries.edit(Key::Char(character), 1);
+            }
+
+            assert_eq!(
+                run_hint(&bar(&state)).liveness,
+                expected,
+                "{cql} under a {} connection",
+                posture.label()
+            );
+        }
     }
 
     #[test]

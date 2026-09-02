@@ -286,7 +286,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
     match state.overlay.as_ref()? {
         Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
         Overlay::Commands(panel) => Some(OverlayView::Commands {
-            rows: commands::rows(panel.search().as_ref()),
+            rows: commands::rows(panel.search().as_ref(), state.posture()),
             selected: panel.selected(),
             sift: panel.sift().map(sift_view),
         }),
@@ -958,7 +958,7 @@ mod tests {
         assert_eq!(
             view_model(&state).overlay,
             Some(OverlayView::Commands {
-                rows: crate::commands::rows(None),
+                rows: crate::commands::rows(None, state.posture()),
                 selected: 1,
                 sift: None,
             })

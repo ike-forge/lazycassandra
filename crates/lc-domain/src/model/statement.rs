@@ -147,13 +147,15 @@ impl Statement {
         }
     }
 
-    /// A statement typed by hand, classified by its first keyword.
+    /// A statement typed by hand, classified by the verb that opens it.
     ///
-    /// A sniffer rather than a parser: a statement opening with a comment
-    /// classifies as [`StatementKind::Write`] and is refused on a read-only
-    /// connection. That is the conservative direction, and it is where a real
-    /// CQL parser lands when one arrives
-    /// (docs/superpowers/specs/2026-08-10-query-execution-design.md §4).
+    /// A sniffer rather than a parser, but a scanning one: the verb is read
+    /// off [`crate::cql::opening_words`], so a leading comment is skipped and
+    /// a `;` inside a string does not split a statement. Every statement in
+    /// the buffer is classified and the most restricted kind wins, so a
+    /// `SELECT` typed ahead of a `DROP` does not launder it
+    /// (docs/superpowers/specs/2026-08-10-query-execution-design.md §4,
+    /// posture design §2).
     #[must_use]
     pub fn typed(cql: &str) -> Self {
         Self {
@@ -180,18 +182,71 @@ fn restriction(key: &[(String, String)]) -> String {
         .join(" AND ")
 }
 
-/// An unrecognised verb is mutating: being wrong that way costs an error
-/// message, and being wrong the other way costs a write the posture was set to
-/// prevent (design §4).
-fn kind_of(cql: &str) -> StatementKind {
-    let verb = cql.split_whitespace().next().unwrap_or_default();
+/// Every verb that opens a statement changing nothing on the cluster.
+///
+/// The allowlist is the whole gate: a verb absent from it is mutating, so
+/// being wrong here costs an error message and being wrong the other way
+/// costs a write the posture was set to prevent (design §4, posture design
+/// §2). The list is closed and short by design — CQL grows verbs, and a new
+/// one arriving is refused on a read-only connection until someone decides
+/// it belongs here.
+///
+/// `USE` changes the session's keyspace rather than the cluster, and
+/// `DESCRIBE`/`LIST` read schema and permissions back.
+const READING: &[&str] = &["SELECT", "USE", "DESCRIBE", "DESC", "LIST"];
 
-    match verb.to_ascii_uppercase().as_str() {
-        "SELECT" => StatementKind::Read,
-        "DROP" | "TRUNCATE" => StatementKind::Destructive,
-        "CREATE" | "ALTER" => StatementKind::Schema,
-        _ => StatementKind::Write,
+/// Every verb that removes data or a schema object outright. Gated by posture
+/// *and* by typed confirmation (vision.md §4, principle 6).
+///
+/// `DROP` covers every object it can name — keyspace, table, index, type,
+/// view, role, function — because the first word is what the gate reads.
+const DESTRUCTIVE: &[&str] = &["DROP", "TRUNCATE"];
+
+/// Every verb that changes schema, cluster metadata or permissions rather
+/// than rows: `CREATE`/`ALTER` over any object, and the two that move
+/// privileges around.
+///
+/// `ALTER TABLE … ADD` is here rather than under a fourth kind: adding a
+/// column is a schema change whichever clause spells it.
+const SCHEMA: &[&str] = &["CREATE", "ALTER", "GRANT", "REVOKE"];
+
+/// The kind a verb opens, with an unrecognised one mutating.
+fn kind_of_verb(verb: &str) -> StatementKind {
+    if READING.contains(&verb) {
+        StatementKind::Read
+    } else if DESTRUCTIVE.contains(&verb) {
+        StatementKind::Destructive
+    } else if SCHEMA.contains(&verb) {
+        StatementKind::Schema
+    } else {
+        // `INSERT`, `UPDATE`, `DELETE`, `BEGIN`/`APPLY` around a batch, and
+        // every verb this table has not learned.
+        StatementKind::Write
     }
+}
+
+/// How far a kind is trusted, least to most restricted. A buffer holding
+/// several statements takes the highest of theirs: a `SELECT` typed ahead of
+/// a `DROP` must not launder it (posture design §2).
+const fn severity(kind: StatementKind) -> u8 {
+    match kind {
+        StatementKind::Read => 0,
+        StatementKind::Write => 1,
+        StatementKind::Schema => 2,
+        StatementKind::Destructive => 3,
+    }
+}
+
+/// The kind of a buffer: the most restricted kind among the statements in it.
+///
+/// A buffer with no statement in it at all classifies as [`StatementKind::Write`]
+/// — the same conservative direction an unknown verb takes.
+fn kind_of(cql: &str) -> StatementKind {
+    crate::cql::opening_words(cql)
+        .iter()
+        .map(|verb| kind_of_verb(verb))
+        .max_by_key(|kind| severity(*kind))
+        .unwrap_or(StatementKind::Write)
 }
 
 #[cfg(test)]
@@ -270,8 +325,118 @@ mod tests {
     fn an_unknown_verb_is_treated_as_mutating() {
         // The conservative direction: a verb this table has not learned is
         // refused on a read-only connection rather than waved through it.
-        assert!(Statement::typed("LIST ROLES").mutates());
-        assert!(Statement::typed("-- a comment first\nSELECT 1").mutates());
+        assert!(Statement::typed("REBUILD INDEX shop.orders").mutates());
+        assert!(Statement::typed("").mutates());
+    }
+
+    #[test]
+    fn a_leading_comment_does_not_hide_the_verb() {
+        for cql in [
+            "-- what this does\nSELECT * FROM shop.orders",
+            "// what this does\nSELECT * FROM shop.orders",
+            "/* what this does */ SELECT * FROM shop.orders",
+        ] {
+            assert_eq!(Statement::typed(cql).kind, StatementKind::Read, "{cql}");
+        }
+    }
+
+    #[test]
+    fn reading_the_schema_and_the_session_is_not_a_mutation() {
+        for cql in [
+            "USE shop",
+            "DESCRIBE TABLES",
+            "desc keyspace shop",
+            "LIST ROLES",
+            "LIST ALL PERMISSIONS",
+        ] {
+            assert!(
+                !Statement::typed(cql).mutates(),
+                "{cql} changes nothing and a read-only connection may run it"
+            );
+        }
+    }
+
+    #[test]
+    fn every_verb_that_writes_rows_is_a_write() {
+        for cql in [
+            "INSERT INTO shop.orders (id) VALUES (1)",
+            "UPDATE shop.orders SET total = 1 WHERE id = 1",
+            "DELETE FROM shop.orders WHERE id = 1",
+            "BEGIN BATCH INSERT INTO shop.orders (id) VALUES (1); APPLY BATCH",
+        ] {
+            assert_eq!(Statement::typed(cql).kind, StatementKind::Write, "{cql}");
+        }
+    }
+
+    #[test]
+    fn every_verb_that_changes_schema_or_permissions_is_a_schema_change() {
+        for cql in [
+            "CREATE TABLE shop.orders (id int PRIMARY KEY)",
+            "CREATE KEYSPACE shop WITH replication = {}",
+            "CREATE INDEX ON shop.orders (total)",
+            "CREATE MATERIALIZED VIEW shop.v AS SELECT * FROM shop.orders",
+            "CREATE ROLE reader",
+            "ALTER TABLE shop.orders ADD note text",
+            "ALTER KEYSPACE shop WITH durable_writes = true",
+            "GRANT SELECT ON KEYSPACE shop TO reader",
+            "REVOKE MODIFY ON KEYSPACE shop FROM reader",
+        ] {
+            assert_eq!(Statement::typed(cql).kind, StatementKind::Schema, "{cql}");
+        }
+    }
+
+    #[test]
+    fn every_verb_that_removes_something_is_destructive() {
+        for cql in [
+            "DROP TABLE shop.orders",
+            "DROP KEYSPACE shop",
+            "DROP INDEX shop.orders_total",
+            "DROP MATERIALIZED VIEW shop.v",
+            "DROP TYPE shop.address",
+            "DROP ROLE reader",
+            "TRUNCATE shop.orders",
+            "TRUNCATE TABLE shop.orders",
+        ] {
+            assert_eq!(
+                Statement::typed(cql).kind,
+                StatementKind::Destructive,
+                "{cql} must not reach the cluster without confirmation"
+            );
+        }
+    }
+
+    // A read typed ahead of a write is the whole reason the buffer is
+    // classified statement by statement rather than by its first word.
+    #[test]
+    fn a_buffer_takes_the_most_restricted_kind_in_it() {
+        assert_eq!(
+            Statement::typed("SELECT * FROM shop.orders; DROP TABLE shop.orders").kind,
+            StatementKind::Destructive
+        );
+        assert_eq!(
+            Statement::typed("SELECT * FROM shop.orders; UPDATE shop.orders SET a = 1").kind,
+            StatementKind::Write
+        );
+        assert_eq!(
+            Statement::typed("CREATE TABLE t (a int PRIMARY KEY); SELECT * FROM t").kind,
+            StatementKind::Schema
+        );
+    }
+
+    #[test]
+    fn a_semicolon_inside_a_string_does_not_open_a_statement() {
+        assert_eq!(
+            Statement::typed("SELECT * FROM shop.orders WHERE note = '; DROP TABLE x'").kind,
+            StatementKind::Read
+        );
+    }
+
+    #[test]
+    fn a_trailing_semicolon_adds_no_statement() {
+        assert_eq!(
+            Statement::typed("SELECT * FROM shop.orders;\n").kind,
+            StatementKind::Read
+        );
     }
 
     #[test]

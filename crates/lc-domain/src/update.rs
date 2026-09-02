@@ -1431,6 +1431,35 @@ fn raise(state: &mut State, message: Message) {
     state.overlay = Some(Overlay::Message(message));
 }
 
+/// The one modal a read-only connection answers a mutating action with.
+///
+/// `what` names the action in the user's vocabulary — the key they pressed,
+/// not the statement it would have built — because the statement is the part
+/// they have not seen yet.
+///
+/// There is deliberately no way past it. A posture is a property of the
+/// connection, so the way to run this is to open a connection that permits
+/// it; an override key here would make the posture a suggestion, and a
+/// suggestion is not what vision.md §6 asks for (posture design §3).
+///
+/// `state.dirty` is set by [`raise`]'s callers elsewhere; set here because
+/// both call sites are refusals that change nothing else in the frame.
+fn refuse_read_only(state: &mut State, what: &str) {
+    raise(
+        state,
+        Message {
+            title: "Read-only connection".to_owned(),
+            message: format!(
+                "This connection is open read-only, so {what} is refused. \
+                 Give it `posture = \"writable\"` in your config and reconnect \
+                 to run it."
+            ),
+            severity: Severity::Danger,
+        },
+    );
+    state.mark_dirty();
+}
+
 /// Puts back whatever the overlay on screen was previewing, and completes
 /// whatever it was leaving pending, so a replacement can be installed over
 /// it without stranding either (final review, I4 follow-up).
@@ -2954,17 +2983,23 @@ fn rows_target(state: &State) -> Option<Target> {
 /// `d` opens the confirmation over whatever [`drop_target`] names.
 ///
 /// Refused, silently, wherever the question it would ask cannot be answered:
-/// a posture that would not run the statement anyway, a frame with no room to
-/// draw the block, no schema to name a node from, a drop already in flight,
-/// and a range of more than one row — "drop these four" is a different
-/// question with a different confirmation (drop design §1). The first two are
-/// greyed on the hint bar, so the refusal is visible before the key is
-/// pressed (`view::hints::liveness`).
+/// a frame with no room to draw the block, no schema to name a node from, a
+/// drop already in flight, and a range of more than one row — "drop these
+/// four" is a different question with a different confirmation (drop design
+/// §1). Those are greyed on the hint bar, so the refusal is visible before
+/// the key is pressed (`view::hints::liveness`).
+///
+/// The posture is the one refusal that is *not* silent. It is greyed too, but
+/// a key that is grey because of how the connection was opened teaches
+/// nothing about which connection that is, and a user who pressed it anyway
+/// is owed the reason (posture design §3).
 fn open_drop(state: &mut State) {
-    if state.dropping.is_some()
-        || !state.posture().permits_mutation()
-        || !state.geometry.drop_fits()
-    {
+    if !state.posture().permits_mutation() {
+        refuse_read_only(state, "drop and delete");
+        return;
+    }
+
+    if state.dropping.is_some() || !state.geometry.drop_fits() {
         return;
     }
 
@@ -3691,7 +3726,12 @@ fn run(state: &mut State) -> Vec<Effect> {
     // names its target in text this program does not parse, so there is
     // nothing to ask the user to type back (drop design's preamble). This
     // call site becomes the prompt once there is (design §5).
-    if stmt.kind.is_destructive() {
+    // Gated on the posture permitting mutation at all: on a read-only
+    // connection the confirmation is not what stands between the user and
+    // this statement, and naming it would send them looking for a `d` that
+    // would refuse them too. `submit_into_contents` raises the posture's own
+    // refusal below (posture design §3).
+    if stmt.kind.is_destructive() && state.posture().permits_mutation() {
         // Logged before the modal, not instead of it: the modal is gone the
         // moment it is dismissed, and the trail is where the reason survives
         // (query log design §1, §8).
@@ -3763,6 +3803,14 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
                 },
             );
             state.contents.refused(subject);
+
+            // Logged before the modal, not instead of it: the modal is gone
+            // the moment it is dismissed, and the trail is where the reason
+            // survives (query log design §1, §8). Only the posture raises
+            // one — "not connected" is already what the empty panels say.
+            if matches!(error, DbError::ReadOnly) {
+                refuse_read_only(state, "a statement that changes anything");
+            }
         }
     }
 
@@ -11780,16 +11828,38 @@ mod tests {
     }
 
     #[test]
-    fn d_is_inert_on_a_read_only_connection() {
+    fn d_on_a_read_only_connection_asks_nothing_and_says_why() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         state.geometry = state.geometry.with_drop_fits(true);
 
         press(&mut state, Key::Char('d'));
 
         assert!(
-            state.overlay.is_none(),
+            !matches!(state.overlay, Some(Overlay::Drop(_))),
             "a question the statement's own guard would refuse is not asked"
         );
+        assert!(
+            matches!(&state.overlay, Some(Overlay::Message(message))
+                if message.title == "Read-only connection"),
+            "the reason the key did nothing is the reason the user is owed"
+        );
+    }
+
+    /// The key is greyed *and* answered. Greying alone leaves a user who
+    /// pressed it with nothing, and the bar cannot say which connection is
+    /// the read-only one (posture design §3).
+    #[test]
+    fn the_read_only_refusal_names_the_way_out_of_it() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.geometry = state.geometry.with_drop_fits(true);
+
+        press(&mut state, Key::Char('d'));
+
+        let Some(Overlay::Message(message)) = &state.overlay else {
+            panic!("refused with a modal");
+        };
+        assert!(message.message.contains("writable"), "{}", message.message);
+        assert_eq!(message.severity, Severity::Danger);
     }
 
     #[test]
@@ -12201,7 +12271,11 @@ mod tests {
 
         press(&mut state, Key::Char('d'));
 
-        assert!(state.overlay.is_none());
+        assert!(
+            matches!(&state.overlay, Some(Overlay::Message(message))
+                if message.title == "Read-only connection"),
+            "the grid's `d` is refused by the same posture gate the tree's is"
+        );
     }
 
     /// A `Protected` connection is about *destructive* statements, and a row
@@ -13162,6 +13236,10 @@ mod tests {
     #[test]
     fn a_destructive_statement_refused_by_run_says_so_in_the_trail() {
         let mut state = editing("DROP TABLE shop.orders");
+        let ConnectionState::Connected(connection) = &mut state.connection else {
+            panic!("the fixture is connected");
+        };
+        connection.posture = Posture::Writable;
 
         run_query(&mut state);
 
@@ -13308,6 +13386,92 @@ mod tests {
             matches!(state.contents.state(), ContentsState::Failed { .. }),
             "the posture gate refuses it and the panel says so"
         );
+    }
+
+    /// Every mutating verb, run from the buffer against a read-only
+    /// connection: nothing reaches the cluster and each one says why. The
+    /// list is the classifier's, so a verb added there without a posture
+    /// answer fails here (posture design §2).
+    #[test]
+    fn every_mutating_statement_typed_by_hand_is_refused_and_says_why() {
+        for cql in [
+            "INSERT INTO shop.orders (id) VALUES (1)",
+            "UPDATE shop.orders SET total = 1 WHERE id = 1",
+            "DELETE FROM shop.orders WHERE id = 1",
+            "BEGIN BATCH INSERT INTO shop.orders (id) VALUES (1); APPLY BATCH",
+            "CREATE TABLE shop.new (id int PRIMARY KEY)",
+            "CREATE KEYSPACE other WITH replication = {}",
+            "ALTER TABLE shop.orders ADD note text",
+            "GRANT SELECT ON KEYSPACE shop TO reader",
+            "REVOKE MODIFY ON KEYSPACE shop FROM reader",
+            "DROP TABLE shop.orders",
+            "TRUNCATE shop.orders",
+            "-- innocent\nDROP KEYSPACE shop",
+            "SELECT * FROM shop.orders; DROP TABLE shop.orders",
+        ] {
+            let mut state = editing(cql);
+
+            let effects = run_query(&mut state);
+
+            assert!(effects.is_empty(), "{cql} reached the cluster");
+            assert!(
+                matches!(&state.overlay, Some(Overlay::Message(message))
+                    if message.title == "Read-only connection"),
+                "{cql} was refused without saying why"
+            );
+        }
+    }
+
+    /// A read is not refused, and a read-only connection is what the tool is
+    /// for — the modal must not be in the way of one.
+    #[test]
+    fn a_read_typed_by_hand_raises_no_refusal() {
+        for cql in [
+            "SELECT * FROM shop.orders",
+            "-- a note\nSELECT * FROM shop.orders",
+            "SELECT * FROM shop.orders WHERE note = '; DROP TABLE x'",
+        ] {
+            let mut state = editing(cql);
+
+            let effects = run_query(&mut state);
+
+            assert!(!effects.is_empty(), "{cql} should have run");
+            assert!(state.overlay.is_none(), "{cql} was refused");
+        }
+    }
+
+    /// The posture names itself rather than deferring to the confirmation
+    /// that is not what stands in the way here: a read-only connection has no
+    /// `d` to send the user to.
+    #[test]
+    fn a_destructive_statement_on_a_read_only_connection_blames_the_posture() {
+        let mut state = editing("DROP TABLE shop.orders");
+
+        run_query(&mut state);
+
+        let Some(Overlay::Message(message)) = &state.overlay else {
+            panic!("refused with a modal");
+        };
+        assert_eq!(message.title, "Read-only connection");
+        assert!(
+            !message.message.contains("typed confirmation"),
+            "the confirmation is not what refused it: {}",
+            message.message
+        );
+    }
+
+    /// The refusal survives the modal, which `esc` destroys (query log design
+    /// §1).
+    #[test]
+    fn a_statement_the_posture_refuses_says_so_in_the_trail_too() {
+        let mut state = editing("DROP TABLE shop.orders");
+
+        run_query(&mut state);
+
+        let Outcome::Rejected { reason } = state.log.entries().last().unwrap().outcome() else {
+            panic!("the statement was refused");
+        };
+        assert!(reason.contains("read-only"), "{reason}");
     }
 
     #[test]

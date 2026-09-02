@@ -417,6 +417,10 @@ A `DELETE` restricts the whole primary key or it deletes something else. See
 [drop design](specs/2026-08-31-drop-design.md) §3.1 for what is spelled and
 what is refused.
 
+On a connection whose posture permits no mutation `d` opens nothing at all and
+says so, rather than being one of the silent refusals above: the bar greys it,
+and pressing it raises the read-only modal (posture design §3).
+
 What the block asks depends on what is being taken away and on the
 connection's posture. A keyspace is always typed back — it takes every table
 in it — and `Posture::Protected` raises a table to the same bar. A row delete
@@ -1011,6 +1015,20 @@ than think about whether it belongs on the bar. `esc` is still omitted from the
 other three bars rather than greyed there: it would be grey in most frames, and
 a permanently grey hint teaches nothing.
 
+**A key the connection's posture refuses is greyed everywhere, and answered
+when it is pressed.** A read-only connection greys `d` on both panels it is
+bound in, greys the palette's four drop-and-delete rows, and greys `ctrl-r`
+against a buffer holding anything but a read — that last one against the text
+as typed, because the same key in the same frame runs a `SELECT` and would be
+refused a `DELETE`. Greyed, not omitted: the palette claims to be complete, and
+a row that vanished on a read-only connection would teach that the tool cannot
+drop a table at all. Pressing one anyway raises a modal naming the posture and
+the config key that changes it — greying alone leaves a user who pressed the
+key with nothing, and no bar can say *which* connection is the read-only one.
+There is no way past the modal, deliberately: a posture is a property of the
+connection, and an override key would make it a suggestion
+([posture design](specs/2026-09-02-posture-design.md) §1, §3).
+
 The palette is the half of that pair with no discretion. The bar picks what a
 panel's hints teach; the palette claims to be complete, so it may not omit a key
 that does something ([command palette design](specs/2026-08-09-command-palette-design.md)
@@ -1401,10 +1419,16 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | An empty buffer is inert | `an_empty_buffer_runs_nothing` |
 | Either path cancels the other | `running_a_query_cancels_a_pending_table_read`, `reading_a_table_cancels_a_pending_query` |
 | Destructive is refused, unexecuted | `a_destructive_statement_is_refused_until_confirmation_exists` |
-| The posture gate still applies | `a_typed_write_is_refused_on_a_read_only_connection` |
+| The posture gate still applies, over every mutating verb, and raises a modal | `a_typed_write_is_refused_on_a_read_only_connection`, `every_mutating_statement_typed_by_hand_is_refused_and_says_why`, `a_read_typed_by_hand_raises_no_refusal` |
+| The posture names itself rather than the confirmation | `a_destructive_statement_on_a_read_only_connection_blames_the_posture` |
+| A posture refusal survives the modal in the trail | `a_statement_the_posture_refuses_says_so_in_the_trail_too` |
+| The bar greys `ctrl-r` against a buffer the posture would refuse | `the_run_hint_greys_against_a_buffer_the_posture_would_refuse` (`view/hints.rs`) |
+| The palette greys every mutating row on a read-only connection, and drops none | `a_read_only_connection_greys_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_greys_only_what_the_run_already_greyed`, `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_or_a_delete` (`commands.rs`) |
 | A second modifier is not a binding | `ctrl_alt_r_does_not_run_the_buffer` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
-| A statement is classified by its first keyword | the `statement.rs` tests |
+| A statement is classified by the verb opening it, comments and strings scanned past | `a_leading_comment_does_not_hide_the_verb`, `a_semicolon_inside_a_string_does_not_open_a_statement`, `a_trailing_semicolon_adds_no_statement` (`model/statement.rs`) |
+| Every verb is classified, and an unknown one is mutating | `reading_the_schema_and_the_session_is_not_a_mutation`, `every_verb_that_writes_rows_is_a_write`, `every_verb_that_changes_schema_or_permissions_is_a_schema_change`, `every_verb_that_removes_something_is_destructive`, `an_unknown_verb_is_treated_as_mutating` (`model/statement.rs`) |
+| A buffer takes the most restricted kind in it | `a_buffer_takes_the_most_restricted_kind_in_it` (`model/statement.rs`) |
 | A modifier reaches the label | `a_binding_behind_ctrl_is_named_with_a_ctrl_prefix` (`view/hints.rs`) |
 | The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding`, `the_palette_has_a_queries_section` (`commands.rs`) |
 | The bar greys `ctrl-r run` while there is nothing to run | `the_run_hint_is_inert_while_there_is_nothing_to_run`, `the_run_hint_is_live_once_there_is_a_statement`, `nothing_but_the_run_hint_is_ever_inert` (`view/hints.rs`) |
@@ -1455,8 +1479,9 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `y` drops and `n` abandons, on the yes/no spelling | `y_drops_the_table`, `n_abandons_the_drop`, `esc_abandons_the_drop_on_either_spelling`, `a_yes_no_confirmation_swallows_the_keys_it_does_not_use` |
 | The typed spelling runs only on the name it asked for, matched verbatim | `enter_on_a_mismatched_name_does_nothing`, `enter_on_the_typed_name_drops_the_keyspace`, `a_typed_confirmation_runs_only_on_the_name_it_asked_for`, `a_name_is_matched_verbatim_rather_than_folded` (`drop.rs`) |
 | Every printable key is text there, `n` and `d` included | `n_is_text_on_a_typed_confirmation`, `a_typed_confirmation_takes_text_rather_than_quitting_or_moving`, `a_second_d_leaves_the_open_confirmation_as_it_was` |
-| `d` is refused where the question could not be answered | `d_is_inert_on_a_read_only_connection`, `d_is_inert_where_the_frame_cannot_draw_the_block`, `d_is_inert_while_a_drop_is_running`, `d_is_inert_over_a_multi_row_selection`, `d_does_nothing_outside_the_tree`, `a_read_only_connection_drops_nothing` (`outbound/scenario.rs`) |
+| `d` is refused where the question could not be answered | `d_is_inert_where_the_frame_cannot_draw_the_block`, `d_is_inert_while_a_drop_is_running`, `d_is_inert_over_a_multi_row_selection`, `d_does_nothing_outside_the_tree`, `a_read_only_connection_drops_nothing` (`outbound/scenario.rs`) |
 | The bar greys `d` where it is refused | `the_drop_hint_is_live_only_where_the_key_would_open_something` (`view/hints.rs`) |
+| A read-only connection refuses `d` on both panels, and says why | `d_on_a_read_only_connection_asks_nothing_and_says_why`, `the_read_only_refusal_names_the_way_out_of_it`, `a_delete_is_refused_on_a_read_only_connection`, `a_read_only_connection_drops_nothing` (`outbound/scenario.rs`) |
 | A frame that shrank past the block closes it | `a_frame_that_shrank_past_the_drop_block_closes_it` |
 | A successful drop re-reads the schema; a failed one reloads nothing | `a_completed_drop_re_reads_the_schema`, `a_failed_drop_reloads_nothing_and_says_why`, `a_page_for_an_ordinary_read_reloads_nothing`, `dropping_a_table_removes_it_from_the_tree`, `dropping_a_keyspace_takes_its_name_typed_back` (`outbound/scenario.rs`) |
 | A refusal survives the modal in the trail | `a_drop_the_posture_refuses_is_logged_and_raised` |

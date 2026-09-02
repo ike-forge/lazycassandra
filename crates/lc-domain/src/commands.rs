@@ -7,6 +7,7 @@
 //! arm of `handle_key` claims.
 
 use crate::model::{Key, KeyPress};
+use crate::posture::Posture;
 use crate::search::{Search, Sift};
 use crate::state::{Cursor, Panel};
 use crate::view::Binding;
@@ -30,6 +31,32 @@ pub struct Group {
 pub struct Command {
     pub binding: Binding,
     pub run: Run,
+    pub gate: Gate,
+}
+
+/// What a command needs from the connection before it does anything.
+///
+/// An enum over a `bool`, for conventions.md §1's reason: `mutates: true` on
+/// a row would say nothing about *why* the palette greys it, and the greying
+/// rule the renderer applies is the same shape as [`Run::Inert`]'s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// Runs under any posture.
+    Anywhere,
+    /// Changes the cluster, so a read-only connection greys it and refuses
+    /// it. The refusal is `update`'s, not this enum's — this is what the
+    /// palette draws (posture design §3).
+    Mutates,
+}
+
+impl Gate {
+    /// Whether a connection under `posture` could run this at all.
+    const fn permitted(self, posture: Posture) -> bool {
+        match self {
+            Self::Anywhere => true,
+            Self::Mutates => posture.permits_mutation(),
+        }
+    }
 }
 
 impl Command {
@@ -37,6 +64,15 @@ impl Command {
         Self {
             binding: Binding { keys, action },
             run,
+            gate: Gate::Anywhere,
+        }
+    }
+
+    /// A command a read-only connection has no use for.
+    const fn mutating(keys: &'static [Stroke], action: &'static str, run: Run) -> Self {
+        Self {
+            gate: Gate::Mutates,
+            ..Self::new(keys, action, run)
         }
     }
 }
@@ -58,6 +94,25 @@ impl Run {
         match self {
             Self::Inert => Liveness::Inert,
             Self::Here | Self::In(_) => Liveness::Live,
+        }
+    }
+}
+
+impl Command {
+    /// How this row is drawn under `posture`: faint where `⏎` on it would do
+    /// nothing, whether that is because the row is documentation or because
+    /// the connection forbids it.
+    ///
+    /// The row is still listed either way. The palette claims to be complete
+    /// (command palette design §2), and a key that vanishes on a read-only
+    /// connection would teach a user that the tool cannot drop a table at all
+    /// (posture design §3).
+    #[must_use]
+    pub const fn liveness(&self, posture: Posture) -> Liveness {
+        if self.gate.permitted(posture) {
+            self.run.liveness()
+        } else {
+            Liveness::Inert
         }
     }
 }
@@ -195,22 +250,25 @@ const TABLES: &[Command] = &[Command::new(
 /// so a palette that pressed one would yank rather than confirm (palette
 /// execution design §5).
 const DROP: &[Command] = &[
-    Command::new(
+    Command::mutating(
         &[Stroke::key(Key::Char('d'))],
         "drop this",
         Run::In(Panel::Tables),
     ),
-    Command::new(
+    Command::mutating(
         &[Stroke::key(Key::Char('d'))],
         "delete these rows",
         Run::In(Panel::Contents),
     ),
-    Command::new(&[Stroke::key(Key::Char('y'))], "yes, drop it", Run::Inert),
-    Command::new(
+    Command::mutating(&[Stroke::key(Key::Char('y'))], "yes, drop it", Run::Inert),
+    Command::mutating(
         &[Stroke::key(Key::Enter)],
         "drop the typed name",
         Run::Inert,
     ),
+    // Not gated: cancelling is the way out of a confirmation, and a read-only
+    // connection that somehow has one up needs it more than a writable one
+    // does.
     Command::new(
         &[Stroke::key(Key::Char('n')), Stroke::key(Key::Escape)],
         "cancel the drop",
@@ -370,10 +428,11 @@ pub enum CommandRow {
     Command {
         keys: String,
         action: &'static str,
-        /// Faint when the row is documentation rather than a command: `⏎` on
-        /// it does nothing, and a row that looks live and is not is the one
-        /// way this list can mislead
-        /// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §8).
+        /// Faint when `⏎` on it would do nothing: the row is documentation
+        /// rather than a command, or the connection's posture forbids what it
+        /// does. A row that looks live and is not is the one way this list can
+        /// mislead (docs/superpowers/specs/2026-08-15-palette-execution-design.md
+        /// §8, posture design §3).
         liveness: Liveness,
     },
     /// What a term that matched nothing leaves behind. A row rather than an
@@ -413,14 +472,14 @@ impl Slot {
         }
     }
 
-    fn row(self) -> CommandRow {
+    fn row(self, posture: Posture) -> CommandRow {
         match self {
             Self::Separator => CommandRow::Separator,
             Self::Heading(heading) => CommandRow::Heading(heading),
             Self::Command { command, .. } => CommandRow::Command {
                 keys: label(command.binding.keys),
                 action: command.binding.action,
-                liveness: command.run.liveness(),
+                liveness: command.liveness(posture),
             },
         }
     }
@@ -475,15 +534,19 @@ fn slots(search: Option<&Search>) -> Vec<Slot> {
 
 /// The rows the palette draws under `search`, `None` meaning no prompt or a
 /// query too short to mean one.
+///
+/// `posture` decides only how a row is *drawn*: the list is the same length
+/// under every posture, so [`row_count`] needs none and a connection opening
+/// read-only moves no border (posture design §3).
 #[must_use]
-pub fn rows(search: Option<&Search>) -> Vec<CommandRow> {
+pub fn rows(search: Option<&Search>, posture: Posture) -> Vec<CommandRow> {
     let slots = slots(search);
 
     if slots.is_empty() {
         return vec![CommandRow::Empty];
     }
 
-    slots.into_iter().map(Slot::row).collect()
+    slots.into_iter().map(|slot| slot.row(posture)).collect()
 }
 
 /// How many rows [`rows`] produces. The block's geometry is derived from
@@ -731,6 +794,97 @@ mod tests {
 
     fn commands() -> Vec<&'static Command> {
         CATALOGUE.iter().flat_map(|group| group.commands).collect()
+    }
+
+    /// The palette under a posture that greys nothing, which is what every
+    /// test about the *shape* of the list wants. The posture's own effect on
+    /// it is tested against `Posture::ReadOnly` explicitly.
+    fn rows(search: Option<&Search>) -> Vec<CommandRow> {
+        super::rows(search, Posture::Writable)
+    }
+
+    fn row_for(action: &str, posture: Posture) -> CommandRow {
+        super::rows(None, posture)
+            .into_iter()
+            .find(|row| matches!(row, CommandRow::Command { action: a, .. } if *a == action))
+            .unwrap_or_else(|| panic!("no row for {action}"))
+    }
+
+    fn liveness_of(action: &str, posture: Posture) -> Liveness {
+        let CommandRow::Command { liveness, .. } = row_for(action, posture) else {
+            unreachable!("row_for only returns commands")
+        };
+        liveness
+    }
+
+    #[test]
+    fn a_read_only_connection_greys_every_command_that_would_change_the_cluster() {
+        for action in [
+            "drop this",
+            "delete these rows",
+            "yes, drop it",
+            "drop the typed name",
+        ] {
+            assert_eq!(
+                liveness_of(action, Posture::ReadOnly),
+                Liveness::Inert,
+                "`{action}` would be refused, so the palette may not offer it"
+            );
+        }
+    }
+
+    /// Greyed, not dropped. The palette claims to be complete, and a row that
+    /// disappeared on a read-only connection would teach that the tool cannot
+    /// drop a table at all (posture design §3).
+    #[test]
+    fn a_read_only_connection_drops_no_row_from_the_palette() {
+        assert_eq!(
+            super::rows(None, Posture::ReadOnly).len(),
+            super::rows(None, Posture::Writable).len()
+        );
+        assert_eq!(row_count(None), super::rows(None, Posture::ReadOnly).len());
+    }
+
+    #[test]
+    fn a_writable_connection_greys_only_what_the_run_already_greyed() {
+        for action in ["drop this", "delete these rows"] {
+            assert_eq!(liveness_of(action, Posture::Writable), Liveness::Live);
+        }
+
+        // `Run::Inert` outranks nothing and is outranked by nothing: these two
+        // mean something only inside the confirmation, whatever the posture.
+        assert_eq!(
+            liveness_of("yes, drop it", Posture::Writable),
+            Liveness::Inert
+        );
+    }
+
+    /// The way out of a confirmation is not a mutation, so the posture does
+    /// not grey it.
+    #[test]
+    fn cancelling_a_drop_is_not_gated_on_the_posture() {
+        let cancel = commands()
+            .into_iter()
+            .find(|command| command.binding.action == "cancel the drop")
+            .expect("no cancel row");
+
+        assert_eq!(cancel.gate, Gate::Anywhere);
+    }
+
+    /// Every gated command lives under the one heading that holds them, which
+    /// is what keeps this list reviewable: a new mutating binding filed
+    /// elsewhere is a row this test asks about.
+    #[test]
+    fn every_gated_command_is_a_drop_or_a_delete() {
+        for command in commands() {
+            if command.gate == Gate::Mutates {
+                assert!(
+                    DROP.contains(command),
+                    "`{}` is gated but is not in the Drop and delete group",
+                    command.binding.action
+                );
+            }
+        }
     }
 
     #[test]

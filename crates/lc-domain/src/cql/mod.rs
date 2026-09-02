@@ -147,6 +147,37 @@ const fn token(kind: Kind, role: Option<Role>) -> Option<Token> {
     }
 }
 
+/// The opening word of every statement in `text`, upper-cased, in order.
+///
+/// The word a statement is *classified* by, which is why it is scanned rather
+/// than split off the front: a leading comment is not a verb, and `;` inside a
+/// string is not a separator — both of which a `split_whitespace` on the raw
+/// buffer gets wrong, and getting them wrong is a write reaching a connection
+/// that forbade one (posture design §2).
+///
+/// One entry per statement, so a buffer holding several is classified by all
+/// of them. A statement with no word in it at all — trailing whitespace past
+/// the last `;` — contributes nothing.
+#[must_use]
+pub(crate) fn opening_words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut open = false;
+
+    for piece in lex::pieces(text) {
+        match piece.kind {
+            Kind::Comment | Kind::Whitespace => {}
+            Kind::Punctuation if piece.text == ";" => open = false,
+            _ if open => {}
+            _ => {
+                open = true;
+                words.push(piece.text.to_ascii_uppercase());
+            }
+        }
+    }
+
+    words
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

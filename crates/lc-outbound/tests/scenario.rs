@@ -512,7 +512,13 @@ async fn a_read_only_connection_drops_nothing() {
     let effects = press(&mut state, Key::Char('d'));
     run(&cluster, &mut state, effects).await;
 
-    assert!(view_model(&state).overlay.is_none());
+    assert!(
+        matches!(
+            view_model(&state).overlay,
+            Some(OverlayView::Message(message)) if message.title == "Read-only connection"
+        ),
+        "the posture refuses the drop, and says so rather than swallowing the key"
+    );
     assert!(cluster.executed().is_empty());
 }
 
