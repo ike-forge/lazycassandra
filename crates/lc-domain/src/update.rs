@@ -3777,10 +3777,7 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
 fn go_right(state: &mut State) -> Vec<Effect> {
     match state.focus() {
         Panel::Tables => return step_in(state),
-        Panel::Contents => {
-            let len = state.contents.column_count();
-            state.contents.column.down(len);
-        }
+        Panel::Contents => step_column(state, Side::Right),
         Panel::Ddl | Panel::Queries => {}
     }
 
@@ -3820,8 +3817,67 @@ fn step_in(state: &mut State) -> Vec<Effect> {
 fn go_left(state: &mut State) {
     match state.focus() {
         Panel::Tables => transition(state, Transition::Close),
-        Panel::Contents => state.contents.column.up(),
+        Panel::Contents => step_column(state, Side::Left),
         Panel::Ddl | Panel::Queries => {}
+    }
+}
+
+/// Which edge of the drawn column window a press works from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
+/// `h`/`l` on the grid: the column cursor by one, or — in row mode — the
+/// window by one.
+///
+/// The cursor is what moves in both cases, because it is what
+/// [`follow_grid_columns`] carries the window with (selection modes design
+/// §3). The modes differ only in where it is put: in cell and column mode the
+/// cursor is on screen, so moving it one column is a move the user can see,
+/// and the window comes along once it reaches an edge. Row mode paints no
+/// column, so those same presses are invisible until the cursor has crossed a
+/// whole screen of columns — the grid stands still under a key documented to
+/// move it, and a wide table reads as one that cannot be scrolled at all.
+/// There the cursor lands on the column just outside the window instead, so
+/// every press reveals a column, `csvlens`-style.
+fn step_column(state: &mut State, side: Side) {
+    let column = match state.contents.mode {
+        SelectionMode::Row => match beyond(state, side) {
+            Some(column) => column,
+            // The window is against that edge of the page. Left as it is
+            // rather than clamped to the edge column: in row mode that would
+            // be a cursor move nothing draws, and the modes the user can cycle
+            // to would then open somewhere the presses never showed them.
+            None => return,
+        },
+        SelectionMode::Cell | SelectionMode::Column => match side {
+            Side::Left => return state.contents.column.up(),
+            Side::Right => return state.contents.column.down(state.contents.column_count()),
+        },
+    };
+
+    state
+        .contents
+        .column
+        .go_to(column, state.contents.column_count());
+}
+
+/// The column just outside the drawn window on `side`, or `None` when the
+/// window already ends there — including when the whole page fits, where
+/// there is nothing to scroll in either direction.
+fn beyond(state: &State, side: Side) -> Option<usize> {
+    let (widths, available) = grid_columns(state)?;
+    let first = state.contents.column_scroll.first();
+
+    match side {
+        Side::Left => first.checked_sub(1),
+        Side::Right => {
+            let next = first + grid::fitting(widths, first, available);
+
+            (next < widths.len()).then_some(next)
+        }
     }
 }
 
@@ -7323,10 +7379,18 @@ mod tests {
         state
     }
 
+    /// [`grid_of`] in cell mode, where `h`/`l` move the column cursor. Row
+    /// mode moves the window under it instead (selection modes design §3).
+    fn cell_grid_of(columns: usize, width: usize) -> State {
+        let mut state = grid_of(columns, width);
+        state.contents.mode = SelectionMode::Cell;
+        state
+    }
+
     #[test]
     fn l_and_right_move_the_grid_cursor_one_column() {
         for key in [Key::Char('l'), Key::Right] {
-            let mut state = grid_of(4, 80);
+            let mut state = cell_grid_of(4, 80);
 
             press(&mut state, key);
 
@@ -7337,7 +7401,7 @@ mod tests {
     #[test]
     fn h_and_left_move_the_grid_cursor_back_one_column() {
         for key in [Key::Char('h'), Key::Left] {
-            let mut state = grid_of(4, 80);
+            let mut state = cell_grid_of(4, 80);
             press(&mut state, Key::Char('l'));
 
             press(&mut state, key);
@@ -7348,7 +7412,7 @@ mod tests {
 
     #[test]
     fn the_grid_cursor_cannot_run_off_either_edge_of_a_page() {
-        let mut state = grid_of(2, 80);
+        let mut state = cell_grid_of(2, 80);
 
         for _ in 0..5 {
             press(&mut state, Key::Char('l'));
@@ -7359,6 +7423,84 @@ mod tests {
             press(&mut state, Key::Char('h'));
         }
         assert_eq!(state.contents.column.index(), 0, "stops on the first");
+    }
+
+    #[test]
+    fn row_mode_scrolls_the_grid_a_column_per_press() {
+        // Four columns of width 5 with two blanks between: two fit in a grid
+        // 16 wide, as `the_column_viewport_follows_the_cell_cursor` counts it.
+        let mut state = grid_of(4, 16);
+        assert_eq!(state.contents.mode, SelectionMode::Row);
+
+        for key in [Key::Char('l'), Key::Right] {
+            let first = state.contents.column_scroll.first();
+
+            press(&mut state, key);
+
+            assert_eq!(
+                state.contents.column_scroll.first(),
+                first + 1,
+                "{key:?} must reveal a column rather than move a cursor \
+                 nothing paints"
+            );
+        }
+
+        for key in [Key::Char('h'), Key::Left] {
+            let first = state.contents.column_scroll.first();
+
+            press(&mut state, key);
+
+            assert_eq!(state.contents.column_scroll.first(), first - 1, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn row_mode_stops_the_grid_at_either_end_of_the_page() {
+        let mut state = grid_of(4, 16);
+
+        for _ in 0..5 {
+            press(&mut state, Key::Char('l'));
+        }
+        assert_eq!(
+            state.contents.column_scroll.first(),
+            2,
+            "the window ends on the last column, with no dead space past it"
+        );
+
+        for _ in 0..5 {
+            press(&mut state, Key::Char('h'));
+        }
+        assert_eq!(state.contents.column_scroll.first(), 0);
+    }
+
+    #[test]
+    fn row_mode_moves_nothing_over_a_page_that_fits() {
+        let mut state = grid_of(4, 80);
+
+        press(&mut state, Key::Char('l'));
+
+        assert_eq!(state.contents.column_scroll.first(), 0);
+        assert_eq!(
+            state.contents.column.index(),
+            0,
+            "with nothing to reveal there is no column to put the cursor on"
+        );
+    }
+
+    #[test]
+    fn the_column_the_grid_scrolled_to_is_the_one_cell_mode_opens_on() {
+        let mut state = grid_of(4, 16);
+        press(&mut state, Key::Char('l'));
+
+        press(&mut state, Key::Char('m'));
+
+        assert_eq!(state.contents.mode, SelectionMode::Column);
+        assert_eq!(
+            state.contents.column.index(),
+            2,
+            "the invisible cursor rode along with the window, so cycling to a \
+             mode that paints it lands on a drawn column"
+        );
     }
 
     #[test]
@@ -7389,7 +7531,7 @@ mod tests {
         // fits two columns in a grid 16 wide once the merged bar+gutter block
         // (bar plus a one-digit gutter) and the spacing ahead of the values
         // are taken off.
-        let mut state = grid_of(4, 16);
+        let mut state = cell_grid_of(4, 16);
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
@@ -7408,7 +7550,7 @@ mod tests {
 
     #[test]
     fn a_narrower_frame_pulls_the_column_viewport_back_to_the_cursor() {
-        let mut state = grid_of(4, 80);
+        let mut state = cell_grid_of(4, 80);
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
@@ -7432,7 +7574,7 @@ mod tests {
 
     #[test]
     fn a_panel_that_grew_pulls_the_column_viewport_back() {
-        let mut state = grid_of(4, 16);
+        let mut state = cell_grid_of(4, 16);
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
@@ -7456,7 +7598,7 @@ mod tests {
 
     #[test]
     fn a_frame_too_small_to_draw_does_not_strand_the_column_viewport() {
-        let mut state = grid_of(4, 80);
+        let mut state = cell_grid_of(4, 80);
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
@@ -7485,6 +7627,7 @@ mod tests {
     #[test]
     fn home_and_end_still_reach_the_ends_of_the_row_list() {
         let mut state = grid_of_rows(4, 12, 80);
+        state.contents.mode = SelectionMode::Cell;
         press(&mut state, Key::Char('l'));
 
         press(&mut state, Key::End);
@@ -9932,6 +10075,7 @@ mod tests {
     #[test]
     fn gg_and_shift_g_reach_the_ends_of_the_grids_rows() {
         let mut state = grid_of_rows(4, 12, 80);
+        state.contents.mode = SelectionMode::Cell;
         press(&mut state, Key::Char('l'));
 
         press(&mut state, Key::Char('G'));
