@@ -469,7 +469,7 @@ Queries moves the cursor through its buffer.
 |---|---|
 | `j` / `↓` | Down one row (in Queries, `↓` only — `j` is text; with a completion popup up, the next candidate). |
 | `k` / `↑` | Up one (in Queries, `↑` only — `k` is text; with a popup up, the previous candidate). |
-| `l` / `→` | Right one column in Contents; unfold the selected keyspace in Tables. |
+| `l` / `→` | Right one column in Contents; in Tables, unfold the selected keyspace, step into an unfolded one, or read the selected table into Contents — as `Enter` does. |
 | `h` / `←` | Left one column in Contents; fold it in Tables, stepping out from a table row first. |
 | `PageDown` / `ctrl-d` | Down one panel height. |
 | `PageUp` / `ctrl-u` | Up one panel height. |
@@ -594,6 +594,14 @@ action, and a second name for a key everyone already knows buys nothing.
 `l`/`h` and `→`/`←` are motion, not tree keys, and the Motion table above is
 where they live: unfolding is what *move right* means in a tree, and the same
 key means the next column in a grid — §2.
+
+On a table row `l` is `⏎`: the tree has no level below a table, so *move
+right* out of one is the panel to its right, and a hand walking `l` `l` `l`
+lands in Contents rather than on a key that does nothing. The two are not
+synonyms above that row — on an open keyspace `⏎` folds where `l` steps in —
+and `l` inherits `⏎`'s two conditions on the read itself: a selection of more
+than one row makes it inert, and a search swallows only the fold path, never
+the read.
 
 Reading a table cancels whatever read Contents was waiting on, and moves focus
 to Contents immediately rather than when the page lands: focus is a consequence
@@ -918,7 +926,7 @@ in its own vocabulary:
 
 | Panel | `h` / `←` | `l` / `→` |
 |---|---|---|
-| Tables | Fold — step out | Unfold — step in |
+| Tables | Fold — step out | Unfold — step in — read a table |
 | Contents | Previous column | Next column |
 | DDL | Inert | Inert |
 | Queries | Cursor left, in text | Cursor right, in text |
@@ -1190,6 +1198,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Motion is the focused panel's only | `motion_belongs_to_the_focused_panel_only`, `motion_in_one_panel_never_reaches_another` |
 | `Enter` folds and reads, and `Space` does neither | `enter_toggles_a_keyspace`, `space_is_not_a_second_name_for_enter`, `space_reads_no_table` |
 | `l`/`h` and arrows agree | `l_and_right_open_a_keyspace`, `h_and_left_close_a_keyspace` |
+| `l` on a table reads it, as `⏎` does | `l_and_right_read_the_table_under_the_cursor`, `l_reads_a_table_under_a_search_the_way_enter_does`, `l_on_a_table_is_inert_over_a_range_of_many` |
 | `h` steps out before folding | `h_from_a_table_steps_out_to_its_keyspace_before_folding` |
 | Tree keys are Tables-only | `a_tree_transition_belongs_to_the_focused_panel_only`, `enter_outside_the_tree_reads_nothing` |
 | `l`/`h` walk the grid's columns | `l_and_right_move_the_grid_cursor_one_column`, `h_and_left_move_the_grid_cursor_back_one_column` |

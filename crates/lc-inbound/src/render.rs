@@ -5201,7 +5201,7 @@ mod tests {
         assert!(drawn.contains("Global"));
         assert!(drawn.contains("dismiss the overlay"));
         assert!(drawn.contains("focus Table contents"));
-        assert!(drawn.contains("right, or unfold"));
+        assert!(drawn.contains("right, unfold, read"));
     }
 
     #[test]

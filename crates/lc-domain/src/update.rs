@@ -917,7 +917,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::Home => scroll(state, Motion::Start),
         Key::End => scroll(state, Motion::End),
         Key::Enter => return activate(state),
-        Key::Char('l') | Key::Right => go_right(state),
+        Key::Char('l') | Key::Right => return go_right(state),
         Key::Char('h') | Key::Left => go_left(state),
         Key::Char('/') => open_prompt(state),
         Key::Char('y') => return yank(state),
@@ -3774,15 +3774,47 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
 /// The four horizontal keys mean *move left* and *move right*, and each panel
 /// resolves that in its own vocabulary — the shape `j`/`k` already have
 /// (docs/shortcuts.md §2, docs/superpowers/specs/2026-08-10-table-display-design.md §2).
-fn go_right(state: &mut State) {
+fn go_right(state: &mut State) -> Vec<Effect> {
     match state.focus() {
-        Panel::Tables => transition(state, Transition::Open),
+        Panel::Tables => return step_in(state),
         Panel::Contents => {
             let len = state.contents.column_count();
             state.contents.column.down(len);
         }
         Panel::Ddl | Panel::Queries => {}
     }
+
+    Vec::new()
+}
+
+/// `l` and `→` in Tables: a keyspace opens, a table is read.
+///
+/// *Move right* out of a table row is the panel to its right — the tree has no
+/// further level, and Contents is what a table's contents are drawn in — so
+/// the key lands where `⏎` already does rather than doing nothing
+/// (docs/shortcuts.md §4). The keyspace arm keeps [`TablesPanel::open`]'s own
+/// vocabulary, which is what makes it not merely `⏎`'s synonym: `⏎` folds an
+/// open keyspace, `l` steps into it.
+fn step_in(state: &mut State) -> Vec<Effect> {
+    let table = {
+        let Some((tables, schema)) = state.tables_and_schema() else {
+            return Vec::new();
+        };
+
+        match tables.selected(schema) {
+            // Reading a table needs one table, the argument `activate` makes
+            // for `⏎` (docs/shortcuts.md §4). Folding is left alone: it
+            // addresses the cursor's row, not the selection.
+            Some(Node::Table { .. }) if tables.selects_many() => return Vec::new(),
+            Some(Node::Table { keyspace, table }) => TableRef::new(&keyspace.name, &table.name),
+            _ => {
+                transition(state, Transition::Open);
+                return Vec::new();
+            }
+        }
+    };
+
+    read(state, table)
 }
 
 fn go_left(state: &mut State) {
@@ -7193,6 +7225,57 @@ mod tests {
                 "closing is a pure state change and must emit no effect (table-list design §2)"
             );
         }
+    }
+
+    /// `l` on a table row is `⏎`: *move right* out of the tree's last level
+    /// is the panel to its right (docs/shortcuts.md §4).
+    #[test]
+    fn l_and_right_read_the_table_under_the_cursor() {
+        for key in [Key::Char('l'), Key::Right] {
+            let mut state = browsing_tables(&[("shop", &["orders"])]);
+            press(&mut state, key);
+            press(&mut state, key);
+
+            let effects = press(&mut state, key);
+
+            assert!(
+                effects
+                    .iter()
+                    .any(|effect| matches!(effect, Effect::Execute { .. })),
+                "{key:?} on a table row did not read it"
+            );
+            assert_eq!(state.focus(), Panel::Contents, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn l_reads_a_table_under_a_search_the_way_enter_does() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        state.apply_search(Searched::Tables, Search::new("orders"));
+
+        state.tables.cursor.go_to(1, row_count(&state));
+        let effects = press(&mut state, Key::Char('l'));
+
+        assert!(
+            !effects.is_empty(),
+            "only the fold path is swallowed under a search"
+        );
+    }
+
+    #[test]
+    fn l_on_a_table_is_inert_over_a_range_of_many() {
+        let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
+        press(&mut state, Key::Char('l'));
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Char('v'));
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('l'));
+
+        assert!(
+            effects.is_empty(),
+            "reading a table needs one table, as it does for enter"
+        );
     }
 
     #[test]

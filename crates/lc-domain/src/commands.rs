@@ -137,7 +137,7 @@ const MOTION: &[Command] = &[
     ),
     Command::new(
         &[Stroke::key(Key::Char('l')), Stroke::key(Key::Right)],
-        "right, or unfold",
+        "right, unfold, read",
         Run::Here,
     ),
     Command::new(
