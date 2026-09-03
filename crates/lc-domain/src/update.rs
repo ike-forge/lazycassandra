@@ -7970,15 +7970,18 @@ mod tests {
     }
 
     #[test]
-    fn pressing_two_three_times_returns_to_the_first_tab() {
+    fn pressing_two_once_per_tab_returns_to_the_first_one() {
         let mut state = browsing_a_table();
 
-        for _ in 0..3 {
+        // One press to arrive, then one per tab: the walk wraps whatever the
+        // strip holds, so the count follows `DdlTab::ALL` rather than a
+        // number a third tab would have made wrong.
+        for _ in 0..=DdlTab::ALL.len() {
             press(&mut state, Key::Char('2'));
         }
 
         assert_eq!(state.focus(), Panel::Ddl);
-        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "two tabs, so the walk wraps");
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl);
     }
 
     #[test]
@@ -10433,6 +10436,7 @@ mod tests {
             },
             static_columns: Vec::new(),
             regular_columns: Vec::new(),
+            indexes: Vec::new(),
             options: TableOptions::default(),
         };
         let schema = Schema {

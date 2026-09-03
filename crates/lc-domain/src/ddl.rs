@@ -8,11 +8,11 @@
 use crate::search::Search;
 use crate::state::{Cursor, Scroll, Selection};
 
-/// Which of the panel's two tabs is drawn.
+/// Which of the panel's tabs is drawn.
 ///
 /// An enum rather than a `bool` on the panel: the tabs differ in what they
-/// describe, not in a flag, and a third one (indexes, views) would be an arm
-/// here rather than a second boolean (conventions.md §1).
+/// describe, not in a flag, and the next one (views) is an arm here rather
+/// than a third boolean (conventions.md §1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DdlTab {
     /// The physical shape and the table's options.
@@ -20,11 +20,14 @@ pub enum DdlTab {
     Ddl,
     /// Every column the table has, whatever part of the key it plays.
     Columns,
+    /// How the table can be looked up: its primary key, then one block per
+    /// secondary index (indexes design §2).
+    Indexes,
 }
 
 impl DdlTab {
     /// The tabs in the order the title strip draws them.
-    pub const ALL: [Self; 2] = [Self::Ddl, Self::Columns];
+    pub const ALL: [Self; 3] = [Self::Ddl, Self::Columns, Self::Indexes];
 
     /// The next tab in [`DdlTab::ALL`], wrapping.
     ///
@@ -35,7 +38,8 @@ impl DdlTab {
     pub const fn next(self) -> Self {
         match self {
             Self::Ddl => Self::Columns,
-            Self::Columns => Self::Ddl,
+            Self::Columns => Self::Indexes,
+            Self::Indexes => Self::Ddl,
         }
     }
 
@@ -43,8 +47,9 @@ impl DdlTab {
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
-            Self::Ddl => Self::Columns,
+            Self::Ddl => Self::Indexes,
             Self::Columns => Self::Ddl,
+            Self::Indexes => Self::Columns,
         }
     }
 
@@ -53,18 +58,24 @@ impl DdlTab {
         match self {
             Self::Ddl => "DDL",
             Self::Columns => "Columns",
+            Self::Indexes => "Indexes",
         }
     }
 
     /// The label a border too narrow for the full strip falls back to.
     ///
-    /// Both names are already short enough that there is nothing left to drop:
-    /// what the tabs describe is a table, and the identity rows beneath the
-    /// border say which one
-    /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4).
+    /// Three tabs no longer fit a sidebar of the usual width, so this is the
+    /// rung that keeps every tab named there rather than dropping two of them
+    /// for the one being drawn — which is what the rung was kept for
+    /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4). `DDL` has
+    /// nothing left to drop and stays whole.
     #[must_use]
     pub const fn short_label(self) -> &'static str {
-        self.label()
+        match self {
+            Self::Ddl => "DDL",
+            Self::Columns => "Cols",
+            Self::Indexes => "Idx",
+        }
     }
 }
 
@@ -100,7 +111,7 @@ impl DdlPanel {
     /// Draws `tab`, putting the cursor and the viewport back at the top when
     /// that is a change.
     ///
-    /// The two tabs describe different rows, so a cursor carried across would
+    /// The tabs describe different rows, so a cursor carried across would
     /// land on a row the user never chose — and on a shorter tab, past the end
     /// until the next `Msg::Measured` clamped it. The same argument holds for
     /// a range: it addresses rows of the tab that drew it, so it does not

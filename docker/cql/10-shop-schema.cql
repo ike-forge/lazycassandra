@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS customers_by_id (
 CREATE INDEX IF NOT EXISTS customers_by_id_country_code_idx
     ON customers_by_id (country_code);
 
+-- A collection index, so the Indexes tab has a `values(...)` target to read
+-- and not only a bare column (ddl indexes design §3).
+CREATE INDEX IF NOT EXISTS customers_by_id_tags_idx
+    ON customers_by_id (tags);
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS customers_by_email AS
     SELECT customer_id, email, display_name, country_code, is_active, signup_date
     FROM customers_by_id

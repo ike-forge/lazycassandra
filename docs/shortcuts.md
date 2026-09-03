@@ -35,11 +35,12 @@ layer is dispatched above the panel that takes text (§2).
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
 | `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's search, or leave the panel for Tables — first hit wins (§2). |
-| `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns tab where one is drawn; Table contents; Queries' Cql tab; Queries' Logs tab. This is how the Logs tab is reached. |
+| `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns and Indexes tabs where a table is selected; Table contents; Queries' Cql tab; Queries' Logs tab. This is how the Logs tab is reached. |
 | `Shift-Tab` | The same stops, walked backwards. |
 | `1`¹ | Focus Tables. |
 | `2`¹ | Focus DDL. Pressed again, its next tab. |
 | `2`¹ | Focus Table columns — the same key, one tab further in. |
+| `2`¹ | Focus Table indexes — the same key, one tab further still. |
 | `3`¹ | Focus Table contents. |
 | `4`¹ | Focus Queries. |
 | `]`¹ | The focused panel's next tab. |
@@ -54,7 +55,7 @@ Logs tab too, but not as text: `4` has no strip left to walk once the tab
 cycle belongs to `Tab`/`Shift-Tab` alone (see the paragraph below), and
 `]`/`[` walk nothing for the same reason.
 
-² "One CSV line" holds for DDL's two tabs, and for two of Table contents'
+² "One CSV line" holds for DDL's three tabs, and for two of Table contents'
 three selection modes. Tables is the exception it always was, with a bare
 name instead; Table contents' cell mode is a second exception, conditional
 on the mode rather than fixed to the panel:
@@ -66,6 +67,7 @@ on the mode rather than fixed to the panel:
 | Table contents, column mode | Every row's value in the column, as one CSV line, no heading |
 | DDL, DDL tab | The row's fields for its kind, as one CSV line |
 | DDL, Columns tab | `name,type,kind`, as one CSV line |
+| DDL, Indexes tab | The row's fields for its kind, as one CSV line — `status,text` for an indexed column, `class,SASIIndex` for a custom index's class |
 | Tables | The node's bare name — `shop`, `shop.orders` — not a CSV line |
 | Any panel, a selection held | Every selected row, in the order the rows are drawn — every column in column mode, every row of the rectangle in cell mode — one line each, joined with `\n`, no trailing newline and nothing between the groups. A single cell in cell mode still yanks bare. |
 
@@ -77,7 +79,7 @@ candidate — as `⏎` does there too. The Queries subsection below is where tha
 is argued.
 
 Each panel's title opens with the key that reaches it — `[1]-Tables`,
-`[2]-Table DDL - Table columns`, `[3]-Table contents`, `[4]-Queries`
+`[2]-DDL - Columns - Indexes`, `[3]-Table contents`, `[4]-Queries`
 (`[4]-Queries - Logs` on its second tab) — so the
 binding is learned by looking at the panel rather than by reading this file
 (vision.md §4, principle 1). The number is drawn in the same style as the
@@ -93,15 +95,16 @@ command acts on what has focus
 `1` `2` `3` `4` run down the frame in the order the panels are drawn —
 top-left, bottom-left, top-right, bottom-right — and `Tab` walks the same
 order, now stopping at every tab a panel draws along the way: DDL's own tab
-and, where a table is selected, its Columns tab beside it; then Queries' Cql
-tab and its Logs tab. One order on screen, in the titles and under the
+and, where a table is selected, its Columns and Indexes tabs beside it; then
+Queries' Cql tab and its Logs tab. One order on screen, in the titles and under the
 fingers. Four letters chosen for the words they sit inside used to do this
 job; a letter has to be learned per panel, while four digits in frame order
 are one rule, and a novice reading `[2]-` has been told the whole binding.
 
 A number focuses its panel. Pressed again — that is, pressed while its panel
 already has focus — it steps to the panel's next tab, wrapping, but only on
-the DDL panel: `2` `2` reaches the Columns tab and a third `2` comes back;
+the DDL panel: `2` `2` reaches the Columns tab, a third `2` the Indexes tab
+and a fourth comes back;
 `1` `1` stays on Tables. Queries has two tabs now as well, Cql and Logs, and
 `4` does not walk them the way `2` walks DDL's — a genuine asymmetry, not an
 oversight. The reason is the panel itself: the Cql tab takes text, so a `4`
@@ -112,8 +115,8 @@ already reverted it there (see the Logs tab subsection below). The trail is
 reached a different way instead — `Tab`/`Shift-Tab` walking every
 `(panel, tab)` stop a strip can draw, DDL's two and Queries' two alike (see
 the table above) — so the Logs tab costs no digit of its own. The palette
-says so directly for DDL: `2` takes two rows, one per tab, one under the
-other. The general rule stays with `]`/`[`, but a reader who has not met
+says so directly for DDL: `2` takes a row per tab, one under the other.
+The general rule stays with `]`/`[`, but a reader who has not met
 those keys yet learns from the repetition that the number pressed again goes
 somewhere — which is how the tabs are found without reading this file
 (vision.md §4, principle 1). `]` and `[` do the same walk forwards and
@@ -128,7 +131,10 @@ row you were reading. Changing tab does move the cursor and the viewport to the
 top — the tabs describe different rows, so a row index carried across addresses
 nothing the user chose.
 
-On a keyspace the DDL strip draws one tab, so walking stays on it. A press that
+On a keyspace the DDL strip draws one tab, so walking stays on it. A table's
+three no longer fit a sidebar of the usual width, where the strip draws them
+short — `DDL - Cols - Idx` — rather than dropping the two not being read
+([ddl tabs design](specs/2026-08-12-ddl-tabs-design.md) §4). A press that
 stored a tab nothing draws would put the panel somewhere the user cannot see it
 is. The tab the panel was left on is kept, not reset: stepping onto a keyspace
 and back is navigation, and it may not cost you the tab you were reading.

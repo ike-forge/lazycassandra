@@ -29,6 +29,11 @@ pub(crate) const KEY: &str = "\u{f030b} ";
 /// Options, a keyspace's Replication. The outline cut: a cog is all teeth, and
 /// filling it at one cell leaves a blob.
 pub(crate) const SETTINGS: &str = "\u{f013} ";
+/// `nf-fa-search`, in front of the heading of an index section — an index is
+/// what a lookup goes through, and the glass is the one glyph that reads as
+/// lookup at a single cell. Not the key's: an index is not part of the key,
+/// and the Indexes tab draws both.
+pub(crate) const INDEX: &str = "\u{f002} ";
 
 pub(crate) const fn tree_row(kind: RowKind) -> &'static str {
     match kind {
@@ -63,6 +68,7 @@ pub(crate) fn identity(token: Token) -> &'static str {
 pub(crate) fn section(token: Token, group: Group) -> &'static str {
     match (token, group) {
         (Token::PartitionKey | Token::ClusteringKey, _) => KEY,
+        (_, Group::Indexes) => INDEX,
         (_, Group::Settings) => SETTINGS,
         _ => "",
     }

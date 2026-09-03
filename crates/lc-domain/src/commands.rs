@@ -147,12 +147,17 @@ const GLOBAL: &[Command] = &[
     Command::new(&[Stroke::key(Key::BackTab)], "previous panel", Run::Here),
     Command::new(&[Stroke::key(Key::Char('1'))], "focus Tables", Run::Here),
     Command::new(&[Stroke::key(Key::Char('2'))], "focus Table DDL", Run::Here),
-    // The one panel with a second tab names it, because the pairing is what
-    // teaches the rule: two rows over the same key, and a reader who never
-    // presses `]` still learns that `2` again reaches the Columns tab.
+    // The one panel with tabs names each of them, because the pairing is what
+    // teaches the rule: a row per tab over the same key, and a reader who
+    // never presses `]` still learns that `2` again goes one tab further in.
     Command::new(
         &[Stroke::key(Key::Char('2'))],
         "focus Table columns",
+        Run::Here,
+    ),
+    Command::new(
+        &[Stroke::key(Key::Char('2'))],
+        "focus Table indexes",
         Run::Here,
     ),
     Command::new(
@@ -162,8 +167,8 @@ const GLOBAL: &[Command] = &[
     ),
     Command::new(&[Stroke::key(Key::Char('4'))], "focus Queries", Run::Here),
     // The rule itself — a number pressed again steps one tab further in —
-    // lives here rather than under all five numbers: only the DDL panel has a
-    // tab to reach today, and only that press is spelled out above.
+    // lives here rather than under all five numbers: only the DDL panel has
+    // tabs to reach today, and only those presses are spelled out above.
     Command::new(&[Stroke::key(Key::Char(']'))], "next tab", Run::Here),
     Command::new(&[Stroke::key(Key::Char('['))], "prev tab", Run::Here),
     Command::new(&[Stroke::key(Key::Char('y'))], "yank", Run::Here),
@@ -951,12 +956,12 @@ mod tests {
         );
     }
 
-    /// The second press is a row of its own, directly under the first: a
-    /// reader who never presses `]` still learns that `2` reaches the Columns
-    /// tab, and the pairing only teaches it while the two rows stay adjacent
+    /// Each further press is a row of its own, directly under the last: a
+    /// reader who never presses `]` still learns that `2` walks the tabs, and
+    /// the pairing only teaches it while the rows stay adjacent
     /// (docs/shortcuts.md §1).
     #[test]
-    fn the_panel_number_names_the_tab_its_second_press_reaches() {
+    fn the_panel_number_names_every_tab_its_further_presses_reach() {
         let rows = rows(None);
         let ddl = rows
             .iter()
@@ -970,12 +975,19 @@ mod tests {
             .expect("no row focuses the DDL panel");
 
         assert_eq!(
-            rows[ddl + 1],
-            CommandRow::Command {
-                keys: "2".to_owned(),
-                action: "focus Table columns",
-                liveness: Liveness::Live,
-            }
+            rows[ddl + 1..=ddl + 2],
+            [
+                CommandRow::Command {
+                    keys: "2".to_owned(),
+                    action: "focus Table columns",
+                    liveness: Liveness::Live,
+                },
+                CommandRow::Command {
+                    keys: "2".to_owned(),
+                    action: "focus Table indexes",
+                    liveness: Liveness::Live,
+                },
+            ]
         );
     }
 

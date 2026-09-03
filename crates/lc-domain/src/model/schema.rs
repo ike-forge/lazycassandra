@@ -46,7 +46,125 @@ pub struct Table {
     pub static_columns: Vec<Column>,
     /// Everything that is neither part of the primary key nor static.
     pub regular_columns: Vec<Column>,
+    /// The table's secondary indexes, by name.
+    ///
+    /// Empty on the great majority of tables, which is a fact the Indexes tab
+    /// reports rather than hides (indexes design §2).
+    pub indexes: Vec<Index>,
     pub options: TableOptions,
+}
+
+/// One secondary index over a table.
+///
+/// `scylla::cluster::metadata` carries none, so this is read off
+/// `system_schema.indexes` the way clustering order and the CQL type text are
+/// (indexes design §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Index {
+    pub name: String,
+    pub target: IndexTarget,
+    pub kind: IndexKind,
+}
+
+/// Who implements an index.
+///
+/// Two arms rather than Cassandra's three kinds: `KEYS` and `COMPOSITES` say
+/// nothing [`IndexTarget`] does not already carry — a `KEYS` index is the one
+/// whose target is `keys(column)` — while a custom one names a class no
+/// target implies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexKind {
+    /// Cassandra's own, whichever of `KEYS` and `COMPOSITES` it recorded.
+    Builtin,
+    /// `CUSTOM`, and the class behind it: SASI, SAI, or a third party's.
+    Custom { class: String },
+}
+
+/// What an index is built over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexTarget {
+    /// The column, unquoted — the name [`Table::column`] can be asked for.
+    pub column: String,
+    /// `None` where the whole column is indexed, which is every index over a
+    /// column that is not a collection.
+    pub part: Option<CollectionPart>,
+}
+
+/// Which part of a collection column an index covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollectionPart {
+    Keys,
+    Values,
+    Entries,
+    Full,
+}
+
+impl CollectionPart {
+    /// The CQL function that names it, which is also how the target was
+    /// written down.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Keys => "keys",
+            Self::Values => "values",
+            Self::Entries => "entries",
+            Self::Full => "full",
+        }
+    }
+
+    fn of(label: &str) -> Option<Self> {
+        [Self::Keys, Self::Values, Self::Entries, Self::Full]
+            .into_iter()
+            .find(|part| part.label() == label)
+    }
+}
+
+impl IndexTarget {
+    /// Reads `system_schema.indexes`' `target` option: a column name, or a
+    /// collection modality wrapping one — `keys(tags)`, `entries(prices)`.
+    ///
+    /// A target this build cannot read is kept whole as the column name. It
+    /// then draws as the cluster wrote it and matches no column, which costs
+    /// the type at the margin and nothing else — where dropping it would lose
+    /// an index the table really has.
+    #[must_use]
+    pub fn parse(target: &str) -> Self {
+        let split = target
+            .split_once('(')
+            .and_then(|(label, rest)| Some((CollectionPart::of(label)?, rest.strip_suffix(')')?)));
+
+        match split {
+            Some((part, column)) => Self {
+                column: unquoted(column),
+                part: Some(part),
+            },
+            None => Self {
+                column: unquoted(target),
+                part: None,
+            },
+        }
+    }
+
+    /// The target as the panel draws it: the modality, over the column's own
+    /// name rather than the quoted form the cluster reported it under.
+    #[must_use]
+    pub fn text(&self) -> String {
+        match self.part {
+            Some(part) => format!("{}({})", part.label(), self.column),
+            None => self.column.clone(),
+        }
+    }
+}
+
+/// A quoted identifier's own name: the quotes off and CQL's doubling undone.
+///
+/// Cassandra writes the target with the quotes a case-sensitive column needs,
+/// and a column is stored under the name inside them.
+fn unquoted(identifier: &str) -> String {
+    identifier
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .map_or_else(|| identifier.to_owned(), |name| name.replace("\"\"", "\""))
 }
 
 /// Every property `system_schema.tables` reports for one table, as text.
@@ -184,6 +302,12 @@ impl Table {
             .chain(self.static_columns.iter())
             .chain(self.regular_columns.iter())
     }
+
+    /// The column `name` names, whatever part of the table it plays.
+    #[must_use]
+    pub fn column(&self, name: &str) -> Option<&Column> {
+        self.columns().find(|column| column.name == name)
+    }
 }
 
 /// Whether a keyspace is the cluster's own or somebody's schema.
@@ -276,6 +400,7 @@ mod tests {
             },
             static_columns: vec![column("firmware", "text")],
             regular_columns: vec![column("temperature_c", "float")],
+            indexes: Vec::new(),
             options: TableOptions::default(),
         }
     }
@@ -397,6 +522,70 @@ mod tests {
             names,
             ["device_id", "reading_at", "firmware", "temperature_c"]
         );
+    }
+
+    #[test]
+    fn a_plain_target_is_the_whole_column() {
+        let target = IndexTarget::parse("status");
+
+        assert_eq!(target.column, "status");
+        assert_eq!(target.part, None);
+        assert_eq!(target.text(), "status");
+    }
+
+    #[test]
+    fn a_collection_target_keeps_the_part_it_covers() {
+        for (text, part) in [
+            ("keys(tags)", CollectionPart::Keys),
+            ("values(tags)", CollectionPart::Values),
+            ("entries(prices)", CollectionPart::Entries),
+            ("full(path)", CollectionPart::Full),
+        ] {
+            let target = IndexTarget::parse(text);
+
+            assert_eq!(target.part, Some(part));
+            assert_eq!(
+                target.text(),
+                text,
+                "the modality is drawn as CQL writes it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_case_sensitive_target_names_the_column_the_table_stores() {
+        // Cassandra writes the target quoted, and `Table::column` is asked
+        // for the name inside the quotes.
+        assert_eq!(IndexTarget::parse("\"Status\"").column, "Status");
+        assert_eq!(IndexTarget::parse("keys(\"Tags\")").column, "Tags");
+        assert_eq!(
+            IndexTarget::parse("\"say \"\"hi\"\"\"").column,
+            "say \"hi\"",
+            "CQL doubles a quote inside an identifier"
+        );
+    }
+
+    #[test]
+    fn a_target_this_build_cannot_read_is_kept_whole() {
+        // Dropping it would lose an index the table really has; kept, it
+        // draws as the cluster wrote it and matches no column.
+        let target = IndexTarget::parse("something(a, b)");
+
+        assert_eq!(target.part, None);
+        assert_eq!(target.text(), "something(a, b)");
+    }
+
+    #[test]
+    fn a_column_is_found_whatever_part_of_the_table_it_plays() {
+        let table = readings();
+
+        for name in ["device_id", "reading_at", "firmware", "temperature_c"] {
+            assert_eq!(
+                table.column(name).map(|column| column.name.as_str()),
+                Some(name)
+            );
+        }
+        assert!(table.column("gone").is_none());
     }
 
     #[test]

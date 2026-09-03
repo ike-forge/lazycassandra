@@ -43,6 +43,7 @@ pub(crate) fn table(name: &str) -> Table {
         },
         static_columns: Vec::new(),
         regular_columns: Vec::new(),
+        indexes: Vec::new(),
         options: TableOptions::new(BTreeMap::from([
             ("comment".to_owned(), format!("The {name} table.")),
             ("gc_grace_seconds".to_owned(), "864000".to_owned()),

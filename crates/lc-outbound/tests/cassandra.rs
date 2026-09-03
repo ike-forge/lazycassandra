@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 
 use lc_domain::config::{ConnectionConfig, ConnectionName};
 use lc_domain::model::{
-    ClusteringOrder, ConnId, CqlValue, DbError, Keyspace, KeyspaceKind, Replication, Statement,
+    ClusteringOrder, ConnId, CqlValue, DbError, IndexKind, Keyspace, KeyspaceKind, Replication,
+    Statement,
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
@@ -161,6 +162,63 @@ async fn a_tables_clustering_order_survives_the_round_trip() {
         ],
         "the driver's metadata drops this, so the extra query is what earns it"
     );
+}
+
+#[tokio::test]
+async fn a_tables_indexes_come_back_with_their_targets() {
+    let schema = fixture_schema().await;
+
+    let customers = schema
+        .keyspaces
+        .get("shop")
+        .expect("shop exists")
+        .tables
+        .get("customers_by_id")
+        .expect("customers_by_id exists");
+
+    assert_eq!(
+        customers
+            .indexes
+            .iter()
+            .map(|index| (index.name.as_str(), index.target.text(), &index.kind))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "customers_by_id_country_code_idx",
+                "country_code".to_owned(),
+                &IndexKind::Builtin,
+            ),
+            (
+                "customers_by_id_tags_idx",
+                "values(tags)".to_owned(),
+                &IndexKind::Builtin,
+            ),
+        ],
+        "the driver's metadata carries no indexes, so the extra query is what earns these"
+    );
+
+    assert_eq!(
+        customers
+            .column("tags")
+            .map(|column| column.cql_type.as_str()),
+        Some("set<text>"),
+        "the panel draws the indexed column's own type at the margin"
+    );
+}
+
+#[tokio::test]
+async fn a_table_with_no_index_reports_none_rather_than_failing_the_read() {
+    let schema = fixture_schema().await;
+
+    let orders = schema
+        .keyspaces
+        .get("shop")
+        .expect("shop exists")
+        .tables
+        .get("orders_by_customer")
+        .expect("orders_by_customer exists");
+
+    assert!(orders.indexes.is_empty());
 }
 
 #[tokio::test]

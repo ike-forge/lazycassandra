@@ -10,8 +10,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use lc_domain::config::{ConnectionConfig, Discovery};
 use lc_domain::model::{
-    ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Keyspace, Page, PagingState,
-    PrimaryKey, Replication, Row, Schema, Statement, Table, TableOptions,
+    ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Index, IndexKind, IndexTarget,
+    Keyspace, Page, PagingState, PrimaryKey, Replication, Row, Schema, Statement, Table,
+    TableOptions,
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
@@ -162,8 +163,9 @@ impl Cluster for CassandraCluster {
 
         let columns = column_rows(&session).await?;
         let options = option_rows(&session).await?;
+        let indexes = index_rows(&session).await?;
 
-        schema(&session.get_cluster_state(), &columns, &options)
+        schema(&session.get_cluster_state(), &columns, &options, &indexes)
     }
 
     /// Unpaged because the statement carries its own `LIMIT`
@@ -382,6 +384,84 @@ fn option_text(value: Option<&DriverValue>) -> String {
     }
 }
 
+/// `scylla::cluster::metadata` carries no indexes at all, so the whole of what
+/// the Indexes tab draws is read here.
+///
+/// Named columns rather than a wildcard, the opposite of [`OPTIONS_QUERY`]:
+/// these five have been `system_schema.indexes`' entire column set since
+/// Cassandra 3.0, and a target or a kind we failed to ask for is a tab that
+/// silently says "none".
+const INDEXES_QUERY: &str = "SELECT keyspace_name, table_name, index_name, kind, options \
+                             FROM system_schema.indexes";
+
+/// The `options` entry naming what an index covers, and the one naming who
+/// implements it.
+const TARGET: &str = "target";
+const CLASS_NAME: &str = "class_name";
+
+/// Every index in the cluster, grouped by the table it is built on.
+///
+/// A view's indexes — Cassandra allows none today — would key by the view's
+/// own name and fall out of the join, the way its columns do.
+async fn index_rows(session: &Session) -> Result<BTreeMap<(String, String), Vec<Index>>, DbError> {
+    let result = session
+        .query_unpaged(INDEXES_QUERY, &[])
+        .await
+        .map_err(|error| DbError::Other(error.to_string()))?
+        .into_rows_result()
+        .map_err(|error| DbError::Other(error.to_string()))?;
+
+    // `Option` around the map because a null column deserializes into no
+    // collection rather than an empty one, and an index whose options are
+    // null is an index with no target — still worth listing by name.
+    let rows = result
+        .rows::<(
+            String,
+            String,
+            String,
+            String,
+            Option<BTreeMap<String, String>>,
+        )>()
+        .map_err(|error| DbError::Other(error.to_string()))?;
+
+    let mut grouped: BTreeMap<(String, String), Vec<Index>> = BTreeMap::new();
+    for row in rows {
+        let (keyspace, table, name, kind, options) =
+            row.map_err(|error| DbError::Other(error.to_string()))?;
+        let options = options.unwrap_or_default();
+
+        grouped
+            .entry((keyspace, table))
+            .or_default()
+            .push(to_index(name, &kind, &options));
+    }
+
+    // `index_name` is the clustering column, so the rows already arrive in
+    // this order; sorting says so rather than relying on it
+    // (conventions.md §4).
+    for indexes in grouped.values_mut() {
+        indexes.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+
+    Ok(grouped)
+}
+
+/// A `CUSTOM` index without a `class_name` is a row Cassandra does not write,
+/// and the honest reading of one is that there is no class to name.
+fn to_index(name: String, kind: &str, options: &BTreeMap<String, String>) -> Index {
+    let class = options.get(CLASS_NAME).cloned();
+    let kind = match class.filter(|_| kind.eq_ignore_ascii_case("custom")) {
+        Some(class) => IndexKind::Custom { class },
+        None => IndexKind::Builtin,
+    };
+
+    Index {
+        name,
+        target: IndexTarget::parse(options.get(TARGET).map_or("", String::as_str)),
+        kind,
+    }
+}
+
 /// Builds a table from the driver's key ordering and `system_schema`'s column
 /// detail.
 ///
@@ -396,6 +476,7 @@ fn to_table(
     partition_key: &[String],
     clustering_key: &[String],
     rows: &[ColumnRow],
+    indexes: Vec<Index>,
     options: TableOptions,
 ) -> Option<Table> {
     let by_name: BTreeMap<&str, &ColumnRow> = rows
@@ -430,6 +511,7 @@ fn to_table(
         },
         static_columns: of_kind(rows, "static"),
         regular_columns: of_kind(rows, "regular"),
+        indexes,
         options,
     })
 }
@@ -469,13 +551,14 @@ fn schema(
     state: &ClusterState,
     columns: &BTreeMap<(String, String), Vec<ColumnRow>>,
     options: &BTreeMap<(String, String), TableOptions>,
+    indexes: &BTreeMap<(String, String), Vec<Index>>,
 ) -> Result<Schema, DbError> {
     let keyspaces = state
         .keyspaces_iter()
         .map(|(name, keyspace)| {
             Ok((
                 name.to_owned(),
-                to_keyspace(name, keyspace, columns, options)?,
+                to_keyspace(name, keyspace, columns, options, indexes)?,
             ))
         })
         .collect::<Result<BTreeMap<_, _>, DbError>>()?;
@@ -488,6 +571,7 @@ fn to_keyspace(
     keyspace: &DriverKeyspace,
     columns: &BTreeMap<(String, String), Vec<ColumnRow>>,
     options: &BTreeMap<(String, String), TableOptions>,
+    indexes: &BTreeMap<(String, String), Vec<Index>>,
 ) -> Result<Keyspace, DbError> {
     let mut tables = BTreeMap::new();
 
@@ -500,11 +584,17 @@ fn to_keyspace(
         // options carry no invariant at all (design §2).
         let settings = options.get(&key).cloned().unwrap_or_default();
 
+        // Absent for the same reason and with the same weight as an absent
+        // options row: a table with no index is the common case, not a read
+        // that came back short.
+        let table_indexes = indexes.get(&key).cloned().unwrap_or_default();
+
         let mapped = to_table(
             table_name,
             &table.partition_key,
             &table.clustering_key,
             rows,
+            table_indexes,
             settings,
         )
         .ok_or_else(|| {
@@ -654,6 +744,7 @@ mod tests {
             &["device_id".to_owned()],
             &["reading_at".to_owned(), "seq".to_owned()],
             &readings_rows(),
+            Vec::new(),
             TableOptions::default(),
         )
         .expect("every key column has a row")
@@ -687,6 +778,7 @@ mod tests {
                 column_row("a", "partition_key", "int", "none"),
                 column_row("b", "partition_key", "int", "none"),
             ],
+            Vec::new(),
             TableOptions::default(),
         )
         .expect("every key column has a row");
@@ -736,6 +828,7 @@ mod tests {
                 column_row("id", "partition_key", "int", "none"),
                 column_row("frozen_list", "regular", "frozen<list<text>>", "none"),
             ],
+            Vec::new(),
             TableOptions::default(),
         )
         .expect("every key column has a row");
@@ -750,6 +843,7 @@ mod tests {
             &["device_id".to_owned()],
             &[],
             &[column_row("temperature_c", "regular", "float", "none")],
+            Vec::new(),
             TableOptions::default(),
         );
 
@@ -772,6 +866,7 @@ mod tests {
             &[],
             &[],
             &[column_row("device_id", "partition_key", "text", "none")],
+            Vec::new(),
             TableOptions::default(),
         );
 
@@ -779,6 +874,58 @@ mod tests {
             empty_partition.is_none(),
             "an empty partition key must be refused even though every named key column resolved"
         );
+    }
+
+    fn index_options(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_cassandra_index_carries_its_target_and_nothing_about_a_class() {
+        for kind in ["COMPOSITES", "KEYS"] {
+            let index = to_index(
+                "orders_by_status".to_owned(),
+                kind,
+                &index_options(&[("target", "status")]),
+            );
+
+            assert_eq!(index.kind, IndexKind::Builtin);
+            assert_eq!(index.target, IndexTarget::parse("status"));
+        }
+    }
+
+    #[test]
+    fn a_custom_index_carries_the_class_implementing_it() {
+        let index = to_index(
+            "orders_sasi".to_owned(),
+            "CUSTOM",
+            &index_options(&[
+                ("target", "status"),
+                ("class_name", "org.apache.cassandra.index.sasi.SASIIndex"),
+            ]),
+        );
+
+        assert_eq!(
+            index.kind,
+            IndexKind::Custom {
+                class: "org.apache.cassandra.index.sasi.SASIIndex".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_index_with_no_options_is_still_listed_by_name() {
+        // Neither a null `options` map nor a `CUSTOM` row without a class is
+        // something Cassandra writes; both are expressible, and dropping the
+        // index would hide one the table really has.
+        let index = to_index("orders_ghost".to_owned(), "CUSTOM", &BTreeMap::new());
+
+        assert_eq!(index.name, "orders_ghost");
+        assert_eq!(index.kind, IndexKind::Builtin);
+        assert_eq!(index.target.text(), "");
     }
 
     #[test]

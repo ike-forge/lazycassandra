@@ -736,8 +736,9 @@ mod tests {
     use lc_domain::ddl::DdlTab;
     use lc_domain::grid::{BAR, COLUMN_SPACING};
     use lc_domain::model::{
-        ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, Key, Keyspace, Page,
-        PrimaryKey, QueryId, Replication, Schema, Statement, Table, TableOptions,
+        ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, Index, IndexKind, IndexTarget,
+        Key, Keyspace, Page, PrimaryKey, QueryId, Replication, Schema, Statement, Table,
+        TableOptions,
     };
     use lc_domain::pointer::{Click, Mark};
     use lc_domain::posture::Posture;
@@ -1305,6 +1306,7 @@ mod tests {
             },
             static_columns: Vec::new(),
             regular_columns: Vec::new(),
+            indexes: Vec::new(),
             options: TableOptions::default(),
         }
     }
@@ -3294,6 +3296,7 @@ mod tests {
             },
             static_columns: Vec::new(),
             regular_columns: Vec::new(),
+            indexes: Vec::new(),
             options: TableOptions::new(
                 [
                     ("comment", "Order history."),
@@ -3391,6 +3394,83 @@ mod tests {
         );
     }
 
+    /// The Indexes tab of a table carrying one index per shape an index has:
+    /// a plain column, a collection modality, and a custom implementation.
+    fn indexed() -> Table {
+        Table {
+            regular_columns: vec![column("status", "text"), column("tags", "set<text>")],
+            indexes: vec![
+                Index {
+                    name: "orders_by_status".to_owned(),
+                    target: IndexTarget::parse("status"),
+                    kind: IndexKind::Builtin,
+                },
+                Index {
+                    name: "orders_by_tag".to_owned(),
+                    target: IndexTarget::parse("values(tags)"),
+                    kind: IndexKind::Builtin,
+                },
+                Index {
+                    name: "orders_sasi".to_owned(),
+                    target: IndexTarget::parse("status"),
+                    kind: IndexKind::Custom {
+                        class: "org.apache.cassandra.index.sasi.SASIIndex".to_owned(),
+                    },
+                },
+            ],
+            ..orders()
+        }
+    }
+
+    fn indexing(table: Table) -> State {
+        let mut state = describing(table);
+        state.ddl.show(DdlTab::Indexes);
+        state
+    }
+
+    #[test]
+    fn the_indexes_tab_draws_the_primary_key_and_a_block_per_index() {
+        let buffer = draw_state(104, 41, &indexing(indexed()));
+
+        assert_eq!(
+            ddl_rows(&buffer)[..19],
+            [
+                "▌\u{f084} Keyspace         shop",
+                " \u{f0ce} Table",
+                "     orders_by_customer",
+                "",
+                "\u{f030b} Partition Key",
+                "   customer_id      uuid",
+                "\u{f030b} Clustering Key",
+                "   order_date ↓     date",
+                "   order_id ↑   timeuuid",
+                // The indexes are what was built on the key, so they open a
+                // group of their own.
+                "",
+                "\u{f002} orders_by_status",
+                "   status           text",
+                "\u{f002} orders_by_tag",
+                // The type does not fit beside a target this wide, so it
+                // wraps under it the way a long option's value does.
+                "   values(tags)",
+                "     set<text>",
+                "\u{f002} orders_sasi",
+                "   status           text",
+                // A custom index names the class implementing it, which is
+                // the one thing its target cannot say.
+                " class",
+                "   org.apache.cassandra.",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_table_with_no_index_says_so_rather_than_showing_an_empty_block() {
+        let buffer = draw_state(104, 41, &indexing(orders()));
+
+        assert_eq!(ddl_rows(&buffer)[9..12], ["", "\u{f002} Indexes", " none"]);
+    }
+
     #[test]
     fn a_title_is_pushed_off_its_corner_by_border_and_not_by_blanks() {
         let buffer = draw(80, 24);
@@ -3436,12 +3516,13 @@ mod tests {
     }
 
     #[test]
-    fn a_border_wide_enough_names_both_tabs_and_fades_the_one_not_drawn() {
-        // 120 columns puts the sidebar at 30, which holds the whole strip.
-        let buffer = draw_state(120, 41, &describing(orders()));
+    fn a_border_wide_enough_names_every_tab_and_fades_the_ones_not_drawn() {
+        // 132 columns puts the sidebar at 33, which holds the whole strip —
+        // three full names, their separators and the panel number.
+        let buffer = draw_state(132, 41, &describing(orders()));
         let border = row(&buffer, top_border(&buffer, "DDL").1);
 
-        assert!(border.contains("DDL - Columns"), "got {border:?}");
+        assert!(border.contains("DDL - Columns - Indexes"), "got {border:?}");
 
         // Past its 'C', which the separator before it also holds.
         let (fg, _, modifier) = style_of_first(&buffer, "olumns");
@@ -3452,13 +3533,14 @@ mod tests {
     }
 
     #[test]
-    fn a_sidebar_on_its_usual_width_still_names_both_tabs() {
-        // At 100 columns the sidebar is 25, and the strip needs 13 of the 21
-        // a border that wide has to spend on a title.
+    fn a_sidebar_on_its_usual_width_still_names_every_tab() {
+        // At 104 columns the sidebar is 26, which the three full names no
+        // longer fit — so the strip steps down to the short ones rather than
+        // dropping two tabs for the one being drawn (ddl tabs design §4).
         let buffer = draw_state(104, 41, &listing(orders()));
         let border = row(&buffer, top_border(&buffer, "DDL").1);
 
-        assert!(border.contains("DDL - Columns"), "got {border:?}");
+        assert!(border.contains("DDL - Cols - Idx"), "got {border:?}");
     }
 
     #[test]
@@ -4332,11 +4414,11 @@ mod tests {
         let strip = row(&buffer, DDL_BORDER);
 
         assert!(
-            strip.contains("DDL") && strip.contains("Columns"),
+            strip.contains("DDL") && strip.contains("Cols") && strip.contains("Idx"),
             "row {DDL_BORDER} must be the strip this test is about: {strip:?}"
         );
 
-        for (label, tab) in [("DDL", 0), ("Columns", 1)] {
+        for (label, tab) in [("DDL", 0), ("Cols", 1), ("Idx", 2)] {
             assert_eq!(
                 map.hit(column_of(&buffer, DDL_BORDER, label), DDL_BORDER),
                 Some(Click::Tab {
@@ -5069,7 +5151,7 @@ mod tests {
     #[test]
     fn a_command_row_names_what_it_does_before_the_key_it_costs() {
         let buffer = with_palette(100, 40);
-        let row = block_row(&buffer, "Commands", 18);
+        let row = block_row(&buffer, "Commands", 19);
 
         assert_eq!(row.trim(), "yank                  y");
     }
@@ -5201,7 +5283,7 @@ mod tests {
         assert!(drawn.contains("Global"));
         assert!(drawn.contains("back out one step"));
         assert!(drawn.contains("focus Table contents"));
-        assert!(drawn.contains("right, unfold, read"));
+        assert!(drawn.contains("left, or fold"));
     }
 
     #[test]

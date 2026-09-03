@@ -287,6 +287,7 @@ pub(crate) mod tests_support {
             },
             static_columns: Vec::new(),
             regular_columns: Vec::new(),
+            indexes: Vec::new(),
             options: options(&[
                 ("gc_grace_seconds", "864000"),
                 ("bloom_filter_fp_chance", "0.01"),

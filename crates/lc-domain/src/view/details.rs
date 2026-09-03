@@ -8,7 +8,8 @@
 
 use crate::ddl::DdlTab;
 use crate::model::{
-    ClassKind, ClassOption, ClusteringOrder, Column, Keyspace, Replication, Setting, Table,
+    ClassKind, ClassOption, ClusteringOrder, Column, Index, IndexKind, Keyspace, Replication,
+    Setting, Table,
 };
 use crate::search::{Direction, Search};
 use crate::state::{Panel, State};
@@ -98,6 +99,13 @@ pub enum Group {
     Shape,
     /// What the schema reports about it: table options, replication.
     Settings,
+    /// The secondary indexes, one block each (indexes design §2).
+    ///
+    /// A group of its own rather than [`Group::Shape`]: the key it sits under
+    /// on the Indexes tab is shape, the indexes over it are what was built on
+    /// top, and the blank line between the two follows from the change of
+    /// group the way every other one does.
+    Indexes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +227,7 @@ pub(super) fn of(state: &State) -> Option<Details> {
     let details = match (state.tables.selected(schema)?, shown_tab(state)) {
         (Node::Table { keyspace, table }, DdlTab::Ddl) => of_table(keyspace, table),
         (Node::Table { keyspace, table }, DdlTab::Columns) => columns_of(keyspace, table),
+        (Node::Table { keyspace, table }, DdlTab::Indexes) => indexes_of(keyspace, table),
         (Node::Keyspace { keyspace, .. }, _) => of_keyspace(keyspace),
     };
 
@@ -362,8 +371,9 @@ fn identity(keyspace: &Keyspace, table: Option<&Table>) -> Section {
     }
 }
 
-fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
-    let partition = Section {
+/// The columns that decide where a row lives, under the heading that says so.
+fn partition_section(table: &Table) -> Section {
+    Section {
         heading: Some(Heading::new("Partition Key", Token::PartitionKey)),
         group: Group::Shape,
         token: Some(Token::PartitionKey),
@@ -377,9 +387,12 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
                 cql_type: column.cql_type.clone(),
             })
             .collect(),
-    };
+    }
+}
 
-    let clustering = Section {
+/// The columns that order a partition, under the heading that says so.
+fn clustering_section(table: &Table) -> Section {
+    Section {
         heading: Some(Heading::new("Clustering Key", Token::ClusteringKey)),
         group: Group::Shape,
         token: Some(Token::ClusteringKey),
@@ -393,8 +406,10 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
                 cql_type: clustering.column.cql_type.clone(),
             })
             .collect(),
-    };
+    }
+}
 
+fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     let options = Section {
         heading: Some(Heading::new("Options", Token::Section)),
         group: Group::Settings,
@@ -405,10 +420,92 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     Details {
         sections: populated([
             identity(keyspace, Some(table)),
-            partition,
-            clustering,
+            partition_section(table),
+            clustering_section(table),
             options,
         ]),
+    }
+}
+
+/// How the table can be looked up: the primary key in the two blocks the DDL
+/// tab already draws it in, then one block per secondary index.
+///
+/// The key leads because it is the index every table has — a lookup naming no
+/// part of it is what the indexes below exist to make possible — and it is
+/// drawn in the same shape, so the tab reads as one list of ways in
+/// (indexes design §2).
+fn indexes_of(keyspace: &Keyspace, table: &Table) -> Details {
+    let mut sections = populated([
+        identity(keyspace, Some(table)),
+        partition_section(table),
+        clustering_section(table),
+    ]);
+
+    sections.extend(index_sections(table));
+
+    Details { sections }
+}
+
+/// One section per index, headed by its name — or the one section that says
+/// there are none.
+fn index_sections(table: &Table) -> Vec<Section> {
+    if table.indexes.is_empty() {
+        return vec![no_indexes()];
+    }
+
+    table
+        .indexes
+        .iter()
+        .map(|index| Section {
+            heading: Some(Heading::new(index.name.clone(), Token::Section)),
+            group: Group::Indexes,
+            token: None,
+            rows: index_rows(table, index),
+        })
+        .collect()
+}
+
+/// The target at the top, and the class where one is named.
+///
+/// The kind itself is not a row: `KEYS` and `COMPOSITES` are what the target
+/// already says, and the arm carrying anything a reader cannot see is the
+/// custom one (indexes design §3).
+fn index_rows(table: &Table, index: &Index) -> Vec<DetailRow> {
+    let target = DetailRow::KeyColumn {
+        name: index.target.text(),
+        order: None,
+        cql_type: table
+            .column(&index.target.column)
+            .map(|column| column.cql_type.clone())
+            .unwrap_or_default(),
+    };
+
+    let class = match &index.kind {
+        IndexKind::Builtin => None,
+        IndexKind::Custom { class } => Some(DetailRow::Property {
+            name: "class".to_owned(),
+            value: class.clone(),
+        }),
+    };
+
+    std::iter::once(target).chain(class).collect()
+}
+
+/// What a table with no secondary index shows.
+///
+/// A row rather than a bare heading, and a heading rather than nothing at all:
+/// the tab is offered on every table, "none" is the answer a reader came for
+/// as often as a list is, and a heading with nothing under it reads as a panel
+/// that failed to load rather than as a table with no index.
+fn no_indexes() -> Section {
+    Section {
+        heading: Some(Heading::new("Indexes", Token::Section)),
+        group: Group::Indexes,
+        token: None,
+        rows: vec![DetailRow::Property {
+            name: "none".to_owned(),
+            value: String::new(),
+        }],
     }
 }
 
@@ -517,7 +614,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::model::{
-        ClusteringColumn, Column, ConnId, DbError, PrimaryKey, Replication, Schema, TableOptions,
+        ClusteringColumn, Column, ConnId, DbError, Index, IndexKind, IndexTarget, PrimaryKey,
+        Replication, Schema, TableOptions,
     };
     use crate::search::{Search, Searched};
     use crate::state::{Connection, ConnectionState, SchemaState, State};
@@ -601,6 +699,7 @@ mod tests {
             },
             static_columns: Vec::new(),
             regular_columns: vec![column("status", "text")],
+            indexes: Vec::new(),
             options: options(&[
                 ("gc_grace_seconds", "864000"),
                 ("comment", "Order history."),
@@ -634,6 +733,145 @@ mod tests {
             static_columns: vec![column("region", "text")],
             ..orders()
         }
+    }
+
+    fn indexes_tab(state: &State) -> State {
+        let mut state = state.clone();
+        state.ddl.show(DdlTab::Indexes);
+        state
+    }
+
+    /// The fixture with one index per shape an index has: a plain column, a
+    /// collection modality, and a custom implementation.
+    fn indexed() -> Table {
+        Table {
+            regular_columns: vec![column("status", "text"), column("tags", "set<text>")],
+            indexes: vec![
+                Index {
+                    name: "orders_by_status".to_owned(),
+                    target: IndexTarget::parse("status"),
+                    kind: IndexKind::Builtin,
+                },
+                Index {
+                    name: "orders_by_tag".to_owned(),
+                    target: IndexTarget::parse("values(tags)"),
+                    kind: IndexKind::Builtin,
+                },
+                Index {
+                    name: "orders_sasi".to_owned(),
+                    target: IndexTarget::parse("status"),
+                    kind: IndexKind::Custom {
+                        class: "SASIIndex".to_owned(),
+                    },
+                },
+            ],
+            ..orders()
+        }
+    }
+
+    #[test]
+    fn the_indexes_tab_leads_with_the_key_and_gives_every_index_a_block() {
+        let details = details(&indexes_tab(&browsing(indexed())));
+
+        assert_eq!(
+            headings(&details),
+            [
+                "Partition Key",
+                "Clustering Key",
+                "orders_by_status",
+                "orders_by_tag",
+                "orders_sasi",
+            ],
+            "the key is the index every table has, so it reads first"
+        );
+    }
+
+    #[test]
+    fn an_index_carries_the_target_and_the_type_of_the_column_it_covers() {
+        let details = details(&indexes_tab(&browsing(indexed())));
+
+        assert_eq!(
+            section(&details, "orders_by_tag").rows,
+            [DetailRow::KeyColumn {
+                name: "values(tags)".to_owned(),
+                order: None,
+                cql_type: "set<text>".to_owned(),
+            }],
+            "the modality is part of what the index covers, the type is the column's"
+        );
+    }
+
+    #[test]
+    fn a_custom_index_names_the_class_behind_it_and_a_builtin_one_names_nothing() {
+        let details = details(&indexes_tab(&browsing(indexed())));
+
+        assert_eq!(
+            section(&details, "orders_sasi").rows[1],
+            DetailRow::Property {
+                name: "class".to_owned(),
+                value: "SASIIndex".to_owned(),
+            }
+        );
+        assert_eq!(
+            section(&details, "orders_by_status").rows.len(),
+            1,
+            "Cassandra's own implementation is what a class row would restate"
+        );
+    }
+
+    #[test]
+    fn an_index_over_a_column_the_table_no_longer_has_keeps_its_row() {
+        // A schema read that raced a `DROP` … `ADD`: the index is real, and
+        // the type at the margin is the only thing missing.
+        let table = Table {
+            indexes: vec![Index {
+                name: "orders_by_gone".to_owned(),
+                target: IndexTarget::parse("gone"),
+                kind: IndexKind::Builtin,
+            }],
+            ..orders()
+        };
+
+        let details = details(&indexes_tab(&browsing(table)));
+
+        assert_eq!(
+            section(&details, "orders_by_gone").rows,
+            [DetailRow::KeyColumn {
+                name: "gone".to_owned(),
+                order: None,
+                cql_type: String::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_table_with_no_index_says_so_in_a_row_rather_than_a_bare_heading() {
+        let details = details(&indexes_tab(&browsing(orders())));
+
+        assert_eq!(
+            headings(&details),
+            ["Partition Key", "Clustering Key", "Indexes"]
+        );
+        assert_eq!(
+            section(&details, "Indexes").rows,
+            [DetailRow::Property {
+                name: "none".to_owned(),
+                value: String::new(),
+            }],
+            "a heading with nothing under it reads as a panel that failed to load"
+        );
+    }
+
+    #[test]
+    fn the_indexes_are_a_group_of_their_own_so_a_blank_line_opens_them() {
+        let details = details(&indexes_tab(&browsing(indexed())));
+
+        assert_eq!(
+            section(&details, "Partition Key").group,
+            Group::Shape,
+            "the key is the table's shape wherever it is drawn"
+        );
+        assert_eq!(section(&details, "orders_by_status").group, Group::Indexes);
     }
 
     fn columns_tab(state: &State) -> State {

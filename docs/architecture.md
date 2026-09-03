@@ -35,8 +35,12 @@ issued and what came back — the connection, the schema read, every query and
 export — and a startup connect or schema failure raises `Overlay::Fatal`, a
 modal with no dismissal that ends the process rather than leaving a
 half-connected app on screen
-(docs/superpowers/specs/2026-08-19-query-log-design.md).
-**Last updated:** 2026-08-19
+(docs/superpowers/specs/2026-08-19-query-log-design.md). The DDL panel's strip
+has a third tab: `Indexes` reads `system_schema.indexes` — metadata the driver
+does not carry — and draws the ways into a table, its primary key first and
+then a block per secondary index
+(docs/superpowers/specs/2026-09-03-ddl-indexes-design.md).
+**Last updated:** 2026-09-03
 
 ---
 

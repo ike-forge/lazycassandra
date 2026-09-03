@@ -398,6 +398,7 @@ mod tests {
             },
             static_columns: Vec::new(),
             regular_columns: Vec::new(),
+            indexes: Vec::new(),
             options: TableOptions::new(std::collections::BTreeMap::new()),
         }
     }

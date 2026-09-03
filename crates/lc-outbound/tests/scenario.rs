@@ -5,7 +5,9 @@
 
 use lc_domain::clock::Stamp;
 use lc_domain::log::Outcome;
-use lc_domain::model::{Column, CqlValue, DbError, Key, KeyPress, Page, Row, Statement};
+use lc_domain::model::{
+    Column, CqlValue, DbError, Index, IndexKind, IndexTarget, Key, KeyPress, Page, Row, Statement,
+};
 use lc_domain::posture::Posture;
 use lc_domain::state::Panel;
 use lc_domain::style::Token;
@@ -372,6 +374,47 @@ fn ddl_details(state: &State) -> Details {
         panic!("a selected row has something to describe");
     };
     details.clone()
+}
+
+#[tokio::test]
+async fn walking_the_ddl_strip_reaches_the_indexes_of_the_selected_table() {
+    let mut schema = tabled_schema_of(&[("shop", &["orders"])]);
+    schema
+        .keyspaces
+        .get_mut("shop")
+        .and_then(|keyspace| keyspace.tables.get_mut("orders"))
+        .expect("the fixture has shop.orders")
+        .indexes = vec![Index {
+        name: "orders_by_id".to_owned(),
+        target: IndexTarget::parse("id"),
+        kind: IndexKind::Builtin,
+    }];
+
+    let cluster = FakeCluster::new(schema, Posture::ReadOnly);
+    let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
+    run(&cluster, &mut state, effects).await;
+
+    press(&mut state, Key::Char('l'));
+    press(&mut state, Key::Char('l'));
+    // Once to reach the panel, then one press per tab up to the third.
+    for _ in 0..3 {
+        press(&mut state, Key::Char('2'));
+    }
+
+    let indexes = ddl_details(&state);
+    assert_eq!(
+        headings(&indexes),
+        ["Partition Key", "orders_by_id"],
+        "the key leads, and the index the cluster reported follows it"
+    );
+    assert_eq!(
+        section(&indexes, "orders_by_id").rows,
+        [DetailRow::KeyColumn {
+            name: "id".to_owned(),
+            order: None,
+            cql_type: "uuid".to_owned(),
+        }]
+    );
 }
 
 #[tokio::test]
