@@ -39,6 +39,10 @@ that belongs to neither the machine nor the checkout. It layers rather than
 replaces: keys it leaves unstated still come from the files beneath it. A
 path that is not there ends the launch rather than falling back.
 
+`--connection <name>` opens that connection at startup instead of asking,
+overriding `default_connection`. A name the config does not carry opens the
+picker rather than something else.
+
 A first run writes the user-level file if nothing is there: every setting
 commented out at its default, with a line on what each one does. Delete it for
 a fresh copy. Only the theme picker ever writes to it again, and only the

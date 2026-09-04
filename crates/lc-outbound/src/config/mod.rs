@@ -152,6 +152,7 @@ pub struct FileConfigSource {
     cwd: PathBuf,
     global: Option<PathBuf>,
     named: Option<PathBuf>,
+    opening: Option<String>,
 }
 
 impl FileConfigSource {
@@ -161,6 +162,7 @@ impl FileConfigSource {
             cwd: cwd.to_path_buf(),
             global: discover::global_path(xdg, home),
             named: None,
+            opening: None,
         }
     }
 
@@ -173,6 +175,20 @@ impl FileConfigSource {
     pub fn named(self, path: &Path) -> Self {
         Self {
             named: Some(path.to_path_buf()),
+            ..self
+        }
+    }
+
+    /// The connection `--connection` named, in place of whatever
+    /// `default_connection` says.
+    ///
+    /// An override of that key rather than a fourth kind of thing: what opens
+    /// a cluster at startup, and what the picker opens seated on, both already
+    /// read it (connection picker design §3).
+    #[must_use]
+    pub fn opening(self, name: &str) -> Self {
+        Self {
+            opening: Some(name.to_owned()),
             ..self
         }
     }
@@ -247,6 +263,32 @@ impl FileConfigSource {
     }
 }
 
+/// Points `default_connection` at `name`, or at nothing when the config holds
+/// no such connection.
+///
+/// Nothing rather than the file's own default: a mistyped `--connection` must
+/// not open a different cluster than the one asked for, and the picker asking
+/// is the outcome a user can see and correct.
+fn open_instead(config: &mut Config, name: &str) -> Vec<Diagnostic> {
+    let named = config
+        .connections
+        .iter()
+        .find(|connection| connection.name.as_str() == name)
+        .map(|connection| connection.name.clone());
+
+    config.default_connection = named;
+    if config.default_connection.is_some() {
+        return Vec::new();
+    }
+
+    vec![Diagnostic {
+        origin: Origin::new("--connection"),
+        span: None,
+        severity: Severity::Danger,
+        message: format!("no connection named `{name}` — the picker opens instead"),
+    }]
+}
+
 /// Puts the annotated example at the user-level path when nothing is there
 /// (example config design §2).
 ///
@@ -279,8 +321,11 @@ impl lc_domain::ports::ConfigSource for FileConfigSource {
             .collect();
         let (merged, more) = merge::merge(layers);
         diagnostics.extend(more);
-        let (config, more) = validate::validate(merged);
+        let (mut config, more) = validate::validate(merged);
         diagnostics.extend(more);
+        if let Some(name) = &self.opening {
+            diagnostics.extend(open_instead(&mut config, name));
+        }
 
         (config, diagnostics)
     }
@@ -321,6 +366,8 @@ impl lc_domain::ports::ConfigSink for FileConfigSource {
 
 #[cfg(test)]
 mod tests {
+    use lc_domain::config::ConnectionName;
+
     use super::*;
 
     fn origin() -> Origin {
@@ -378,6 +425,51 @@ mod tests {
             None,
             "silence must not win a key the layer beneath stated"
         );
+    }
+
+    fn two_connections() -> Config {
+        let (layer, _) = parse(
+            "default_connection = \"local\"\n\n[[connections]]\nname = \"local\"\nhosts = \
+             [\"127.0.0.1:9042\"]\n\n[[connections]]\nname = \"prod\"\nhosts = \
+             [\"10.0.0.1:9042\"]\n",
+            &origin(),
+        );
+        let (merged, _) = merge::merge(vec![layer.expect("it parses")]);
+        let (config, _) = validate::validate(merged);
+
+        config
+    }
+
+    #[test]
+    fn a_named_connection_replaces_the_files_default() {
+        let mut config = two_connections();
+
+        let diagnostics = open_instead(&mut config, "prod");
+
+        assert_eq!(
+            config
+                .default_connection
+                .as_ref()
+                .map(ConnectionName::as_str),
+            Some("prod")
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn a_name_no_connection_carries_opens_nothing_at_all() {
+        let mut config = two_connections();
+
+        let diagnostics = open_instead(&mut config, "prd");
+
+        assert_eq!(
+            config.default_connection, None,
+            "falling back to the file's own default would open a cluster the \
+             user did not name"
+        );
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Severity::Danger);
+        assert!(diagnostics[0].message.contains("`prd`"), "{diagnostics:?}");
     }
 
     #[test]

@@ -11,7 +11,6 @@ mod export;
 mod input;
 mod mouse;
 
-use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -61,8 +60,8 @@ fn spawn_ticker(tx: mpsc::UnboundedSender<Incoming>) {
 async fn main() -> Result<()> {
     // Before the terminal is touched, so a usage error or `--help` lands in
     // the shell the user is looking at rather than behind an alternate screen.
-    let config = match cli::parse(std::env::args_os().skip(1)) {
-        Ok(cli::Invocation::Run { config }) => config,
+    let options = match cli::parse(std::env::args_os().skip(1)) {
+        Ok(cli::Invocation::Run(options)) => options,
         Ok(cli::Invocation::Print(text)) => {
             println!("{text}");
             return Ok(());
@@ -72,7 +71,7 @@ async fn main() -> Result<()> {
             std::process::exit(2);
         }
     };
-    if let Some(path) = &config
+    if let Some(path) = &options.config
         && !path.is_file()
     {
         eprintln!("`--config {}`: no such file", path.display());
@@ -85,17 +84,17 @@ async fn main() -> Result<()> {
     // under a program that is still drawing — architecture.md §11 has that
     // still open.
     let terminal = ratatui::init();
-    let result = captured(terminal, config.as_deref()).await;
+    let result = captured(terminal, &options).await;
     ratatui::restore();
     result
 }
 
 /// Holds mouse capture for exactly as long as the loop runs, so it is released
 /// while the terminal is still ours.
-async fn captured(terminal: DefaultTerminal, config: Option<&Path>) -> Result<()> {
+async fn captured(terminal: DefaultTerminal, options: &cli::Options) -> Result<()> {
     let capture = mouse::MouseCapture::enable()?;
 
-    run(terminal, &capture, config).await
+    run(terminal, &capture, options).await
 }
 
 /// Draws a frame and reports what it turned out to be.
@@ -168,7 +167,7 @@ fn queued(
 async fn run(
     mut terminal: DefaultTerminal,
     capture: &mouse::MouseCapture,
-    config_path: Option<&Path>,
+    options: &cli::Options,
 ) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let suspension = input::Suspension::default();
@@ -182,11 +181,14 @@ async fn run(
     let writer: Arc<dyn Writer> = Arc::new(lc_outbound::file::FileWriter);
 
     lc_outbound::config::write_example_config_from_env();
-    let source = lc_outbound::config::FileConfigSource::from_env();
-    let source = Arc::new(match config_path {
-        Some(path) => source.named(path),
-        None => source,
-    });
+    let mut source = lc_outbound::config::FileConfigSource::from_env();
+    if let Some(path) = &options.config {
+        source = source.named(path);
+    }
+    if let Some(name) = &options.connection {
+        source = source.opening(name);
+    }
+    let source = Arc::new(source);
     let (config, diagnostics) = source.load().await;
     let sink: Arc<dyn ConfigSink> = source;
     let themes = Themes::new(&config.themes, config.background);
