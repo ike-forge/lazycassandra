@@ -1956,7 +1956,7 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop       ││    id \u{21c5}\u{f0b0}  email \u{21c5}\u{f0b0}                       │",
+            "│▌\u{f084} shop       ││    id \u{21c5} \u{f0b0}  email \u{21c5} \u{f0b0}                     │",
             "the header leaves the bar+gutter block blank, and each name is \
              followed by the two marks its column always carries"
         );
@@ -1966,15 +1966,15 @@ mod tests {
             "a rule under the headings keeps them from reading as a row"
         );
         // The id column is as wide as its heading and marks, not as its
-        // one-digit values, so the email column starts three further right
+        // one-digit values, so the email column starts four further right
         // than the values alone would put it.
         assert_eq!(
             row(&buffer, 3),
-            "│              ││▌1  1      ada@example.com                │"
+            "│              ││▌1  1       ada@example.com               │"
         );
         assert_eq!(
             row(&buffer, 4),
-            "╰──────────────╯│ 2  2      bob@example.com                │"
+            "╰──────────────╯│ 2  2       bob@example.com               │"
         );
     }
 
@@ -2011,7 +2011,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop             ││    a \u{21c5}\u{f0b0}                      b \u{21c5}\u{f0b0}                                │",
+            "│▌\u{f084} shop             ││    a \u{21c5} \u{f0b0}                     b \u{21c5} \u{f0b0}                               │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
@@ -3049,7 +3049,7 @@ mod tests {
 
         assert_eq!(
             block_row(&buffer, "Table contents", 0).trim_end(),
-            "    c0 \u{21c5}\u{f0b0}  c1 \u{21c5}\u{f0b0}",
+            "    c0 \u{21c5} \u{f0b0}  c1 \u{21c5} \u{f0b0}",
             "an unsorted, unfiltered grid still says where the keys apply"
         );
     }
@@ -3089,15 +3089,16 @@ mod tests {
             .fg
             .expect("faint spends a colour");
 
-        // `id` is five columns wide — two for the name, one blank, two marks
-        // — so its sort mark sits third and its filter mark fourth.
+        // `id` is six columns wide — two for the name, a blank, the sort
+        // mark, a blank, the funnel — so its sort mark sits third and its
+        // filter mark fifth.
         let id = first_cell(area, 1);
         assert_eq!(fg(id + 3), faint, "id is not sorted");
-        assert_eq!(fg(id + 4), marker, "and it is filtered");
+        assert_eq!(fg(id + 5), marker, "and it is filtered");
 
-        let name = id + 5 + COLUMN_SPACING;
+        let name = id + 6 + COLUMN_SPACING;
         assert_eq!(fg(name + 5), marker, "name is sorted");
-        assert_eq!(fg(name + 6), faint, "and not filtered");
+        assert_eq!(fg(name + 7), faint, "and not filtered");
     }
 
     #[test]
@@ -4364,13 +4365,13 @@ mod tests {
             })
         );
         assert_eq!(
-            map.hit(sort + 1, 1),
+            map.hit(sort + 2, 1),
             Some(Click::Mark {
                 panel: Panel::Contents,
                 column: 0,
                 mark: Mark::Filter
             }),
-            "and the funnel beside it is the filter key"
+            "and the funnel a blank past it is the filter key"
         );
     }
 

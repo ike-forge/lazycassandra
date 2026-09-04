@@ -854,9 +854,9 @@ const fn mark_token(active: bool) -> Token {
 /// where the mode paints no band, or where the cursor's column is not one of
 /// these.
 ///
-/// Each heading is its name, a blank, and its two marks — the [`MARKS`]
-/// columns the domain measured the heading with, so the marks never push the
-/// name out of its own column (design §5).
+/// Each heading is its name, a blank, and its two marks a blank apart — the
+/// [`MARKS`] columns the domain measured the heading with, so the marks never
+/// push the name out of its own column (design §5).
 fn heading(
     columns: &[GridColumn],
     widths: &[u16],
@@ -911,6 +911,7 @@ fn heading_cell(column: &GridColumn, width: u16, style: Style, theme: Theme) -> 
             sort_mark(column.sort),
             style.patch(theme.style(mark_token(column.sort.is_some()))),
         ),
+        TextSpan::styled(" ", style),
         TextSpan::styled(
             FILTER_MARK,
             style.patch(theme.style(mark_token(column.filtered))),
@@ -939,7 +940,7 @@ fn mark_bands(
 
             [
                 (sort, lc_domain::pointer::Mark::Sort),
-                (sort.saturating_add(1), lc_domain::pointer::Mark::Filter),
+                (sort.saturating_add(2), lc_domain::pointer::Mark::Filter),
             ]
             .map(|(start, mark)| Band {
                 start,

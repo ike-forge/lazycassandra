@@ -39,14 +39,14 @@ pub const COLUMN_SPACING: u16 = 2;
 pub const BAR: u16 = 1;
 
 /// The columns a heading spends on its sort and filter marks, the blank
-/// between them and the name included.
+/// before them and the one between them included.
 ///
 /// Here rather than beside the glyphs the renderer picks, for [`available`]'s
 /// reason: the width a heading needs is arithmetic the domain owns, and a
 /// renderer drawing a mark the width did not allow for would push the name
 /// out of its own column
 /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
-pub const MARKS: u16 = 3;
+pub const MARKS: u16 = 4;
 
 /// Each column's natural width: the widest of its values and of its heading
 /// with the marks that heading always carries, capped.

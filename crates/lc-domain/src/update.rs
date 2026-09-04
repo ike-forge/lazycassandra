@@ -7492,9 +7492,9 @@ mod tests {
 
     #[test]
     fn row_mode_scrolls_the_grid_a_column_per_press() {
-        // Four columns of width 5 with two blanks between: two fit in a grid
-        // 16 wide, as `the_column_viewport_follows_the_cell_cursor` counts it.
-        let mut state = grid_of(4, 16);
+        // Four columns of width 6 with two blanks between: two fit in a grid
+        // 18 wide, as `the_column_viewport_follows_the_cell_cursor` counts it.
+        let mut state = grid_of(4, 18);
         assert_eq!(state.contents.mode, SelectionMode::Row);
 
         for key in [Key::Char('l'), Key::Right] {
@@ -7521,7 +7521,7 @@ mod tests {
 
     #[test]
     fn row_mode_stops_the_grid_at_either_end_of_the_page() {
-        let mut state = grid_of(4, 16);
+        let mut state = grid_of(4, 18);
 
         for _ in 0..5 {
             press(&mut state, Key::Char('l'));
@@ -7554,7 +7554,7 @@ mod tests {
 
     #[test]
     fn the_column_the_grid_scrolled_to_is_the_one_cell_mode_opens_on() {
-        let mut state = grid_of(4, 16);
+        let mut state = grid_of(4, 18);
         press(&mut state, Key::Char('l'));
 
         press(&mut state, Key::Char('m'));
@@ -7591,12 +7591,12 @@ mod tests {
 
     #[test]
     fn the_column_viewport_follows_the_cell_cursor() {
-        // Four columns of width 5 ("c0" plus the marks its heading carries,
-        // which outrun a one-digit value) with two spaces between: 5+2+5 = 12
-        // fits two columns in a grid 16 wide once the merged bar+gutter block
+        // Four columns of width 6 ("c0" plus the marks its heading carries,
+        // which outrun a one-digit value) with two spaces between: 6+2+6 = 14
+        // fits two columns in a grid 18 wide once the merged bar+gutter block
         // (bar plus a one-digit gutter) and the spacing ahead of the values
         // are taken off.
-        let mut state = cell_grid_of(4, 16);
+        let mut state = cell_grid_of(4, 18);
 
         press(&mut state, Key::Char('l'));
         assert_eq!(
@@ -7627,7 +7627,7 @@ mod tests {
 
         update(
             &mut state,
-            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(16)),
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(18)),
         );
 
         assert_eq!(
@@ -7639,7 +7639,7 @@ mod tests {
 
     #[test]
     fn a_panel_that_grew_pulls_the_column_viewport_back() {
-        let mut state = cell_grid_of(4, 16);
+        let mut state = cell_grid_of(4, 18);
         for _ in 0..3 {
             press(&mut state, Key::Char('l'));
         }
