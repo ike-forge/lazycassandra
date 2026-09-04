@@ -68,3 +68,48 @@ async fn a_project_file_written_after_the_source_was_built_still_wins() {
         "the project file wins whole (configuration design §3)"
     );
 }
+
+/// `--config` layers above both discovered files (configuration design §5).
+#[tokio::test]
+async fn a_named_file_wins_over_the_project_and_user_files() {
+    let xdg = scratch("files-named-xdg");
+    let cwd = scratch("files-named-cwd");
+    write(
+        &xdg.join("lazycassandra").join("config.toml"),
+        "theme = \"ash-dark\"\nicons = false\n",
+    );
+    write(&cwd.join(".lazycassandra.toml"), "theme = \"quill-dark\"\n");
+    let named = cwd.join("elsewhere.toml");
+    write(&named, "theme = \"beacon-dark\"\n");
+
+    let (config, diagnostics) = FileConfigSource::new(&cwd, Some(&xdg), None)
+        .named(&named)
+        .load()
+        .await;
+
+    assert_eq!(config.theme.slug(), "beacon-dark");
+    assert_eq!(
+        config.icons,
+        lc_domain::config::Icons::Off,
+        "and the keys it leaves unstated still layer up"
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+/// A named file that is gone is reported rather than absorbed: falling through
+/// to the discovered files would answer a typo with somebody else's settings.
+#[tokio::test]
+async fn a_named_file_that_is_not_there_is_a_diagnostic() {
+    let cwd = scratch("files-named-missing");
+
+    let (_, diagnostics) = FileConfigSource::new(&cwd, None, None)
+        .named(&cwd.join("gone.toml"))
+        .load()
+        .await;
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].message.contains("could not be read"),
+        "{diagnostics:?}"
+    );
+}

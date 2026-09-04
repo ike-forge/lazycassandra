@@ -232,3 +232,26 @@ async fn the_files_permissions_are_the_ones_it_had() {
         0o600
     );
 }
+
+#[tokio::test]
+async fn a_named_file_stating_the_theme_is_the_one_rewritten() {
+    let xdg = scratch("save-named-xdg");
+    let cwd = scratch("save-named-cwd");
+    write(&global(&xdg), "theme = \"ash-dark\"\n");
+    write(
+        &cwd.join(".lazycassandra.toml"),
+        "theme = \"beacon-dark\"\n",
+    );
+    let named = cwd.join("elsewhere.toml");
+    write(&named, "theme = \"ash-dark\"\n");
+    let source = FileConfigSource::new(&cwd, Some(&xdg), None).named(&named);
+
+    source.save_theme(&quill()).await.expect("a writable file");
+
+    assert_eq!(read(&named), "theme = \"quill-dark\"\n");
+    assert_eq!(
+        read(&cwd.join(".lazycassandra.toml")),
+        "theme = \"beacon-dark\"\n",
+        "the layer the named file overrides is not touched"
+    );
+}

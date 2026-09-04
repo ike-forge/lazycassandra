@@ -343,8 +343,8 @@ built-in themes, and the runtime picker (`ctrl-t`).
 
 Layered, lowest to highest: built-in defaults → user config
 (`$XDG_CONFIG_HOME/lazycassandra/config.toml`) → project
-`.lazycassandra.toml`. Environment and command-line layers are designed for
-and not yet built.
+`.lazycassandra.toml` → the file `--config` names. An environment layer is
+designed for and not yet built.
 
 Discovery, parsing, merging and validation are `lc-outbound`; the merged,
 validated result is `lc_domain::config::Config`, which is total: no `Option`

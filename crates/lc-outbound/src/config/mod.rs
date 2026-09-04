@@ -142,7 +142,7 @@ pub fn global_path() -> Option<PathBuf> {
     discover::global_path(xdg.as_deref(), home.as_deref())
 }
 
-/// The two files, layered (design §3).
+/// The files, layered (design §3).
 ///
 /// Holds where to look rather than what was found: the save may create the
 /// user-level file, and both operations must see the disk as it is when they
@@ -151,6 +151,7 @@ pub fn global_path() -> Option<PathBuf> {
 pub struct FileConfigSource {
     cwd: PathBuf,
     global: Option<PathBuf>,
+    named: Option<PathBuf>,
 }
 
 impl FileConfigSource {
@@ -159,6 +160,20 @@ impl FileConfigSource {
         Self {
             cwd: cwd.to_path_buf(),
             global: discover::global_path(xdg, home),
+            named: None,
+        }
+    }
+
+    /// The file `--config` named, layered above both discovered ones.
+    ///
+    /// Above rather than instead of: a user pointing at a file with two keys
+    /// in it is stating those two keys, not asking for the defaults
+    /// everywhere else (design §5).
+    #[must_use]
+    pub fn named(self, path: &Path) -> Self {
+        Self {
+            named: Some(path.to_path_buf()),
+            ..self
         }
     }
 
@@ -171,7 +186,12 @@ impl FileConfigSource {
         Self::new(&cwd, xdg.as_deref(), home.as_deref())
     }
 
-    /// Both files, nearest last, skipping whichever is not there.
+    /// Every file that applies, nearest last, skipping whichever is not there.
+    ///
+    /// The named file is not skipped when it is absent: the read then fails
+    /// and says so, because a `--config` naming nothing is a typo, and
+    /// falling through to the discovered files silently would answer it with
+    /// somebody else's settings.
     fn paths(&self) -> Vec<PathBuf> {
         let mut paths = Vec::new();
 
@@ -181,25 +201,27 @@ impl FileConfigSource {
         if let Some(local) = discover::first_existing(&discover::local_candidates(&self.cwd)) {
             paths.push(local.clone());
         }
+        if let Some(named) = &self.named {
+            paths.push(named.clone());
+        }
 
         paths
     }
 
-    /// The file whose `theme` is in force: the project file when it states
-    /// one, else the user-level file — created if it is not there.
+    /// The file whose `theme` is in force: the highest layer stating one,
+    /// else the user-level file — created if it is not there.
     ///
-    /// Writing the global file while a project file states `theme` would save
-    /// a value that loses on the next launch, which is the bug this exists to
-    /// remove (theme persistence design §3).
+    /// Writing a file that a higher layer overrides would save a value that
+    /// loses on the next launch, which is the bug this exists to remove
+    /// (theme persistence design §3).
     fn save_target(&self) -> Result<PathBuf, lc_domain::ports::ConfigWriteError> {
-        let local = discover::first_existing(&discover::local_candidates(&self.cwd))
-            .filter(|path| {
-                std::fs::read_to_string(path).is_ok_and(|source| save::states_theme(&source))
-            })
-            .cloned();
+        let stated = self.paths().into_iter().rev().find(|path| {
+            std::fs::read_to_string(path).is_ok_and(|source| save::states_theme(&source))
+        });
 
-        local
+        stated
             .or_else(|| self.global.clone())
+            .or_else(|| self.named.clone())
             .ok_or(lc_domain::ports::ConfigWriteError::NoPath)
     }
 

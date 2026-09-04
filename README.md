@@ -34,6 +34,11 @@ Two TOML files, layered lowest to highest: a user-level
 committed to git**, so a teammate clones the repo, runs `lazycassandra`, and
 is connected. Both are optional.
 
+`lazycassandra --config <path>` adds a third layer above both, for a file
+that belongs to neither the machine nor the checkout. It layers rather than
+replaces: keys it leaves unstated still come from the files beneath it. A
+path that is not there ends the launch rather than falling back.
+
 A first run writes the user-level file if nothing is there: every setting
 commented out at its default, with a line on what each one does. Delete it for
 a fresh copy. Only the theme picker ever writes to it again, and only the
