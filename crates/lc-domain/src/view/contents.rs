@@ -66,17 +66,17 @@ pub(super) fn title(state: &State) -> Vec<Segment> {
 
 /// The panel's name, then what it is showing, then how much of it.
 ///
-/// The qualified name keeps the schema's own colours ([`TableRef::segments`]):
-/// this panel does not follow the tree cursor, so its title is the only thing
-/// on screen saying which table is up (vision.md §4, principle 8), and it says
-/// it the way the tree does.
+/// The qualified name keeps the schema's own colours ([`TableRef::segments`])
+/// and a typed statement the editor's ([`crate::cql::issued`]): this panel
+/// does not follow the tree cursor, so its title is the only thing on screen
+/// saying what is up (vision.md §4, principle 8), and it says it the way the
+/// panel it came from does.
 fn named(base: &str, subject: &Subject, count: Option<String>) -> Vec<Segment> {
     let mut segments = vec![Segment::plain(format!("{base} — "))];
 
     match subject {
         Subject::Table(table) => segments.extend(table.segments()),
-        // A typed statement names no one table, so there is nothing to colour.
-        Subject::Typed(_) => segments.push(Segment::plain(subject.label())),
+        Subject::Typed(cql) => segments.extend(crate::cql::issued(cql)),
     }
 
     if let Some(count) = count {
@@ -454,20 +454,22 @@ mod tests {
         );
     }
 
-    /// A statement names no one table, so the title has nothing to colour —
-    /// and still reads exactly as it did.
+    /// A typed statement is coloured as the editor and the trail colour it.
     #[test]
-    fn a_typed_subjects_title_carries_no_colour() {
+    fn a_typed_subjects_title_is_highlighted_as_cql() {
         let mut state = tabled(&[("shop", &["orders"])]);
         state.contents.requested(
             QueryId::next(),
-            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+            Subject::Typed("SELECT *\n  FROM shop.orders".to_owned()),
         );
 
+        let mut expected = vec![Segment::plain("Table contents — ")];
+        expected.extend(crate::cql::issued("SELECT * FROM shop.orders"));
+        assert_eq!(title_segments(&state), expected);
         assert!(
-            title_segments(&state)
+            expected
                 .iter()
-                .all(|segment| segment.token.is_none())
+                .any(|segment| segment.token == Some(Token::Keyword))
         );
         assert_eq!(
             contents_title(&state),
