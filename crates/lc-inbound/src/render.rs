@@ -52,6 +52,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let connection_rows = crate::connections::visible_rows(frame.area());
     let export_fits = crate::export::fits(frame.area());
     let drop_fits = crate::drop::fits(frame.area());
+    let inspector_rows = crate::inspect::visible_rows(frame.area());
     let rects = match layout(frame.area(), queries_height(view)) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
@@ -158,7 +159,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         hint_bar,
     );
 
-    render_overlay(frame, view, hint_bar, theme);
+    let inspector_lines = render_overlay(frame, view, hint_bar, theme);
 
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
@@ -168,15 +169,17 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_drop_fits(drop_fits)
             .with_grid_width(grid_width)
             .with_theme_rows(theme_rows)
-            .with_connection_rows(connection_rows),
+            .with_connection_rows(connection_rows)
+            .with_inspector(inspector_rows, inspector_lines),
         map: FrameMap::new(hits),
     }
 }
 
 /// The one overlay this frame is showing, if any — the modal over the
 /// panels, and, for the two that carry a live search, the prompt on the hint
-/// bar row after it (overlay search design §7).
-fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) {
+/// bar row after it (overlay search design §7). Answers with the lines the
+/// inspector wrapped to, and zero for every other overlay.
+fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) -> usize {
     match &view.overlay {
         Some(OverlayView::Message(message) | OverlayView::Fatal(message)) => {
             crate::overlay::render(frame, message, theme);
@@ -249,8 +252,11 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
             crate::filter::render(frame, column, query, theme);
         }
         Some(OverlayView::Drop(view)) => crate::drop::render(frame, view, theme),
+        Some(OverlayView::Inspect(view)) => return crate::inspect::render(frame, view, theme),
         None => {}
     }
+
+    0
 }
 
 /// `rect` split at `taken` columns from its left edge, clamped to what `rect`
@@ -316,7 +322,10 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             // A modal that owns the frame. Unlike the export form, which is
             // asking about the grid beneath it, a drop is asking about one
             // row its own title already names (drop design §2).
-            | OverlayView::Drop(_),
+            | OverlayView::Drop(_)
+            // The value it shows is copied out of the grid, and the title
+            // names where from (cell inspector design §3).
+            | OverlayView::Inspect(_),
         ) => true,
         // The filter modal is not one either, for the export form's reason:
         // it narrows the grid beneath it, and a modal that dimmed its own

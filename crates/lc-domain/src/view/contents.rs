@@ -4,14 +4,17 @@
 //! its title is what says which table is on screen (vision.md §4, principle
 //! 8).
 
+use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
+
 use crate::cell;
 use crate::contents::{ContentsState, GridPage, Order, SelectionMode, Subject, TableRef};
+use crate::inspect::{Inspected, Inspector};
 use crate::model::{CqlValue, Schema};
 use crate::search::Search;
 use crate::state::{Panel, Ranges, State};
 use crate::style::{Segment, Severity, Token};
 
-use super::{PanelBody, waiting};
+use super::{InspectBody, InspectField, InspectValue, InspectView, PanelBody, waiting};
 
 /// One column heading.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -266,6 +269,79 @@ fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str)
         // the schema does not support.
         None
     }
+}
+
+/// The inspector's projection. Tokens are the grid's own, so a key column
+/// reads as one in both (cell inspector design §3).
+pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
+    let table = grid_table(state, inspector.subject());
+    let column = |name: &str| column_token(state.schema(), table.as_ref(), name);
+    let value = |name: &str, value: &CqlValue| InspectValue {
+        lines: crate::inspect::lines(value),
+        token: match value {
+            CqlValue::Null => Some(Token::Faint),
+            _ => key_token(column(name)),
+        },
+    };
+
+    let body = match inspector.inspected() {
+        Inspected::Cell {
+            column: name,
+            value: inspected,
+        } => InspectBody::Cell(value(name, inspected)),
+        Inspected::Row {
+            columns, values, ..
+        } => {
+            let cap = usize::from(state.config.grid.max_column_width.get());
+            let names = columns
+                .iter()
+                .map(|name| name.width())
+                .max()
+                .unwrap_or(0)
+                .min(cap);
+
+            InspectBody::Row {
+                names: u16::try_from(names).unwrap_or(u16::MAX),
+                fields: columns
+                    .iter()
+                    .zip(values)
+                    .map(|(name, inspected)| InspectField {
+                        name: fitted(name, names),
+                        token: column(name),
+                        value: value(name, inspected),
+                    })
+                    .collect(),
+            }
+        }
+    };
+
+    InspectView {
+        title: inspector.title(),
+        size: inspector.size(),
+        body,
+        offset: inspector.offset(),
+    }
+}
+
+/// `name` cut to `width` cells with an ellipsis, the way the grid cuts a
+/// heading.
+fn fitted(name: &str, width: usize) -> String {
+    if name.width() <= width {
+        return name.to_owned();
+    }
+
+    let mut out = String::new();
+    let mut used = 0;
+    for character in name.chars() {
+        used += character.width().unwrap_or(0);
+        if used >= width {
+            break;
+        }
+        out.push(character);
+    }
+    out.push('…');
+
+    out
 }
 
 /// The table a grid's rows came from: the one the tree asked for, or the one
@@ -1055,6 +1131,75 @@ mod tests {
             rows_ranges,
             Ranges::default(),
             "column mode has no row axis, so a held rows range must not be projected"
+        );
+    }
+
+    #[test]
+    fn a_row_projects_one_field_per_column_under_a_capped_name_column() {
+        let long = "a_column_name_longer_than_the_thirty_cell_cap";
+        let state = showing(page_of(
+            &["id", long],
+            &[&[CqlValue::Int(7), CqlValue::Null]],
+        ));
+        let inspector = Inspector::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Inspected::Row {
+                number: 1,
+                columns: vec!["id".to_owned(), long.to_owned()],
+                values: vec![CqlValue::Int(7), CqlValue::Null],
+            },
+        );
+
+        let view = inspect(&state, &inspector);
+
+        assert_eq!(crate::style::text(&view.title), "shop.orders · row 1");
+        assert_eq!(view.size, None);
+        assert_eq!(
+            view.body,
+            InspectBody::Row {
+                names: 30,
+                fields: vec![
+                    InspectField {
+                        name: "id".to_owned(),
+                        token: Some(Token::PartitionKey),
+                        value: InspectValue {
+                            lines: vec!["7".to_owned()],
+                            token: Some(Token::PartitionKeyValue),
+                        },
+                    },
+                    InspectField {
+                        name: "a_column_name_longer_than_the…".to_owned(),
+                        token: None,
+                        value: InspectValue {
+                            lines: vec!["null".to_owned()],
+                            token: Some(Token::Faint),
+                        },
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn a_cell_projects_its_value_laid_out_and_its_size() {
+        let state = showing(page_of(&["note"], &[&[CqlValue::Text("[1,2]".to_owned())]]));
+        let inspector = Inspector::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Inspected::Cell {
+                column: "note".to_owned(),
+                value: CqlValue::Text("[1,2]".to_owned()),
+            },
+        );
+
+        let view = inspect(&state, &inspector);
+
+        assert_eq!(view.size.as_deref(), Some("5 B"));
+        assert_eq!(
+            view.body,
+            InspectBody::Cell(InspectValue {
+                lines: ["[", "  1,", "  2", "]"].map(str::to_owned).to_vec(),
+                token: None,
+            })
         );
     }
 }

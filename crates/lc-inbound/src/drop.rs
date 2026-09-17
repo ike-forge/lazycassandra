@@ -101,7 +101,7 @@ fn statement(view: &DropView) -> Vec<String> {
 /// own style; the names carry the schema colours the domain gave them. Bold
 /// is dropped for `export::title`'s reason: the border is bold already, and a
 /// schema name is not emphasis.
-fn title(segments: &[Segment], theme: Theme) -> TextLine<'static> {
+pub(crate) fn title(segments: &[Segment], theme: Theme) -> TextLine<'static> {
     TextLine::from(
         segments
             .iter()

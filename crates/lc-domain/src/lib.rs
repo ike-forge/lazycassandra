@@ -14,6 +14,7 @@ pub mod drop;
 pub mod editor;
 pub mod export;
 pub mod grid;
+pub mod inspect;
 pub mod line;
 pub mod literal;
 pub mod log;

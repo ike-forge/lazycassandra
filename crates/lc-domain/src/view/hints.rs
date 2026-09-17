@@ -135,6 +135,25 @@ const DIAGNOSTICS_GLOBAL: &[Binding] = &[Binding {
     action: "close",
 }];
 
+/// What the bar names while the inspector is up. `j/k` is named for the
+/// reason the theme picker names it: nothing else on screen says the block
+/// scrolls (cell inspector design §6).
+pub(crate) const INSPECT: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('j')), Stroke::key(Key::Char('k'))],
+        action: "scroll",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('y'))],
+        action: "copy",
+    },
+];
+
+const INSPECT_GLOBAL: &[Binding] = &[Binding {
+    keys: &[Stroke::key(Key::Escape)],
+    action: "close",
+}];
+
 /// What the bar names in place of the focused panel's group while the picker
 /// is open. Moving is the whole panel group, and it is named "preview"
 /// because that is what the press does — the cursor writes `State.theme` on
@@ -413,6 +432,10 @@ pub(crate) fn bar(state: &State) -> HintBar {
         };
     }
 
+    if let Some(Overlay::Inspect(inspector)) = &state.overlay {
+        return inspect_bar(inspector, export);
+    }
+
     if matches!(state.overlay, Some(Overlay::Search(_) | Overlay::Filter(_))) {
         return HintBar {
             panel: Vec::new(),
@@ -455,6 +478,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         .iter()
         .filter(|binding| !completing || !binding.keys.contains(&Stroke::key(Key::Enter)))
         .filter(|binding| !refused(state, binding))
+        .filter(|binding| binding.action != "inspect" || crate::update::inspection(state).is_some())
         .map(|binding| Hint {
             liveness: liveness(state, binding),
             ..rendered(binding)
@@ -512,6 +536,28 @@ fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar
                 ..rendered(binding)
             })
             .collect(),
+        export,
+    }
+}
+
+/// The inspector's own bar. `y` is greyed over a null, which it copies
+/// nothing from.
+fn inspect_bar(inspector: &crate::inspect::Inspector, export: Option<String>) -> HintBar {
+    let copies = inspector.yank().is_some();
+
+    HintBar {
+        panel: INSPECT
+            .iter()
+            .map(|binding| Hint {
+                liveness: if copies || binding.action != "copy" {
+                    Liveness::Live
+                } else {
+                    Liveness::Inert
+                },
+                ..rendered(binding)
+            })
+            .collect(),
+        global: INSPECT_GLOBAL.iter().map(rendered).collect(),
         export,
     }
 }

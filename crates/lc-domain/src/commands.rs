@@ -275,6 +275,11 @@ const DROP: &[Command] = &[
 
 const CONTENTS: &[Command] = &[
     Command::new(
+        &[Stroke::key(Key::Enter)],
+        "inspect",
+        Run::In(Panel::Contents),
+    ),
+    Command::new(
         &[Stroke::key(Key::Char('m'))],
         "cycle selection mode",
         Run::In(Panel::Contents),

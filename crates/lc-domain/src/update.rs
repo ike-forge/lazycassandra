@@ -13,6 +13,7 @@ use crate::ddl::DdlTab;
 use crate::drop::{DropPrompt, Target};
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
+use crate::inspect::{Inspected, Inspector};
 use crate::line::Line;
 use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
 use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
@@ -603,10 +604,7 @@ fn yank(state: &mut State) -> Vec<Effect> {
         Panel::Queries => log_entries(state),
     };
 
-    // A payload of nothing but delimiters says nothing, and `Effect::Yank`
-    // becomes an OSC 52 sequence: an empty one asks the terminal to clear the
-    // clipboard (design §5).
-    let Some(line) = line.filter(|line| line.chars().any(|c| c != ',' && c != '\n')) else {
+    let Some(line) = line.filter(|line| says_something(line)) else {
         // A `y` that said nothing has nothing to show and nothing to reset:
         // spending the selection here would punish the user for pressing `y`
         // on a null (visual mode design §5.1).
@@ -617,6 +615,13 @@ fn yank(state: &mut State) -> Vec<Effect> {
     collapse_selection(state);
 
     vec![Effect::Yank(line)]
+}
+
+/// A payload of nothing but delimiters says nothing, and `Effect::Yank`
+/// becomes an OSC 52 sequence: an empty one asks the terminal to clear the
+/// clipboard (design §5).
+fn says_something(line: &str) -> bool {
+    line.chars().any(|c| c != ',' && c != '\n')
 }
 
 /// What `y` just took, ready to be lit once the selection that named it is
@@ -845,6 +850,12 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return diagnostics_key(state, press.key);
     }
 
+    // Motion, `y`, and the two ways out; `q` still quits (cell inspector
+    // design §4).
+    if matches!(state.overlay, Some(Overlay::Inspect(_))) {
+        return inspect_key(state, press.key);
+    }
+
     // The theme picker takes motion until a search is up, and text while one
     // is, the same as the palette
     // (docs/superpowers/specs/2026-08-16-overlay-search-design.md §5).
@@ -907,6 +918,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::PageUp => scroll(state, Motion::PageUp),
         Key::Home => scroll(state, Motion::Start),
         Key::End => scroll(state, Motion::End),
+        Key::Enter if state.focus() == Panel::Contents => open_inspector(state),
         Key::Enter => return activate(state),
         Key::Char('l') | Key::Right => return go_right(state),
         Key::Char('h') | Key::Left => go_left(state),
@@ -972,7 +984,7 @@ fn takes_text(state: &State) -> bool {
         // it before this is consulted — but written down anyway, rather than
         // grouped with `Message`/`None`, because neither it nor `Diagnostics`
         // has text of its own to type into.
-        Some(Overlay::Diagnostics(_) | Overlay::Fatal(_)) => false,
+        Some(Overlay::Diagnostics(_) | Overlay::Inspect(_) | Overlay::Fatal(_)) => false,
         Some(Overlay::Message(_)) | None => state.takes_text(),
     }
 }
@@ -986,11 +998,16 @@ fn takes_text(state: &State) -> bool {
 fn goto(state: &mut State, edge: Edge) {
     let last = BuiltIn::ALL.len() + state.config.themes.len();
     let connections = state.config.connections.len();
+    let (lines, height) = inspector_extent(state);
 
     match &mut state.overlay {
         Some(Overlay::Commands(panel)) => match edge {
             Edge::Start => panel.to_start(),
             Edge::End => panel.to_end(),
+        },
+        Some(Overlay::Inspect(inspector)) => match edge {
+            Edge::Start => inspector.to_start(),
+            Edge::End => inspector.to_end(lines, height),
         },
         Some(Overlay::Diagnostics(panel)) => match edge {
             Edge::Start => panel.to_start(),
@@ -1040,8 +1057,21 @@ fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect> {
     // open prompt restores `previous` instead of dropping it; with any other
     // overlay up, `escape` only dismisses it, so nothing else changes.
     if state.overlay.is_some() {
-        if matches!(pointer, Pointer::Click(_)) {
-            escape(state);
+        match pointer {
+            Pointer::Click(_) => escape(state),
+            // The one modal the wheel reaches: it is a document, and wheeling
+            // a document is reading it (cell inspector design §4).
+            Pointer::Wheel { direction, .. } => {
+                if matches!(state.overlay, Some(Overlay::Inspect(_))) {
+                    let key = match direction {
+                        Wheel::Down => Key::Down,
+                        Wheel::Up => Key::Up,
+                    };
+                    for _ in 0..WHEEL_ROWS {
+                        inspect_key(state, key);
+                    }
+                }
+            }
         }
         return Vec::new();
     }
@@ -1768,6 +1798,7 @@ fn escape(state: &mut State) {
             Overlay::Message(_)
             | Overlay::Commands(_)
             | Overlay::Diagnostics(_)
+            | Overlay::Inspect(_)
             | Overlay::Export(_)
             | Overlay::Filter(_)
             | Overlay::Drop(_),
@@ -1947,6 +1978,95 @@ fn diagnostics_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::PageUp => panel.page_up(height),
         Key::Home => panel.to_start(),
         Key::End => panel.to_end(),
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+/// The inspector's wrapped line count and body height, as the last frame
+/// measured them.
+const fn inspector_extent(state: &State) -> (usize, usize) {
+    (
+        state.geometry.inspector_lines(),
+        state.geometry.inspector_rows(),
+    )
+}
+
+/// What `Enter` over the grid would inspect: the row under the cursor in row
+/// mode, the cell under it otherwise, as the grid draws them.
+///
+/// `None` with nothing loaded, on an empty grid, while a range is held —
+/// `Enter` names one thing, and a selection is several — and on a frame with
+/// no room for the block (cell inspector design §2, §5). Read by the hint bar
+/// too, so `⏎ inspect` is named exactly where it opens.
+pub(crate) fn inspection(state: &State) -> Option<Inspector> {
+    if state.focus() != Panel::Contents
+        || state.geometry.inspector_rows() == 0
+        || state.contents.rows.is_active()
+        || state.contents.columns.is_active()
+    {
+        return None;
+    }
+
+    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+        return None;
+    };
+    let index = state.contents.cursor.index();
+    let row = page.row(index)?;
+    let columns = &page.page().columns;
+
+    let inspected = match state.contents.mode {
+        SelectionMode::Row => Inspected::Row {
+            number: index + 1,
+            columns: columns.clone(),
+            values: row.values.clone(),
+        },
+        SelectionMode::Cell | SelectionMode::Column => {
+            let at = state.contents.column.index();
+
+            Inspected::Cell {
+                column: columns.get(at)?.clone(),
+                value: row.values.get(at)?.clone(),
+            }
+        }
+    };
+
+    Some(Inspector::opened(subject.clone(), inspected))
+}
+
+fn open_inspector(state: &mut State) {
+    if let Some(inspector) = inspection(state) {
+        state.overlay = Some(Overlay::Inspect(inspector));
+    }
+}
+
+/// Every key the inspector claims (cell inspector design §4). Anything else
+/// is inert, so no key means "close" in one frame and something else in the
+/// next.
+fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
+    let (lines, height) = inspector_extent(state);
+    let Some(Overlay::Inspect(inspector)) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char('j') | Key::Down => inspector.down(lines, height),
+        Key::Char('k') | Key::Up => inspector.up(),
+        Key::PageDown => inspector.page_down(lines, height),
+        Key::PageUp => inspector.page_up(height),
+        Key::Home => inspector.to_start(),
+        Key::End => inspector.to_end(lines, height),
+        Key::Char('y') => {
+            return inspector
+                .yank()
+                .filter(|line| says_something(line))
+                .map(Effect::Yank)
+                .into_iter()
+                .collect();
+        }
+        Key::Enter | Key::Escape => escape(state),
+        Key::Char('q') => return quit(state),
         _ => {}
     }
 
@@ -2464,6 +2584,7 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
                 | Overlay::Themes { .. }
                 | Overlay::Connections { .. }
                 | Overlay::Diagnostics(_)
+                | Overlay::Inspect(_)
                 | Overlay::Export(_)
                 | Overlay::Filter(_)
                 | Overlay::Drop(_)
@@ -3186,6 +3307,7 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Connections { .. }) => connections_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
+        Some(Overlay::Inspect(_)) => inspect_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does;
         // the form and the filter modal have nothing paged either, and the
         // confirmation drives no list. `Fatal` is unreachable here for
@@ -3470,6 +3592,22 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     {
         state.overlay = None;
         state.mark_dirty();
+    }
+
+    // The inspector answers for its own shrink, and a narrower frame can
+    // rewrap its value shorter than the offset it was left at.
+    if matches!(state.overlay, Some(Overlay::Inspect(_))) && geometry.inspector_rows() == 0 {
+        state.overlay = None;
+        state.mark_dirty();
+    }
+    let (lines, height) = inspector_extent(state);
+    if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
+        let before = inspector.offset();
+        inspector.clamp_to(lines, height);
+
+        if inspector.offset() != before {
+            state.dirty = true;
+        }
     }
 
     // The picker closes on its own gate, not the palette's, since config
@@ -5165,6 +5303,7 @@ mod tests {
             | Overlay::Export(_)
             | Overlay::Filter(_)
             | Overlay::Drop(_)
+            | Overlay::Inspect(_)
             | Overlay::Fatal(_) => None,
         }
     }
@@ -11633,6 +11772,372 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Inspecting (docs/superpowers/specs/2026-09-17-cell-inspector-design.md)
+    // ------------------------------------------------------------------
+
+    /// `grid_of_named_cells`, measured into a frame whose inspector shows ten
+    /// rows of a value forty lines long.
+    fn inspectable(columns: usize, rows: usize) -> State {
+        let mut state = grid_of_named_cells(columns, rows);
+        update(
+            &mut state,
+            Msg::Measured(
+                Geometry::new([8, 8, 8, 1], 0, 0)
+                    .with_grid_width(80)
+                    .with_inspector(10, 40),
+            ),
+        );
+        state
+    }
+
+    fn inspecting(state: &State) -> Option<&Inspector> {
+        match &state.overlay {
+            Some(Overlay::Inspect(inspector)) => Some(inspector),
+            _ => None,
+        }
+    }
+
+    fn opened(mode: SelectionMode) -> State {
+        let mut state = inspectable(3, 4);
+        state.contents.mode = mode;
+        state.contents.cursor.go_to(2, 4);
+        state.contents.column.go_to(1, 3);
+        press(&mut state, Key::Enter);
+        state
+    }
+
+    #[test]
+    fn enter_in_row_mode_inspects_the_whole_row() {
+        let state = opened(SelectionMode::Row);
+
+        assert_eq!(
+            inspecting(&state).map(Inspector::inspected),
+            Some(&Inspected::Row {
+                number: 3,
+                columns: vec!["c0".to_owned(), "c1".to_owned(), "c2".to_owned()],
+                values: ["r2c0", "r2c1", "r2c2"]
+                    .map(|text| CqlValue::Text(text.to_owned()))
+                    .to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn enter_in_cell_and_column_mode_inspects_the_cell_under_the_cursor() {
+        for mode in [SelectionMode::Cell, SelectionMode::Column] {
+            let state = opened(mode);
+
+            assert_eq!(
+                inspecting(&state).map(Inspector::inspected),
+                Some(&Inspected::Cell {
+                    column: "c1".to_owned(),
+                    value: CqlValue::Text("r2c1".to_owned()),
+                }),
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn enter_inspects_the_row_as_the_grid_draws_it() {
+        let mut state = inspectable(2, 3);
+        state.contents.cycle_sort(0);
+
+        press(&mut state, Key::Enter);
+
+        let Some(Inspected::Row { number, values, .. }) =
+            inspecting(&state).map(Inspector::inspected)
+        else {
+            panic!("the row is up");
+        };
+        assert_eq!(*number, 1, "the gutter's number, not the cluster's order");
+        assert_eq!(values[0], CqlValue::Text("r2c0".to_owned()));
+    }
+
+    #[test]
+    fn enter_is_inert_with_nothing_loaded() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        state.focus_on(Panel::Contents);
+        state.geometry = state.geometry.with_inspector(10, 0);
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(state.overlay, None);
+    }
+
+    #[test]
+    fn enter_is_inert_on_an_empty_grid() {
+        let mut state = inspectable(2, 0);
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(state.overlay, None);
+    }
+
+    #[test]
+    fn enter_is_inert_while_a_range_is_held() {
+        for mode in [
+            SelectionMode::Row,
+            SelectionMode::Cell,
+            SelectionMode::Column,
+        ] {
+            let mut state = inspectable(3, 4);
+            state.contents.mode = mode;
+            press(&mut state, Key::Char('v'));
+
+            press(&mut state, Key::Enter);
+            assert_eq!(state.overlay, None, "extending, {mode:?}");
+
+            press(&mut state, Key::Char('v'));
+            press(&mut state, Key::Enter);
+            assert_eq!(state.overlay, None, "frozen, {mode:?}");
+        }
+    }
+
+    #[test]
+    fn enter_is_inert_on_a_frame_with_no_room_for_the_block() {
+        let mut state = grid_of_named_cells(3, 4);
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(state.overlay, None);
+    }
+
+    #[test]
+    fn j_k_and_the_arrows_scroll_a_line() {
+        let mut state = opened(SelectionMode::Cell);
+
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::Down);
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(2));
+
+        press(&mut state, Key::Char('k'));
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(1));
+        press(&mut state, Key::Up);
+        press(&mut state, Key::Up);
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(0));
+    }
+
+    #[test]
+    fn the_paging_keys_scroll_a_body_height() {
+        let mut state = opened(SelectionMode::Cell);
+
+        press(&mut state, Key::PageDown);
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(10));
+        press_binding(&mut state, KeyPress::ctrl(Key::Char('d')));
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(20));
+        press_binding(&mut state, KeyPress::ctrl(Key::Char('u')));
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(10));
+        press(&mut state, Key::PageUp);
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(0));
+    }
+
+    #[test]
+    fn g_home_g_and_end_reach_the_top_and_the_bottom() {
+        for (bottom, top) in [(Key::Char('G'), Key::Char('g')), (Key::End, Key::Home)] {
+            let mut state = opened(SelectionMode::Cell);
+
+            press(&mut state, bottom);
+            assert_eq!(
+                inspecting(&state).map(Inspector::offset),
+                Some(30),
+                "the last line at the bottom of the body"
+            );
+
+            press(&mut state, top);
+            assert_eq!(inspecting(&state).map(Inspector::offset), Some(0));
+        }
+    }
+
+    #[test]
+    fn scrolling_stops_at_the_last_line() {
+        let mut state = opened(SelectionMode::Cell);
+
+        for _ in 0..50 {
+            press(&mut state, Key::Char('j'));
+        }
+
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(30));
+    }
+
+    #[test]
+    fn enter_and_escape_close_it() {
+        for key in [Key::Enter, Key::Escape] {
+            let mut state = opened(SelectionMode::Cell);
+
+            let effects = press(&mut state, key);
+
+            assert_eq!(state.overlay, None, "{key:?}");
+            assert!(effects.is_empty());
+        }
+    }
+
+    #[test]
+    fn q_quits_from_the_inspector() {
+        let mut state = opened(SelectionMode::Cell);
+
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(effects.contains(&Effect::Quit));
+    }
+
+    #[test]
+    fn every_other_key_is_inert() {
+        for key in [
+            Key::Char('m'),
+            Key::Char('v'),
+            Key::Char('/'),
+            Key::Char('d'),
+            Key::Char('l'),
+            Key::Char('?'),
+            Key::Char('1'),
+            Key::Tab,
+        ] {
+            let mut state = opened(SelectionMode::Cell);
+            let before = state.clone();
+
+            let effects = press(&mut state, key);
+
+            assert!(effects.is_empty(), "{key:?}");
+            assert_eq!(state.overlay, before.overlay, "{key:?}");
+            assert_eq!(state.focus(), Panel::Contents, "{key:?}");
+            assert_eq!(state.contents, before.contents, "{key:?}");
+        }
+
+        let mut state = opened(SelectionMode::Cell);
+        for chord in ['t', 'o', 'e'] {
+            press_binding(&mut state, KeyPress::ctrl(Key::Char(chord)));
+            assert!(inspecting(&state).is_some(), "ctrl-{chord}");
+        }
+    }
+
+    #[test]
+    fn y_yanks_the_bare_value_and_leaves_the_inspector_open() {
+        for mode in [SelectionMode::Cell, SelectionMode::Column] {
+            let mut state = opened(mode);
+
+            let effects = press(&mut state, Key::Char('y'));
+
+            assert_eq!(effects, vec![Effect::Yank("r2c1".to_owned())], "{mode:?}");
+            assert!(inspecting(&state).is_some());
+        }
+    }
+
+    #[test]
+    fn y_yanks_the_row_as_one_csv_line() {
+        let mut state = opened(SelectionMode::Row);
+
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert_eq!(effects, vec![Effect::Yank("r2c0,r2c1,r2c2".to_owned())]);
+        assert!(inspecting(&state).is_some());
+    }
+
+    #[test]
+    fn y_over_a_null_yanks_nothing() {
+        let mut state = populated(Panel::Contents);
+        state.contents.mode = SelectionMode::Cell;
+        state.geometry = state.geometry.with_inspector(10, 1);
+        press(&mut state, Key::Enter);
+        assert!(inspecting(&state).is_some());
+
+        assert!(press(&mut state, Key::Char('y')).is_empty());
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_inspector_and_a_click_closes_it() {
+        let mut state = opened(SelectionMode::Cell);
+
+        update(
+            &mut state,
+            Msg::Pointer(Pointer::Wheel {
+                panel: Panel::Tables,
+                direction: Wheel::Down,
+            }),
+        );
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(WHEEL_ROWS));
+
+        update(
+            &mut state,
+            Msg::Pointer(Pointer::Click(Click::Panel(Panel::Tables))),
+        );
+        assert_eq!(state.overlay, None);
+        assert_eq!(state.focus(), Panel::Contents, "the click spent itself");
+    }
+
+    #[test]
+    fn a_frame_too_small_for_the_block_closes_it() {
+        let mut state = opened(SelectionMode::Cell);
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
+        );
+
+        assert_eq!(state.overlay, None);
+    }
+
+    #[test]
+    fn a_value_that_rewraps_shorter_pulls_the_offset_back() {
+        let mut state = opened(SelectionMode::Cell);
+        press(&mut state, Key::End);
+
+        update(
+            &mut state,
+            Msg::Measured(
+                Geometry::new([8, 8, 8, 1], 0, 0)
+                    .with_grid_width(80)
+                    .with_inspector(10, 15),
+            ),
+        );
+
+        assert_eq!(inspecting(&state).map(Inspector::offset), Some(5));
+        assert!(state.dirty);
+    }
+
+    #[test]
+    fn the_bar_names_scroll_copy_and_close_over_the_inspector() {
+        let state = opened(SelectionMode::Cell);
+
+        let bar = crate::view::hints::bar(&state);
+
+        assert_eq!(
+            bar.panel
+                .iter()
+                .chain(&bar.global)
+                .map(|hint| format!("{} {}", hint.keys, hint.action))
+                .collect::<Vec<_>>(),
+            ["j/k scroll", "y copy", "esc close"]
+        );
+    }
+
+    #[test]
+    fn the_contents_bar_names_inspect_only_where_enter_opens_it() {
+        let named = |state: &State| {
+            crate::view::hints::bar(state)
+                .panel
+                .iter()
+                .any(|hint| hint.action == "inspect")
+        };
+
+        for mode in [
+            SelectionMode::Row,
+            SelectionMode::Cell,
+            SelectionMode::Column,
+        ] {
+            let mut state = inspectable(3, 4);
+            state.contents.mode = mode;
+            assert!(named(&state), "{mode:?}");
+
+            press(&mut state, Key::Char('v'));
+            assert!(!named(&state), "a range is held, {mode:?}");
+        }
+
+        assert!(!named(&inspectable(3, 0)), "an empty grid");
+        assert!(!named(&grid_of_named_cells(3, 4)), "no room for the block");
     }
 
     // ------------------------------------------------------------------

@@ -19,6 +19,7 @@ mod hints;
 pub mod hit;
 mod icons;
 pub mod input;
+mod inspect;
 pub mod layout;
 mod loader;
 mod logs;
