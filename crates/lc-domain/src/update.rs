@@ -2041,9 +2041,10 @@ const fn inspector_extent(state: &State) -> (usize, usize) {
 }
 
 /// What `Enter` over the grid would inspect: the row under the cursor in row
-/// mode, the cell under it otherwise, as the grid draws them.
+/// mode, the cell under it in cell mode, as the grid draws them.
 ///
-/// `None` with nothing loaded, on an empty grid, while a range is held —
+/// `None` in column mode, whose cursor names a column rather than one value;
+/// with nothing loaded, on an empty grid, while a range is held —
 /// `Enter` names one thing, and a selection is several — and on a frame with
 /// no room for the block (cell inspector design §2, §5). Read by the hint bar
 /// too, so `⏎ inspect` is named exactly where it opens.
@@ -2069,7 +2070,8 @@ pub(crate) fn inspection(state: &State) -> Option<Inspector> {
             columns: columns.clone(),
             values: row.values.clone(),
         },
-        SelectionMode::Cell | SelectionMode::Column => {
+        SelectionMode::Column => return None,
+        SelectionMode::Cell => {
             let at = state.contents.column.index();
 
             Inspected::Cell {
@@ -12038,19 +12040,21 @@ mod tests {
     }
 
     #[test]
-    fn enter_in_cell_and_column_mode_inspects_the_cell_under_the_cursor() {
-        for mode in [SelectionMode::Cell, SelectionMode::Column] {
-            let state = opened(mode);
+    fn enter_in_cell_mode_inspects_the_cell_under_the_cursor() {
+        let state = opened(SelectionMode::Cell);
 
-            assert_eq!(
-                inspecting(&state).map(Inspector::inspected),
-                Some(&Inspected::Cell {
-                    column: "c1".to_owned(),
-                    value: CqlValue::Text("r2c1".to_owned()),
-                }),
-                "{mode:?}"
-            );
-        }
+        assert_eq!(
+            inspecting(&state).map(Inspector::inspected),
+            Some(&Inspected::Cell {
+                column: "c1".to_owned(),
+                value: CqlValue::Text("r2c1".to_owned()),
+            })
+        );
+    }
+
+    #[test]
+    fn enter_in_column_mode_is_inert() {
+        assert_eq!(opened(SelectionMode::Column).overlay, None);
     }
 
     #[test]
@@ -12228,14 +12232,12 @@ mod tests {
 
     #[test]
     fn y_yanks_the_bare_value_and_leaves_the_inspector_open() {
-        for mode in [SelectionMode::Cell, SelectionMode::Column] {
-            let mut state = opened(mode);
+        let mut state = opened(SelectionMode::Cell);
 
-            let effects = press(&mut state, Key::Char('y'));
+        let effects = press(&mut state, Key::Char('y'));
 
-            assert_eq!(effects, vec![Effect::Yank("r2c1".to_owned())], "{mode:?}");
-            assert!(inspecting(&state).is_some());
-        }
+        assert_eq!(effects, vec![Effect::Yank("r2c1".to_owned())]);
+        assert!(inspecting(&state).is_some());
     }
 
     #[test]
@@ -12335,11 +12337,11 @@ mod tests {
                 .any(|hint| hint.action == "inspect")
         };
 
-        for mode in [
-            SelectionMode::Row,
-            SelectionMode::Cell,
-            SelectionMode::Column,
-        ] {
+        let mut column = inspectable(3, 4);
+        column.contents.mode = SelectionMode::Column;
+        assert!(!named(&column), "column mode");
+
+        for mode in [SelectionMode::Row, SelectionMode::Cell] {
             let mut state = inspectable(3, 4);
             state.contents.mode = mode;
             assert!(named(&state), "{mode:?}");

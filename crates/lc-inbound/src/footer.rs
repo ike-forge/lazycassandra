@@ -12,8 +12,8 @@ use crate::theme::Theme;
 const SEPARATOR: &str = " · ";
 
 /// Draws `footer` from the left corner of `block`'s bottom border, short of
-/// `limit`, and answers with the first column it left free. The estimate is
-/// dropped first and the whole footer next where the border cannot hold them.
+/// `limit`, and answers with the first column it left free. Where the border
+/// cannot hold it all, the hint goes first, the estimate next, then the footer.
 pub(crate) fn render(
     frame: &mut Frame,
     block: Rect,
@@ -23,9 +23,13 @@ pub(crate) fn render(
 ) -> u16 {
     let start = block.x.saturating_add(1 + crate::loader::INSET);
     let room = usize::from(limit.saturating_sub(start));
-    let fitting = [line(footer, true, theme), line(footer, false, theme)]
-        .into_iter()
-        .find(|line| line.width() <= room);
+    let fitting = [
+        line(footer, true, true, theme),
+        line(footer, true, false, theme),
+        line(footer, false, false, theme),
+    ]
+    .into_iter()
+    .find(|line| line.width() <= room);
 
     let Some(line) = fitting else {
         return block.x.saturating_add(1);
@@ -44,7 +48,7 @@ pub(crate) fn render(
     start.saturating_add(width)
 }
 
-fn line(footer: &Footer, sized: bool, theme: Theme) -> Line<'static> {
+fn line(footer: &Footer, sized: bool, hinted: bool, theme: Theme) -> Line<'static> {
     let muted = theme.style(Token::Muted);
     let size = footer.size.as_ref().filter(|_| sized).map(|size| {
         Span::styled(
@@ -67,6 +71,9 @@ fn line(footer: &Footer, sized: bool, theme: Theme) -> Line<'static> {
             spans.push(Span::styled(SEPARATOR, muted));
         }
         spans.push(part);
+    }
+    if let Some(hint) = footer.hint.as_ref().filter(|_| hinted) {
+        spans.push(Span::styled(format!(" — {hint}"), muted));
     }
     spans.push(Span::styled(" ", muted));
 
