@@ -29,8 +29,8 @@ pub struct GridColumn {
     /// [`Token::RegularColumn`]. `None` when the schema no longer has the
     /// table, so no claim about its shape can be checked.
     pub token: Option<Token>,
-    /// Character columns it is drawn in, capped by
-    /// `grid.max_column_width`. Computed here rather than in the
+    /// Character columns it is drawn in: capped by `grid.max_column_width`,
+    /// then widened into room the panel has spare. Computed here rather than in the
     /// renderer so the fitting arithmetic can live beside the offsets it
     /// bounds (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
     pub width: u16,
@@ -242,11 +242,13 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         .map(|name| column_token(state.schema(), table.as_ref(), name))
         .collect();
 
+    let (widths, _) = grid_page.drawn(state.geometry.grid_width());
+
     PanelBody::Grid {
         columns: page
             .columns
             .iter()
-            .zip(grid_page.widths())
+            .zip(widths.iter())
             .zip(&tokens)
             .enumerate()
             .map(|(index, ((name, width), token))| GridColumn {

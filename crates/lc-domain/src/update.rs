@@ -33,6 +33,7 @@ use crate::state::{
 use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
 use crate::tree::Node;
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -4118,7 +4119,7 @@ fn beyond(state: &State, side: Side) -> Option<usize> {
     match side {
         Side::Left => first.checked_sub(1),
         Side::Right => {
-            let next = first + grid::fitting(widths, first, available);
+            let next = first + grid::fitting(&widths, first, available);
 
             (next < widths.len()).then_some(next)
         }
@@ -4128,15 +4129,12 @@ fn beyond(state: &State, side: Side) -> Option<usize> {
 /// The columns the grid is drawing over, and the width they have.
 ///
 /// `None` when there is no page: nothing to fit, and nothing to follow.
-fn grid_columns(state: &State) -> Option<(&[u16], u16)> {
+fn grid_columns(state: &State) -> Option<(Cow<'_, [u16]>, u16)> {
     let ContentsState::Loaded { page, .. } = state.contents.state() else {
         return None;
     };
 
-    let gutter = grid::gutter(page.len());
-    let width = u16::try_from(state.geometry.grid_width()).unwrap_or(u16::MAX);
-
-    Some((page.widths(), grid::available(width, gutter)))
+    Some(page.drawn(state.geometry.grid_width()))
 }
 
 /// Pulls the column viewport over the selected cell, and back inside a page
@@ -4153,15 +4151,15 @@ fn follow_grid_columns(state: &mut State) {
     };
 
     // Moved out and back so the widths can stay borrowed from the page they
-    // were measured with rather than be copied per tick.
+    // were measured with.
     let mut columns = state.contents.column_scroll;
     // Clamp first, follow second, mirroring `clamp_lists` before
     // `follow_moved_cursors` on the row axis: the clamp answers "is the
     // offset too far right for this page and this width", which can leave the
     // cursor off screen, and the follow is what puts it back. The other order
     // would let the clamp undo the follow and hide the selected cell.
-    columns.clamp_to(widths, available);
-    columns.follow(column, widths, available);
+    columns.clamp_to(&widths, available);
+    columns.follow(column, &widths, available);
 
     state.contents.column_scroll = columns;
 }
@@ -8988,7 +8986,7 @@ mod tests {
 
         let (widths, available) = grid_columns(&state).expect("a page is loaded");
         assert!(
-            grid::fitting(widths, 0, available) < widths.len(),
+            grid::fitting(&widths, 0, available) < widths.len(),
             "the viewport must hide at least one column for this test to prove anything"
         );
 
@@ -8996,6 +8994,57 @@ mod tests {
         assert_eq!(
             press(&mut state, Key::Char('y')),
             vec![Effect::Yank("v0,v1,v2,v3".to_owned())]
+        );
+    }
+
+    #[test]
+    fn the_column_follow_draws_by_the_widths_the_grid_is_drawn_at() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+        let query = QueryId::next();
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["id".to_owned(), "body".to_owned()],
+                rows: vec![Row {
+                    values: vec![CqlValue::Int(1), CqlValue::Text("x".repeat(500))],
+                }],
+                next: None,
+            },
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
+        state.focus_on(Panel::Contents);
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 8, 1], 0, 0).with_grid_width(80)),
+        );
+
+        let (widths, available) = grid_columns(&state).expect("a page is loaded");
+        assert_eq!(widths.as_ref(), [6, available - 6 - grid::COLUMN_SPACING]);
+
+        let crate::view::PanelBody::Grid { columns, .. } = crate::view::view_model(&state)
+            .panels
+            .into_iter()
+            .find(|panel| panel.panel == Panel::Contents)
+            .expect("a contents panel")
+            .body
+        else {
+            panic!("a grid");
+        };
+        let drawn: Vec<u16> = columns.iter().map(|column| column.width).collect();
+        assert_eq!(drawn, widths.as_ref());
+
+        state.contents.mode = SelectionMode::Row;
+        press(&mut state, Key::Char('l'));
+        assert_eq!(
+            state.contents.column_scroll.first(),
+            0,
+            "a widened grid still fits, so there is nothing to scroll to"
         );
     }
 

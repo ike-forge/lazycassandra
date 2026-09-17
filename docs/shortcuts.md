@@ -746,8 +746,9 @@ panel underneath sees one, `q` included.
 ### The cell inspector
 
 `Enter` over Table contents opens `Overlay::Inspect`. The grid caps a column
-at `grid.max_column_width` (30 by default) and ellipsises the rest; this is
-where a value is read whole. Row mode shows every column of the row under the
+at `grid.max_column_width` (30 by default) and ellipsises the rest, widening
+truncated columns into whatever room a grid that fits leaves; this is where a
+value is read whole. Row mode shows every column of the row under the
 cursor, one field to a column; cell and column mode show the cell under it.
 It reads the grid as drawn, sorted and filtered. JSON text is re-indented
 without a token changing, and a collection is laid out one element to a line.
@@ -1303,6 +1304,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A read returns the cell cursor to the first cell | `a_request_returns_the_cell_cursor_to_the_first_cell`, `a_refusal_returns_the_cell_cursor_to_the_first_cell`, `a_fresh_panel_has_no_columns_to_move_over`, `a_loaded_page_reports_its_columns` (`contents.rs`) |
 | The column viewport follows the cell cursor | `the_column_viewport_follows_the_cell_cursor`, `a_narrower_frame_pulls_the_column_viewport_back_to_the_cursor`; `ColumnScroll` itself by `a_visible_column_moves_the_viewport_nowhere`, `the_viewport_moves_the_shortest_distance_that_shows_a_column_to_the_right`, `the_viewport_follows_a_column_to_the_left`, `a_column_too_wide_for_the_panel_is_shown_from_its_own_start`, `following_a_column_that_is_gone_clamps_the_viewport` (`grid.rs`) |
 | A column is as wide as the widest thing in it, capped | `a_column_is_as_wide_as_the_widest_thing_in_it`, `a_heading_wider_than_every_value_sets_the_width`, `a_column_is_capped`, `a_column_with_no_rows_is_still_as_wide_as_its_heading` (`grid.rs`) |
+| A grid that fits widens its truncated columns into the room left | `a_page_that_fits_gives_its_leftover_to_the_truncated_column`, `columns_the_cap_did_not_truncate_keep_their_widths`, `truncated_columns_share_the_leftover_equally`, `a_column_that_reaches_its_natural_width_passes_the_rest_on`, `columns_too_wide_for_the_panel_are_left_to_scroll` (`grid.rs`), `an_appended_value_past_the_cap_grows_the_width_the_panel_widens_to` (`contents.rs`), `the_column_follow_draws_by_the_widths_the_grid_is_drawn_at`, `a_truncated_column_widens_to_fill_the_panel` (`inbound/render.rs`) |
 | Only whole columns are drawn | `only_the_columns_that_fit_are_counted`, `fitting_counts_from_the_offset`, `a_panel_too_narrow_for_one_column_still_draws_it`, `fitting_past_the_last_column_is_nothing` (`grid.rs`) |
 | The grid names its cell, its first column and its widths | `a_grid_carries_the_width_of_every_column`, `a_grid_names_the_selected_cell_and_the_first_column_drawn`, `the_gutter_is_as_wide_as_the_last_row_number` (`view/contents.rs`, and the same name in `grid.rs` for the arithmetic under it) |
 | A read lands focus in Contents, by key or by click | `reading_a_table_lands_focus_in_contents`, `a_click_on_a_table_lands_focus_in_contents_too`, `focus_moves_before_the_page_arrives`, `a_refused_read_still_lands_focus_in_contents` |

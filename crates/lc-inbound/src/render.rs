@@ -3340,6 +3340,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_truncated_column_widens_to_fill_the_panel() {
+        let body = "Row after row of the same plain prose. ".repeat(40);
+        let mut state = showing(page_of(
+            &["id", "body"],
+            &[
+                &[CqlValue::Int(1), text(&body)],
+                &[CqlValue::Int(2), text(&body)],
+            ],
+        ));
+        state.geometry = geometry_of(80, 12, &state);
+        state.contents.mode = SelectionMode::Column;
+        state.contents.column.go_to(1, 2);
+
+        let buffer = draw_state(80, 12, &state);
+        let area = block_area(&buffer, "Table contents");
+        let drawn = block_row(&buffer, "Table contents", 2);
+        let last = area.right() - 2;
+        let bg = |y: u16| buffer.cell((last, y)).expect("inside the panel").bg;
+        let selected = Theme::default().style(Token::Selected).bg;
+
+        assert!(
+            drawn.ends_with('…'),
+            "the body runs to the border: {drawn:?}"
+        );
+        assert_eq!(
+            Some(bg(grid_row_y(area, 1))),
+            selected,
+            "column mode lights the column to its new edge"
+        );
+        assert_eq!(Some(bg(1)), selected, "and its heading");
+    }
+
     /// `shop.orders_by_customer` as the fixture declares it.
     fn orders() -> Table {
         Table {

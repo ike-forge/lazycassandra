@@ -910,7 +910,8 @@ fn heading_cell(column: &GridColumn, width: u16, style: Style, theme: Theme) -> 
 
     // The marks patch onto the heading's own style rather than replacing it,
     // so a column-mode wash still reads across the whole cell and only the
-    // foreground says whether the mark is in force.
+    // foreground says whether the mark is in force. The cell carries the style
+    // too, so the wash reaches past the marks in a column wider than them.
     Cell::from(Line::from(vec![
         TextSpan::styled(format!("{name} "), style),
         TextSpan::styled(
@@ -923,6 +924,7 @@ fn heading_cell(column: &GridColumn, width: u16, style: Style, theme: Theme) -> 
             style.patch(theme.style(mark_token(column.filtered))),
         ),
     ]))
+    .style(style)
 }
 
 /// Where each drawn column's two marks landed, for a press to be resolved

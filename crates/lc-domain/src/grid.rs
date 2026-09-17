@@ -8,6 +8,8 @@
 //! measurement crossing back
 //! (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
 
+use std::borrow::Cow;
+
 use unicode_width::UnicodeWidthStr as _;
 
 use crate::cell;
@@ -44,13 +46,9 @@ pub const BAR: u16 = 1;
 pub const MARKS: u16 = 4;
 
 /// Each column's natural width: the widest of its values and of its heading
-/// with the marks that heading always carries, capped at `cap` — past which a
-/// value is ellipsised and `Enter` is how it is read whole
-/// (docs/superpowers/specs/2026-09-17-cell-inspector-design.md §1).
+/// with the marks that heading always carries.
 #[must_use]
-pub fn widths(page: &Page, cap: MaxColumnWidth) -> Vec<u16> {
-    let cap = cap.get();
-
+pub fn natural_widths(page: &Page) -> Vec<u16> {
     page.columns
         .iter()
         .enumerate()
@@ -64,9 +62,71 @@ pub fn widths(page: &Page, cap: MaxColumnWidth) -> Vec<u16> {
                 .max()
                 .unwrap_or(1);
 
-            u16::try_from(widest).unwrap_or(cap).clamp(1, cap)
+            u16::try_from(widest).unwrap_or(u16::MAX).max(1)
         })
         .collect()
+}
+
+/// `natural` capped at `cap`, past which a value is ellipsised and `Enter` is
+/// how it is read whole
+/// (docs/superpowers/specs/2026-09-17-cell-inspector-design.md §1).
+#[must_use]
+pub fn capped(natural: &[u16], cap: MaxColumnWidth) -> Vec<u16> {
+    natural
+        .iter()
+        .map(|width| (*width).min(cap.get()))
+        .collect()
+}
+
+/// Each column's natural width, capped.
+#[must_use]
+pub fn widths(page: &Page, cap: MaxColumnWidth) -> Vec<u16> {
+    capped(&natural_widths(page), cap)
+}
+
+/// The capped `widths`, widened into whatever `available` has left over once
+/// every column fits: the room is shared equally among the columns the cap
+/// truncated, none past its `natural` width, and what a column cannot take
+/// goes to the rest. Columns that do not all fit are left as they are, to be
+/// scrolled (docs/superpowers/specs/2026-09-17-cell-inspector-design.md §1).
+#[must_use]
+pub fn spread<'a>(widths: &'a [u16], natural: &[u16], available: u16) -> Cow<'a, [u16]> {
+    let spacing = u16::try_from(widths.len().saturating_sub(1))
+        .unwrap_or(u16::MAX)
+        .saturating_mul(COLUMN_SPACING);
+    let used = widths
+        .iter()
+        .fold(spacing, |used, width| used.saturating_add(*width));
+    if used >= available {
+        return Cow::Borrowed(widths);
+    }
+    let mut leftover = available - used;
+
+    let mut truncated: Vec<usize> = (0..widths.len())
+        .filter(|at| {
+            natural
+                .get(*at)
+                .is_some_and(|natural| *natural > widths[*at])
+        })
+        .collect();
+    if truncated.is_empty() {
+        return Cow::Borrowed(widths);
+    }
+
+    let mut spread = widths.to_vec();
+    while leftover > 0 && !truncated.is_empty() {
+        let count = u16::try_from(truncated.len()).unwrap_or(u16::MAX);
+        let share = (leftover / count).max(1);
+
+        for at in &truncated {
+            let grown = share.min(natural[*at] - spread[*at]).min(leftover);
+            spread[*at] += grown;
+            leftover -= grown;
+        }
+        truncated.retain(|at| spread[*at] < natural[*at]);
+    }
+
+    Cow::Owned(spread)
 }
 
 /// The width left for value columns once the bar+gutter block and the one
@@ -233,6 +293,46 @@ mod tests {
         let page = page(&["id"], &[]);
 
         assert_eq!(widths(&page, MaxColumnWidth::default()), vec![2 + MARKS]);
+    }
+
+    #[test]
+    fn a_page_that_fits_gives_its_leftover_to_the_truncated_column() {
+        assert_eq!(spread(&[6, 30], &[6, 100], 60).as_ref(), [6, 52]);
+    }
+
+    #[test]
+    fn columns_the_cap_did_not_truncate_keep_their_widths() {
+        assert_eq!(spread(&[6, 12], &[6, 12], 60).as_ref(), [6, 12]);
+    }
+
+    #[test]
+    fn truncated_columns_share_the_leftover_equally() {
+        assert_eq!(
+            spread(&[30, 6, 30], &[100, 6, 100], 81).as_ref(),
+            [36, 6, 35],
+            "the odd column goes to the leftmost"
+        );
+    }
+
+    #[test]
+    fn a_column_that_reaches_its_natural_width_passes_the_rest_on() {
+        assert_eq!(
+            spread(&[30, 30, 30], &[33, 100, 100], 110).as_ref(),
+            [33, 37, 36]
+        );
+    }
+
+    #[test]
+    fn columns_too_wide_for_the_panel_are_left_to_scroll() {
+        assert_eq!(spread(&[30, 30], &[100, 100], 61).as_ref(), [30, 30]);
+        assert_eq!(spread(&[30, 30], &[100, 100], 62).as_ref(), [30, 30]);
+    }
+
+    #[test]
+    fn natural_widths_are_uncapped() {
+        let page = page(&["blob"], &[&[CqlValue::Text("x".repeat(100))]]);
+
+        assert_eq!(natural_widths(&page), vec![100]);
     }
 
     #[test]

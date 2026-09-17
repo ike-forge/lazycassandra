@@ -5,6 +5,7 @@
 //! with its own vocabulary rather than another field on `State`
 //! (architecture.md §11).
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use crate::bytes::Bytes;
@@ -295,6 +296,9 @@ impl Sort {
 pub struct GridPage {
     page: Page,
     widths: Vec<u16>,
+    /// [`GridPage::widths`] uncapped, which is what the room a panel has
+    /// left is shared out by.
+    natural: Vec<u16>,
     sort: Option<Sort>,
     /// One slot per column of the page, so a filter is addressed by the
     /// column index the grid already counts in and no lookup can name a
@@ -310,7 +314,8 @@ pub struct GridPage {
 
 impl GridPage {
     fn new(page: Page, cap: MaxColumnWidth) -> Self {
-        let widths = crate::grid::widths(&page, cap);
+        let natural = crate::grid::natural_widths(&page);
+        let widths = crate::grid::capped(&natural, cap);
         let filters = vec![None; page.columns.len()];
         let order = (0..page.rows.len()).collect();
         let bytes = page.rows.iter().map(Bytes::of_row).sum();
@@ -318,6 +323,7 @@ impl GridPage {
         Self {
             page: Page { next: None, ..page },
             widths,
+            natural,
             sort: None,
             filters,
             order,
@@ -345,7 +351,15 @@ impl GridPage {
             rows,
             next: None,
         };
-        for (width, wider) in self.widths.iter_mut().zip(crate::grid::widths(&added, cap)) {
+        let natural = crate::grid::natural_widths(&added);
+        for (width, wider) in self
+            .widths
+            .iter_mut()
+            .zip(crate::grid::capped(&natural, cap))
+        {
+            *width = (*width).max(wider);
+        }
+        for (width, wider) in self.natural.iter_mut().zip(natural) {
             *width = (*width).max(wider);
         }
 
@@ -397,10 +411,25 @@ impl GridPage {
         &self.page
     }
 
-    /// Each column's natural width, measured once when the page landed.
+    /// Each column's capped width, measured as rows land.
     #[must_use]
     pub fn widths(&self) -> &[u16] {
         &self.widths
+    }
+
+    /// Each column's drawn width in a grid body `grid_width` characters wide,
+    /// and the width the columns have there. The one answer the column
+    /// follow, the projection and the renderer draw by: two would scroll the
+    /// cursor and the drawn window apart (table display design §6).
+    #[must_use]
+    pub fn drawn(&self, grid_width: usize) -> (Cow<'_, [u16]>, u16) {
+        let width = u16::try_from(grid_width).unwrap_or(u16::MAX);
+        let available = crate::grid::available(width, crate::grid::gutter(self.len()));
+
+        (
+            crate::grid::spread(&self.widths, &self.natural, available),
+            available,
+        )
     }
 
     /// The column the grid is sorted on, if any.
@@ -2260,6 +2289,28 @@ mod tests {
         );
 
         assert_eq!(panel.loaded().expect("a page").widths(), [20]);
+    }
+
+    #[test]
+    fn an_appended_value_past_the_cap_grows_the_width_the_panel_widens_to() {
+        let mut panel = pageable(1);
+        panel.fetch_one(QueryId::next).expect("a page");
+        let grid_width = usize::from(crate::grid::BAR + 1 + crate::grid::COLUMN_SPACING + 100);
+
+        land(
+            &mut panel,
+            Page {
+                columns: vec!["id".to_owned()],
+                rows: vec![Row {
+                    values: vec![CqlValue::Text("x".repeat(60))],
+                }],
+                next: None,
+            },
+        );
+
+        let page = panel.loaded().expect("a page");
+        assert_eq!(page.widths(), [30], "capped");
+        assert_eq!(page.drawn(grid_width).0.as_ref(), [60], "then widened");
     }
 
     #[test]
