@@ -113,7 +113,7 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
         TextLine::default(),
         path(&visible, view.stop == Stop::Path, theme),
         TextLine::default(),
-        export_button(view.stop == Stop::Export, theme),
+        button("Export", view.stop == Stop::Export, theme),
     ];
 
     frame.render_widget(Paragraph::new(lines), inner);
@@ -229,33 +229,18 @@ fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
     (visible, cursor - first)
 }
 
-fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'_> {
-    let style = theme.style(if focused {
-        Token::Selected
+/// Bracketed, and on the selection ground while `tab` is on it. The key that
+/// presses it is the bar's to name, not the button's.
+fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
+    let style = if focused {
+        theme
+            .style(Token::Selected)
+            .patch(theme.style(Token::Focused))
     } else {
-        Token::HintKey
-    });
-
-    TextLine::from(Span::styled(label, style)).right_aligned()
-}
-
-/// The form's own key, drawn the way a hint bar draws one
-/// (`hints::Segment::spans`): the key in the colour a shortcut always wears,
-/// the label beside it dim, so only the key reads as pressable. When `Tab`
-/// is not on this stop the whole pairing recedes to `Faint` together, an
-/// inert hint rather than a live one.
-fn export_button(focused: bool, theme: Theme) -> TextLine<'static> {
-    let (key, label) = if focused {
-        (Token::HintKey, Token::HintAction)
-    } else {
-        (Token::Faint, Token::Faint)
+        theme.style(Token::HintAction)
     };
 
-    TextLine::from(vec![
-        Span::styled("space ", theme.style(key)),
-        Span::styled("Export", theme.style(label)),
-    ])
-    .right_aligned()
+    TextLine::from(Span::styled(format!("[ {label} ]"), style)).right_aligned()
 }
 
 /// Positions the caret over the path field, measuring the way
@@ -434,34 +419,29 @@ mod tests {
     }
 
     #[test]
-    fn the_export_key_alone_carries_the_shortcut_colour() {
-        let theme = Theme::default();
-        let live = super::export_button(true, theme);
+    fn the_export_button_is_bracketed_and_names_no_key() {
+        let line = super::button("Export", true, Theme::default());
 
-        assert_eq!(live.spans[0].content.as_ref(), "space ");
-        assert_eq!(live.spans[1].content.as_ref(), "Export");
-        assert_eq!(
-            live.spans[0].style,
-            theme.style(lc_domain::style::Token::HintKey)
-        );
-        assert_eq!(
-            live.spans[1].style,
-            theme.style(lc_domain::style::Token::HintAction)
-        );
-        assert_ne!(
-            live.spans[0].style, live.spans[1].style,
-            "only the key reads as highlighted"
-        );
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].content.as_ref(), "[ Export ]");
     }
 
     #[test]
-    fn the_export_button_dims_together_when_tab_is_elsewhere() {
+    fn the_export_button_takes_the_selection_ground_only_under_tab() {
         let theme = Theme::default();
-        let inert = super::export_button(false, theme);
-        let faint = theme.style(lc_domain::style::Token::Faint);
+        let ground = theme
+            .style(lc_domain::style::Token::Selected)
+            .bg
+            .expect("the selection spends a ground");
 
-        assert_eq!(inert.spans[0].style, faint);
-        assert_eq!(inert.spans[1].style, faint);
+        assert_eq!(
+            super::button("Export", true, theme).spans[0].style.bg,
+            Some(ground)
+        );
+        assert_eq!(
+            super::button("Export", false, theme).spans[0].style,
+            theme.style(lc_domain::style::Token::HintAction)
+        );
     }
 
     /// The block reserves no row past `Export`: `inner.height - 1` (the last
@@ -478,7 +458,7 @@ mod tests {
         .expect("the form fits an 80x24 frame");
         let last_inner_row = area.y + super::HEIGHT - 2;
 
-        assert!(row(&buffer, last_inner_row).contains("space Export"));
+        assert!(row(&buffer, last_inner_row).contains("[ Export ]"));
     }
 
     #[test]

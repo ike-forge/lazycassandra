@@ -256,6 +256,40 @@ pub(crate) const DELETE_TYPED: &[Binding] = &[
     },
 ];
 
+const NEXT_OPTION: Binding = Binding {
+    keys: &[Stroke::key(Key::Tab)],
+    action: "next option",
+};
+
+/// `space` means what the stop under `tab` makes it mean, and nothing on the
+/// path stop, where it is text (export design §2).
+const TOGGLE: Binding = Binding {
+    keys: &[Stroke::key(Key::Char(' '))],
+    action: "toggle",
+};
+
+const EXPORT: Binding = Binding {
+    keys: &[Stroke::key(Key::Char(' ')), Stroke::key(Key::Enter)],
+    action: "export",
+};
+
+/// `q` is not named: the form claims it and does nothing with it.
+const EXPORT_CLOSE: Binding = Binding {
+    keys: &[Stroke::key(Key::Escape)],
+    action: "close",
+};
+
+pub(crate) const EXPORT_OVERWRITE: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char(' ')), Stroke::key(Key::Enter)],
+        action: "overwrite",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Escape)],
+        action: "back",
+    },
+];
+
 /// What the bar names while a prompt is up, and while the filter modal is —
 /// two text fields with the same two ways out, `⏎` writing what was typed and
 /// `esc` leaving what was there (grid sort and filter design §3). The panel
@@ -387,15 +421,8 @@ pub(crate) fn bar(state: &State) -> HintBar {
         };
     }
 
-    // The form claims every key, so the panel underneath answers to nothing —
-    // the same rule `Search` follows above. The form's own bar is a later
-    // task's, once it has one.
-    if matches!(state.overlay, Some(Overlay::Export(_))) {
-        return HintBar {
-            panel: Vec::new(),
-            global: Vec::new(),
-            export,
-        };
+    if let Some(Overlay::Export(form)) = &state.overlay {
+        return export_bar(form, export);
     }
 
     if let Some(Overlay::Drop(prompt)) = &state.overlay {
@@ -485,6 +512,44 @@ fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar
                 ..rendered(binding)
             })
             .collect(),
+        export,
+    }
+}
+
+/// The form's own bar. The panel underneath answers to nothing, so it has no
+/// panel group of its own; what the stop under `tab` answers to is named in
+/// its place.
+fn export_bar(form: &crate::export::ExportForm, export: Option<String>) -> HintBar {
+    use crate::export::Stop;
+
+    if form.confirm().is_some() {
+        return HintBar {
+            panel: Vec::new(),
+            global: EXPORT_OVERWRITE.iter().map(rendered).collect(),
+            export,
+        };
+    }
+
+    let stop = match form.stop() {
+        // A scope group with one enabled option has nothing to toggle to.
+        Stop::Scope => Some(Hint {
+            liveness: if form.fetched_enabled() {
+                Liveness::Live
+            } else {
+                Liveness::Inert
+            },
+            ..rendered(&TOGGLE)
+        }),
+        Stop::Format => Some(rendered(&TOGGLE)),
+        Stop::Path => None,
+        Stop::Export => Some(rendered(&EXPORT)),
+    };
+
+    HintBar {
+        panel: std::iter::once(rendered(&NEXT_OPTION))
+            .chain(stop)
+            .collect(),
+        global: vec![rendered(&EXPORT_CLOSE)],
         export,
     }
 }

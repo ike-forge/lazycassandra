@@ -13672,6 +13672,82 @@ mod tests {
         }
     }
 
+    /// The form's bar changes with the stop, so each stop is swept.
+    #[test]
+    fn every_live_hint_the_export_forms_bar_shows_does_something() {
+        for tabs in 0..4 {
+            let seated = || {
+                let mut state = contents_showing(ROW_LIMIT);
+                open_form(&mut state);
+                for _ in 0..tabs {
+                    handle_key(&mut state, KeyPress::new(Key::Tab));
+                }
+                state
+            };
+            let bar = crate::view::hints::bar(&seated());
+            let stop = form_of(&seated()).stop();
+
+            for hint in bar.panel.iter().chain(&bar.global) {
+                assert_eq!(hint.liveness, crate::view::Liveness::Live);
+
+                for key in hint.keys.split('/') {
+                    let key = match key {
+                        "tab" => Key::Tab,
+                        "space" => Key::Char(' '),
+                        "⏎" => Key::Enter,
+                        "esc" => Key::Escape,
+                        other => panic!("{stop:?} names {other}, which this sweep cannot press"),
+                    };
+                    let mut state = seated();
+                    let before = crate::view::view_model(&state);
+
+                    let effects = press(&mut state, key);
+
+                    assert!(
+                        crate::view::view_model(&state) != before || !effects.is_empty(),
+                        "{stop:?} offers '{key:?} {}' and pressing it changes nothing",
+                        hint.action
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_export_forms_bar_follows_the_stop() {
+        let mut state = contents_showing(ROW_LIMIT);
+        open_form(&mut state);
+        let named = |state: &State| {
+            let bar = crate::view::hints::bar(state);
+            bar.panel
+                .iter()
+                .chain(&bar.global)
+                .map(|hint| format!("{} {}", hint.keys, hint.action))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            named(&state),
+            ["tab next option", "space toggle", "esc close"]
+        );
+        press(&mut state, Key::Tab);
+        assert_eq!(
+            named(&state),
+            ["tab next option", "space toggle", "esc close"]
+        );
+        press(&mut state, Key::Tab);
+        assert_eq!(
+            named(&state),
+            ["tab next option", "esc close"],
+            "space is text on the path"
+        );
+        press(&mut state, Key::Tab);
+        assert_eq!(
+            named(&state),
+            ["tab next option", "space/⏎ export", "esc close"]
+        );
+    }
+
     #[test]
     fn ctrl_e_over_a_loaded_contents_panel_opens_the_export_form() {
         let mut state = contents_showing(5);
