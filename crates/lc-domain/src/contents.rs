@@ -5,6 +5,7 @@
 //! with its own vocabulary rather than another field on `State`
 //! (architecture.md §11).
 
+use crate::config::MaxColumnWidth;
 use crate::grid::ColumnScroll;
 use crate::model::{KeyspaceKind, Page, QueryId, Row};
 use crate::search::{Direction, Search};
@@ -166,8 +167,8 @@ pub struct GridPage {
 }
 
 impl GridPage {
-    fn new(page: Page) -> Self {
-        let widths = crate::grid::widths(&page);
+    fn new(page: Page, cap: MaxColumnWidth) -> Self {
+        let widths = crate::grid::widths(&page, cap);
         let filters = vec![None; page.columns.len()];
         let order = (0..page.rows.len()).collect();
 
@@ -532,15 +533,16 @@ impl ContentsPanel {
         self.columns = Selection::default();
     }
 
-    /// Applies a page, if it is the one being waited on.
-    pub fn page_ready(&mut self, query: QueryId, page: Page) {
+    /// Applies a page, if it is the one being waited on, its columns capped
+    /// at `cap`.
+    pub fn page_ready(&mut self, query: QueryId, page: Page, cap: MaxColumnWidth) {
         let Some(subject) = self.awaited(query) else {
             return;
         };
 
         self.state = ContentsState::Loaded {
             subject,
-            page: GridPage::new(page),
+            page: GridPage::new(page, cap),
         };
     }
 
@@ -703,6 +705,7 @@ mod tests {
                 ],
                 next: None,
             },
+            MaxColumnWidth::default(),
         );
         panel
     }
@@ -777,7 +780,7 @@ mod tests {
     #[test]
     fn a_page_with_no_rows_has_no_match_to_reach() {
         let (mut panel, query) = loading();
-        panel.page_ready(query, page(0));
+        panel.page_ready(query, page(0), MaxColumnWidth::default());
         panel.set_search(Search::new("ali"));
 
         assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
@@ -793,6 +796,7 @@ mod tests {
                 rows: vec![Row { values: Vec::new() }],
                 next: None,
             },
+            MaxColumnWidth::default(),
         );
         panel.set_search(Search::new("ali"));
 
@@ -819,7 +823,7 @@ mod tests {
     fn the_page_being_waited_on_is_applied() {
         let (mut panel, query) = loading();
 
-        panel.page_ready(query, page(3));
+        panel.page_ready(query, page(3), MaxColumnWidth::default());
 
         assert_eq!(panel.row_count(), 3);
         assert_eq!(panel.outstanding(), None, "the wait is over");
@@ -829,7 +833,7 @@ mod tests {
     fn a_page_for_another_query_is_not_applied() {
         let (mut panel, query) = loading();
 
-        panel.page_ready(QueryId::next(), page(3));
+        panel.page_ready(QueryId::next(), page(3), MaxColumnWidth::default());
 
         assert_eq!(
             panel.outstanding(),
@@ -847,7 +851,7 @@ mod tests {
             Subject::Table(TableRef::new("shop", "users")),
         );
 
-        panel.page_ready(first, page(3));
+        panel.page_ready(first, page(3), MaxColumnWidth::default());
 
         assert_eq!(panel.row_count(), 0);
         let ContentsState::Loading { subject, .. } = panel.state() else {
@@ -880,7 +884,7 @@ mod tests {
     #[test]
     fn a_new_request_starts_the_cursor_at_the_top() {
         let (mut panel, query) = loading();
-        panel.page_ready(query, page(5));
+        panel.page_ready(query, page(5), MaxColumnWidth::default());
         panel.cursor.down(5);
 
         let next = QueryId::next();
@@ -982,7 +986,7 @@ mod tests {
         let query = QueryId::next();
         panel.requested(query, Subject::Typed("SELECT 1".to_owned()));
 
-        panel.page_ready(query, page(3));
+        panel.page_ready(query, page(3), MaxColumnWidth::default());
 
         assert_eq!(panel.row_count(), 3);
         assert_eq!(panel.outstanding(), None, "the wait is over");
@@ -1001,14 +1005,14 @@ mod tests {
     fn a_page_arrives_with_its_column_widths_already_measured() {
         let (mut panel, query) = loading();
 
-        panel.page_ready(query, wide_page(3));
+        panel.page_ready(query, wide_page(3), MaxColumnWidth::default());
 
         let ContentsState::Loaded { page, .. } = panel.state() else {
             panic!("the page landed");
         };
         assert_eq!(
             page.widths(),
-            crate::grid::widths(page.page()),
+            crate::grid::widths(page.page(), MaxColumnWidth::default()),
             "measured once beside the page, not once per tick"
         );
     }
@@ -1017,7 +1021,7 @@ mod tests {
     fn a_loaded_page_reports_its_columns() {
         let (mut panel, query) = loading();
 
-        panel.page_ready(query, wide_page(4));
+        panel.page_ready(query, wide_page(4), MaxColumnWidth::default());
 
         assert_eq!(panel.column_count(), 4);
     }
@@ -1025,7 +1029,7 @@ mod tests {
     #[test]
     fn a_request_returns_the_cell_cursor_to_the_first_cell() {
         let (mut panel, query) = loading();
-        panel.page_ready(query, wide_page(4));
+        panel.page_ready(query, wide_page(4), MaxColumnWidth::default());
         panel.cursor.go_to(0, 1);
         panel.column.go_to(3, 4);
         panel.column_scroll.follow(3, &[1, 1, 1, 1], 4);
@@ -1042,7 +1046,7 @@ mod tests {
     #[test]
     fn a_refusal_returns_the_cell_cursor_to_the_first_cell() {
         let (mut panel, query) = loading();
-        panel.page_ready(query, wide_page(4));
+        panel.page_ready(query, wide_page(4), MaxColumnWidth::default());
         panel.column.go_to(3, 4);
 
         panel.refused(Subject::Table(TableRef::new("shop", "carts")));
@@ -1124,6 +1128,7 @@ mod tests {
                     .collect(),
                 next: None,
             },
+            MaxColumnWidth::default(),
         );
         panel
     }
@@ -1291,6 +1296,7 @@ mod tests {
                 rows: Vec::new(),
                 next: None,
             },
+            MaxColumnWidth::default(),
         );
 
         panel.cycle_sort(0);

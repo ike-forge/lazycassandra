@@ -1759,7 +1759,9 @@ mod tests {
         state
             .contents
             .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state.contents.page_ready(query, page);
+        state
+            .contents
+            .page_ready(query, page, lc_domain::config::MaxColumnWidth::default());
         state
     }
 
@@ -1980,7 +1982,7 @@ mod tests {
 
     #[test]
     fn a_column_wider_than_the_cap_is_ellipsised_rather_than_clipped() {
-        // A uuid is 36 columns; the cap is 24.
+        // A uuid is 36 columns; the cap is 30.
         let state = showing(page_of(
             &["id"],
             &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
@@ -1990,14 +1992,14 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 3),
-            "│              ││▌1  8f14e45f-ceea-467a-9c2b…              │",
+            "│              ││▌1  8f14e45f-ceea-467a-9c2b-8c4d2…        │",
             "a silently clipped value looks like a shorter value"
         );
     }
 
     #[test]
     fn a_table_too_wide_for_the_panel_drops_columns_rather_than_squeezing_them() {
-        // Four uuid-wide columns want 4×24 + spacing = 99 in a 66-column
+        // Four uuid-wide columns want 4×30 + spacing = 126 in a 66-column
         // panel. `Constraint::Length` is a request, not a floor: handed all
         // four, ratatui shrinks every one to fit and truncates each value with
         // no ellipsis to say it did.
@@ -2011,12 +2013,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop             ││    a \u{21c5} \u{f0b0}                     b \u{21c5} \u{f0b0}                               │",
+            "│▌\u{f084} shop             ││    a \u{21c5} \u{f0b0}                           b \u{21c5} \u{f0b0}                         │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│                    ││▌1  8f14e45f-ceea-467a-9c2b…  8f14e45f-ceea-467a-9c2b…            │",
+            "│                    ││▌1  8f14e45f-ceea-467a-9c2b-8c4d2…  8f14e45f-ceea-467a-9c2b-8c4d2…│",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -2934,7 +2936,7 @@ mod tests {
     /// viewport it walks has to be the one the frame it is drawn in draws.
     fn walked(inner: u16, path: &[usize]) -> State {
         let page = sized_page(12, 3);
-        let widths = lc_domain::grid::widths(&page);
+        let widths = lc_domain::grid::widths(&page, lc_domain::config::MaxColumnWidth::default());
         let mut state = showing(page);
         state.contents.mode = SelectionMode::Cell;
         let available = lc_domain::grid::available(inner, 1);
@@ -3254,7 +3256,7 @@ mod tests {
 
     #[test]
     fn a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed() {
-        // `lc_domain::grid::widths` caps a column at 24 and not at the panel,
+        // `lc_domain::grid::widths` caps a column at 30 and not at the panel,
         // so the natural width outruns the 19 columns of body left once the
         // merged bar+gutter block and its spacing column are taken. `drawn_widths`
         // caps each width against what is left, so ratatui is never

@@ -37,7 +37,7 @@
 
 # ── the results grid ──────────────────────────────────────────
 # [grid]
-# max_column_width = 24    # 1..=512, in cells
+# max_column_width = 30    # 1..=512, in cells
 # row_limit        = 500   # 1..=1000000; the LIMIT on a generated SELECT —
 #                          # how much data exists, not how much arrives at once
 

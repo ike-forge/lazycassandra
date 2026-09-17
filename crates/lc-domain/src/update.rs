@@ -357,7 +357,9 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             // Answers whichever asked for it. A drop's result reaches the
             // panel too and is dropped there, because the panel is not
             // waiting on that id (drop design §3).
-            state.contents.page_ready(query, *page);
+            state
+                .contents
+                .page_ready(query, *page, state.config.grid.max_column_width);
             state.mark_dirty();
             finish_drop(state, query, None)
         }
@@ -7413,6 +7415,7 @@ mod tests {
                     .collect(),
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state.focus_on(Panel::Contents);
         update(
@@ -8324,6 +8327,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_stated_column_width_is_the_grids_cap() {
+        let mut state = read_shop_orders();
+        state.config.grid.max_column_width =
+            crate::config::MaxColumnWidth::try_new(40).expect("in range");
+        press(&mut state, Key::Enter);
+        let query = state.contents.outstanding().expect("the read is waiting");
+
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page {
+                    columns: vec!["note".to_owned()],
+                    rows: vec![crate::model::Row {
+                        values: vec![crate::model::CqlValue::Text("x".repeat(100))],
+                    }],
+                    next: None,
+                }),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert_eq!(state.contents.loaded().expect("a page").widths(), [40]);
+    }
+
     fn statement_subject_from(cql: &str) -> LogSubject {
         statement_subject(&Statement::typed(cql))
     }
@@ -8669,6 +8698,7 @@ mod tests {
                 }],
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state.focus_on(Panel::Contents);
         update(
@@ -8711,6 +8741,7 @@ mod tests {
                     .collect(),
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state.focus_on(Panel::Contents);
         update(
@@ -9212,6 +9243,7 @@ mod tests {
                     .collect(),
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state.focus_on(Panel::Contents);
         state.contents.mode = SelectionMode::Column;
@@ -9424,6 +9456,7 @@ mod tests {
                     .collect(),
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state.contents.set_filter(0, Search::new("keep"));
 
@@ -9749,6 +9782,7 @@ mod tests {
                 ],
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state.focus_on(Panel::Contents);
         state.contents.mode = SelectionMode::Row;
@@ -10613,6 +10647,7 @@ mod tests {
                     .collect(),
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state
     }
@@ -10635,6 +10670,7 @@ mod tests {
                 }],
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state
     }
@@ -12078,6 +12114,7 @@ mod tests {
                     .collect(),
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
         state.focus_on(Panel::Contents);
         state
@@ -12214,6 +12251,7 @@ mod tests {
                 }],
                 next: None,
             },
+            crate::config::MaxColumnWidth::default(),
         );
 
         press(&mut state, Key::Char('d'));
@@ -13667,7 +13705,11 @@ mod tests {
         state
             .contents
             .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state.contents.page_ready(query, page_of(rows));
+        state.contents.page_ready(
+            query,
+            page_of(rows),
+            crate::config::MaxColumnWidth::default(),
+        );
         state
     }
 
@@ -13679,7 +13721,11 @@ mod tests {
         state
             .contents
             .requested(query, Subject::Typed(cql.to_owned()));
-        state.contents.page_ready(query, page_of(ROW_LIMIT));
+        state.contents.page_ready(
+            query,
+            page_of(ROW_LIMIT),
+            crate::config::MaxColumnWidth::default(),
+        );
         state
     }
 
@@ -14656,6 +14702,7 @@ mod tests {
                 columns: vec!["action".to_owned()],
                 ..page_of(3)
             },
+            crate::config::MaxColumnWidth::default(),
         );
 
         update(

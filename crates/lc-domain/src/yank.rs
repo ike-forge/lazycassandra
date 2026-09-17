@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn a_yanked_value_is_not_ellipsised() {
-        let value = "x".repeat(usize::from(crate::grid::MAX_COLUMN_WIDTH) + 10);
+        let value = "x".repeat(usize::from(crate::config::MaxColumnWidth::default().get()) + 10);
         let page = Page {
             columns: vec!["blob".to_owned()],
             rows: vec![Row {
@@ -274,10 +274,10 @@ mod tests {
             next: None,
         };
 
-        let drawn_width = crate::grid::widths(&page)[0];
+        let drawn_width = crate::grid::widths(&page, crate::config::MaxColumnWidth::default())[0];
         assert_eq!(
             drawn_width,
-            crate::grid::MAX_COLUMN_WIDTH,
+            crate::config::MaxColumnWidth::default().get(),
             "the grid draws this column capped, not at the value's full length"
         );
 
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn a_cell_yank_is_not_ellipsised() {
-        let long = "x".repeat(usize::from(crate::grid::MAX_COLUMN_WIDTH) * 2);
+        let long = "x".repeat(usize::from(crate::config::MaxColumnWidth::default().get()) * 2);
 
         assert_eq!(
             grid_cell(&CqlValue::Text(long.clone())),

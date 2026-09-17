@@ -56,7 +56,9 @@ macro_rules! bounded {
     };
 }
 
-bounded!(MaxColumnWidth, u16, "max_column_width", 1, 512, 24);
+// 30 holds a millisecond timestamp and stops short of a uuid's 36
+// (cell inspector design §1).
+bounded!(MaxColumnWidth, u16, "max_column_width", 1, 512, 30);
 bounded!(RowLimit, u32, "row_limit", 1, 1_000_000, 500);
 bounded!(PageSize, u32, "page_size", 1, 100_000, 5_000);
 bounded!(Millis, u32, "milliseconds", 1, 600_000, 5_000);
@@ -432,7 +434,7 @@ mod tests {
     fn the_default_config_is_the_built_in_layer() {
         let config = Config::default();
 
-        assert_eq!(config.grid.max_column_width.get(), 24);
+        assert_eq!(config.grid.max_column_width.get(), 30);
         assert_eq!(config.layout.sidebar(), 25);
         assert_eq!(config.layout.ddl(), 60);
         assert_eq!(config.layout.queries(), 10);

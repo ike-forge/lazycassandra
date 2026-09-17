@@ -23,7 +23,7 @@ pub struct GridColumn {
     /// table, so no claim about its shape can be checked.
     pub token: Option<Token>,
     /// Character columns it is drawn in, capped by
-    /// [`crate::grid::MAX_COLUMN_WIDTH`]. Computed here rather than in the
+    /// `grid.max_column_width`. Computed here rather than in the
     /// renderer so the fitting arithmetic can live beside the offsets it
     /// bounds (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
     pub width: u16,
@@ -329,7 +329,9 @@ mod tests {
         state
             .contents
             .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state.contents.page_ready(query, page);
+        state
+            .contents
+            .page_ready(query, page, crate::config::MaxColumnWidth::default());
         state
     }
 
@@ -360,7 +362,9 @@ mod tests {
         state
             .contents
             .requested(query, Subject::Typed(cql.to_owned()));
-        state.contents.page_ready(query, page);
+        state
+            .contents
+            .page_ready(query, page, crate::config::MaxColumnWidth::default());
         state
     }
 
@@ -374,7 +378,9 @@ mod tests {
         state
             .contents
             .requested(query, Subject::Typed(cql.to_owned()));
-        state.contents.page_ready(query, page);
+        state
+            .contents
+            .page_ready(query, page, crate::config::MaxColumnWidth::default());
         state
     }
 
@@ -597,6 +603,7 @@ mod tests {
                 &["id", "at", "total"],
                 &[&[CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]],
             ),
+            crate::config::MaxColumnWidth::default(),
         );
 
         let PanelBody::Grid { columns, .. } = contents_body(&state) else {
@@ -766,6 +773,7 @@ mod tests {
                 &["id", "at", "total"],
                 &[&[CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]],
             ),
+            crate::config::MaxColumnWidth::default(),
         );
 
         let PanelBody::Grid { rows, .. } = contents_body(&state) else {

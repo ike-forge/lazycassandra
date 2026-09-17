@@ -651,6 +651,14 @@ mod tests {
     }
 
     #[test]
+    fn a_stated_column_width_is_kept() {
+        let (config, diagnostics) = config_of(&["[grid]\nmax_column_width = 40\n"]);
+
+        assert_eq!(config.grid.max_column_width.get(), 40);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
     fn a_layout_failure_blames_the_share_that_is_out_of_range_not_the_first_one_stated() {
         let (config, diagnostics) = config_of(&["[layout]\nsidebar = 50\nddl = 3\n"]);
 

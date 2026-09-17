@@ -1081,7 +1081,11 @@ mod tests {
             .requested(query, Subject::Table(TableRef::new("shop", "orders")));
 
         let mut loaded = loading.clone();
-        loaded.contents.page_ready(query, Page::default());
+        loaded.contents.page_ready(
+            query,
+            Page::default(),
+            crate::config::MaxColumnWidth::default(),
+        );
 
         let mut failed = loading.clone();
         failed.contents.failed(query);
