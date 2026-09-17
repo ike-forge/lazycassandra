@@ -112,9 +112,10 @@ From the table display slice (docs/superpowers/specs/2026-08-10-table-display-de
 
 - Pinned key columns. Useful the moment a table is wide enough to scroll, and
   blocked on a rule for what happens when the pinned block alone does not fit.
-- Column widths that survive a restart. They are recomputed from each page;
-  `ConfigSink` can write a key back now (theme persistence design), but
-  nothing holds a width.
+- Column widths that survive a restart. They grow as pages land and widen
+  into the panel's spare room, but start over with every read; `ConfigSink`
+  can write a key back now (theme persistence design), but nothing holds a
+  width.
 - The horizontal thumb glyph has never been looked at on a real terminal. The
   bottom bar reuses the vertical bar's machinery with `━`; it is pinned by
   position, not by appearance.
