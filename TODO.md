@@ -20,8 +20,6 @@ From the table-list review (docs/superpowers/specs/2026-08-08-table-list-design.
 
 From the table-contents slice (docs/superpowers/specs/2026-08-09-table-contents-design.md §9):
 
-- Paging. `LIMIT 200` is a wall, not a window: `Cluster::execute_paged` and
-  `Page::next` exist and only export drives them.
 - `CqlValue::Timestamp` is now produced by nothing — the adapter formats
   timestamps to text because the domain has no calendar. Either give it one or
   drop the variant; an arm nothing constructs is a claim the model does not
@@ -120,9 +118,3 @@ From the table display slice (docs/superpowers/specs/2026-08-10-table-display-de
 - The horizontal thumb glyph has never been looked at on a real terminal. The
   bottom bar reuses the vertical bar's machinery with `━`; it is pinned by
   position, not by appearance.
-
-From the configuration slice (docs/superpowers/specs/2026-08-14-configuration-design.md §11):
-
-- `grid.row_limit` parses and validates but nothing reads it:
-  `update::ROW_LIMIT` is what applies, and the defaults disagree (500 against
-  200).

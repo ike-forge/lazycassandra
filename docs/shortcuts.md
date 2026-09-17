@@ -34,7 +34,7 @@ layer is dispatched above the panel that takes text (§2).
 | `N`¹ | Move to the previous match of the focused panel's search, wrapping. |
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
-| `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's search, or leave the panel for Tables — first hit wins (§2). |
+| `Esc` | Dismiss the overlay, stop a running `P`, leave visual mode, clear a range, clear the focused panel's search, or leave the panel for Tables — first hit wins (§2). |
 | `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns and Indexes tabs where a table is selected; Table contents; Queries' Cql tab; Queries' Logs tab. This is how the Logs tab is reached. |
 | `Shift-Tab` | The same stops, walked backwards. |
 | `1`¹ | Focus Tables. |
@@ -686,6 +686,8 @@ below.
 |---|---|
 | `Enter` | Open the inspector over the row under the cursor in row mode, or the cell under it in cell and column mode. Inert with nothing loaded, on an empty grid, while a range is held, and on a frame with no room to draw the block. See the inspector's own subsection below. |
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
+| `p` | Fetch the next page of the result and append it. Inert once the result has ended and while a page is in flight. |
+| `P` | Fetch pages until the result ends or a stop is reached. Inert where `p` is. |
 | `ctrl-e` | Open the export form. Inert on an empty grid, while an export is running, and on a frame with no room to draw the form. |
 | `d` | Open the delete confirmation over the selected rows, or the row under the cursor when no range is held. Inert unless those rows can be addressed by their whole primary key. See the drop confirmation's own subsection in §1. |
 
@@ -714,6 +716,16 @@ doing is on screen. Both are clickable (§7). Sorting and filtering reach the
 rows already fetched and never re-run the statement; a filter hides rows, and
 the panel title says how much of the page is left.
 See [grid sort and filter design](superpowers/specs/2026-08-31-grid-sort-filter-design.md).
+
+A read fetches `grid.page_rows` rows (200 by default); nothing more arrives
+until `p` or `P` asks, and reaching the last row fetches nothing. `P` stops at
+the next 100 MB of estimated row memory or the next million rows above where
+it was pressed, whichever comes first; pressed again it continues to the next
+multiple. `p` ignores both stops. `Esc` stops a running `P`: the page in flight
+lands and no further one is asked for. The bottom border counts the rows
+fetched and says whether there is more, a page is loading or `P` stopped, with
+the estimate from 10 MB up. Export streams and is bound by neither stop.
+See [grid paging design](superpowers/specs/2026-09-17-grid-paging-design.md).
 
 ### The filter prompt
 
@@ -915,10 +927,11 @@ row was a duplicate of the fourth kind and is gone.
 distinct `Key::Char`s and stay unbound; a shifted letter is a binding of its
 own, not a synonym for the plain one. `T` was an exception and has been
 given back — the theme picker moved to `ctrl-t` (§1's picker subsection).
-Two exceptions remain: `N`, which walks a search backwards and is not a
-synonym for `n` (§1's global table; search highlight design §5.3), and `G`,
+Three exceptions remain: `N`, which walks a search backwards and is not a
+synonym for `n` (§1's global table; search highlight design §5.3); `G`,
 which reaches the end of a list and is not a synonym for `g`, which reaches
-the start (§1's motion table). A
+the start (§1's motion table); and `P`, which fetches every page and is not
+a synonym for `p`, which fetches one (§1's Table contents subsection). A
 shifted arrow is left as a synonym for the plain one, and stays that way:
 `v` is how a selection extends, so no arrow needs a shifted meaning of its
 own. Binding one now would be a fourth kind of duplicate — the same key,
@@ -1025,8 +1038,9 @@ surface — the bar has never claimed to be the complete list
 is unconditionally true, in that frame, that pressing it does something —
 which, since the chain's last rung became every panel rather than the editor
 alone, is every frame but Tables' own. The bar names the rung that would fire:
-`esc clear` on a panel carrying a search or a live range, `esc leave` on any
-other panel but Tables, and `esc close` on an open palette or search prompt.
+`esc stop` on Table contents while `P` runs, `esc clear` on a panel carrying
+a search or a live range, `esc leave` on any other panel but Tables, and
+`esc close` on an open palette or search prompt.
 It stays out of Tables with neither an overlay up nor a search applied, where
 it still does nothing at all, and naming it there would be a lie (design §3). A binding that is in none of a title, the bar, or the palette is
 a binding only this file knows about.
@@ -1164,7 +1178,9 @@ overlay comes off first, restoring the cursor to the row the prompt opened on
 and, in the picker, the theme it previewed with it — the overlay itself stays
 up. Failing that, an overlay up is dismissed — a search prompt cancels,
 restoring the search and the cursor it found applied when it opened; the
-palette just closes. Failing that, an extending
+palette just closes. Failing that, a running `P` in a focused Table
+contents stops, the page in flight still landing (grid paging design §2).
+Failing that, an extending
 range in the focused panel freezes, the way a second `v` would, so `Esc`
 never discards a range that is still growing. Failing that, the selection
 clears — every group at once, however many are held. Failing that, the
@@ -1184,16 +1200,17 @@ mode design §4, overlay search design §1).
 
 ## 3. The key budget
 
-Taken, lowercase: `c` `d` `f` `g` `h` `j` `k` `l` `m` `n` `q` `s` `v` `y`,
+Taken, lowercase: `c` `d` `f` `g` `h` `j` `k` `l` `m` `n` `p` `q` `s` `v` `y`,
 plus `?` and `/`. `c`, `f` and `s` are taken by Table contents' column mode
 alone — a panel's claim on a letter stops at that panel's border, and this
 one stops at a mode's (§1's Table contents subsection).
 Taken, digits: `1` `2` `3` `4`.
 Taken, punctuation: `[` and `]`.
-Taken, uppercase: `N` and `G` — the only shifted letters bound (§2).
+Taken, uppercase: `N`, `G` and `P` — the only shifted letters bound (§2).
+`p` and `P` answer in Table contents alone.
 
-Free, lowercase: `a` `b` `e` `i` `o` `p` `r` `t` `u` `w` `x` `z`, the
-digits `5`–`9` and `0`, and every uppercase letter but `N` and `G`.
+Free, lowercase: `a` `b` `e` `i` `o` `r` `t` `u` `w` `x` `z`, the
+digits `5`–`9` and `0`, and every uppercase letter but `N`, `G` and `P`.
 
 `Space` is claimed for the first time, inside the export form only: it
 activates the focused stop there (§1's export-form subsection) and is free
@@ -1221,10 +1238,10 @@ Ctrl taken: `ctrl-r`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
 `ctrl-t` and `ctrl-o` everywhere, and `ctrl-d`/`ctrl-u` everywhere
 `PageDown`/`PageUp` do anything. The rest of the layer is free — including
-`r`, `e`, `t`, `o`, `d`, `u` and `p` as plain keys, which nothing binds. `n`
+`r`, `e`, `t`, `o` and `u` as plain keys, which nothing binds. `n`
 is bound plain, to the next
-search match, and `ctrl-n` is a binding of its own rather than a synonym for
-it. Alt is not a layer and nothing may claim from it.
+search match, and `p` to the next page; `ctrl-n` and `ctrl-p` are bindings
+of their own rather than synonyms for either. Alt is not a layer and nothing may claim from it.
 
 `Backspace`, `Delete`, `←`/`→` and `Home`/`End` gained a third text field
 with the drop confirmation's typed name; the editor and the export form's
@@ -1541,6 +1558,11 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The inspector scrolls, closes, quits and swallows the rest | `j_k_and_the_arrows_scroll_a_line`, `the_paging_keys_scroll_a_body_height`, `g_home_g_and_end_reach_the_top_and_the_bottom`, `scrolling_stops_at_the_last_line`, `enter_and_escape_close_it`, `q_quits_from_the_inspector`, `every_other_key_is_inert` |
 | `y` in the inspector yanks per mode and leaves it open | `y_yanks_the_bare_value_and_leaves_the_inspector_open`, `y_yanks_the_row_as_one_csv_line`, `y_over_a_null_yanks_nothing` |
 | The wheel scrolls the inspector; a click and a shrink close it | `the_wheel_scrolls_the_inspector_and_a_click_closes_it`, `a_frame_too_small_for_the_block_closes_it`, `a_value_that_rewraps_shorter_pulls_the_offset_back` |
+| `p` appends the next page and `P` pages to the end, both from where the last page left off | `p_fetches_the_next_page_from_where_the_last_one_left_off`, `shift_p_fetches_pages_until_the_result_ends`, `a_page_asked_for_is_sized_by_grid_page_rows`, `the_next_page_is_appended_and_the_last_ends_the_result`, `every_page_runs_to_the_end` (`contents.rs`) |
+| `p` and `P` are inert without more, outside the grid and while a page is in flight | `paging_is_inert_without_more_elsewhere_and_while_a_page_is_in_flight`, `nothing_is_fetched_twice_at_once` (`contents.rs`) |
+| `P` stops at each stop and continues past it; `p` ignores them | `every_page_stops_at_the_next_hundred_megabytes_and_continues_past_it`, `every_page_stops_at_the_next_million_rows_and_continues_past_it`, `the_next_page_ignores_a_stop`, `a_stop_is_the_next_multiple_above_where_every_page_was_pressed` (`contents.rs`) |
+| `Esc` stops `P` below an overlay and above a range, and the page in flight lands | `escape_stops_shift_p_and_the_page_in_flight_still_lands`, `escape_ranks_below_an_overlay_and_above_a_range`, `stopping_every_page_still_appends_the_one_in_flight` (`contents.rs`) |
+| The bar names `p`/`P` only while there is more, and `esc stop` while `P` runs; the palette greys both once the result ended | `the_bar_names_paging_only_while_there_is_more`, `the_palette_greys_paging_once_the_result_has_ended` |
 | The bar names the inspector's keys, and `⏎ inspect` only where it opens | `the_bar_names_scroll_copy_and_close_over_the_inspector`, `the_contents_bar_names_inspect_only_where_enter_opens_it` |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
 | `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
