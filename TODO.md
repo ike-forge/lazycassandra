@@ -1,9 +1,9 @@
-- Support/test older cassandra version (<5)
+- Support/test older cassandra version (<5). The fixture runs `cassandra:5.0.8`
+  only.
 - Test performance (for display and querying) when datasets are huge
-- Add readonly mode (make obvious visually)
-- Write actions must all be obvisous (special color/ui)
-- Display shortcuts on the UI (dynamic/contextualized) — the hint bar
-  vision.md §7 Phase 0 promises; docs/shortcuts.md §4 is what it replaces
+- Show the connection's posture at all times. Today it is named only in the
+  connection picker, the palette's disabled rows, the bar and the refusal
+  modal; nothing on the frame says "read-only" while you browse.
 
 From the table-list review (docs/superpowers/specs/2026-08-08-table-list-design.md):
 
@@ -13,15 +13,13 @@ From the table-list review (docs/superpowers/specs/2026-08-08-table-list-design.
   passes a keyspace count where a tree-row count is meant, correct only
   because those fixtures have no tables.
 - A refresh binding. `describe` refuses the whole schema when a DDL change
-  races its two reads, and nothing re-issues `Effect::LoadSchema` — recovery
-  is a restart (table-list design §8).
-- Untested spec cells: `l`/`Right` on a table row, and ctrl/alt against the
-  three tree bindings. Both correct by construction, neither pinned.
+  races its two reads, and only a successful drop re-issues
+  `Effect::LoadSchema` — otherwise recovery is a restart (table-list design §8).
+- Untested spec cell: ctrl/alt against `Enter`, `l` and `h` on the tree. Only
+  `j` is pinned.
 
 From the table-contents slice (docs/superpowers/specs/2026-08-09-table-contents-design.md §9):
 
-- Paging. `LIMIT 200` is a wall, not a window: `Effect::FetchNextPage` and
-  `Page::next` exist and nothing drives them.
 - `CqlValue::Timestamp` is now produced by nothing — the adapter formats
   timestamps to text because the domain has no calendar. Either give it one or
   drop the variant; an arm nothing constructs is a claim the model does not
@@ -34,11 +32,8 @@ From the table-contents slice (docs/superpowers/specs/2026-08-09-table-contents-
 
 From the table metadata slice (docs/superpowers/specs/2026-08-09-table-metadata-design.md):
 
-- Display `system_schema.columns`: the regular and static column list in the
-  DDL panel. The data has been in `Table` since the table-list slice; only the
-  projection and the rendering are missing.
-- Revisit the option importance order once it has been used for a few weeks.
-  It is a first guess, and `BY_IMPORTANCE` in `model/schema.rs` is the one
+- Revisit the option layout order once it has been used for a few weeks.
+  It is a first guess, and `RANKED` and `BULKY` in `model/schema.rs` are the
   place to change.
 - `describe` now makes three reads, so the window for a DDL change to race it
   is wider than the table-list spec's §3 measured. Same failure, same recovery
@@ -46,14 +41,6 @@ From the table metadata slice (docs/superpowers/specs/2026-08-09-table-metadata-
 
 From the panel scrolling slice (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md):
 
-- `ctrl-d` and `ctrl-u`. The ctrl layer exists now and has four members:
-  `ctrl-e`/`ctrl-y` in Table DDL
-  (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §4.1), `ctrl-r` in Queries
-  (docs/superpowers/specs/2026-08-10-query-execution-design.md), and `ctrl-e`
-  again in Queries, opening the buffer in an external editor
-  (docs/superpowers/specs/2026-08-12-external-editor-design.md §1). Vim's
-  half-page motions still are not in it, and want the layer designed rather
-  than a fifth arm added in passing (design §5).
 - A long `Notice` still cannot scroll. One sentence is the assumption; a
   `DbError` carrying a paragraph would break it.
 
@@ -64,24 +51,11 @@ From the mouse input slice (docs/superpowers/specs/2026-08-09-mouse-input-design
 
 From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-design.md §9):
 
-- Size the Queries panel by what is in it. It gets one content row at 80x24
-  and 120x40 — the 3-row floor beats `QUERIES_PERCENT` until the terminal is
-  about forty rows tall — so multi-line CQL is legible only by scrolling.
-  The panel is meant to grow with its content and its focus, which is a
-  layout change with its own spec, not a tweak to the percentage.
-- The session log. architecture.md §4 calls this panel "statement entry and
-  session log"; only the first half exists. `State.queries` is now a
-  `QueriesPanel` — completion got there before the log did
-  (docs/superpowers/specs/2026-08-16-query-editor-design.md §5.3) — so the log
-  has somewhere to live when it lands.
 - Undo and redo, selection, clipboard, and word motions. The buffer has none.
-- ~~Column completion.~~ Closed by
-  docs/superpowers/specs/2026-08-16-cql-semantics-design.md §6: the cursor's
-  context now says which table is in scope without a parser.
-- A CQL parser, and what waits on it: running the statement under the cursor,
-  splitting a buffer on statement boundaries, and classifying a statement by
-  more than its first verb. `ctrl-f` lays the whole buffer out for the same
-  reason `ctrl-r` runs all of it.
+- A CQL parser, and what waits on it: running the statement under the cursor
+  and splitting a buffer on statement boundaries. `ctrl-f` lays the whole
+  buffer out for the same reason `ctrl-r` runs all of it. Classification
+  already lexes each `;`-separated statement, but still by its first verb.
 - Completion inside a quoted identifier. `"My` offers nothing — the word
   scanner stops at the quote.
 - Stepping between a statement shape's holes. The caret lands in the first and
@@ -92,96 +66,55 @@ From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-
   `durable_writes` from `gc_grace_seconds` needs the resolver to carry which
   of the two the clause hangs off (completion ranking design §9).
 - The formatter's layout is fixed: two-column indent, upper-case keywords, one
-  clause to a line. A preference needs a consumer in the configuration slice
-  (design §11), and there is none.
-- An overlay up over a focused Queries breaks two promises, both because
-  "focus is the mode" (design §3) does not yet weigh `state.overlay`. First,
-  the hint bar's `esc leave` is momentarily false: `escape` prioritises the
-  overlay, so `Esc` spends the press dismissing it instead of leaving, and the
-  bar promises something the next keystroke will not do — the first binding
-  where a modal can pre-empt what the bar claims, every other hint staying
-  true under an overlay. Second, every other key the editor claims still
-  reaches the buffer regardless of the overlay: typing is not lost, but
-  `render.rs` deliberately draws no cursor while an overlay is up, so the
-  text lands invisibly until the overlay is dismissed (nothing is corrupted
-  and `Backspace` recovers it, but nothing on screen says the keystroke
-  landed). The obvious guard — `state.overlay.is_none() && state.focus.takes_text()`
-  before offering a key to the editor — would fix the second symptom but
-  break the first kind of promise instead: `q` would quit and `t`/`a`/`c`/`u`
-  would move focus while a modal is up, which is "focus is the mode" failing
-  in the other direction. Closing either honestly means making the bar and
-  the key route both overlay-aware together — `bar(focus)` becoming
-  `bar(focus, has_overlay)`, and `handle_key` answering what an overlay does
-  to every claimed key, not just `Esc` — which is a design change rather than
-  a fix, and one decision closes both.
+  clause to a line. A preference would need a `[format]` section in `Config`.
+- `Overlay::Message` over a focused Cql tab. Every other overlay claims keys
+  before the editor; a message does not, so typed keys land in the buffer
+  while no cursor is drawn, and the bar still promises `esc leave` although
+  `Esc` dismisses the message first. Making the message claim keys fixes both.
 - `crates/lc-inbound/src/body.rs`'s `shifted`, the editor's horizontal
   scroll, snaps the offset `left` to a character boundary of the *cursor's*
   line and then applies that same offset to every drawn line. A line whose
   character boundaries fall elsewhere loses one cell more than `left` claims
-  and draws one column left of where it belongs. Only visible with two or
-  more content rows on screen, lines of mixed character width, and the view
-  scrolled sideways — not reachable at the terminal sizes the panel gets
-  today (§9's one-content-row table above), but it will matter once the
-  dynamic-height slice lands. The fix is per-line boundary snapping, worth
-  doing only once the panel can show more than one line.
-- The pointer and the editor have not met. A click in the Queries panel
-  focuses it but cannot position the text cursor — `click_at` in `update.rs`
-  returns right after setting `state.focus` for `Panel::Ddl | Panel::Queries`
-  — and the wheel does not scroll the buffer: `panel_scroll` has no arm for
-  `Panel::Queries` because the editor stores no scroll offset to hand back,
-  both of its offsets being derived from the cursor and the area per frame
-  (design §5). Both gaps want the same decision: whether the editor gets a
-  stored viewport of its own, the way the list panels do (list viewport
-  design), or keeps deriving its offsets from the cursor and stays out of
-  reach of the pointer. That is a design question, not a bug, and it is
-  unanswered on purpose. Table DDL shares that `click_at` arm for a plainer
-  reason: it already has a row cursor (ddl selection design), so wiring its
-  click is the same `go_to` call Tables and Contents already make — an
-  unwired binding, not an open question.
+  and draws one column left of where it belongs. Reachable now that the panel
+  grows with its buffer: lines of mixed character width, scrolled sideways.
+  The fix is per-line boundary snapping.
+- A click in the Cql tab focuses the panel but cannot position the text
+  cursor, and the wheel does not scroll the buffer: `panel_scroll` answers
+  `None` for Cql because the editor stores no scroll offset, both of its
+  offsets being derived from the cursor and the area per frame (design §5).
+  Whether the editor gets a stored viewport of its own, the way the list
+  panels do (list viewport design), is a design question, unanswered on
+  purpose.
 
 From the query execution slice (docs/superpowers/specs/2026-08-10-query-execution-design.md):
 
 - Running the buffer sends all of it as one statement. Splitting on statement
-  boundaries, and running only the one under the cursor, needs a CQL parser —
-  it lands in `Statement::typed`
-  (docs/superpowers/specs/2026-08-10-query-execution-design.md §3, §10).
+  boundaries, and running only the one under the cursor, needs a CQL parser
+  (design §3, §10).
 - A destructive statement typed into the editor is refused rather than
-  confirmed. The typed-confirmation flow vision.md §4 principle 6 requires
-  replaces that refusal (design §5).
-- A query's result does not page. Neither does a table read; `Effect::FetchNextPage`
-  exists and nothing drives it. Both paths get it at once (design §10).
+  confirmed. `d` has a typed confirmation now; the buffer's statement names
+  its target in text nothing parses, so there is nothing to ask the user to
+  type back (design §5).
 
 From the command palette slice (docs/superpowers/specs/2026-08-09-command-palette-design.md §10):
 
-- Search. The palette is named Commands and carries a selection precisely so
-  this can land; it needs text input, which needs the mode design §7 defers.
 - Contextual ordering. The palette shows the same groups whatever has focus;
-  vision.md §4 principle 1 promises a *contextual* map. It now lists `l`/`h`
-  twice, once under each panel that resolves them, which is the honest shape for
-  a flat catalogue and exactly the duplication a contextual one would collapse.
+  vision.md §4 principle 1 promises a *contextual* map.
 
 From the panel search slice (docs/superpowers/specs/2026-08-10-panel-search-design.md §8):
 
-- Search in Queries. `/` types a `/` there, and every other printable key is
-  text too, so search has no unmodified key left to claim without breaking the
-  panel-takes-text rule. The ctrl layer exists now and could hold one, but a
-  `ctrl-/` would put search behind a different key in Queries than in the other
-  three panels, which is what the *same key means the same thing in every
-  panel* rule is for. The route in is `esc` then `/`, once Queries has a
-  vim-style normal mode — that slice's decision, not this one's, since it also
-  has to invent how one leaves the panel once `esc` no longer does that.
+- Search in the Cql tab. `/` types a `/` there, and every other printable key
+  is text too, so search has no unmodified key left to claim without breaking
+  the panel-takes-text rule. A `ctrl-/` would put search behind a different
+  key there than everywhere else. The Logs tab is searchable already.
 
 From the table display slice (docs/superpowers/specs/2026-08-10-table-display-design.md §11):
 
-- Expanded-cell inspection. `MAX_COLUMN_WIDTH` is 24 and horizontal scrolling
-  reaches columns, not the tails of values, so a 36-character uuid is still
-  ellipsised and nothing shows it in full. The cell cursor is the target such a
-  view needs, and it now exists; the view itself wants a design of its own.
 - Pinned key columns. Useful the moment a table is wide enough to scroll, and
   blocked on a rule for what happens when the pinned block alone does not fit.
-- Column widths that survive a restart. They are recomputed from each page, so
-  resizing one is not a thing to do — a preference needs a config system to hold
-  it, and there is none.
+- Column widths that survive a restart. They are recomputed from each page;
+  `ConfigSink` can write a key back now (theme persistence design), but
+  nothing holds a width.
 - The horizontal thumb glyph has never been looked at on a real terminal. The
   bottom bar reuses the vertical bar's machinery with `━`; it is pinned by
   position, not by appearance.

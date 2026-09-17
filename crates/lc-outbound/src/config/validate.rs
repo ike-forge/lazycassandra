@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use lc_domain::config::{
     Background, Compression, Config, ConnectionConfig, ConnectionName, Consistency, Credential,
     Credentials, CustomTheme, Diagnostic, Discovery, DriverConfig, ExportConfig, GridConfig, Icons,
-    MaxColumnWidth, Millis, Mouse, Origin, OutOfRange, PageSize, PanelRatios, Rgb, RowLimit, Span,
+    MaxColumnWidth, Millis, Mouse, Origin, OutOfRange, PageRows, PageSize, PanelRatios, Rgb, Span,
 };
 use lc_domain::posture::Posture;
 use lc_domain::style::Severity;
@@ -140,13 +140,13 @@ fn grid(layer: Option<GridLayer>, report: &mut Report) -> GridConfig {
             "grid.max_column_width",
         )
     });
-    let limit = layer
-        .row_limit
-        .and_then(|value| report.keep(RowLimit::try_new(value.value), &value, "grid.row_limit"));
+    let rows = layer
+        .page_rows
+        .and_then(|value| report.keep(PageRows::try_new(value.value), &value, "grid.page_rows"));
 
     GridConfig {
         max_column_width: width.unwrap_or_default(),
-        row_limit: limit.unwrap_or_default(),
+        page_rows: rows.unwrap_or_default(),
     }
 }
 
@@ -648,6 +648,31 @@ mod tests {
         assert_eq!(config.grid.max_column_width, MaxColumnWidth::default());
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Danger);
+    }
+
+    #[test]
+    fn a_stated_page_size_for_the_grid_is_kept() {
+        let (config, diagnostics) = config_of(&["[grid]\npage_rows = 50\n"]);
+
+        assert_eq!(config.grid.page_rows.get(), 50);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_page_size_for_the_grid_out_of_range_falls_back_to_the_default() {
+        let (config, diagnostics) = config_of(&["[grid]\npage_rows = 0\n"]);
+
+        assert_eq!(config.grid.page_rows.get(), 200);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("grid.page_rows"));
+    }
+
+    #[test]
+    fn a_stated_column_width_is_kept() {
+        let (config, diagnostics) = config_of(&["[grid]\nmax_column_width = 40\n"]);
+
+        assert_eq!(config.grid.max_column_width.get(), 40);
+        assert!(diagnostics.is_empty());
     }
 
     #[test]

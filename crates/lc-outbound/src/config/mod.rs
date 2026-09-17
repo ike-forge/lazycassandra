@@ -79,7 +79,10 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
                 // `serde`'s flatten keeps the name and not the position.
                 span: None,
                 severity: Severity::Warning,
-                message: format!("unknown key `{table}{key}` — ignored"),
+                message: renamed(table, key).map_or_else(
+                    || format!("unknown key `{table}{key}` — ignored"),
+                    |now| format!("`{table}{key}` is now `{now}` — ignored"),
+                ),
             });
         }
     };
@@ -105,6 +108,12 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
     }
 
     diagnostics
+}
+
+/// The key a retired one was renamed to. `grid.row_limit` was a `LIMIT` and
+/// `grid.page_rows` is a page size (grid paging design §1).
+fn renamed(table: &str, key: &str) -> Option<&'static str> {
+    (table == "grid." && key == "row_limit").then_some("grid.page_rows")
 }
 
 /// An environment variable, `None` if unset, empty, or not an absolute path.
@@ -412,6 +421,19 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Warning);
         assert!(diagnostics[0].message.contains("panel_ratios"));
+    }
+
+    #[test]
+    fn a_retired_row_limit_names_the_key_that_replaced_it() {
+        let (_, diagnostics) = parse("[grid]\nrow_limit = 500\n", &origin());
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Severity::Warning);
+        assert!(
+            diagnostics[0].message.contains("grid.page_rows"),
+            "{}",
+            diagnostics[0].message
+        );
     }
 
     #[test]

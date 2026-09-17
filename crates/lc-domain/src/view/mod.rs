@@ -15,7 +15,7 @@ mod tables;
 mod title;
 
 pub use crate::style::Segment;
-pub use contents::{GridCell, GridColumn};
+pub use contents::{Footer, GridCell, GridColumn, SIZE_SHOWN_FROM};
 pub use details::{ColumnKind, DetailRow, Details, Group, Heading, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness, Stroke};
 pub use logs::{LogRow, RUNNING};
@@ -145,6 +145,7 @@ pub enum OverlayView {
     Export(Box<ExportView>),
     /// The drop confirmation, flattened the way the export form is.
     Drop(Box<DropView>),
+    Inspect(Box<InspectView>),
     /// A startup failure with no dismissal, only `q`/`esc` ending the
     /// process (query log design §7).
     Fatal(Message),
@@ -238,6 +239,49 @@ pub struct DropView {
     pub typed: Option<TypedName>,
 }
 
+/// The cell inspector, flattened for a renderer that never sees an
+/// [`Inspector`](crate::inspect::Inspector)
+/// (docs/superpowers/specs/2026-09-17-cell-inspector-design.md §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectView {
+    pub title: Vec<Segment>,
+    /// The cell's size, for the bottom border. `None` over a row or a null.
+    pub size: Option<String>,
+    pub body: InspectBody,
+    /// The first wrapped line drawn.
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InspectBody {
+    Cell(InspectValue),
+    /// One field per column, in column order, each value hanging under a name
+    /// column `names` cells wide.
+    Row {
+        names: u16,
+        fields: Vec<InspectField>,
+    },
+}
+
+/// A value laid out for reading: one string per line, its leading spaces the
+/// indent a wrapped continuation keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectValue {
+    pub lines: Vec<String>,
+    /// The token the grid draws the same value in: faint for a null, a key
+    /// column's colour for a key.
+    pub token: Option<Token>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectField {
+    /// Ellipsised to the name column's width.
+    pub name: String,
+    /// The heading's token in the grid.
+    pub token: Option<Token>,
+    pub value: InspectValue,
+}
+
 /// The typed confirmation's field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypedName {
@@ -286,7 +330,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
     match state.overlay.as_ref()? {
         Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
         Overlay::Commands(panel) => Some(OverlayView::Commands {
-            rows: commands::rows(panel.search().as_ref(), state.posture()),
+            rows: commands::rows(panel.search().as_ref(), state.posture(), &state.contents),
             selected: panel.selected(),
             sift: panel.sift().map(sift_view),
         }),
@@ -366,6 +410,9 @@ fn overlay(state: &State) -> Option<OverlayView> {
                 }),
             },
         }))),
+        Overlay::Inspect(inspector) => Some(OverlayView::Inspect(Box::new(contents::inspect(
+            state, inspector,
+        )))),
         Overlay::Fatal(message) => Some(OverlayView::Fatal(message.clone())),
     }
 }
@@ -426,6 +473,9 @@ pub struct PanelView {
     /// Whether this panel is waiting on the cluster, and how far into the
     /// loader's cycle that wait is.
     pub activity: Activity,
+    /// What the bottom border says about how much is loaded. Table contents
+    /// alone has one.
+    pub footer: Option<Footer>,
 }
 
 /// What a panel has to show.
@@ -495,9 +545,15 @@ pub enum PanelBody {
     /// A result set: one header per column, one row per row.
     Grid {
         columns: Vec<GridColumn>,
+        /// The rows from `offset` on, as many as the panel is tall: a grid
+        /// paged to a million rows cannot be projected whole every frame
+        /// (grid paging design §4).
         rows: Vec<Vec<GridCell>>,
+        /// Every row the arrangement leaves, drawn or not.
+        total: usize,
         selected: usize,
-        /// The first row drawn, as [`PanelBody::Tree::offset`].
+        /// The first row drawn, as [`PanelBody::Tree::offset`], and the row
+        /// `rows` starts at.
         offset: usize,
         /// The leftmost column drawn.
         first_column: usize,
@@ -563,6 +619,10 @@ pub fn view_model(state: &State) -> ViewModel {
                 }
             } else {
                 Activity::Resting
+            },
+            footer: match panel {
+                Panel::Contents => contents::footer(state),
+                Panel::Tables | Panel::Ddl | Panel::Queries => None,
             },
         }),
         focus: state.focus(),
@@ -958,7 +1018,7 @@ mod tests {
         assert_eq!(
             view_model(&state).overlay,
             Some(OverlayView::Commands {
-                rows: crate::commands::rows(None, state.posture()),
+                rows: crate::commands::rows(None, state.posture(), &state.contents),
                 selected: 1,
                 sift: None,
             })
@@ -1076,12 +1136,19 @@ mod tests {
     fn every_contents_state() -> Vec<State> {
         let query = QueryId::next();
         let mut loading = tabled(&[("shop", &["orders"])]);
-        loading
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        loading.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
 
         let mut loaded = loading.clone();
-        loaded.contents.page_ready(query, Page::default());
+        loaded.contents.page_ready(
+            query,
+            Page::default(),
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
 
         let mut failed = loading.clone();
         failed.contents.failed(query);

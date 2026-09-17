@@ -4,14 +4,20 @@
 //! its title is what says which table is on screen (vision.md §4, principle
 //! 8).
 
+use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
+
 use crate::cell;
-use crate::contents::{ContentsState, GridPage, Order, SelectionMode, Subject, TableRef};
+use crate::contents::{
+    Bytes, ContentsState, Fetch, GridPage, MEMORY_STEP, Order, Paging, SelectionMode, Stopped,
+    Subject, TableRef,
+};
+use crate::inspect::{Inspected, Inspector};
 use crate::model::{CqlValue, Schema};
 use crate::search::Search;
 use crate::state::{Panel, Ranges, State};
 use crate::style::{Segment, Severity, Token};
 
-use super::{PanelBody, waiting};
+use super::{InspectBody, InspectField, InspectValue, InspectView, PanelBody, waiting};
 
 /// One column heading.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +29,7 @@ pub struct GridColumn {
     /// table, so no claim about its shape can be checked.
     pub token: Option<Token>,
     /// Character columns it is drawn in, capped by
-    /// [`crate::grid::MAX_COLUMN_WIDTH`]. Computed here rather than in the
+    /// `grid.max_column_width`. Computed here rather than in the
     /// renderer so the fitting arithmetic can live beside the offsets it
     /// bounds (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
     pub width: u16,
@@ -52,6 +58,81 @@ pub struct GridCell {
     pub matched: bool,
 }
 
+/// How much of a result Table contents holds, drawn on its bottom border
+/// (docs/superpowers/specs/2026-09-17-grid-paging-design.md §5).
+///
+/// Three parts because the renderer drops them apart: `size` first, then the
+/// whole footer, as the border narrows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Footer {
+    /// Every row fetched, filtered or not: the title already says how much of
+    /// that a filter left.
+    pub rows: String,
+    /// The estimate, from [`SIZE_SHOWN_FROM`] up, in the warning colour from
+    /// the first memory stop up.
+    pub size: Option<Segment>,
+    /// `None` once the result ended.
+    pub status: Option<String>,
+}
+
+/// The estimate below which the footer leaves it out.
+pub const SIZE_SHOWN_FROM: Bytes = Bytes::new(10_000_000);
+
+pub(super) fn footer(state: &State) -> Option<Footer> {
+    let ContentsState::Loaded { page, paging, .. } = state.contents.state() else {
+        return None;
+    };
+    let bytes = page.bytes();
+
+    Some(Footer {
+        rows: match page.fetched() {
+            1 => "1 row".to_owned(),
+            count => format!("{} rows", thousands(count)),
+        },
+        size: (bytes >= SIZE_SHOWN_FROM).then(|| {
+            Segment::styled(
+                format!("≈ {}", megabytes(bytes)),
+                if bytes >= MEMORY_STEP {
+                    Token::Severity(Severity::Warning)
+                } else {
+                    Token::Muted
+                },
+            )
+        }),
+        status: match paging {
+            Paging::Ended => None,
+            Paging::More { fetch, .. } => Some(match fetch {
+                Fetch::Idle => "more".to_owned(),
+                Fetch::One(_) | Fetch::All { .. } => "loading".to_owned(),
+                Fetch::Stopped(Stopped::Memory(at)) => format!("stopped at {}", megabytes(*at)),
+                Fetch::Stopped(Stopped::Rows(at)) => {
+                    format!("stopped at {} rows", thousands(*at))
+                }
+            }),
+        },
+    })
+}
+
+/// Whole megabytes, rounded down: `104 MB`.
+fn megabytes(bytes: Bytes) -> String {
+    format!("{} MB", bytes.get() / 1_000_000)
+}
+
+/// `1234567` as `1,234,567`.
+fn thousands(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+
+    out
+}
+
 pub(super) fn title(state: &State) -> Vec<Segment> {
     const BASE: &str = "Table contents";
 
@@ -60,7 +141,7 @@ pub(super) fn title(state: &State) -> Vec<Segment> {
         ContentsState::Loading { subject, .. } | ContentsState::Failed { subject, .. } => {
             named(BASE, subject, None)
         }
-        ContentsState::Loaded { subject, page } => named(BASE, subject, Some(count(page))),
+        ContentsState::Loaded { subject, page, .. } => named(BASE, subject, Some(count(page))),
     }
 }
 
@@ -120,7 +201,7 @@ pub(super) fn body(state: &State) -> PanelBody {
             text: "query failed — see [4]-Logs".to_owned(),
             token: Some(Token::Severity(Severity::Danger)),
         },
-        ContentsState::Loaded { subject, page } => grid(state, subject, page),
+        ContentsState::Loaded { subject, page, .. } => grid(state, subject, page),
     }
 }
 
@@ -157,6 +238,7 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         },
     };
 
+    let offset = state.contents.scroll.offset();
     let table = grid_table(state, subject);
     let tokens: Vec<Option<Token>> = page
         .columns
@@ -182,8 +264,15 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
                 filtered: grid_page.filter(index).is_some(),
             })
             .collect(),
+        // Unmeasured, the panel has no height to window by, and draws from
+        // the offset on.
         rows: grid_page
             .rows()
+            .skip(offset)
+            .take(match state.geometry.height(Panel::Contents) {
+                0 => usize::MAX,
+                height => height,
+            })
             .map(|row| {
                 row.values
                     .iter()
@@ -198,8 +287,9 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
                     .collect()
             })
             .collect(),
+        total: grid_page.len(),
         selected: state.contents.cursor.index(),
-        offset: state.contents.scroll.offset(),
+        offset,
         first_column: state.contents.column_scroll.first(),
         column: state.contents.column.index(),
         mode: state.contents.mode,
@@ -268,6 +358,79 @@ fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str)
     }
 }
 
+/// The inspector's projection. Tokens are the grid's own, so a key column
+/// reads as one in both (cell inspector design §3).
+pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
+    let table = grid_table(state, inspector.subject());
+    let column = |name: &str| column_token(state.schema(), table.as_ref(), name);
+    let value = |name: &str, value: &CqlValue| InspectValue {
+        lines: crate::inspect::lines(value),
+        token: match value {
+            CqlValue::Null => Some(Token::Faint),
+            _ => key_token(column(name)),
+        },
+    };
+
+    let body = match inspector.inspected() {
+        Inspected::Cell {
+            column: name,
+            value: inspected,
+        } => InspectBody::Cell(value(name, inspected)),
+        Inspected::Row {
+            columns, values, ..
+        } => {
+            let cap = usize::from(state.config.grid.max_column_width.get());
+            let names = columns
+                .iter()
+                .map(|name| name.width())
+                .max()
+                .unwrap_or(0)
+                .min(cap);
+
+            InspectBody::Row {
+                names: u16::try_from(names).unwrap_or(u16::MAX),
+                fields: columns
+                    .iter()
+                    .zip(values)
+                    .map(|(name, inspected)| InspectField {
+                        name: fitted(name, names),
+                        token: column(name),
+                        value: value(name, inspected),
+                    })
+                    .collect(),
+            }
+        }
+    };
+
+    InspectView {
+        title: inspector.title(),
+        size: inspector.size(),
+        body,
+        offset: inspector.offset(),
+    }
+}
+
+/// `name` cut to `width` cells with an ellipsis, the way the grid cuts a
+/// heading.
+fn fitted(name: &str, width: usize) -> String {
+    if name.width() <= width {
+        return name.to_owned();
+    }
+
+    let mut out = String::new();
+    let mut used = 0;
+    for character in name.chars() {
+        used += character.width().unwrap_or(0);
+        if used >= width {
+            break;
+        }
+        out.push(character);
+    }
+    out.push('…');
+
+    out
+}
+
 /// The table a grid's rows came from: the one the tree asked for, or the one
 /// a typed statement names, qualified by the keyspace on screen where the
 /// statement did not qualify it.
@@ -326,10 +489,17 @@ mod tests {
     fn showing(page: Page) -> State {
         let mut state = tabled(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state.contents.page_ready(query, page);
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            page,
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
         state
     }
 
@@ -357,10 +527,17 @@ mod tests {
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Typed(cql.to_owned()));
-        state.contents.page_ready(query, page);
+        state.contents.requested(
+            query,
+            Subject::Typed(cql.to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            page,
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
         state
     }
 
@@ -371,10 +548,17 @@ mod tests {
     fn showing_typed_in(keyspace: &str, cql: &str, page: Page) -> State {
         let mut state = tabled(&[(keyspace, &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Typed(cql.to_owned()));
-        state.contents.page_ready(query, page);
+        state.contents.requested(
+            query,
+            Subject::Typed(cql.to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            page,
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
         state
     }
 
@@ -396,6 +580,7 @@ mod tests {
         state.contents.requested(
             QueryId::next(),
             Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
 
         assert_eq!(
@@ -419,6 +604,7 @@ mod tests {
         state.contents.requested(
             QueryId::next(),
             Subject::Table(TableRef::new(keyspace, table)),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
         state
     }
@@ -461,6 +647,7 @@ mod tests {
         state.contents.requested(
             QueryId::next(),
             Subject::Typed("SELECT *\n  FROM shop.orders".to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
 
         let mut expected = vec![Segment::plain("Table contents — ")];
@@ -480,9 +667,11 @@ mod tests {
     fn failed_state() -> State {
         let mut state = tabled(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.failed(query);
         state
     }
@@ -588,15 +777,19 @@ mod tests {
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             page_of(
                 &["id", "at", "total"],
                 &[&[CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]],
             ),
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
 
         let PanelBody::Grid { columns, .. } = contents_body(&state) else {
@@ -757,15 +950,19 @@ mod tests {
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             page_of(
                 &["id", "at", "total"],
                 &[&[CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]],
             ),
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
 
         let PanelBody::Grid { rows, .. } = contents_body(&state) else {
@@ -1048,5 +1245,226 @@ mod tests {
             Ranges::default(),
             "column mode has no row axis, so a held rows range must not be projected"
         );
+    }
+
+    #[test]
+    fn a_row_projects_one_field_per_column_under_a_capped_name_column() {
+        let long = "a_column_name_longer_than_the_thirty_cell_cap";
+        let state = showing(page_of(
+            &["id", long],
+            &[&[CqlValue::Int(7), CqlValue::Null]],
+        ));
+        let inspector = Inspector::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Inspected::Row {
+                number: 1,
+                columns: vec!["id".to_owned(), long.to_owned()],
+                values: vec![CqlValue::Int(7), CqlValue::Null],
+            },
+        );
+
+        let view = inspect(&state, &inspector);
+
+        assert_eq!(crate::style::text(&view.title), "shop.orders · row 1");
+        assert_eq!(view.size, None);
+        assert_eq!(
+            view.body,
+            InspectBody::Row {
+                names: 30,
+                fields: vec![
+                    InspectField {
+                        name: "id".to_owned(),
+                        token: Some(Token::PartitionKey),
+                        value: InspectValue {
+                            lines: vec!["7".to_owned()],
+                            token: Some(Token::PartitionKeyValue),
+                        },
+                    },
+                    InspectField {
+                        name: "a_column_name_longer_than_the…".to_owned(),
+                        token: None,
+                        value: InspectValue {
+                            lines: vec!["null".to_owned()],
+                            token: Some(Token::Faint),
+                        },
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn a_cell_projects_its_value_laid_out_and_its_size() {
+        let state = showing(page_of(&["note"], &[&[CqlValue::Text("[1,2]".to_owned())]]));
+        let inspector = Inspector::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Inspected::Cell {
+                column: "note".to_owned(),
+                value: CqlValue::Text("[1,2]".to_owned()),
+            },
+        );
+
+        let view = inspect(&state, &inspector);
+
+        assert_eq!(view.size.as_deref(), Some("5 B"));
+        assert_eq!(
+            view.body,
+            InspectBody::Cell(InspectValue {
+                lines: ["[", "  1,", "  2", "]"].map(str::to_owned).to_vec(),
+                token: None,
+            })
+        );
+    }
+
+    fn ids(count: usize) -> Page {
+        page_of(&["id"], &vec![&[CqlValue::Int(1)][..]; count])
+    }
+
+    fn footer_of(state: &State) -> Option<Footer> {
+        view_model(state).panels[2].footer.clone()
+    }
+
+    fn said(footer: &Footer) -> String {
+        [
+            Some(footer.rows.clone()),
+            footer.size.as_ref().map(|size| size.text.clone()),
+            footer.status.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+    }
+
+    fn with_more(page: Page) -> Page {
+        Page {
+            next: Some(crate::model::PagingState(vec![1])),
+            ..page
+        }
+    }
+
+    #[test]
+    fn a_result_that_ended_counts_its_rows_and_says_nothing_more() {
+        let footer = footer_of(&showing(ids(1234))).expect("a footer");
+
+        assert_eq!(said(&footer), "1,234 rows");
+    }
+
+    #[test]
+    fn a_result_with_more_says_so() {
+        let footer = footer_of(&showing(with_more(ids(200)))).expect("a footer");
+
+        assert_eq!(said(&footer), "200 rows · more");
+    }
+
+    #[test]
+    fn a_page_in_flight_is_loading() {
+        let mut state = showing(with_more(ids(3400)));
+        state.contents.fetch_all(QueryId::next);
+
+        assert_eq!(
+            said(&footer_of(&state).expect("a footer")),
+            "3,400 rows · loading"
+        );
+    }
+
+    #[test]
+    fn a_memory_stop_names_the_estimate_in_the_warning_colour() {
+        let mut state = showing(with_more(ids(812)));
+        state.contents.pretend(
+            Bytes::new(104_000_000),
+            Fetch::Stopped(Stopped::Memory(MEMORY_STEP)),
+        );
+
+        let footer = footer_of(&state).expect("a footer");
+        assert_eq!(said(&footer), "812 rows · ≈ 104 MB · stopped at 100 MB");
+        assert_eq!(
+            footer.size.and_then(|size| size.token),
+            Some(Token::Severity(Severity::Warning))
+        );
+    }
+
+    #[test]
+    fn a_row_stop_names_the_rows_it_stopped_at() {
+        let mut state = showing(with_more(ids(3)));
+        state.contents.pretend(
+            Bytes::new(61_000_000),
+            Fetch::Stopped(Stopped::Rows(1_000_000)),
+        );
+
+        let footer = footer_of(&state).expect("a footer");
+        assert_eq!(
+            said(&footer),
+            "3 rows · ≈ 61 MB · stopped at 1,000,000 rows"
+        );
+        assert_eq!(
+            footer.size.and_then(|size| size.token),
+            Some(Token::Muted),
+            "under the first memory stop, the estimate is not a warning"
+        );
+    }
+
+    #[test]
+    fn an_estimate_under_ten_megabytes_is_left_out() {
+        let mut state = showing(with_more(ids(3)));
+        state
+            .contents
+            .pretend(Bytes::new(SIZE_SHOWN_FROM.get() - 1), Fetch::Idle);
+
+        assert_eq!(footer_of(&state).and_then(|footer| footer.size), None);
+    }
+
+    #[test]
+    fn a_filter_leaves_the_footer_counting_every_row_fetched() {
+        let mut state = showing(page_of(
+            &["name"],
+            &[
+                &[CqlValue::Text("a".to_owned())],
+                &[CqlValue::Text("b".to_owned())],
+            ],
+        ));
+        state.contents.set_filter(0, Search::new("a"));
+
+        assert_eq!(footer_of(&state).expect("a footer").rows, "2 rows");
+    }
+
+    #[test]
+    fn only_a_loaded_grid_has_a_footer() {
+        let state = tabled(&[("shop", &["orders"])]);
+
+        assert!(
+            view_model(&state)
+                .panels
+                .iter()
+                .all(|panel| panel.footer.is_none())
+        );
+    }
+
+    #[test]
+    fn thousands_are_separated() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1000), "1,000");
+        assert_eq!(thousands(1_000_000), "1,000,000");
+    }
+
+    #[test]
+    fn only_the_rows_the_panel_can_show_are_projected() {
+        let mut state = showing(ids(20));
+        state.geometry = crate::state::Geometry::new([8, 8, 5, 1], 0, 0);
+        state.contents.cursor.go_to(7, 20);
+        state.contents.scroll.follow(7, 5);
+
+        let PanelBody::Grid {
+            rows,
+            total,
+            offset,
+            ..
+        } = contents_body(&state)
+        else {
+            panic!("a grid");
+        };
+
+        assert_eq!((rows.len(), total, offset), (5, 20, 3));
     }
 }

@@ -128,7 +128,7 @@ fn merge_grid(lower: Option<GridLayer>, upper: Option<GridLayer>) -> Option<Grid
         (None, upper) => upper,
         (Some(lower), Some(upper)) => Some(GridLayer {
             max_column_width: upper.max_column_width.or(lower.max_column_width),
-            row_limit: upper.row_limit.or(lower.row_limit),
+            page_rows: upper.page_rows.or(lower.page_rows),
             unknown: lower.unknown,
         }),
     }

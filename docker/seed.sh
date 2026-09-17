@@ -9,11 +9,14 @@
 # Deterministic: no now(), no uuid(), no $RANDOM, no wall clock. Two runs
 # against empty volumes produce identical data.
 #
-# Three things are generated here rather than checked into cql/:
+# Five things are generated here rather than checked into cql/:
 #   - the 10 000-row wide partition, which would be a 2 MB file
 #   - the 384-dimension vector, which would be a 3 KB single-line literal
 #   - the hostile values, which need raw ESC and C0 bytes that a text editor
 #     silently mangles
+#   - the 100-column row, whose column list is arithmetic
+#   - the big cells, 60 rows of kilobyte-sized values
+#   - the heavy rows, 120 MB of CSV for COPY FROM
 
 set -euo pipefail
 
@@ -25,6 +28,8 @@ AUDIT_DAY='2026-03-01'
 AUDIT_ROWS=10000
 AUDIT_BATCH=100
 VECTOR_DIMS=384
+BIG_CELL_ROWS=60
+HEAVY_ROWS=1200
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -146,6 +151,78 @@ BEGIN {
 }' > "$WORK/wide-row.cql"
 cql_file "$WORK/wide-row.cql"
 
+step "Generating ${BIG_CELL_ROWS} rows of big cells (edge_cases.big_cells)"
+# Every size and value is a function of the row index, so no two rows are the
+# same size and every run writes the same bytes.
+awk -v rows="$BIG_CELL_ROWS" '
+function uuid(row, k) { return sprintf("d0000000-0000-4000-8000-%04x%08x", row, k) }
+BEGIN {
+    q = sprintf("%c", 39)
+    nw = split("brushed steel walnut modular compact outdoor wireless ergonomic folding heavy duty lamp chair shelf kettle speaker drill bracket cable", words, " ")
+    ns = split("Machined from a single billet and finished by hand, every unit is inspected twice before it leaves the workshop.|The frame takes standard M4 fixings, so replacement parts are a hardware store away rather than a warranty claim.|Rated for continuous use in damp rooms, it shrugs off the condensation that ruins cheaper fittings within a season.|A low-friction bearing keeps the action smooth for years, and the tolerances are tight enough that nothing rattles.|Packaging is recycled card with no foam, and the manual is printed on the inside of the box to save a sheet.|Owners report that it outlasts the furniture it is mounted to, which is the point of buying it once.", sentences, "|")
+    nm = split("aluminium oak nylon brass glass rubber cotton ceramic", materials, " ")
+    for (i = 0; i < rows; i++) {
+        sku = sprintf("SKU-%05d", 10000 + i * 37)
+
+        want = 30 + (i * 7) % 31
+        name = words[(i % nw) + 1]
+        for (k = 1; length(name) + 1 + length(words[((i + k * 3) % nw) + 1]) <= want; k++) name = name " " words[((i + k * 3) % nw) + 1]
+
+        want = 1024 + (i * 131) % 2049
+        description = ""
+        for (k = 0; length(description) < want; k++) description = description sentences[((i + k) % ns) + 1] " "
+        description = substr(description, 1, want)
+
+        want = 2048 + (i * 263) % 3800
+        spec = sprintf("{\"sku\":\"%s\",\"dimensions\":{\"w\":%d,\"h\":%d,\"d\":%d.%d,\"unit\":\"mm\"},\"note\":\"fits {M4} bolts, \\\"torque\\\" 2.5Nm\",\"components\":[", sku, 100 + i, 40 + i % 17, 12 + i % 9, i % 10)
+        for (k = 0; length(spec) < want; k++) {
+            if (k) spec = spec ","
+            spec = spec sprintf("{\"part\":\"P-%03d-%02d\",\"qty\":%d,\"material\":\"%s\",\"ratings\":{\"load_kg\":%d.%d,\"ip\":\"IP%d%d\",\"certified\":%s},\"tolerances\":[%d.%02d,-%d.%02d]}", i, k, 1 + k % 4, materials[((i + k) % nm) + 1], 5 + (i * k) % 200, k % 10, (i + k) % 7, (i * k) % 9, ((i + k) % 2) ? "true" : "false", k % 3, (i + k) % 100, k % 2, (i * 3 + k) % 100)
+        }
+        spec = spec "]}"
+
+        n = 10 + (i * 11) % 31
+        tags = ""
+        for (k = 0; k < n; k++) tags = tags (k ? ", " : "") q words[((i + k) % nw) + 1] "-" k q
+
+        n = 20 + (i * 13) % 41
+        attributes = ""
+        for (k = 0; k < n; k++) attributes = attributes (k ? ", " : "") sprintf("%sattr_%02d%s: %svalue %d of row %d%s", q, k, q, q, k * 7 + i, i, q)
+
+        n = 5 + (i * 3) % 21
+        variants = ""
+        for (k = 0; k < n; k++) variants = variants (k ? ", " : "") uuid(i, k)
+
+        n = 2048 + (i * 97) % 6145
+        thumbnail = "0x"
+        for (k = 0; k < n; k++) thumbnail = thumbnail sprintf("%02x", (i * 31 + k * 7) % 256)
+
+        printf "INSERT INTO edge_cases.big_cells (id, sku, name, description, spec, tags, attributes, variants, thumbnail) VALUES (%d, %s%s%s, %s%s%s, %s%s%s, %s%s%s, [%s], {%s}, {%s}, %s);\n", \
+            i, q, sku, q, q, name, q, q, description, q, q, spec, q, tags, attributes, variants, thumbnail
+    }
+}' > "$WORK/big-cells.cql"
+cql_file "$WORK/big-cells.cql"
+
+step "Generating ${HEAVY_ROWS} rows of ~100 KB text (edge_cases.heavy_rows)"
+# Each body is a slice of one prebuilt text, its length and start a function
+# of the row index: concatenating 100 KB a row is quadratic in awk.
+awk -v rows="$HEAVY_ROWS" '
+BEGIN {
+    text = "Row after row of the same plain prose keeps the grid busy. "
+    while (length(text) < 120000) text = text text
+    for (i = 0; i < rows; i++) {
+        size = 95000 + (i * 37) % 10001
+        printf "%d,\"%s\"\n", i, substr(text, 1 + (i * 13) % 997, size)
+    }
+}' > "$WORK/heavy-rows.csv"
+# One row a batch: a single-partition batch is exempt from
+# batch_size_fail_threshold, which 100 KB is twice.
+cat > "$WORK/heavy-rows.cql" <<EOF
+COPY edge_cases.heavy_rows (id, body) FROM '$WORK/heavy-rows.csv'
+    WITH MAXBATCHSIZE = 1 AND CHUNKSIZE = 50;
+EOF
+cql_file "$WORK/heavy-rows.cql"
+
 step "Summary"
 # Via -f, not -e: cqlsh's -e splitter mis-handles statements that span lines
 # and reports a spurious trailing syntax error.
@@ -155,6 +232,7 @@ SELECT keyspace_name, table_name FROM system_schema.tables
 SELECT keyspace_name, view_name FROM system_schema.views
   WHERE keyspace_name IN ('shop', 'typezoo', 'edge_cases');
 SELECT count(*) AS audit_rows FROM shop.audit_log_by_day WHERE day = '${AUDIT_DAY}';
+SELECT count(*) AS heavy_rows FROM edge_cases.heavy_rows;
 EOF
 cql_file "$WORK/summary.cql"
 

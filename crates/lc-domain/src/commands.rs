@@ -6,6 +6,7 @@
 //! `KeyPress` values rather than a string, so a row cannot describe a press no
 //! arm of `handle_key` claims.
 
+use crate::contents::ContentsPanel;
 use crate::model::Key;
 use crate::posture::Posture;
 use crate::search::{Search, Sift};
@@ -46,13 +47,16 @@ pub enum Gate {
     /// is `update`'s, not this enum's — this is what the palette draws
     /// (posture design §3).
     Mutates,
+    /// Fetches more of the grid's result, so a result that ended has nothing
+    /// for it (grid paging design §6).
+    More,
 }
 
 impl Gate {
     /// Whether a connection under `posture` could run this at all.
     const fn permitted(self, posture: Posture) -> bool {
         match self {
-            Self::Anywhere => true,
+            Self::Anywhere | Self::More => true,
             Self::Mutates => posture.permits_mutation(),
         }
     }
@@ -64,6 +68,14 @@ impl Command {
             binding: Binding { keys, action },
             run,
             gate: Gate::Anywhere,
+        }
+    }
+
+    /// A command with nothing to do once the grid's result has ended.
+    const fn paging(keys: &'static [Stroke], action: &'static str) -> Self {
+        Self {
+            gate: Gate::More,
+            ..Self::new(keys, action, Run::In(Panel::Contents))
         }
     }
 
@@ -275,6 +287,13 @@ const DROP: &[Command] = &[
 
 const CONTENTS: &[Command] = &[
     Command::new(
+        &[Stroke::key(Key::Enter)],
+        "inspect",
+        Run::In(Panel::Contents),
+    ),
+    Command::paging(&[Stroke::key(Key::Char('p'))], "fetch the next page"),
+    Command::paging(&[Stroke::key(Key::Char('P'))], "fetch every page"),
+    Command::new(
         &[Stroke::key(Key::Char('m'))],
         "cycle selection mode",
         Run::In(Panel::Contents),
@@ -465,14 +484,18 @@ impl Slot {
         }
     }
 
-    fn row(self, posture: Posture) -> CommandRow {
+    fn row(self, posture: Posture, contents: &ContentsPanel) -> CommandRow {
         match self {
             Self::Separator => CommandRow::Separator,
             Self::Heading(heading) => CommandRow::Heading(heading),
             Self::Command { command, .. } => CommandRow::Command {
                 keys: label(command.binding.keys),
                 action: command.binding.action,
-                liveness: command.run.liveness(),
+                liveness: if command.gate == Gate::More && !contents.has_more() {
+                    Liveness::Inert
+                } else {
+                    command.run.liveness()
+                },
                 refused: command.refused(posture),
             },
         }
@@ -533,14 +556,21 @@ fn slots(search: Option<&Search>) -> Vec<Slot> {
 /// under every posture, so [`row_count`] needs none and a connection opening
 /// read-only moves no border (posture design §3).
 #[must_use]
-pub fn rows(search: Option<&Search>, posture: Posture) -> Vec<CommandRow> {
+pub fn rows(
+    search: Option<&Search>,
+    posture: Posture,
+    contents: &ContentsPanel,
+) -> Vec<CommandRow> {
     let slots = slots(search);
 
     if slots.is_empty() {
         return vec![CommandRow::Empty];
     }
 
-    slots.into_iter().map(|slot| slot.row(posture)).collect()
+    slots
+        .into_iter()
+        .map(|slot| slot.row(posture, contents))
+        .collect()
 }
 
 /// How many rows [`rows`] produces. The block's geometry is derived from
@@ -794,11 +824,11 @@ mod tests {
     /// test about the *shape* of the list wants. The posture's own effect on
     /// it is tested against `Posture::ReadOnly` explicitly.
     fn rows(search: Option<&Search>) -> Vec<CommandRow> {
-        super::rows(search, Posture::Writable)
+        super::rows(search, Posture::Writable, &ContentsPanel::default())
     }
 
     fn row_for(action: &str, posture: Posture) -> CommandRow {
-        super::rows(None, posture)
+        super::rows(None, posture, &ContentsPanel::default())
             .into_iter()
             .find(|row| matches!(row, CommandRow::Command { action: a, .. } if *a == action))
             .unwrap_or_else(|| panic!("no row for {action}"))
@@ -840,10 +870,13 @@ mod tests {
     #[test]
     fn a_read_only_connection_drops_no_row_from_the_palette() {
         assert_eq!(
-            super::rows(None, Posture::ReadOnly).len(),
-            super::rows(None, Posture::Writable).len()
+            super::rows(None, Posture::ReadOnly, &ContentsPanel::default()).len(),
+            super::rows(None, Posture::Writable, &ContentsPanel::default()).len()
         );
-        assert_eq!(row_count(None), super::rows(None, Posture::ReadOnly).len());
+        assert_eq!(
+            row_count(None),
+            super::rows(None, Posture::ReadOnly, &ContentsPanel::default()).len()
+        );
     }
 
     #[test]

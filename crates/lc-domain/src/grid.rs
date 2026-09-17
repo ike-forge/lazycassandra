@@ -11,13 +11,8 @@
 use unicode_width::UnicodeWidthStr as _;
 
 use crate::cell;
+use crate::config::MaxColumnWidth;
 use crate::model::Page;
-
-/// How wide a column may grow before its values are ellipsised.
-///
-/// A uuid is 36 columns and a blob is unbounded. Horizontal scrolling reaches
-/// columns, not the tails of values (design §7).
-pub const MAX_COLUMN_WIDTH: u16 = 24;
 
 /// Blank columns between cells, and between the gutter and the first column.
 ///
@@ -49,9 +44,13 @@ pub const BAR: u16 = 1;
 pub const MARKS: u16 = 4;
 
 /// Each column's natural width: the widest of its values and of its heading
-/// with the marks that heading always carries, capped.
+/// with the marks that heading always carries, capped at `cap` — past which a
+/// value is ellipsised and `Enter` is how it is read whole
+/// (docs/superpowers/specs/2026-09-17-cell-inspector-design.md §1).
 #[must_use]
-pub fn widths(page: &Page) -> Vec<u16> {
+pub fn widths(page: &Page, cap: MaxColumnWidth) -> Vec<u16> {
+    let cap = cap.get();
+
     page.columns
         .iter()
         .enumerate()
@@ -65,9 +64,7 @@ pub fn widths(page: &Page) -> Vec<u16> {
                 .max()
                 .unwrap_or(1);
 
-            u16::try_from(widest)
-                .unwrap_or(MAX_COLUMN_WIDTH)
-                .clamp(1, MAX_COLUMN_WIDTH)
+            u16::try_from(widest).unwrap_or(cap).clamp(1, cap)
         })
         .collect()
 }
@@ -203,7 +200,7 @@ mod tests {
         );
 
         assert_eq!(
-            widths(&page),
+            widths(&page, MaxColumnWidth::default()),
             vec![2 + MARKS, 11],
             "the heading counts, and so do the marks it carries"
         );
@@ -213,21 +210,29 @@ mod tests {
     fn a_heading_wider_than_every_value_sets_the_width() {
         let page = page(&["description"], &[&[CqlValue::Text("hi".to_owned())]]);
 
-        assert_eq!(widths(&page), vec![11 + MARKS]);
+        assert_eq!(widths(&page, MaxColumnWidth::default()), vec![11 + MARKS]);
     }
 
     #[test]
     fn a_column_is_capped() {
         let page = page(&["blob"], &[&[CqlValue::Text("x".repeat(100))]]);
 
-        assert_eq!(widths(&page), vec![MAX_COLUMN_WIDTH]);
+        assert_eq!(widths(&page, MaxColumnWidth::default()), vec![30]);
+    }
+
+    #[test]
+    fn the_cap_is_the_configured_one() {
+        let page = page(&["blob"], &[&[CqlValue::Text("x".repeat(100))]]);
+        let cap = MaxColumnWidth::try_new(48).expect("in range");
+
+        assert_eq!(widths(&page, cap), vec![48]);
     }
 
     #[test]
     fn a_column_with_no_rows_is_still_as_wide_as_its_heading() {
         let page = page(&["id"], &[]);
 
-        assert_eq!(widths(&page), vec![2 + MARKS]);
+        assert_eq!(widths(&page, MaxColumnWidth::default()), vec![2 + MARKS]);
     }
 
     #[test]

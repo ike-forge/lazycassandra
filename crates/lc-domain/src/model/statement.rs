@@ -43,28 +43,10 @@ impl Statement {
         self.kind.mutates()
     }
 
-    /// Every column of one table, bounded by `limit`.
-    ///
-    /// The bound is in the CQL rather than a page size on the request, so what
-    /// reaches the screen is exactly what the statement on display asked for
-    /// (vision.md §4, principle 3).
+    /// Every column of one table, unbounded: the grid pages it and export
+    /// streams it (grid paging design §1).
     #[must_use]
-    pub fn select_all(keyspace: &str, table: &str, limit: usize) -> Self {
-        Self {
-            cql: format!(
-                "SELECT * FROM {}.{} LIMIT {limit}",
-                quoted(keyspace),
-                quoted(table)
-            ),
-            kind: StatementKind::Read,
-        }
-    }
-
-    /// Every column of one table, unbounded. The export's whole-table scope
-    /// (export design §3); [`Statement::select_all`] is the panel's bounded
-    /// read.
-    #[must_use]
-    pub fn select_everything(keyspace: &str, table: &str) -> Self {
+    pub fn select_all(keyspace: &str, table: &str) -> Self {
         Self {
             cql: format!("SELECT * FROM {}.{}", quoted(keyspace), quoted(table)),
             kind: StatementKind::Read,
@@ -256,8 +238,8 @@ mod tests {
     #[test]
     fn selecting_a_table_quotes_both_halves_of_its_name() {
         assert_eq!(
-            Statement::select_all("shop", "orders_by_customer", 200).cql,
-            "SELECT * FROM \"shop\".\"orders_by_customer\" LIMIT 200"
+            Statement::select_all("shop", "orders_by_customer").cql,
+            "SELECT * FROM \"shop\".\"orders_by_customer\""
         );
     }
 
@@ -266,8 +248,8 @@ mod tests {
         // Unquoted, CQL would fold this to `myks` and the statement would name
         // a keyspace that does not exist.
         assert_eq!(
-            Statement::select_all("MyKs", "Orders", 10).cql,
-            "SELECT * FROM \"MyKs\".\"Orders\" LIMIT 10"
+            Statement::select_all("MyKs", "Orders").cql,
+            "SELECT * FROM \"MyKs\".\"Orders\""
         );
     }
 
@@ -278,7 +260,7 @@ mod tests {
 
     #[test]
     fn selecting_is_a_read_and_so_survives_a_read_only_connection() {
-        assert!(!Statement::select_all("shop", "orders", 200).mutates());
+        assert!(!Statement::select_all("shop", "orders").mutates());
     }
 
     #[test]
@@ -517,14 +499,6 @@ mod tests {
              DELETE FROM \"shop\".\"orders\" WHERE \"id\" = 8f14e45f;\n  \
              DELETE FROM \"shop\".\"orders\" WHERE \"id\" = c9f0f895;\n\
              APPLY BATCH"
-        );
-    }
-
-    #[test]
-    fn selecting_everything_quotes_both_halves_and_bounds_nothing() {
-        assert_eq!(
-            Statement::select_everything("shop", "orders").cql,
-            "SELECT * FROM \"shop\".\"orders\""
         );
     }
 }

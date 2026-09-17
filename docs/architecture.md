@@ -13,9 +13,10 @@ themes plus whatever a config file adds (§6), and layered TOML configuration
 with startup diagnostics (§7). The grid now supports row, column and cell
 selection with yank to the clipboard, a visual range over any of the three
 list panels, and `ctrl-e` over a loaded Contents grid opens a form that writes
-the fetched rows or the whole table to a CSV or JSON file — the one path in
-the program that pages a statement past its first round trip (§5,
-`execute_paged`). The Queries buffer is now a CQL editor rather than a text
+the fetched rows or the whole table to a CSV or JSON file. Every read into
+Table contents pages: `p` fetches the next page and `P` fetches until the
+result ends or a memory or row stop (§5, `execute_paged`,
+specs/2026-09-17-grid-paging-design.md). The Queries buffer is now a CQL editor rather than a text
 box: `cql/` scans the buffer once and readers share that scan —
 highlighting into the `Token` path §6 has carried unused since the themes
 slice, a `ctrl-f` that lays a statement out, and a completion popup over CQL's
@@ -271,16 +272,16 @@ Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
 `Schema` and `Page` types. Driver types stop at the adapter. This is what made
 §8 cheap to close — swapping drivers touches one crate.
 
-**`Cluster` pages through `execute_paged(conn, stmt, cursor)`, not a bare
-`fetch_page(conn, cursor)`.** The second signature was the original port and
-could not be implemented: scylla's `query_single_page` needs the statement
-alongside the paging state to resume a query, and a cursor on its own
-identifies nothing the driver can resume — it names a position, not the
-query that produced it. `execute_paged` carries both, and `execute` is
-untouched: it stays `query_unpaged` with `Page::next` hardcoded to `None`,
-so the Contents panel's one-round-trip behaviour does not move. Only the
-export path pages, starting from `execute_paged(conn, stmt, None)` and
-following `Page::next` until it is empty (export design §6.2).
+**`Cluster` pages through `execute_paged(conn, stmt, page_size, cursor)`, not
+a bare `fetch_page(conn, cursor)`.** The second signature was the original
+port and could not be implemented: scylla's `query_single_page` needs the
+statement alongside the paging state to resume a query, and a cursor on its
+own identifies nothing the driver can resume — it names a position, not the
+query that produced it. `execute_paged` carries both. Every read into the
+Contents panel pages at `grid.page_rows`, one page per `p` and until a stop
+for `P`; export pages at `driver.page_size` to the end. `execute` stays
+`query_unpaged` for mutations and DDL, which return no rows to page
+(export design §6.2, specs/2026-09-17-grid-paging-design.md).
 
 ## 6. Theme plumbing
 

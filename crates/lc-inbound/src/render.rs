@@ -52,6 +52,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let connection_rows = crate::connections::visible_rows(frame.area());
     let export_fits = crate::export::fits(frame.area());
     let drop_fits = crate::drop::fits(frame.area());
+    let inspector_rows = crate::inspect::visible_rows(frame.area());
     let rects = match layout(frame.area(), queries_height(view)) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
@@ -112,6 +113,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             beneath,
         );
 
+        let columns = body.as_ref().and_then(|drawn| drawn.columns.as_ref());
+        bottom_border(frame, area, panel, columns, border, beneath);
+
         match &body {
             Some(drawn) => {
                 heights[index] = drawn.extent.visible;
@@ -125,11 +129,6 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                 }
                 if drawn.extent.overflows() {
                     scrollbar(frame, area, &drawn.extent, border, beneath);
-                }
-                if let Some(columns) = &drawn.columns
-                    && columns.overflows()
-                {
-                    horizontal_scrollbar(frame, area, columns, border, beneath);
                 }
             }
             // `Blank` and `Notice` do not scroll, so what such a panel can
@@ -158,7 +157,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         hint_bar,
     );
 
-    render_overlay(frame, view, hint_bar, theme);
+    let inspector_lines = render_overlay(frame, view, hint_bar, theme);
 
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
@@ -168,15 +167,17 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_drop_fits(drop_fits)
             .with_grid_width(grid_width)
             .with_theme_rows(theme_rows)
-            .with_connection_rows(connection_rows),
+            .with_connection_rows(connection_rows)
+            .with_inspector(inspector_rows, inspector_lines),
         map: FrameMap::new(hits),
     }
 }
 
 /// The one overlay this frame is showing, if any — the modal over the
 /// panels, and, for the two that carry a live search, the prompt on the hint
-/// bar row after it (overlay search design §7).
-fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) {
+/// bar row after it (overlay search design §7). Answers with the lines the
+/// inspector wrapped to, and zero for every other overlay.
+fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) -> usize {
     match &view.overlay {
         Some(OverlayView::Message(message) | OverlayView::Fatal(message)) => {
             crate::overlay::render(frame, message, theme);
@@ -249,8 +250,11 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
             crate::filter::render(frame, column, query, theme);
         }
         Some(OverlayView::Drop(view)) => crate::drop::render(frame, view, theme),
+        Some(OverlayView::Inspect(view)) => return crate::inspect::render(frame, view, theme),
         None => {}
     }
+
+    0
 }
 
 /// `rect` split at `taken` columns from its left edge, clamped to what `rect`
@@ -316,7 +320,10 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             // A modal that owns the frame. Unlike the export form, which is
             // asking about the grid beneath it, a drop is asking about one
             // row its own title already names (drop design §2).
-            | OverlayView::Drop(_),
+            | OverlayView::Drop(_)
+            // The value it shows is copied out of the grid, and the title
+            // names where from (cell inspector design §3).
+            | OverlayView::Inspect(_),
         ) => true,
         // The filter modal is not one either, for the export form's reason:
         // it narrows the grid beneath it, and a modal that dimmed its own
@@ -662,19 +669,51 @@ pub(crate) fn scrollbar(
     );
 }
 
-/// Over the bottom border, mirroring [`scrollbar`] on the right one, and only
-/// when a column is off screen — so its absence says nothing is hidden
+/// The footer, and the horizontal track in what it leaves of the border left
+/// of the loader (grid paging design §5).
+fn bottom_border(
+    frame: &mut Frame,
+    area: Rect,
+    panel: &lc_domain::view::PanelView,
+    columns: Option<&Extent>,
+    border: Style,
+    theme: Theme,
+) {
+    let limit = crate::loader::placement(area).map_or(area.right().saturating_sub(1), |place| {
+        place.x.saturating_sub(crate::loader::INSET)
+    });
+    let start = panel
+        .footer
+        .as_ref()
+        .map_or(area.x.saturating_add(1), |footer| {
+            crate::footer::render(frame, area, limit, footer, theme)
+        });
+
+    if let Some(columns) = columns.filter(|columns| columns.overflows()) {
+        let track = Rect {
+            x: start,
+            y: area.bottom().saturating_sub(1),
+            width: limit.saturating_sub(start),
+            height: 1,
+        };
+        horizontal_scrollbar(frame, track, columns, border, theme);
+    }
+}
+
+/// Over `track`, the bottom border between the footer and the loader,
+/// mirroring [`scrollbar`] on the right one, and only when a column is off
+/// screen — so its absence says nothing is hidden
 /// (docs/superpowers/specs/2026-08-10-table-display-design.md §9).
 fn horizontal_scrollbar(
     frame: &mut Frame,
-    area: Rect,
+    track: Rect,
     extent: &Extent,
     border: Style,
     theme: Theme,
 ) {
     bar(
         frame,
-        area,
+        track,
         extent,
         ScrollbarOrientation::HorizontalBottom,
         border,
@@ -694,11 +733,12 @@ fn bar(
     // which beside a `─` sitting at mid-height reads as a row of vertical bars
     // rather than as a thicker stretch of the same line.
     let (track, thumb, margin) = match orientation {
+        // The caller has already cut the track off the border.
         ScrollbarOrientation::HorizontalBottom | ScrollbarOrientation::HorizontalTop => (
             symbols::line::HORIZONTAL,
             symbols::line::THICK_HORIZONTAL,
             Margin {
-                horizontal: 1,
+                horizontal: 0,
                 vertical: 0,
             },
         ),
@@ -748,7 +788,7 @@ mod tests {
         SchemaState, Selection,
     };
     use lc_domain::style::Severity;
-    use lc_domain::view::PanelBody;
+    use lc_domain::view::{Footer, PanelBody};
     use lc_domain::{Ported, ThemeChoice};
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
@@ -1756,10 +1796,17 @@ mod tests {
         });
         state.focus_on(Panel::Contents);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state.contents.page_ready(query, page);
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            lc_domain::model::Statement::select_all("shop", "orders"),
+        );
+        state.contents.page_ready(
+            query,
+            page,
+            lc_domain::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
         state
     }
 
@@ -1980,7 +2027,7 @@ mod tests {
 
     #[test]
     fn a_column_wider_than_the_cap_is_ellipsised_rather_than_clipped() {
-        // A uuid is 36 columns; the cap is 24.
+        // A uuid is 36 columns; the cap is 30.
         let state = showing(page_of(
             &["id"],
             &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
@@ -1990,14 +2037,14 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 3),
-            "│              ││▌1  8f14e45f-ceea-467a-9c2b…              │",
+            "│              ││▌1  8f14e45f-ceea-467a-9c2b-8c4d2…        │",
             "a silently clipped value looks like a shorter value"
         );
     }
 
     #[test]
     fn a_table_too_wide_for_the_panel_drops_columns_rather_than_squeezing_them() {
-        // Four uuid-wide columns want 4×24 + spacing = 99 in a 66-column
+        // Four uuid-wide columns want 4×30 + spacing = 126 in a 66-column
         // panel. `Constraint::Length` is a request, not a floor: handed all
         // four, ratatui shrinks every one to fit and truncates each value with
         // no ellipsis to say it did.
@@ -2011,12 +2058,12 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 1),
-            "│▌\u{f084} shop             ││    a \u{21c5} \u{f0b0}                     b \u{21c5} \u{f0b0}                               │",
+            "│▌\u{f084} shop             ││    a \u{21c5} \u{f0b0}                           b \u{21c5} \u{f0b0}                         │",
             "the two columns that do not fit are not drawn at all"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│                    ││▌1  8f14e45f-ceea-467a-9c2b…  8f14e45f-ceea-467a-9c2b…            │",
+            "│                    ││▌1  8f14e45f-ceea-467a-9c2b-8c4d2…  8f14e45f-ceea-467a-9c2b-8c4d2…│",
             "and the two that do keep their full width and their ellipsis"
         );
     }
@@ -2934,7 +2981,7 @@ mod tests {
     /// viewport it walks has to be the one the frame it is drawn in draws.
     fn walked(inner: u16, path: &[usize]) -> State {
         let page = sized_page(12, 3);
-        let widths = lc_domain::grid::widths(&page);
+        let widths = lc_domain::grid::widths(&page, lc_domain::config::MaxColumnWidth::default());
         let mut state = showing(page);
         state.contents.mode = SelectionMode::Cell;
         let available = lc_domain::grid::available(inner, 1);
@@ -3198,7 +3245,7 @@ mod tests {
         );
     }
 
-    /// The Contents panel's bottom border at 40x12, between its corners.
+    /// The Contents panel's bottom border, between its corners.
     fn contents_bottom(buffer: &Buffer) -> String {
         let area = block_area(buffer, "Table contents");
 
@@ -3208,10 +3255,25 @@ mod tests {
             .collect()
     }
 
+    /// The horizontal track: past the footer, short of the loader's cells.
+    fn contents_track(buffer: &Buffer) -> String {
+        let area = block_area(buffer, "Table contents");
+        let limit =
+            crate::loader::placement(area).expect("room for a loader").x - crate::loader::INSET;
+        let border: String = (area.x + 1..limit)
+            .filter_map(|x| buffer.cell((x, area.bottom() - 1)))
+            .map(Cell::symbol)
+            .collect();
+
+        border
+            .rsplit_once(' ')
+            .map_or(border.clone(), |(_, track)| track.to_owned())
+    }
+
     #[test]
     fn the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on() {
-        let left = contents_bottom(&draw_state(40, 12, &showing_column_path(&[0])));
-        let right = contents_bottom(&draw_state(40, 12, &showing_column_path(&[11])));
+        let left = contents_track(&draw_state(40, 12, &showing_column_path(&[0])));
+        let right = contents_track(&draw_state(40, 12, &showing_column_path(&[11])));
 
         assert!(
             left.starts_with(symbols::line::THICK_HORIZONTAL),
@@ -3254,7 +3316,7 @@ mod tests {
 
     #[test]
     fn a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed() {
-        // `lc_domain::grid::widths` caps a column at 24 and not at the panel,
+        // `lc_domain::grid::widths` caps a column at 30 and not at the panel,
         // so the natural width outruns the 19 columns of body left once the
         // merged bar+gutter block and its spacing column are taken. `drawn_widths`
         // caps each width against what is left, so ratatui is never
@@ -5362,7 +5424,7 @@ mod tests {
         (area.x + 1..area.right() - 1).any(|x| {
             buffer
                 .cell((x, y))
-                .is_some_and(|cell| cell.symbol() != symbols::line::HORIZONTAL)
+                .is_some_and(|cell| cell.symbol() == symbols::line::THICK_HORIZONTAL)
         })
     }
 
@@ -5486,5 +5548,135 @@ mod tests {
             .expect("TestBackend always draws");
 
         assert_eq!(geometry.command_rows(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // The footer (docs/superpowers/specs/2026-09-17-grid-paging-design.md §5)
+    // ------------------------------------------------------------------
+
+    fn footer(rows: &str, size: Option<(&str, Token)>, status: Option<&str>) -> Footer {
+        Footer {
+            rows: rows.to_owned(),
+            size: size.map(|(text, token)| lc_domain::style::Segment::styled(text, token)),
+            status: status.map(str::to_owned),
+        }
+    }
+
+    /// `state`'s frame, with the Contents footer replaced by `footer`.
+    fn drawn_with_footer(width: u16, state: &State, footer: Footer) -> Buffer {
+        let mut view = view_model(state);
+        view.panels[2].footer = Some(footer);
+        draw_view(width, 12, &view)
+    }
+
+    #[test]
+    fn every_footer_the_design_lists_is_drawn_from_the_left_corner() {
+        let state = showing(sized_page(1, 3));
+        let warning = Token::Severity(Severity::Warning);
+
+        for (footer, said) in [
+            (footer("1,234 rows", None, None), "─ 1,234 rows ─"),
+            (
+                footer("200 rows", None, Some("more")),
+                "─ 200 rows · more ─",
+            ),
+            (
+                footer("3,400 rows", None, Some("loading")),
+                "─ 3,400 rows · loading ─",
+            ),
+            (
+                footer(
+                    "812,000 rows",
+                    Some(("≈ 104 MB", warning)),
+                    Some("stopped at 100 MB"),
+                ),
+                "─ 812,000 rows · ≈ 104 MB · stopped at 100 MB ─",
+            ),
+            (
+                footer(
+                    "1,000,000 rows",
+                    Some(("≈ 61 MB", Token::Muted)),
+                    Some("stopped at 1,000,000 rows"),
+                ),
+                "─ 1,000,000 rows · ≈ 61 MB · stopped at 1,000,000 rows ─",
+            ),
+        ] {
+            let bottom = contents_bottom(&drawn_with_footer(160, &state, footer));
+
+            assert!(bottom.starts_with(said), "{bottom:?}");
+        }
+    }
+
+    #[test]
+    fn an_estimate_past_the_first_stop_is_drawn_in_the_warning_colour() {
+        let state = showing(sized_page(1, 3));
+        let buffer = drawn_with_footer(
+            160,
+            &state,
+            footer(
+                "3 rows",
+                Some(("≈ 104 MB", Token::Severity(Severity::Warning))),
+                Some("more"),
+            ),
+        );
+        let area = block_area(&buffer, "Table contents");
+        let at = contents_bottom(&buffer)
+            .chars()
+            .position(|c| c == '≈')
+            .expect("drawn");
+        let cell = buffer
+            .cell((
+                area.x + 1 + u16::try_from(at).expect("fits"),
+                area.bottom() - 1,
+            ))
+            .expect("on the border");
+
+        assert_eq!(
+            Some(cell.fg),
+            Theme::default()
+                .style(Token::Severity(Severity::Warning))
+                .fg
+        );
+    }
+
+    #[test]
+    fn a_loaded_grid_draws_its_own_footer() {
+        let bottom = contents_bottom(&draw_state(60, 12, &showing(sized_page(1, 3))));
+
+        assert!(bottom.starts_with("─ 3 rows ─"), "{bottom:?}");
+    }
+
+    #[test]
+    fn the_horizontal_track_starts_where_the_footer_ends() {
+        let buffer = draw_state(40, 12, &showing_column_path(&[0]));
+        let bottom = contents_bottom(&buffer);
+
+        assert!(
+            bottom.starts_with(&format!("─ 3 rows {}", symbols::line::THICK_HORIZONTAL)),
+            "the thumb sits against the footer, not under it: {bottom:?}"
+        );
+    }
+
+    #[test]
+    fn a_narrow_border_drops_the_estimate_then_the_footer() {
+        let state = showing(sized_page(1, 3));
+        let stopped = || {
+            footer(
+                "812,000 rows",
+                Some(("≈ 104 MB", Token::Muted)),
+                Some("stopped at 100 MB"),
+            )
+        };
+
+        let wide = contents_bottom(&drawn_with_footer(160, &state, stopped()));
+        let middling = contents_bottom(&drawn_with_footer(70, &state, stopped()));
+        let narrow = contents_bottom(&drawn_with_footer(40, &state, stopped()));
+
+        assert!(wide.contains("≈ 104 MB"), "{wide:?}");
+        assert!(
+            middling.starts_with("─ 812,000 rows · stopped at 100 MB ─"),
+            "{middling:?}"
+        );
+        assert!(!narrow.contains("rows"), "{narrow:?}");
     }
 }

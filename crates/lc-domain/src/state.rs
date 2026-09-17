@@ -14,6 +14,7 @@ use crate::contents::{ContentsPanel, Filter, SelectionMode};
 use crate::ddl::DdlPanel;
 use crate::drop::{DropPrompt, Target};
 use crate::export::ExportForm;
+use crate::inspect::Inspector;
 use crate::log::{Log, Outcome};
 use crate::model::{ConnId, DbError, JobId, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
@@ -324,6 +325,9 @@ pub enum Overlay {
     /// consequence of being this overlay is the same either way
     /// (drop design §2).
     Drop(DropPrompt),
+    /// A value or a row read whole, over the grid it came from
+    /// (docs/superpowers/specs/2026-09-17-cell-inspector-design.md).
+    Inspect(Inspector),
     /// A startup failure: the connection or the schema read, either of which
     /// happens before there is an application to put a trail in. Its only
     /// exit is `Effect::Quit`.
@@ -481,7 +485,27 @@ const DDL_HINTS: &[Binding] = &[
     },
 ];
 
+pub(crate) const NEXT_PAGE: Binding = Binding {
+    keys: &[Stroke::key(Key::Char('p'))],
+    action: "next page",
+};
+
+pub(crate) const EVERY_PAGE: Binding = Binding {
+    keys: &[Stroke::key(Key::Char('P'))],
+    action: "all",
+};
+
 const CONTENTS_HINTS: &[Binding] = &[
+    // Named only where it opens: a selection, an empty grid or a frame too
+    // small for the block leaves it off (cell inspector design §6).
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "inspect",
+    },
+    // Named only while the result has more to fetch, and greyed while a page
+    // is in flight (grid paging design §6).
+    NEXT_PAGE,
+    EVERY_PAGE,
     Binding {
         keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "export",
@@ -529,6 +553,12 @@ const CONTENTS_COLUMN_HINTS: &[Binding] = &[
         keys: &[Stroke::key(Key::Char('c'))],
         action: "clear filter",
     },
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "inspect",
+    },
+    NEXT_PAGE,
+    EVERY_PAGE,
     Binding {
         keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "export",
@@ -1231,6 +1261,11 @@ pub struct Geometry {
     /// fits one picker need not fit the other
     /// (connection picker design §7).
     connection_rows: usize,
+    /// Rows the inspector's body could show, and the lines its open value
+    /// wrapped to. The block is sized from the terminal alone, so neither
+    /// depends on the offset they bound (cell inspector design §5).
+    inspector_rows: usize,
+    inspector_lines: usize,
 }
 
 impl Geometry {
@@ -1251,6 +1286,8 @@ impl Geometry {
             grid_width: 0,
             theme_rows: 0,
             connection_rows: 0,
+            inspector_rows: 0,
+            inspector_lines: 0,
         }
     }
 
@@ -1387,6 +1424,31 @@ impl Geometry {
     pub const fn with_connection_rows(self, connection_rows: usize) -> Self {
         Self {
             connection_rows,
+            ..self
+        }
+    }
+
+    /// Rows the inspector's body would show at this frame size, whether or
+    /// not one is open. Zero means it does not fit, which is what makes
+    /// `Enter` over the grid inert (design §5).
+    #[must_use]
+    pub const fn inspector_rows(self) -> usize {
+        self.inspector_rows
+    }
+
+    /// Lines the open inspector's value wrapped to; zero with none open.
+    #[must_use]
+    pub const fn inspector_lines(self) -> usize {
+        self.inspector_lines
+    }
+
+    /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason: a
+    /// test that opens no inspector has nothing to say here.
+    #[must_use]
+    pub const fn with_inspector(self, rows: usize, lines: usize) -> Self {
+        Self {
+            inspector_rows: rows,
+            inspector_lines: lines,
             ..self
         }
     }

@@ -194,3 +194,27 @@ CREATE TABLE IF NOT EXISTS wide_row_one_hundred_columns (
     c099                                             decimal,
     PRIMARY KEY ((k))
 ) WITH comment = '99 value columns plus the partition key.';
+
+-- Cells no column can hold: kilobytes of prose, compact nested JSON, long
+-- collections and a blob, shaped like a product catalogue. What the cell
+-- inspector is read against. Written by seed.sh, which generates the sizes.
+CREATE TABLE IF NOT EXISTS big_cells (
+    id          int,
+    sku         text,
+    name        text,
+    description text,
+    spec        text,
+    tags        list<text>,
+    attributes  map<text, text>,
+    variants    set<uuid>,
+    thumbnail   blob,
+    PRIMARY KEY ((id))
+);
+
+-- ~100 KB of text a row over 1 200 rows, about 120 MB: past the 100 MB where
+-- the grid's P stops. Written by seed.sh with COPY FROM, which generates it.
+CREATE TABLE IF NOT EXISTS heavy_rows (
+    id   int,
+    body text,
+    PRIMARY KEY ((id))
+);

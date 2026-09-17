@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use lc_domain::config::{ConnectionConfig, ConnectionName};
+use lc_domain::config::{ConnectionConfig, ConnectionName, PageSize};
 use lc_domain::export::{Encoder, Format};
 use lc_domain::model::{
     Column, ConnId, JobId, Key, KeyPress, Keyspace, Page, PrimaryKey, Replication, Schema,
@@ -157,6 +157,27 @@ pub(crate) async fn run_with_writer(
                     },
                 }]
             }
+            Effect::ExecutePaged {
+                conn,
+                query,
+                stmt,
+                page_size,
+                cursor,
+            } => vec![match cluster
+                .execute_paged(conn, &stmt, page_size, cursor.as_ref())
+                .await
+            {
+                Ok(page) => Msg::PageReady {
+                    query,
+                    page: Box::new(page),
+                    took: Duration::ZERO,
+                },
+                Err(error) => Msg::Failed {
+                    query,
+                    error,
+                    took: Duration::ZERO,
+                },
+            }],
             Effect::Export {
                 conn,
                 job,
@@ -164,6 +185,7 @@ pub(crate) async fn run_with_writer(
                 destination,
                 format,
                 overwrite,
+                page_size,
             } => {
                 let Some(writer) = writer else {
                     panic!("a scenario producing Effect::Export needs a writer to drive it");
@@ -175,6 +197,7 @@ pub(crate) async fn run_with_writer(
                     destination,
                     format,
                     overwrite,
+                    page_size,
                 };
                 run_export(cluster, writer, &job).await
             }
@@ -196,6 +219,7 @@ struct Job {
     destination: PathBuf,
     format: Format,
     overwrite: bool,
+    page_size: PageSize,
 }
 
 /// Reproduces the sequencing of `lc-app`'s `export::run` against the ports,
@@ -275,7 +299,7 @@ async fn pages(
 
     loop {
         let page: Page = cluster
-            .execute_paged(job.conn, statement, cursor.as_ref())
+            .execute_paged(job.conn, statement, job.page_size, cursor.as_ref())
             .await
             .map_err(ExportError::Cluster)?;
 

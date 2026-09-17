@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use lc_domain::config::ConnectionConfig;
+use lc_domain::model::{ConnId, DbError, Page, QueryId};
 use lc_domain::ports::{Cluster, ConfigSink, Writer};
 use lc_domain::{Effect, Msg};
 use tokio::sync::mpsc::UnboundedSender;
@@ -27,29 +29,7 @@ pub(crate) fn run(
     effect: &Effect,
 ) {
     match effect {
-        Effect::Connect { conn, target } => {
-            let (tx, cluster, conn, target) = (
-                tx.clone(),
-                Arc::clone(cluster),
-                *conn,
-                target.as_ref().clone(),
-            );
-            tokio::spawn(async move {
-                let started = std::time::Instant::now();
-                let result = cluster.connect(conn, &target).await;
-                let took = started.elapsed();
-                let msg = match result {
-                    Ok(posture) => Msg::Connected {
-                        conn,
-                        posture,
-                        took,
-                    },
-                    Err(error) => Msg::ConnectFailed { conn, error, took },
-                };
-                // A closed channel means the main loop has already ended.
-                let _sent = tx.send(msg.into());
-            });
-        }
+        Effect::Connect { conn, target } => connect(tx, cluster, *conn, target.as_ref().clone()),
 
         Effect::LoadSchema(conn) => {
             let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
@@ -70,26 +50,32 @@ pub(crate) fn run(
         }
 
         Effect::Execute { conn, query, stmt } => {
-            let (tx, cluster, conn, query, stmt) = (
-                tx.clone(),
+            let (cluster, conn, stmt) = (Arc::clone(cluster), *conn, stmt.as_ref().clone());
+            answer(
+                tx,
+                *query,
+                async move { cluster.execute(conn, &stmt).await },
+            );
+        }
+
+        Effect::ExecutePaged {
+            conn,
+            query,
+            stmt,
+            page_size,
+            cursor,
+        } => {
+            let (cluster, conn, stmt, page_size, cursor) = (
                 Arc::clone(cluster),
                 *conn,
-                *query,
                 stmt.as_ref().clone(),
+                *page_size,
+                cursor.clone(),
             );
-            tokio::spawn(async move {
-                let started = std::time::Instant::now();
-                let result = cluster.execute(conn, &stmt).await;
-                let took = started.elapsed();
-                let msg = match result {
-                    Ok(page) => Msg::PageReady {
-                        query,
-                        page: Box::new(page),
-                        took,
-                    },
-                    Err(error) => Msg::Failed { query, error, took },
-                };
-                let _sent = tx.send(msg.into());
+            answer(tx, *query, async move {
+                cluster
+                    .execute_paged(conn, &stmt, page_size, cursor.as_ref())
+                    .await
             });
         }
 
@@ -122,6 +108,7 @@ pub(crate) fn run(
             destination,
             format,
             overwrite,
+            page_size,
         } => crate::export::spawn(
             tx,
             cluster,
@@ -133,6 +120,7 @@ pub(crate) fn run(
                 destination: destination.clone(),
                 format: *format,
                 overwrite: *overwrite,
+                page_size: *page_size,
             },
         ),
 
@@ -143,6 +131,54 @@ pub(crate) fn run(
         Effect::Cancel(_) | Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {
         }
     }
+}
+
+fn connect(
+    tx: &UnboundedSender<Incoming>,
+    cluster: &Arc<dyn Cluster>,
+    conn: ConnId,
+    target: ConnectionConfig,
+) {
+    let (tx, cluster) = (tx.clone(), Arc::clone(cluster));
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let result = cluster.connect(conn, &target).await;
+        let took = started.elapsed();
+        let msg = match result {
+            Ok(posture) => Msg::Connected {
+                conn,
+                posture,
+                took,
+            },
+            Err(error) => Msg::ConnectFailed { conn, error, took },
+        };
+        // A closed channel means the main loop has already ended.
+        let _sent = tx.send(msg.into());
+    });
+}
+
+/// Runs `call` as a task and sends back the page or the failure, timed.
+fn answer(
+    tx: &UnboundedSender<Incoming>,
+    query: QueryId,
+    call: impl Future<Output = Result<Page, DbError>> + Send + 'static,
+) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let result = call.await;
+        let took = started.elapsed();
+        let msg = match result {
+            Ok(page) => Msg::PageReady {
+                query,
+                page: Box::new(page),
+                took,
+            },
+            Err(error) => Msg::Failed { query, error, took },
+        };
+        // A closed channel means the main loop has already ended.
+        let _sent = tx.send(msg.into());
+    });
 }
 
 /// Silent on success, by design: the theme on screen is the confirmation, and

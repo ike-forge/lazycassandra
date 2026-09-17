@@ -4,14 +4,15 @@
 //! provides to await the port.
 
 use lc_domain::clock::Stamp;
+use lc_domain::config::{PageRows, PageSize};
 use lc_domain::log::Outcome;
 use lc_domain::model::{
-    Column, CqlValue, DbError, Index, IndexKind, IndexTarget, Key, KeyPress, Page, Row, Statement,
+    Column, CqlValue, DbError, Index, IndexKind, IndexTarget, Key, KeyPress, Page, PagingState,
+    Row, Statement,
 };
 use lc_domain::posture::Posture;
 use lc_domain::state::Panel;
 use lc_domain::style::Token;
-use lc_domain::update::ROW_LIMIT;
 use lc_domain::view::{DetailRow, Details, OverlayView, PanelBody, RowKind, Section};
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
@@ -193,7 +194,7 @@ async fn pressing_enter_on_a_table_fills_the_contents_panel() {
 
     assert_eq!(
         cluster.executed(),
-        vec![Statement::select_all("shop", "orders", ROW_LIMIT)],
+        vec![Statement::select_all("shop", "orders")],
         "the panel reads exactly the statement it shows"
     );
 
@@ -320,8 +321,8 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
     assert_eq!(
         cluster.executed(),
         vec![
-            Statement::select_all("shop", "orders", ROW_LIMIT),
-            Statement::select_all("shop", "users", ROW_LIMIT),
+            Statement::select_all("shop", "orders"),
+            Statement::select_all("shop", "users"),
         ]
     );
     assert_eq!(
@@ -487,8 +488,8 @@ async fn a_session_leaves_a_trail_of_everything_it_ran() {
     assert!(texts[0].starts_with("Connecting"), "{texts:?}");
     assert!(texts[1].starts_with("Reading schema"), "{texts:?}");
     assert!(
-        texts[2].contains(&format!("LIMIT {ROW_LIMIT}")),
-        "a table open logs the limit appended for it: {texts:?}"
+        texts[2].starts_with("SELECT * FROM"),
+        "a table open logs the statement it issued: {texts:?}"
     );
     assert!(
         state
@@ -667,7 +668,7 @@ async fn deleting_the_selected_rows_re_reads_the_grid() {
     assert!(ran[1].starts_with("BEGIN BATCH"), "{}", ran[1]);
     assert_eq!(ran[1].matches("DELETE FROM").count(), 2, "{}", ran[1]);
     assert_eq!(
-        ran[2], "SELECT * FROM \"shop\".\"orders\" LIMIT 200",
+        ran[2], "SELECT * FROM \"shop\".\"orders\"",
         "the grid is re-read so it stops drawing rows that are gone"
     );
 }
@@ -716,4 +717,71 @@ fn keyed_rows(count: usize) -> Page {
             .collect(),
         next: None,
     }
+}
+
+/// `customers()`' two rows, as page `index` of three.
+fn customers_page(index: u8) -> Page {
+    Page {
+        next: (index < 2).then(|| PagingState(vec![index + 1])),
+        ..customers()
+    }
+}
+
+/// Grid paging design §8: a read, `p`, then `P` to the end.
+#[tokio::test]
+async fn a_read_pages_through_p_and_then_shift_p_to_the_end() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .paging((0..3).map(customers_page).collect());
+    let mut state = on_a_table(&cluster).await;
+
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+    assert_eq!(state.contents.row_count(), 2);
+    assert!(state.contents.has_more());
+
+    let effects = press(&mut state, Key::Char('p'));
+    run(&cluster, &mut state, effects).await;
+    assert_eq!(state.contents.row_count(), 4);
+    assert!(state.contents.can_fetch(), "one page, and no further");
+    let footer = view_model(&state).panels[2]
+        .footer
+        .clone()
+        .expect("a footer");
+    assert_eq!(
+        (footer.rows.as_str(), footer.status.as_deref()),
+        ("4 rows", Some("more"))
+    );
+
+    let effects = press(&mut state, Key::Char('P'));
+    run(&cluster, &mut state, effects).await;
+    assert_eq!(state.contents.row_count(), 6);
+    assert!(!state.contents.has_more());
+    let footer = view_model(&state).panels[2]
+        .footer
+        .clone()
+        .expect("a footer");
+    assert_eq!((footer.rows.as_str(), footer.status), ("6 rows", None));
+
+    assert_eq!(
+        cluster.executed(),
+        vec![Statement::select_all("shop", "orders"); 3],
+        "every page continues the one statement"
+    );
+    assert_eq!(
+        cluster.page_sizes(),
+        vec![PageSize::from(PageRows::default()); 3],
+        "each page is grid.page_rows long"
+    );
+    assert_eq!(
+        state
+            .log
+            .entries()
+            .filter(|entry| entry.subject().text().starts_with("SELECT"))
+            .count(),
+        1,
+        "the trail keeps the one entry the read made"
+    );
 }
