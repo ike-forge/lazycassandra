@@ -109,7 +109,7 @@
 # focus  = "#7aa2f7"
 # danger = "#f7768e"
 #
-# The roles: base, surface, text, dim, faint, border, focus, selection_bg,
+# The roles: base, text, dim, faint, border, focus, selection_bg,
 # crosshair, ranged, selection_fg, selection_bar, shortcut, keyspace, table,
 # partition, clustering, column, label, section, accent, match, success,
 # warning, danger, info, keyword, reference, literal, comment.

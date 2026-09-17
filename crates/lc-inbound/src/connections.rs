@@ -136,7 +136,7 @@ pub(crate) fn render(
     });
 
     frame.render_widget(Clear, area);
-    frame.buffer_mut().set_style(area, theme.overlay_ground());
+    frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
     // A term that matched nothing leaves no row to hold, so the picker says
@@ -237,7 +237,7 @@ fn empty(frame: &mut Frame, config_home: Option<&str>, theme: Theme) {
     });
 
     frame.render_widget(Clear, rect);
-    frame.buffer_mut().set_style(rect, theme.overlay_ground());
+    frame.buffer_mut().set_style(rect, theme.ground());
     frame.render_widget(block, rect);
     frame.render_widget(
         Paragraph::new(

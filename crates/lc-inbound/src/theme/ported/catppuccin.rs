@@ -13,12 +13,10 @@ use crate::theme::{Palette, rgb};
 /// twenty-six: a colour no role names would be a constant nothing reads.
 struct Flavour {
     base: Color,
-    surface0: Color,
     surface1: Color,
     /// `base` a fifth of the way to `surface1`. The one colour here that is not
     /// upstream's: the ramp starts at `surface0` and has no role for a wash this
-    /// subtle, and spending `surface0` on it would make the crosshair as loud as
-    /// an overlay.
+    /// subtle.
     crosshair: Color,
     /// The per-channel midpoint of `crosshair` and `surface1`: not upstream's
     /// either, for the same reason `crosshair` is not.
@@ -46,7 +44,6 @@ impl Flavour {
     const fn palette(&self) -> Palette {
         Palette {
             base: self.base,
-            surface: self.surface0,
             text: self.text,
             dim: self.subtext1,
             faint: self.subtext0,
@@ -91,7 +88,6 @@ impl Flavour {
 )]
 const LATTE_FLAVOUR: Flavour = Flavour {
     base: rgb(0xeff1f5),
-    surface0: rgb(0xccd0da),
     surface1: rgb(0xbcc0cc),
     crosshair: rgb(0xe5e7ed),
     ranged: rgb(0xd0d3dc),
@@ -117,7 +113,6 @@ const LATTE_FLAVOUR: Flavour = Flavour {
 )]
 const FRAPPE_FLAVOUR: Flavour = Flavour {
     base: rgb(0x303446),
-    surface0: rgb(0x414559),
     surface1: rgb(0x51576d),
     crosshair: rgb(0x373b4e),
     ranged: rgb(0x44495d),
@@ -143,7 +138,6 @@ const FRAPPE_FLAVOUR: Flavour = Flavour {
 )]
 const MACCHIATO_FLAVOUR: Flavour = Flavour {
     base: rgb(0x24273a),
-    surface0: rgb(0x363a4f),
     surface1: rgb(0x494d64),
     crosshair: rgb(0x2b2f42),
     ranged: rgb(0x3a3e53),
@@ -169,7 +163,6 @@ const MACCHIATO_FLAVOUR: Flavour = Flavour {
 )]
 const MOCHA_FLAVOUR: Flavour = Flavour {
     base: rgb(0x1e1e2e),
-    surface0: rgb(0x313244),
     surface1: rgb(0x45475a),
     crosshair: rgb(0x262637),
     ranged: rgb(0x353648),

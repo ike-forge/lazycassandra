@@ -37,9 +37,6 @@ pub(super) const fn rgb(value: u32) -> Color {
 pub(crate) struct Palette {
     /// The terminal background this theme assumes, painted before anything else.
     pub(crate) base: Color,
-    /// An overlay's fill, one step up from `base`. Panels sit on `base`; this
-    /// is what separates a floating block from the field it covers.
-    pub(crate) surface: Color,
     /// Primary text: column values, table names in focus.
     pub(crate) text: Color,
     /// Secondary text: option names, column headers, footer labels.
@@ -101,7 +98,6 @@ impl Palette {
     pub(crate) const fn set(&mut self, role: Role, color: Color) {
         match role {
             Role::Base => self.base = color,
-            Role::Surface => self.surface = color,
             Role::Text => self.text = color,
             Role::Dim => self.dim = color,
             Role::Faint => self.faint = color,
@@ -211,15 +207,10 @@ impl Theme {
 
     /// The whole frame's ground. Painted before anything else, so a widget
     /// that sets no colour of its own inherits the theme's rather than the
-    /// terminal's.
+    /// terminal's. Overlays repaint it over what `Clear` reset: they sit on
+    /// the same field as the panels, and their border is what sets them apart.
     pub(crate) fn ground(self) -> Style {
         Style::new().bg(self.palette.base).fg(self.palette.text)
-    }
-
-    /// A floating block's ground, so an overlay separates from the field it
-    /// covers.
-    pub(crate) fn overlay_ground(self) -> Style {
-        Style::new().bg(self.palette.surface).fg(self.palette.text)
     }
 
     /// A frame around the thing taking keys: the focused panel, or the modal
@@ -395,9 +386,9 @@ impl Themes {
 
     /// Overrides `base` and nothing else.
     ///
-    /// `surface`, `selection_bg` and `crosshair` stay the palette's, so an
-    /// overlay and the cursor row keep the contrast they were measured for
-    /// even when the field behind them is the user's (design §4).
+    /// `selection_bg` and `crosshair` stay the palette's, so the cursor row
+    /// keeps the contrast it was measured for even when the field behind it is
+    /// the user's (design §4).
     fn grounded(&self, mut palette: Palette) -> Palette {
         match self.background {
             Background::Theme => {}
@@ -460,13 +451,12 @@ pub(crate) mod tests {
     ///
     /// Destructured with every field named and no `..`, so a new role cannot
     /// enter the palette without the compiler asking here whether it is text.
-    /// `base`, `surface`, `selection_bg` and `crosshair` are what text is drawn
+    /// `base`, `selection_bg` and `crosshair` are what text is drawn
     /// *on*, and `border` is not text — each is answered by the test that knows
     /// what to ask of it rather than swept in here.
     pub(super) fn foregrounds(palette: &Palette) -> Vec<(&'static str, Color)> {
         let Palette {
             base: _,
-            surface: _,
             selection_bg: _,
             crosshair: _,
             ranged: _,
@@ -538,7 +528,6 @@ pub(crate) mod tests {
             for (role, colour) in foregrounds(&palette) {
                 for (ground, name) in [
                     (palette.base, "base"),
-                    (palette.surface, "surface"),
                     (palette.selection_bg, "selection_bg"),
                     (palette.crosshair, "crosshair"),
                     (palette.ranged, "ranged"),
@@ -969,10 +958,6 @@ pub(crate) mod tests {
         let original = Theme::of(&ThemeChoice::Ours(Ours::AshDark)).palette();
 
         assert_eq!(resolved.base, Color::Rgb(0x0b, 0x0d, 0x12));
-        assert_eq!(
-            resolved.surface, original.surface,
-            "an overlay keeps the contrast it was measured for"
-        );
         assert_eq!(resolved.selection_bg, original.selection_bg);
         assert_eq!(resolved.crosshair, original.crosshair);
     }

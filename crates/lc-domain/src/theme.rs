@@ -255,7 +255,6 @@ impl Ported {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     Base,
-    Surface,
     Text,
     Dim,
     Faint,
@@ -287,9 +286,8 @@ pub enum Role {
 }
 
 impl Role {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 29] = [
         Self::Base,
-        Self::Surface,
         Self::Text,
         Self::Dim,
         Self::Faint,
@@ -324,7 +322,6 @@ impl Role {
     pub const fn key(self) -> &'static str {
         match self {
             Self::Base => "base",
-            Self::Surface => "surface",
             Self::Text => "text",
             Self::Dim => "dim",
             Self::Faint => "faint",
