@@ -805,9 +805,9 @@ See [queries editor design](specs/2026-08-09-queries-editor-design.md) and
 
 Queries' second tab: a read-only, scrollable trail of every statement the
 session issued and what came back, one entry per connection attempt, schema
-read, query and export. Reached only by `Tab`/`Shift-Tab` walking the cycle
-of `(panel, tab)` stops (§1) — `4` does not walk onto it, and the paragraph
-above explains why. Once drawn it takes no text at all, unlike the Cql tab
+read, query and export. Reached by `Tab`/`Shift-Tab` walking the cycle of
+`(panel, tab)` stops (§1), or by a click on the tab — `4` does not walk onto
+it, and the paragraph above explains why. Once drawn it takes no text at all, unlike the Cql tab
 beside it: `j`/`k` and the arrows move the cursor entry to entry, `PageUp`/
 `PageDown` and `ctrl-d`/`ctrl-u` page it, `Home`/`End` and `gg`/`G` reach
 either end, `v` starts or freezes a selection of whole entries, `/` searches
@@ -821,7 +821,7 @@ would not be a trail (query log design §5.3). Leaving the panel — by `Tab`,
 `Shift-Tab`, another panel's number, or a click — reverts the tab to Cql,
 because the panel's unfocused height is a function of the CQL buffer it
 hugs, not of the trail (query log design §5.2); returning to Logs costs
-`Tab`/`Shift-Tab` walking the cycle again, or `4` then `Tab` once. `Esc`
+`Tab`/`Shift-Tab` walking the cycle again, `4` then `Tab` once, or a click. `Esc`
 leaves it for Tables the way it leaves any other panel (§2), reverting the
 tab on the way out like every other route off it. The trail's own search does
 not outlive the tab being drawn either — switching to Cql clears it, since the
@@ -1338,7 +1338,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A click on a cell moves both cursors, and on a heading only the column | `a_click_on_a_cell_moves_both_cursors`, `a_click_on_a_heading_moves_the_column_cursor_and_no_row` |
 | A click never changes the selection mode | `a_click_on_a_cell_leaves_the_selection_mode_alone` |
 | A click on a DDL row selects it | `a_click_on_a_ddl_row_moves_the_cursor` |
-| A click on a tab draws it, and a stale one only focuses | `a_click_on_a_tab_focuses_its_panel_and_draws_it`, `a_click_on_a_tab_the_strip_no_longer_draws_only_focuses`, `a_click_on_a_single_tab_panels_title_focuses_it` |
+| A click on a tab draws it, and a stale one only focuses | `a_click_on_a_tab_focuses_its_panel_and_draws_it`, `a_click_on_the_logs_tab_focuses_queries_and_draws_the_trail`, `a_click_on_a_tab_the_strip_no_longer_draws_only_focuses`, `a_click_on_a_single_tab_panels_title_focuses_it` |
 | A stale row or column is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped`, `a_click_on_a_ddl_row_that_has_gone_is_dropped_rather_than_clamped`, `a_click_on_a_column_that_has_gone_is_dropped_rather_than_clamped` |
 | A click spends itself on the overlay | `a_click_dismisses_the_overlay_and_does_nothing_else`, `a_wheel_does_not_dismiss_the_overlay` |
 | The wheel scrolls without focusing | `a_wheel_scrolls_the_panel_under_it_without_focusing_it`, `a_wheel_over_the_ddl_panel_scrolls_its_lines`, `a_wheel_over_a_panel_with_nothing_to_scroll_is_inert`, `a_wheel_over_tables_moves_the_viewport_rather_than_the_selection`, `a_wheel_over_tables_no_longer_scrolls_the_ddl_panel_back` |
