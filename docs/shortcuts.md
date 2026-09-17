@@ -499,7 +499,7 @@ Queries moves the cursor through its buffer.
 `ctrl-d`/`ctrl-u` already have to `PageDown`/`PageUp` (§2). They apply to
 whatever list the frame is driving: the focused panel, or the overlay in front
 of it when that overlay takes motion — the command palette, the diagnostics
-list and the theme picker all answer them.
+list, the theme picker and the inspector all answer them.
 
 `g` is one press rather than vim's `gg`: no other binding starts with `g`, so
 a prefix would only cost a keystroke and a pending state. In Queries and under
@@ -605,9 +605,10 @@ did. §1's `y` footnote table carries the row-by-row shape
 
 ### Tables panel
 
-Accepted anywhere, but a no-op unless Tables has focus — except in Queries,
-which takes text: there `Enter` inserts a newline, or accepts a completion
-while one is being offered. See the Queries subsection below.
+Accepted anywhere, but a no-op unless Tables has focus — except in Table
+contents, where `Enter` opens the inspector, and in Queries, which takes text:
+there `Enter` inserts a newline, or accepts a completion while one is being
+offered. See those subsections below.
 
 | Key | Action |
 |---|---|
@@ -683,6 +684,7 @@ below.
 
 | Key | Action |
 |---|---|
+| `Enter` | Open the inspector over the row under the cursor in row mode, or the cell under it in cell and column mode. Inert with nothing loaded, on an empty grid, while a range is held, and on a frame with no room to draw the block. See the inspector's own subsection below. |
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
 | `ctrl-e` | Open the export form. Inert on an empty grid, while an export is running, and on a frame with no room to draw the form. |
 | `d` | Open the delete confirmation over the selected rows, or the row under the cursor when no range is held. Inert unless those rows can be addressed by their whole primary key. See the drop confirmation's own subsection in §1. |
@@ -728,6 +730,30 @@ panel underneath sees one, `q` included.
 | `Enter` | Applies the term and closes. An empty term clears the column's filter. |
 | `Esc` | Closes, leaving the column filtered exactly as it was. |
 | anything else | Inert, `ctrl-d`/`ctrl-u` included: the modal has no list to page. |
+
+### The cell inspector
+
+`Enter` over Table contents opens `Overlay::Inspect`. The grid caps a column
+at `grid.max_column_width` (30 by default) and ellipsises the rest; this is
+where a value is read whole. Row mode shows every column of the row under the
+cursor, one field to a column; cell and column mode show the cell under it.
+It reads the grid as drawn, sorted and filtered. JSON text is re-indented
+without a token changing, and a collection is laid out one element to a line.
+Like the palette it dims the panels, claims every key and leaves `q` quitting.
+
+| Key | Effect |
+|---|---|
+| `j` / `k`, `Down` / `Up` | Scroll a line. |
+| `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | Scroll a page. |
+| `Home` / `End`, `g` / `G` | The top, the bottom. |
+| `y` | Yank what the grid's `y` would in the mode it was opened from: the bare value, or the row as one CSV line. The inspector stays open. |
+| `Enter` / `Esc` | Close it. |
+| `q` | Quits, as everywhere else. |
+| anything else | Inert, every other ctrl chord included. |
+
+The wheel scrolls it wherever the pointer is, and a click closes it. A frame
+that shrinks past the block closes it too. See
+[cell inspector design](superpowers/specs/2026-09-17-cell-inspector-design.md).
 
 ### Queries panel
 
@@ -1010,9 +1036,10 @@ and `PageUp`/`PageDown` are off every panel's bar: a user of a terminal list
 reaches for them before reading anything, and a bar that spends its width on
 them has none left for what is particular to the panel — which is the only
 thing a *contextual* bar is for. `Shift-Tab` is `Tab`'s inverse and is off it
-for the same reason. The one exception is the theme picker's `j/k preview`,
+for the same reason. The two exceptions are the theme picker's `j/k preview`,
 where what the hint teaches is the side effect rather than the motion (§1's
-picker subsection).
+picker subsection), and the inspector's `j/k scroll`, where nothing else on
+screen says the block scrolls.
 The palette lists every one of them regardless — that is the division of
 labour the next paragraph states.
 
@@ -1083,9 +1110,9 @@ frame and something else in the next is the ambiguity both halves of this
 rule exist to prevent.
 
 **A modal that claims every key says so by dimming what it covers.** While the
-palette, the message overlay, the theme picker or the diagnostics list is up,
-there is no focused panel — all four take the border and title an unfocused
-panel takes — and the cursor row, the cursor cell and the washes around it are
+palette, the message overlay, the theme picker, the diagnostics list or the
+inspector is up, there is no focused panel — all of them take the border and
+title an unfocused panel takes — and the cursor row, the cursor cell and the washes around it are
 not drawn: a panel that still drew them would be claiming a press that cannot
 reach it. The hint bar recedes with them — every hint on it goes `Faint`, the
 weight an inert hint already carries, because the modal has claimed those keys
@@ -1187,6 +1214,9 @@ Named keys taken: `Enter` `Esc` `Tab` `Shift-Tab` `Home` `End` `PageUp`
 `PageDown` `↑` `↓` `←` `→`, plus `Backspace` and `Delete`, which only the
 editor and the export form's path stop bind.
 
+`Enter` is gated on focus three ways, the shape `d` has on two: the tree folds
+or reads, the grid inspects, and the editor splits a line (§1).
+
 Ctrl taken: `ctrl-r`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
 `ctrl-t` and `ctrl-o` everywhere, and `ctrl-d`/`ctrl-u` everywhere
@@ -1227,7 +1257,6 @@ which is a spec-level change.
 | `r` refresh | The reload path exists now — a successful drop re-issues `Effect::LoadSchema` (§1's drop subsection) — but it has exactly that one caller. A refresh key is a binding with its own argument to make about what a racing DDL change costs a panel mid-read, and this slice did not make it (TODO.md). |
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
 | Horizontal wheel | Dropped at the edge, and this slice did not pick it up. A notch moves the row viewport; columns are reached with the keys §1 names. |
-| An expand-cell key | Horizontal scrolling reaches columns, not the tails of values, so a 36-character uuid is still ellipsised. Showing one in full is a view with a design of its own, and a cell cursor is what it was waiting for (TODO.md). |
 | Drag-to-select | Weighed and refused: `lc-inbound` drops drag and move events at the edge today (§7), so honouring one would need a new gesture, press-origin state, and an autoscroll rule at the panel edges — for a selection two keystrokes already make. |
 | `Shift-↓` extend selection | `v` is the way to extend a selection; a shifted arrow would be a second name for a key that already does it, the fourth kind of duplicate §2's "one key, one action" refuses. |
 | User-defined bindings | vision.md §7 Phase 5. |
@@ -1507,6 +1536,12 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A delete is a `Write`, so `Posture::Protected` still answers it with `y` | `a_delete_is_a_write_rather_than_a_destructive_statement` (`model/statement.rs`), `a_protected_connection_still_answers_a_delete_with_y` |
 | A completed delete re-reads the grid rather than the schema | `a_completed_delete_re_reads_the_grid_rather_than_the_schema`, `deleting_the_selected_rows_re_reads_the_grid` (`outbound/scenario.rs`) |
 | The block counts the rows, and counts one in the singular | `a_delete_block_counts_the_rows_in_its_border_and_in_its_warning`, `one_row_is_counted_in_the_singular_everywhere_it_is_counted`, `a_long_batch_is_elided_in_the_middle_and_says_how_much` (`inbound/drop.rs`) |
+| `Enter` over the grid inspects the row or the cell, as drawn | `enter_in_row_mode_inspects_the_whole_row`, `enter_in_cell_and_column_mode_inspects_the_cell_under_the_cursor`, `enter_inspects_the_row_as_the_grid_draws_it` |
+| `Enter` over the grid is refused where it names nothing, or several things | `enter_is_inert_with_nothing_loaded`, `enter_is_inert_on_an_empty_grid`, `enter_is_inert_while_a_range_is_held`, `enter_is_inert_on_a_frame_with_no_room_for_the_block` |
+| The inspector scrolls, closes, quits and swallows the rest | `j_k_and_the_arrows_scroll_a_line`, `the_paging_keys_scroll_a_body_height`, `g_home_g_and_end_reach_the_top_and_the_bottom`, `scrolling_stops_at_the_last_line`, `enter_and_escape_close_it`, `q_quits_from_the_inspector`, `every_other_key_is_inert` |
+| `y` in the inspector yanks per mode and leaves it open | `y_yanks_the_bare_value_and_leaves_the_inspector_open`, `y_yanks_the_row_as_one_csv_line`, `y_over_a_null_yanks_nothing` |
+| The wheel scrolls the inspector; a click and a shrink close it | `the_wheel_scrolls_the_inspector_and_a_click_closes_it`, `a_frame_too_small_for_the_block_closes_it`, `a_value_that_rewraps_shorter_pulls_the_offset_back` |
+| The bar names the inspector's keys, and `⏎ inspect` only where it opens | `the_bar_names_scroll_copy_and_close_over_the_inspector`, `the_contents_bar_names_inspect_only_where_enter_opens_it` |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
 | `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
 | A cell yanks its value, unescaped and untruncated | `a_cell_yanks_without_quoting`, `a_cell_yank_is_not_ellipsised` (`yank.rs`) |
@@ -1591,6 +1626,7 @@ Bound, and spending nothing from §3's budget. See the
 | Left click | Anywhere, overlay up | Dismiss the overlay |
 | Left click | The hint bar | Nothing |
 | Wheel | The panel under the pointer | Scrolls three rows or lines, moving neither focus nor the selection |
+| Wheel | Anywhere, inspector up | Scrolls the inspector three lines |
 
 **A click on an open search prompt cancels it**, restoring the search and
 the cursor that stood before the prompt opened — the same thing `Esc` does

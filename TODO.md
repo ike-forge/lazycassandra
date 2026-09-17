@@ -112,10 +112,6 @@ From the panel search slice (docs/superpowers/specs/2026-08-10-panel-search-desi
 
 From the table display slice (docs/superpowers/specs/2026-08-10-table-display-design.md §11):
 
-- Expanded-cell inspection. `MAX_COLUMN_WIDTH` is 24 and horizontal scrolling
-  reaches columns, not the tails of values, so a 36-character uuid is still
-  ellipsised and nothing shows it in full. The cell cursor is the target such a
-  view needs, and it now exists; the view itself wants a design of its own.
 - Pinned key columns. Useful the moment a table is wide enough to scroll, and
   blocked on a rule for what happens when the pinned block alone does not fit.
 - Column widths that survive a restart. They are recomputed from each page;
@@ -127,6 +123,6 @@ From the table display slice (docs/superpowers/specs/2026-08-10-table-display-de
 
 From the configuration slice (docs/superpowers/specs/2026-08-14-configuration-design.md §11):
 
-- `grid.max_column_width` and `grid.row_limit` parse and validate but nothing
-  reads them: `grid::MAX_COLUMN_WIDTH` and `update::ROW_LIMIT` are what apply,
-  and the defaults disagree (`row_limit` 500 against 200).
+- `grid.row_limit` parses and validates but nothing reads it:
+  `update::ROW_LIMIT` is what applies, and the defaults disagree (500 against
+  200).
