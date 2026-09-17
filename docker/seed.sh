@@ -16,7 +16,7 @@
 #     silently mangles
 #   - the 100-column row, whose column list is arithmetic
 #   - the big cells, 60 rows of kilobyte-sized values
-#   - the heavy rows, 120 MB of CSV for COPY FROM
+#   - the heavy rows, 229 MB of CSV for COPY FROM
 
 set -euo pipefail
 
@@ -29,7 +29,7 @@ AUDIT_ROWS=10000
 AUDIT_BATCH=100
 VECTOR_DIMS=384
 BIG_CELL_ROWS=60
-HEAVY_ROWS=1200
+HEAVY_ROWS=2400
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
