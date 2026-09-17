@@ -238,6 +238,7 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         },
     };
 
+    let offset = state.contents.scroll.offset();
     let table = grid_table(state, subject);
     let tokens: Vec<Option<Token>> = page
         .columns
@@ -263,8 +264,15 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
                 filtered: grid_page.filter(index).is_some(),
             })
             .collect(),
+        // Unmeasured, the panel has no height to window by, and draws from
+        // the offset on.
         rows: grid_page
             .rows()
+            .skip(offset)
+            .take(match state.geometry.height(Panel::Contents) {
+                0 => usize::MAX,
+                height => height,
+            })
             .map(|row| {
                 row.values
                     .iter()
@@ -279,8 +287,9 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
                     .collect()
             })
             .collect(),
+        total: grid_page.len(),
         selected: state.contents.cursor.index(),
-        offset: state.contents.scroll.offset(),
+        offset,
         first_column: state.contents.column_scroll.first(),
         column: state.contents.column.index(),
         mode: state.contents.mode,
@@ -1437,5 +1446,25 @@ mod tests {
         assert_eq!(thousands(999), "999");
         assert_eq!(thousands(1000), "1,000");
         assert_eq!(thousands(1_000_000), "1,000,000");
+    }
+
+    #[test]
+    fn only_the_rows_the_panel_can_show_are_projected() {
+        let mut state = showing(ids(20));
+        state.geometry = crate::state::Geometry::new([8, 8, 5, 1], 0, 0);
+        state.contents.cursor.go_to(7, 20);
+        state.contents.scroll.follow(7, 5);
+
+        let PanelBody::Grid {
+            rows,
+            total,
+            offset,
+            ..
+        } = contents_body(&state)
+        else {
+            panic!("a grid");
+        };
+
+        assert_eq!((rows.len(), total, offset), (5, 20, 3));
     }
 }

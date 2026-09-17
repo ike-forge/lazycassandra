@@ -3634,6 +3634,11 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         state.mark_dirty();
     }
 
+    // The grid projects only as many rows as its panel is tall.
+    if geometry.height(Panel::Contents) != previous.height(Panel::Contents) {
+        state.mark_dirty();
+    }
+
     // The bar's `? commands` hint is a function of `command_rows`
     // (view/hints.rs): a resize that flips it between zero and
     // non-zero changes the view model just as surely as the ddl
@@ -15993,5 +15998,21 @@ mod tests {
                 crate::view::Liveness::Inert
             );
         }
+    }
+
+    #[test]
+    fn a_taller_grid_panel_is_drawn_again() {
+        let mut state = contents_showing(30);
+        state.dirty = false;
+
+        update(
+            &mut state,
+            Msg::Measured(Geometry::new([8, 8, 20, 1], 0, 0)),
+        );
+
+        assert!(
+            state.dirty,
+            "the projection holds only as many rows as fitted"
+        );
     }
 }

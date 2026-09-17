@@ -545,9 +545,15 @@ pub enum PanelBody {
     /// A result set: one header per column, one row per row.
     Grid {
         columns: Vec<GridColumn>,
+        /// The rows from `offset` on, as many as the panel is tall: a grid
+        /// paged to a million rows cannot be projected whole every frame
+        /// (grid paging design §4).
         rows: Vec<Vec<GridCell>>,
+        /// Every row the arrangement leaves, drawn or not.
+        total: usize,
         selected: usize,
-        /// The first row drawn, as [`PanelBody::Tree::offset`].
+        /// The first row drawn, as [`PanelBody::Tree::offset`], and the row
+        /// `rows` starts at.
         offset: usize,
         /// The leftmost column drawn.
         first_column: usize,

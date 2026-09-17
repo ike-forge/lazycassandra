@@ -404,7 +404,9 @@ fn tree(frame: &mut Frame, area: Rect, view: &TreeView, theme: Theme) -> Extent 
 #[derive(Clone, Copy)]
 struct GridView<'a> {
     columns: &'a [GridColumn],
+    /// The rows from `offset` on.
     rows: &'a [Vec<GridCell>],
+    total: usize,
     selected: usize,
     offset: usize,
     first_column: usize,
@@ -432,6 +434,7 @@ fn grid(
     let GridView {
         columns,
         rows,
+        total,
         selected,
         offset,
         first_column,
@@ -501,7 +504,7 @@ fn grid(
     let body = rows
         .iter()
         .enumerate()
-        .map(|(index, cells)| grid_row(index, cells, &row_layout, theme));
+        .map(|(index, cells)| grid_row(offset + index, cells, &row_layout, theme));
 
     let table = Table::new(body, constraints)
         .header(header)
@@ -523,15 +526,16 @@ fn grid(
     // Which of `TableState`'s three selections this frame carries. A row
     // scrolled out of view is `None` in cell and row mode alike; a column
     // selection does not depend on where the row viewport sits (design §4).
-    let empty = TableState::default().with_offset(offset);
+    let empty = TableState::default();
+    let drawn_row = row.map(|row| row - offset);
     let (table, mut state) = match mode {
         SelectionMode::Cell => (
             table.cell_highlight_style(theme.style(Token::SelectedCell)),
-            empty.with_selected_cell(row.map(|row| (row, drawn_column))),
+            empty.with_selected_cell(drawn_row.map(|row| (row, drawn_column))),
         ),
         SelectionMode::Row => (
             table.row_highlight_style(theme.style(Token::Selected)),
-            empty.with_selected(row),
+            empty.with_selected(drawn_row),
         ),
         SelectionMode::Column => (
             table.column_highlight_style(theme.style(Token::Selected)),
@@ -543,7 +547,7 @@ fn grid(
         let at = selected_column
             .map(|_| column - first_column)
             .map(|at| (columns_at[at].start, drawn_widths[at]));
-        crosshair(frame, area, row.map(|row| row - offset), at, theme);
+        crosshair(frame, area, drawn_row, at, theme);
     }
 
     frame.render_stateful_widget(table, area, &mut state);
@@ -554,8 +558,8 @@ fn grid(
 
     (
         Extent {
-            position: state.offset(),
-            total: rows.len(),
+            position: offset + state.offset(),
+            total,
             visible: height,
         },
         Extent {
@@ -632,6 +636,7 @@ fn grid_view(body: &PanelBody) -> Option<GridView<'_>> {
     let PanelBody::Grid {
         columns,
         rows,
+        total,
         selected,
         offset,
         first_column,
@@ -649,6 +654,7 @@ fn grid_view(body: &PanelBody) -> Option<GridView<'_>> {
     Some(GridView {
         columns,
         rows,
+        total: *total,
         selected: *selected,
         offset: *offset,
         first_column: *first_column,
