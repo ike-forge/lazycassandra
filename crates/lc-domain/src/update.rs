@@ -883,12 +883,11 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return drop_key(state, press.key);
     }
 
-    // Focus is the mode. A panel that takes text claims every printable key
-    // and the editing keys; what it does not claim keeps the global meaning
-    // it has everywhere else (design §3). This is the rule shortcuts.md §2
-    // said the CQL editor would have to break — no key is carved out of it,
-    // its own number included: `WHERE id = 4` has to be typeable from inside
-    // the buffer that takes text (docs/shortcuts.md §2).
+    // An open buffer claims every printable key and the editing keys; what it
+    // does not claim keeps the global meaning it has everywhere else (design
+    // §3). No key is carved out, its own number included: `WHERE id = 4` has
+    // to be typeable. Opening the buffer is its own step for that reason, so
+    // `4` keeps its meaning until then (cql edit mode design §2).
     if state.takes_text() && edit(state, press.key) {
         return Vec::new();
     }
@@ -905,6 +904,9 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         Key::PageUp => scroll(state, Motion::PageUp),
         Key::Home => scroll(state, Motion::Start),
         Key::End => scroll(state, Motion::End),
+        Key::Enter | Key::Char('i') if state.focus() == Panel::Queries => {
+            state.queries.start_editing();
+        }
         Key::Enter => return activate(state),
         Key::Char('l') | Key::Right => return go_right(state),
         Key::Char('h') | Key::Left => go_left(state),
@@ -1112,6 +1114,12 @@ fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
             show_tab(state, panel, tab);
             return Vec::new();
         }
+        // A press on the buffer is `4` then `⏎`: pointing at text says where
+        // the next keys go (cql edit mode design §4).
+        Click::Panel(Panel::Queries) => {
+            state.queries.start_editing();
+            return Vec::new();
+        }
         Click::Panel(_) => return Vec::new(),
     };
 
@@ -1189,13 +1197,21 @@ fn focus_by_number(state: &mut State, key: char) {
 /// Steps the focused panel's strip one tab in `step`, wrapping.
 ///
 /// A tab the strip does not draw is not a place to arrive at: on a keyspace
-/// the DDL panel offers one tab, and walking stays on it. Queries has no
-/// strip a key can reach this way: `4` is text once its CQL tab has focus,
-/// the same as any other digit, and the Logs tab is reached by walking
-/// `Tab`/`BackTab`'s cycle of stops (see [`Landing`]) or by a click.
+/// the DDL panel offers one tab, and walking stays on it. Queries reaches
+/// here only with its buffer closed — an open one has already claimed `4`,
+/// `]` and `[` as text (cql edit mode design §2).
 fn walk_tab(state: &mut State, step: Step) {
-    if state.focus() != Panel::Ddl {
-        return;
+    match state.focus() {
+        Panel::Ddl => {}
+        Panel::Queries => {
+            let shown = state.queries.tab();
+            state.show_queries_tab(match step {
+                Step::Forward => shown.next(),
+                Step::Back => shown.previous(),
+            });
+            return;
+        }
+        Panel::Tables | Panel::Contents => return,
     }
 
     let shown = state.ddl.tab();
@@ -1212,10 +1228,9 @@ fn walk_tab(state: &mut State, step: Step) {
 /// One stop in the `Tab`/`BackTab` cycle: a panel, and — where it has more
 /// than one — the tab it lands on.
 ///
-/// Every `(panel, tab)` pair a strip can draw is a stop, DDL's two and
-/// Queries' two included, so the trail is reachable without spending a
-/// panel's own number on it — the number stays text where the CQL buffer is
-/// what has focus (docs/shortcuts.md §2).
+/// Every `(panel, tab)` pair a strip can draw is a stop, DDL's tabs and
+/// Queries' two included, so `Tab` alone walks everything a number and its
+/// repeats reach (docs/shortcuts.md §2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Landing {
     Tables,
@@ -1787,6 +1802,14 @@ fn escape(state: &mut State) {
         None => {}
     }
 
+    // An open buffer is the innermost thing on screen: `esc` closes it and
+    // keeps focus, and the next `esc` leaves the panel (cql edit mode design
+    // §2).
+    if state.takes_text() {
+        state.queries.stop_editing();
+        return;
+    }
+
     // Above the search for the reason the overlay is above both: the thing
     // most recently put on screen comes off first (design §1).
     if stop_extending(state) || clear_selection(state) {
@@ -1905,6 +1928,10 @@ fn run_selected(state: &mut State) -> Vec<Effect> {
     match command.run {
         Run::Inert => return Vec::new(),
         Run::In(panel) => state.focus_on(panel),
+        Run::Editing => {
+            state.focus_on(Panel::Queries);
+            state.queries.start_editing();
+        }
         Run::Here => {}
     }
 
@@ -5727,6 +5754,7 @@ mod tests {
     fn enter_on_the_run_row_runs_the_buffer() {
         let mut state = measured(&["shop"]);
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
         type_into(&mut state, "select * from shop.a");
         // The buffer survives a focus change; leaving Queries before `?` is
         // what lets the palette open through the real key path rather than
@@ -5813,13 +5841,12 @@ mod tests {
                 let _ = press(&mut state, Key::Enter);
 
                 match command.run {
-                    // "Leave the editor" is the one row whose whole action is
-                    // to leave the panel it is filed under, so `⏎` on it
-                    // lands back on the default panel rather than on
-                    // Queries — a fair report of what Escape does there, not
-                    // a bug (`a_row_filed_under_a_panel_stays_in_that_panel`
-                    // carries the same exception).
-                    Run::In(_) if command.binding.action == "leave the editor" => {}
+                    Run::Editing => assert_eq!(
+                        state.focus(),
+                        Panel::Queries,
+                        "{:?} is an edit",
+                        command.binding.action
+                    ),
                     Run::In(panel) => assert_eq!(
                         state.focus(),
                         panel,
@@ -5840,16 +5867,11 @@ mod tests {
     fn a_row_filed_under_a_panel_stays_in_that_panel() {
         for group in CATALOGUE {
             for command in group.commands {
-                let Run::In(panel) = command.run else {
-                    continue;
+                let panel = match command.run {
+                    Run::In(panel) => panel,
+                    Run::Editing => Panel::Queries,
+                    Run::Here | Run::Inert => continue,
                 };
-                // The one honest exception: Escape's whole action in the
-                // editor is to leave it, so "leave the editor" is a row that
-                // leaves the panel it is filed under by design, not a row
-                // whose heading lies.
-                if command.binding.action == "leave the editor" {
-                    continue;
-                }
                 let key = *command
                     .binding
                     .keys
@@ -5858,6 +5880,9 @@ mod tests {
 
                 let mut state = measured(&["shop"]);
                 state.focus_on(panel);
+                if command.run == Run::Editing {
+                    state.queries.start_editing();
+                }
                 let _ = press_stroke(&mut state, key);
 
                 assert_eq!(
@@ -6638,13 +6663,13 @@ mod tests {
         assert!(press(&mut state, Key::Char('y')).is_empty());
     }
 
-    /// The regression `Tab`'s cycle exists to prevent: the panel's own
-    /// number is not carved out of what the CQL buffer takes as text, or
-    /// `WHERE id = 4` could not be typed from inside it.
+    /// The panel's own number is not carved out of what an open buffer takes
+    /// as text, or `WHERE id = 4` could not be typed.
     #[test]
     fn a_number_typed_into_the_focused_cql_buffer_inserts_the_digit() {
         let mut state = State::default();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         press(&mut state, Key::Char('4'));
 
@@ -6937,11 +6962,13 @@ mod tests {
         assert!(detail.contains("no $EDITOR set"), "{detail}");
     }
 
-    /// A state focused on Queries with `text` typed into it, `\n` meaning
-    /// Enter — the same convention `editor.rs`'s own helper uses.
+    /// A state focused on Queries with its buffer opened and `text` typed
+    /// into it, `\n` meaning Enter — the same convention `editor.rs`'s own
+    /// helper uses.
     fn editing(text: &str) -> State {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.focus_on(Panel::Queries);
+        press(&mut state, Key::Enter);
         type_into(&mut state, text);
         state
     }
@@ -6985,6 +7012,7 @@ mod tests {
     fn a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette() {
         let mut state = measured(&["a"]);
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         press(&mut state, Key::Char('?'));
 
@@ -7018,6 +7046,7 @@ mod tests {
     fn q_does_not_quit_while_the_editor_has_focus() {
         let mut state = browsing(&["a"]);
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         let effects = press(&mut state, Key::Char('q'));
 
@@ -7027,8 +7056,13 @@ mod tests {
     }
 
     #[test]
-    fn escape_leaves_the_editor_for_tables() {
+    fn escape_closes_the_buffer_and_a_second_leaves_for_tables() {
         let mut state = editing("SELECT");
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(state.focus(), Panel::Queries, "one esc does one thing");
+        assert!(!state.takes_text());
 
         press(&mut state, Key::Escape);
 
@@ -8012,6 +8046,7 @@ mod tests {
         for to in Panel::ALL {
             let mut state = State::default();
             state.focus_on(Panel::Queries);
+            state.queries.start_editing();
 
             press(&mut state, Key::Char(to.number()));
 
@@ -8024,12 +8059,107 @@ mod tests {
     fn a_bracket_is_text_in_a_panel_that_takes_text() {
         let mut state = State::default();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         press(&mut state, Key::Char(']'));
 
         assert_eq!(state.focus(), Panel::Queries, "focus is the mode");
         assert_eq!(state.queries.text(), "]");
         assert_eq!(state.ddl.tab(), DdlTab::Ddl, "and no tab changed under it");
+    }
+
+    #[test]
+    fn four_pressed_again_walks_queries_tabs_like_two_walks_ddls() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+
+        press(&mut state, Key::Char('4'));
+        assert_eq!(state.focus(), Panel::Queries);
+        assert_eq!(
+            state.queries.mode(),
+            Some(crate::queries::CqlMode::Browsing)
+        );
+
+        press(&mut state, Key::Char('4'));
+        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+
+        press(&mut state, Key::Char('4'));
+        assert_eq!(state.queries.tab(), QueriesTab::Cql, "wrapping");
+        assert_eq!(state.queries.text(), "", "no press was typed");
+    }
+
+    #[test]
+    fn brackets_walk_queries_tabs_while_the_buffer_is_closed() {
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
+
+        press(&mut state, Key::Char(']'));
+        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+
+        press(&mut state, Key::Char('['));
+        assert_eq!(state.queries.tab(), QueriesTab::Cql);
+    }
+
+    #[test]
+    fn enter_and_i_open_the_buffer_and_type_nothing() {
+        for key in [Key::Enter, Key::Char('i')] {
+            let mut state = State::default();
+            state.focus_on(Panel::Queries);
+
+            press(&mut state, key);
+
+            assert!(state.takes_text(), "{key:?} opens the buffer");
+            assert_eq!(state.queries.text(), "", "{key:?} is not typed");
+        }
+    }
+
+    #[test]
+    fn enter_and_i_open_nothing_on_the_logs_tab() {
+        for key in [Key::Enter, Key::Char('i')] {
+            let mut state = on_the_trail();
+
+            press(&mut state, key);
+
+            assert_eq!(state.queries.tab(), QueriesTab::Logs, "{key:?}");
+            assert!(!state.takes_text(), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn a_closed_buffer_leaves_the_global_keys_their_meaning() {
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
+
+        press(&mut state, Key::Char('1'));
+
+        assert_eq!(state.focus(), Panel::Tables);
+        assert_eq!(state.queries.text(), "");
+    }
+
+    #[test]
+    fn leaving_the_panel_closes_the_buffer() {
+        let mut state = editing("SELECT");
+
+        press(&mut state, Key::Tab);
+        press(&mut state, Key::BackTab);
+
+        assert_eq!(state.focus(), Panel::Queries);
+        assert!(!state.takes_text(), "arriving back does not reopen it");
+
+        press(&mut state, Key::Enter);
+        state.focus_on(Panel::Tables);
+        state.focus_on(Panel::Queries);
+
+        assert!(!state.takes_text());
+    }
+
+    #[test]
+    fn a_click_on_the_buffer_opens_it() {
+        let mut state = State::default();
+
+        point(&mut state, Pointer::Click(Click::Panel(Panel::Queries)));
+
+        assert_eq!(state.focus(), Panel::Queries);
+        assert!(state.takes_text());
     }
 
     /// Also the collision test: a number that an earlier arm already answers
@@ -12345,6 +12475,7 @@ mod tests {
     fn slash_is_text_in_queries_and_opens_nothing() {
         let mut state = State::default();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         press(&mut state, Key::Char('/'));
 
@@ -12700,6 +12831,7 @@ mod tests {
     fn n_types_a_character_in_queries() {
         let mut state = loaded();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         press(&mut state, Key::Char('n'));
 
@@ -12859,6 +12991,7 @@ mod tests {
     fn v_types_a_v_in_queries() {
         let mut state = browsing(&["a"]);
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         press(&mut state, Key::Char('v'));
 
@@ -13192,6 +13325,7 @@ mod tests {
     fn a_statement_refused_for_want_of_a_connection_says_so_in_the_trail() {
         let mut state = State::default();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
         type_into(&mut state, "SELECT * FROM shop.orders");
         let before = state.log.len();
 
@@ -13303,6 +13437,7 @@ mod tests {
         press(&mut state, Key::Enter);
         let read = state.contents.outstanding().expect("the read is in flight");
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
         type_into(&mut state, "SELECT * FROM shop.users");
 
         let effects = run_query(&mut state);
@@ -13318,6 +13453,7 @@ mod tests {
     fn reading_a_table_cancels_a_pending_query() {
         let mut state = read_shop_orders();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
         type_into(&mut state, "SELECT * FROM shop.users");
         run_query(&mut state);
         let query = state
@@ -13565,6 +13701,7 @@ mod tests {
     #[test]
     fn m_types_an_m_in_queries() {
         let mut state = populated(Panel::Queries);
+        state.queries.start_editing();
         let before = state.queries.text();
 
         press(&mut state, Key::Char('m'));
@@ -14862,6 +14999,9 @@ mod tests {
                 Panel::Queries,
                 "the panel is still the way in"
             );
+
+            press(&mut state, Key::Escape);
+            assert!(!state.takes_text(), "the next escape closes the buffer");
 
             press(&mut state, Key::Escape);
             assert_eq!(

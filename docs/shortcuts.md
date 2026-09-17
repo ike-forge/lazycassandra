@@ -16,12 +16,11 @@ key does something, it does it there.
 
 Reachable from every panel that does not take text, in every connection
 state. `Esc`, `Tab` and `Shift-Tab` are the exceptions that really are
-unconditional; the ten marked rows are text instead, on the one tab that
-takes text — Queries' Cql tab, argued in that subsection below. Its Logs tab
-takes no text at all, so most of the marked rows reach it exactly as
-written; the footnote below says which few still do not, and why. `ctrl-t`
-and `ctrl-o` are unmarked because a chord is not text anywhere: the ctrl
-layer is dispatched above the panel that takes text (§2).
+unconditional; the marked rows are text instead, in the one place that takes
+text — Queries' Cql buffer once `⏎` or `i` has opened it, argued in that
+subsection below. `ctrl-t` and `ctrl-o` are unmarked because a chord is not
+text anywhere: the ctrl layer is dispatched above the panel that takes text
+(§2).
 
 | Key | Action |
 |---|---|
@@ -34,26 +33,23 @@ layer is dispatched above the panel that takes text (§2).
 | `N`¹ | Move to the previous match of the focused panel's search, wrapping. |
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
-| `Esc` | Dismiss the overlay, leave visual mode, clear a range, clear the focused panel's search, or leave the panel for Tables — first hit wins (§2). |
-| `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns and Indexes tabs where a table is selected; Table contents; Queries' Cql tab; Queries' Logs tab. This is how the Logs tab is reached. |
+| `Esc` | Dismiss the overlay, close the open Cql buffer, leave visual mode, clear a range, clear the focused panel's search, or leave the panel for Tables — first hit wins (§2). |
+| `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns and Indexes tabs where a table is selected; Table contents; Queries' Cql tab; Queries' Logs tab. |
 | `Shift-Tab` | The same stops, walked backwards. |
 | `1`¹ | Focus Tables. |
 | `2`¹ | Focus DDL. Pressed again, its next tab. |
 | `2`¹ | Focus Table columns — the same key, one tab further in. |
 | `2`¹ | Focus Table indexes — the same key, one tab further still. |
 | `3`¹ | Focus Table contents. |
-| `4`¹ | Focus Queries. |
+| `4`¹ | Focus Queries. Pressed again, its next tab: `4` `4` is Logs. |
 | `]`¹ | The focused panel's next tab. |
 | `[`¹ | Its previous tab. |
 
-¹ Not reachable from the Cql tab: a panel that takes text claims every
-printable key before this table is consulted, so these type themselves
-there instead. The Logs tab is not that panel — it takes no text, so `q`,
-`?`, `/`, `n`, `N`, `y`, `v` and `1`–`3` all reach it exactly as this table
-says. `4`, `]` and `[` are the three exceptions even there, inert on the
-Logs tab too, but not as text: `4` has no strip left to walk once the tab
-cycle belongs to `Tab`/`Shift-Tab` alone (see the paragraph below), and
-`]`/`[` walk nothing for the same reason.
+¹ Not reachable while the Cql buffer is open: it claims every printable key
+before this table is consulted, so these type themselves there instead.
+`Esc` closes the buffer and every one of them answers again. A Cql tab that
+has not been opened, and the Logs tab, take no text at all
+([cql edit mode design](superpowers/specs/2026-09-17-cql-edit-mode-design.md) §2).
 
 ² "One CSV line" holds for DDL's three tabs, and for two of Table contents'
 three selection modes. Tables is the exception it always was, with a bare
@@ -79,8 +75,8 @@ candidate — as `⏎` does there too. The Queries subsection below is where tha
 is argued.
 
 Each panel's title opens with the key that reaches it — `[1]-Tables`,
-`[2]-DDL - Columns - Indexes`, `[3]-Table contents`, `[4]-Queries`
-(`[4]-Queries - Logs` on its second tab) — so the
+`[2]-DDL - Columns - Indexes`, `[3]-Table contents`, `[4]-Queries - Logs`
+— so the
 binding is learned by looking at the panel rather than by reading this file
 (vision.md §4, principle 1). The number is drawn in the same style as the
 panel's active tab: it names the panel, and so does the tab.
@@ -102,28 +98,21 @@ job; a letter has to be learned per panel, while four digits in frame order
 are one rule, and a novice reading `[2]-` has been told the whole binding.
 
 A number focuses its panel. Pressed again — that is, pressed while its panel
-already has focus — it steps to the panel's next tab, wrapping, but only on
-the DDL panel: `2` `2` reaches the Columns tab, a third `2` the Indexes tab
-and a fourth comes back;
-`1` `1` stays on Tables. Queries has two tabs now as well, Cql and Logs, and
-`4` does not walk them the way `2` walks DDL's — a genuine asymmetry, not an
-oversight. The reason is the panel itself: the Cql tab takes text, so a `4`
-typed there is a character like any other digit rather than a second press
-left over for `handle_key` to reinterpret, and arriving at Queries by its
-number always lands on Cql, because leaving the panel by any other route has
-already reverted it there (see the Logs tab subsection below). The trail is
-reached a different way instead — `Tab`/`Shift-Tab` walking every
-`(panel, tab)` stop a strip can draw, DDL's two and Queries' two alike (see
-the table above) — so the Logs tab costs no digit of its own. The palette
-says so directly for DDL: `2` takes a row per tab, one under the other.
+already has focus — it steps to the panel's next tab, wrapping: `2` `2`
+reaches the Columns tab, a third `2` the Indexes tab and a fourth comes back;
+`4` `4` reaches Logs and a third `4` comes back to Cql; `1` `1` stays on
+Tables. This holds for Queries because arriving there never opens the Cql
+buffer — typing is a step of its own, `⏎` or `i` — so the second `4` is still
+a binding rather than a character
+([cql edit mode design](superpowers/specs/2026-09-17-cql-edit-mode-design.md) §2). The palette says so directly for DDL: `2` takes a row per
+tab, one under the other.
 The general rule stays with `]`/`[`, but a reader who has not met
 those keys yet learns from the repetition that the number pressed again goes
 somewhere — which is how the tabs are found without reading this file
 (vision.md §4, principle 1). `]` and `[` do the same walk forwards and
 backwards from the focused panel, for a hand that learnt them in lazygit; on
-a panel with one tab they do nothing, and so do they anywhere in Queries —
-text on the Cql tab, and simply unanswered on the Logs tab, since the walk
-answers to DDL alone, the same reason a repeated `4` goes nowhere there.
+a panel with one tab they do nothing, and in an open Cql buffer they are
+text.
 
 Arriving at the tab already drawn costs nothing: `2` from another panel is how
 focus comes back to whichever DDL tab was up, and it leaves the cursor on the
@@ -733,13 +722,21 @@ panel underneath sees one, `q` included.
 
 Two tabs, Cql and Logs. This subsection is the Cql tab, the buffer the panel
 opens on; the Logs tab is read-only and has a subsection of its own,
-directly below. The panel takes text only while the Cql tab is drawn, so
-while it has focus every printable key is a character and not a binding here
-— the Logs tab claims none of them. What it does not claim keeps its global
-meaning.
+directly below.
+
+The Cql tab is closed when focus arrives — by `4`, `Tab`, `Shift-Tab` or a
+tab click — and takes no text: every global key keeps its meaning, which is
+what lets `4` `4` reach Logs. `⏎` or `i` opens it, and from then on every
+printable key is a character; `Esc` closes it again without leaving the
+panel. The caret is drawn only while it is open, and the bar reads `⏎ edit`
+before and `esc done` after. Leaving the panel or the tab closes it, and
+nothing reopens it on the way back. Vim motions stop at the buffer's edge: it
+is edited with the keys below, and `ctrl-e` is the way to any other editor
+([cql edit mode design](superpowers/specs/2026-09-17-cql-edit-mode-design.md) §6).
 
 | Key | Action |
 |---|---|
+| `Enter` / `i` | With the buffer closed: open it. Types nothing. |
 | `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. A buffer that is empty or all whitespace runs nothing, and the bar greys the hint out while that is so — §2. |
 | `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
 | `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
@@ -747,12 +744,12 @@ meaning.
 | `↓`³ / `↑`³ | The next / previous completion — **only** while a popup is up, and the same step `ctrl-n`/`ctrl-p` take. With none up, they move the cursor, as everywhere else. |
 | `Tab`³ / `Enter`³ | Accept the selected completion — **only** while a popup is up. A keyword lands with the space the word after it needs, unless the cursor is already on one; a name, a type and a statement shape land as they are drawn. With no popup up, `Tab` moves focus and `⏎` splits the line, as everywhere else. |
 | any printable key | Insert it, and offer completions against the word it lands in. `q`, `t`, `j` and the rest are text here. |
-| `Enter` | Split the line at the cursor. |
+| `Enter` | With the buffer open: split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
 | `←` `→` `↑` `↓` | Move the cursor. `←`/`→` wrap between lines, and stay motions under a popup — which is what takes it down. |
 | `Home` / `End` | To the start / end of the **line**. |
 | `PageUp` / `PageDown`, `ctrl-u` / `ctrl-d` | Up / down one panel height. |
-| `Esc`³ | Take the completion popup down; with none up, leave the panel for Tables. |
+| `Esc`³ | Take the completion popup down; with none up, close the buffer. A closed buffer's `Esc` leaves the panel for Tables. |
 
 ³ The five keys the completion popup claims, and it claims them only while it
 is drawn. All five are exceptions to §2's *the same key means the same thing
@@ -760,7 +757,7 @@ in every panel*, taken for the reason `Home` and `End` already diverge here: it
 is what the key does in every editor the audience has met. None is invisible —
 the popup is on screen with a row selected, and the bar swaps `tab panel` and
 `⏎ newline` for `tab ⏎ complete` in exactly the frames the swap is true.
-`Esc`'s second press still leaves the panel, so its hint stays true either way.
+`Esc`'s second press still closes the buffer, so its hint stays true either way.
 The arrows need no swap of their own: a list with a row selected is what a
 reader already presses them in, and *down one row* is what the palette calls
 them under `Navigate` — the popup is the row list this frame is driving, which
@@ -800,7 +797,7 @@ neither leaves the panel outright: `Tab` lands on the Logs tab first, the
 panel's own second stop in the cycle (§1), and only a second `Tab` from there
 wraps on to Tables; `Shift-Tab` from Cql steps back to Table contents
 instead, since Logs sits after Cql in the cycle, not before it. Nothing else
-global survives inside the editor — including `q`, which types a `q`. `ctrl-r` is not global either:
+global survives inside an open buffer — including `q`, which types a `q`. `ctrl-r` is not global either:
 it is the ctrl layer's Queries member and does nothing outside this panel,
 and neither does `ctrl-e`, which opens the buffer in the user's editor
 ([external editor design](specs/2026-08-12-external-editor-design.md) §1).
@@ -811,10 +808,9 @@ See [queries editor design](specs/2026-08-09-queries-editor-design.md) and
 
 Queries' second tab: a read-only, scrollable trail of every statement the
 session issued and what came back, one entry per connection attempt, schema
-read, query and export. Reached by `Tab`/`Shift-Tab` walking the cycle of
-`(panel, tab)` stops (§1), or by a click on the tab — `4` does not walk onto
-it, and the paragraph above explains why. Once drawn it takes no text at all, unlike the Cql tab
-beside it: `j`/`k` and the arrows move the cursor entry to entry, `PageUp`/
+read, query and export. Reached by `4` `4`, by `]` from a closed Cql tab, by
+`Tab`/`Shift-Tab` walking the cycle of `(panel, tab)` stops (§1), or by a
+click on the tab. It takes no text at all: `j`/`k` and the arrows move the cursor entry to entry, `PageUp`/
 `PageDown` and `ctrl-d`/`ctrl-u` page it, `Home`/`End` and `g`/`G` reach
 either end, `v` starts or freezes a selection of whole entries, `/` searches
 it and `n`/`N` walk the matches, `y` yanks — the held selection if one is
@@ -827,7 +823,7 @@ would not be a trail (query log design §5.3). Leaving the panel — by `Tab`,
 `Shift-Tab`, another panel's number, or a click — reverts the tab to Cql,
 because the panel's unfocused height is a function of the CQL buffer it
 hugs, not of the trail (query log design §5.2); returning to Logs costs
-`Tab`/`Shift-Tab` walking the cycle again, `4` then `Tab` once, or a click. `Esc`
+`4` `4`, `Tab`/`Shift-Tab` walking the cycle again, or a click. `Esc`
 leaves it for Tables the way it leaves any other panel (§2), reverting the
 tab on the way out like every other route off it. The trail's own search does
 not outlive the tab being drawn either — switching to Cql clears it, since the
@@ -932,7 +928,7 @@ Neither set is the real one. Anyone who reaches for arrows should never hit a
 motion that only vim keys have, and the reverse (vision.md §4, principle 2 — the
 same key at every level of skill).
 
-The pairing breaks in Queries, and only there: a panel that takes text claims
+The pairing breaks in an open Cql buffer, and only there: it claims
 `j`/`k`/`l`/`h` as characters before this match is reached, so only the
 arrows still move the cursor. This is the vim-key half of the same exception
 §3's key budget note makes for every letter.
@@ -971,12 +967,9 @@ of the document; in the editor they reach the ends of the line, because that
 is what they do in every text editor a user has met. The document's ends
 stay reachable with `PageUp` and `PageDown`.
 
-A panel number (`1`–`4`) is a third exception: it moves focus in every panel
-that does not take text, and is text on the one tab that does — Queries'
-Cql tab, not the panel whole. So are `[` and `]`. Queries' Logs tab takes
-none of them as text, but `4`, `[` and `]` still do nothing there, for a
-different reason §1's tabs discussion gives. The rule's own enforcement
-test was renamed for this — §5.
+A panel number (`1`–`4`) is a third exception: it moves focus everywhere but
+an open Cql buffer, where it is text. So are `[` and `]`. The rule's own
+enforcement test was renamed for this — §5.
 
 `Tab`, `Enter` and `Esc` under a completion popup are a fourth, and the only
 one conditional on something drawn rather than on which panel is focused: while
@@ -999,8 +992,9 @@ surface — the bar has never claimed to be the complete list
 is unconditionally true, in that frame, that pressing it does something —
 which, since the chain's last rung became every panel rather than the editor
 alone, is every frame but Tables' own. The bar names the rung that would fire:
-`esc clear` on a panel carrying a search or a live range, `esc leave` on any
-other panel but Tables, and `esc close` on an open palette or search prompt.
+`esc done` over an open Cql buffer, `esc clear` on a panel carrying a search
+or a live range, `esc leave` on any other panel but Tables, and `esc close` on
+an open palette or search prompt.
 It stays out of Tables with neither an overlay up nor a search applied, where
 it still does nothing at all, and naming it there would be a lie (design §3). A binding that is in none of a title, the bar, or the palette is
 a binding only this file knows about.
@@ -1055,13 +1049,14 @@ pair under every heading that resolves it, which the catalogue did until
 2026-08-15, bought a per-panel noun and cost the reader the same two keys three
 times over before anything particular to a panel.
 
-**Focus is the mode, and an overlay outranks focus.** A panel either takes
-text or it does not, and `Panel::takes_text` is the one exhaustive answer. In a
-panel that takes text every printable key is a character; everywhere else every
-printable key is a binding. There is no state within a panel that changes what
-a key means, so the regime is always the focused border — which is on screen
-and already means something. This replaces the older "no modes" rule, which
-held only until the Queries panel took text.
+**Focus decides the mode, with one step inside Queries, and an overlay
+outranks focus.** `State::takes_text` is the one exhaustive answer: true only
+while Queries has focus and its Cql buffer is open. There every printable key
+is a character; everywhere else every printable key is a binding. Opening the
+buffer is the one state within a panel that changes what a key means, and it
+is entered by a press of its own (`⏎`/`i`), shown by the caret and the bar,
+and left by `Esc` or by leaving the panel
+([cql edit mode design](superpowers/specs/2026-09-17-cql-edit-mode-design.md) §2).
 
 The Table contents selection mode does not touch this. `m` changes what the
 grid highlights — a row, a column, or the cell they cross — and no key changes
@@ -1137,7 +1132,8 @@ overlay comes off first, restoring the cursor to the row the prompt opened on
 and, in the picker, the theme it previewed with it — the overlay itself stays
 up. Failing that, an overlay up is dismissed — a search prompt cancels,
 restoring the search and the cursor it found applied when it opened; the
-palette just closes. Failing that, an extending
+palette just closes. Failing that, an open Cql buffer closes, and focus stays
+on Queries. Failing that, an extending
 range in the focused panel freezes, the way a second `v` would, so `Esc`
 never discards a range that is still growing. Failing that, the selection
 clears — every group at once, however many are held. Failing that, the
@@ -1356,7 +1352,11 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `?` is a bind marker in the editor, not the palette | `a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette` |
 | An open palette outranks a panel that takes text | `an_open_palette_outranks_a_panel_that_takes_text` |
 | Quitting is not reachable from the editor | `q_does_not_quit_while_the_editor_has_focus` |
-| `Esc` prefers the overlay, then leaves | `escape_dismisses_the_overlay_before_it_leaves_the_editor`, `escape_leaves_the_editor_for_tables`, `escape_leaves_every_panel_for_tables` |
+| `Esc` prefers the overlay, then closes the buffer, then leaves | `escape_dismisses_the_overlay_before_it_leaves_the_editor`, `escape_closes_the_buffer_and_a_second_leaves_for_tables`, `escape_takes_the_popup_down_before_it_leaves_the_editor`, `escape_leaves_every_panel_for_tables` |
+| The Cql buffer opens on `⏎`/`i` alone, types nothing doing so, and closes on leaving | `enter_and_i_open_the_buffer_and_type_nothing`, `enter_and_i_open_nothing_on_the_logs_tab`, `leaving_the_panel_closes_the_buffer`, `a_closed_buffer_leaves_the_global_keys_their_meaning` (`update.rs`), `a_panel_opens_browsing_and_claims_no_key_until_opened`, `the_logs_tab_cannot_be_opened_for_typing`, `leaving_the_cql_tab_closes_the_buffer_and_coming_back_does_not_reopen_it` (`queries.rs`) |
+| `4` and the brackets walk Queries' tabs | `four_pressed_again_walks_queries_tabs_like_two_walks_ddls`, `brackets_walk_queries_tabs_while_the_buffer_is_closed` |
+| The caret and the bar say whether the buffer is open | `a_closed_buffer_draws_no_cursor_though_its_panel_is_focused` (`inbound/render.rs`), `a_closed_buffer_names_the_way_in_first_and_still_offers_quit`, `an_open_buffer_names_esc_as_done_rather_than_leave` (`view/hints.rs`), `a_closed_buffer_names_the_way_in_and_keeps_quit` (`inbound/hints.rs`) |
+| A click on the buffer opens it | `a_click_on_the_buffer_opens_it` |
 | `Tab` still leaves | `tab_still_leaves_the_editor` |
 | Ctrl is still not text | `a_modified_key_is_still_not_text` |
 | The editing keys reach the buffer | `the_editing_keys_reach_the_buffer` |
@@ -1552,8 +1552,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 makes the match-order rule in §2 enforceable: a panel claiming a key an earlier
 arm already takes has its arm swallowed, focus does not land, and the test
 fails. Its companion, `a_number_is_text_in_a_panel_that_takes_text`, pins the
-other half: from Queries, a panel number is text and no focus change happens at
-all.
+other half: in an open Cql buffer, a panel number is text and no focus change
+happens at all.
 
 ---
 
@@ -1625,7 +1625,10 @@ the grid draws a band around stays `m`'s business. So a press in row mode still
 moves the column cursor under the highlight, and the next `m` finds it where the
 pointer left it.
 
-Chrome is a border, a notice, the Queries panel, a title away from any tab, the
+A press on the Queries panel opens its Cql buffer, as `4` then `⏎` would; on
+the Logs tab it only focuses.
+
+Chrome is a border, a notice, a title away from any tab, the
 blank over a grid's gutter, and the blank space past the last row or column. In
 the DDL panel it is also the blanks between groups and the section headings: the
 body wraps one row over several lines, and those lines belong to no row. A row

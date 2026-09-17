@@ -250,6 +250,7 @@ mod tests {
     #[test]
     fn an_unfocused_queries_panel_hugs_the_buffer_it_holds() {
         let mut state = State::default();
+        state.queries.start_editing();
         for key in [
             Key::Char('a'),
             Key::Enter,

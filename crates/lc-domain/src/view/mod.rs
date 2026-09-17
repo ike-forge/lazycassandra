@@ -33,7 +33,7 @@ use crate::ddl::DdlTab;
 use crate::drop::Answer;
 use crate::export::{Confirm, Format, Scope, Stop};
 use crate::posture::Posture;
-use crate::queries::QueriesTab;
+use crate::queries::{CqlMode, QueriesTab};
 use crate::search::{Direction, Search, Sift};
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
@@ -488,6 +488,10 @@ pub enum PanelBody {
     Editor {
         lines: Vec<Vec<Segment>>,
         cursor: Position,
+        /// The caret is drawn while [`CqlMode::Editing`] alone: it is the
+        /// on-screen difference between a buffer that takes text and one
+        /// that does not (cql edit mode design §3).
+        mode: CqlMode,
         /// The completion popup, drawn beside the cursor. `None` is no popup,
         /// which is most frames.
         completion: Option<CompletionView>,
@@ -653,6 +657,7 @@ fn body(state: &State, panel: Panel) -> PanelBody {
             QueriesTab::Cql => PanelBody::Editor {
                 lines: crate::cql::highlight(&state.queries.text()),
                 cursor: state.queries.cursor(),
+                mode: state.queries.mode().unwrap_or_default(),
                 completion: state.queries.completion().map(completion),
             },
             QueriesTab::Logs => logs::log_body(state),
@@ -766,6 +771,7 @@ mod tests {
             PanelBody::Editor {
                 lines: vec![Vec::new()],
                 cursor: Position::default(),
+                mode: CqlMode::Browsing,
                 completion: None,
             },
             "an untouched buffer is one empty line with the cursor on it"
@@ -838,6 +844,7 @@ mod tests {
     #[test]
     fn a_column_offered_with_no_table_in_scope_draws_its_label_but_types_its_bare_name() {
         let mut state = tabled(&[("shop", &["orders"])]);
+        state.queries.start_editing();
         state.queries.replace("SELECT i");
         let completion = crate::cql::suggest(state.queries.buffer(), state.schema(), None);
         state.queries.offer(completion);

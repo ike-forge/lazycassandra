@@ -276,10 +276,26 @@ mod tests {
     }
 
     #[test]
-    fn the_editor_names_its_own_keys_and_drops_the_quit_it_no_longer_has() {
+    fn a_closed_buffer_names_the_way_in_and_keeps_quit() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " ctrl-r run | ctrl-e edit | ctrl-f format | ⏎ newline | esc leave | tab panel"
+            " ⏎ edit | ctrl-r run | ctrl-e $EDITOR | esc leave | tab panel | q quit"
+        );
+    }
+
+    #[test]
+    fn the_editor_names_its_own_keys_and_drops_the_quit_it_no_longer_has() {
+        let mut state = State::default();
+        state.focus_on(Panel::Queries);
+        state.queries.start_editing();
+
+        assert_eq!(
+            line(&view_model(&state).hints, 80, Theme::default())
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            " ctrl-r run | ctrl-e $EDITOR | ctrl-f format | ⏎ newline | esc done | tab panel"
         );
     }
 

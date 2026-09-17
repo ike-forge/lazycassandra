@@ -18,6 +18,7 @@
 
 use lc_domain::contents::{Order, SelectionMode};
 use lc_domain::grid::{BAR, COLUMN_SPACING, MARKS, available, fitting};
+use lc_domain::queries::CqlMode;
 use lc_domain::search::Search;
 use lc_domain::state::{Ranges, Span};
 use lc_domain::style::Token;
@@ -235,6 +236,7 @@ pub(crate) fn render(
         PanelBody::Editor {
             lines,
             cursor,
+            mode,
             completion,
         } => Some(Body {
             extent: editor(
@@ -245,7 +247,7 @@ pub(crate) fn render(
                     cursor: *cursor,
                     completion: completion.as_ref(),
                 },
-                focused,
+                focused && *mode == CqlMode::Editing,
                 theme,
             ),
             columns: None,

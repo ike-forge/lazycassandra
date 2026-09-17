@@ -333,6 +333,13 @@ const LEAVE: Binding = Binding {
     action: "leave",
 };
 
+/// `esc` while the Cql buffer is open: it closes the buffer and keeps focus,
+/// so [`LEAVE`] would promise a move that does not happen.
+const DONE: Binding = Binding {
+    keys: &[Stroke::key(Key::Escape)],
+    action: "done",
+};
+
 /// Named on the same condition as [`CLEAR`]: `n`/`N` are inert without a
 /// search applied, and a hint that would do nothing this frame is a lie
 /// (docs/shortcuts.md §2, design §5.3).
@@ -475,7 +482,9 @@ pub(crate) fn bar(state: &State) -> HintBar {
             ..rendered(&NEXT_MATCH)
         });
     }
-    if target.is_some() || selected(state) {
+    if state.takes_text() {
+        panel.push(rendered(&DONE));
+    } else if target.is_some() || selected(state) {
         panel.push(rendered(&CLEAR));
     } else if state.focus() != Panel::default() {
         panel.push(rendered(&LEAVE));
@@ -862,6 +871,7 @@ mod tests {
     fn a_panel_that_takes_text_does_not_claim_q_quits() {
         let mut state = fits();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         let bar = bar(&state);
 
@@ -1250,6 +1260,7 @@ mod tests {
     fn the_queries_bar_names_the_run_binding() {
         let mut state = fits();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         let panel = bar(&state).panel;
 
@@ -1264,6 +1275,7 @@ mod tests {
     fn the_queries_bar_names_the_editor_binding_after_run() {
         let mut state = fits();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         let panel = bar(&state).panel;
 
@@ -1273,9 +1285,42 @@ mod tests {
                 .map(|hint| (hint.keys.as_str(), hint.action))
                 .take(2)
                 .collect::<Vec<_>>(),
-            [("ctrl-r", "run"), ("ctrl-e", "edit")],
+            [("ctrl-r", "run"), ("ctrl-e", "$EDITOR")],
             "the panel exists to run queries; editing one is the next thing it does"
         );
+    }
+
+    #[test]
+    fn a_closed_buffer_names_the_way_in_first_and_still_offers_quit() {
+        let mut state = fits();
+        state.focus_on(Panel::Queries);
+
+        let bar = bar(&state);
+
+        assert_eq!(
+            bar.panel
+                .first()
+                .map(|hint| (hint.keys.as_str(), hint.action)),
+            Some(("⏎", "edit"))
+        );
+        assert!(bar.global.iter().any(|hint| hint.action == "quit"));
+        assert!(bar.panel.iter().any(|hint| hint.action == "leave"));
+    }
+
+    #[test]
+    fn an_open_buffer_names_esc_as_done_rather_than_leave() {
+        let mut state = fits();
+        state.focus_on(Panel::Queries);
+        state.queries.start_editing();
+
+        let panel = bar(&state).panel;
+
+        assert!(
+            panel
+                .iter()
+                .any(|hint| (hint.keys.as_str(), hint.action) == ("esc", "done"))
+        );
+        assert!(panel.iter().all(|hint| hint.action != "leave"));
     }
 
     #[test]
@@ -1285,7 +1330,10 @@ mod tests {
             state.focus_on(focus);
 
             assert!(
-                bar(&state).panel.iter().all(|hint| hint.action != "edit"),
+                bar(&state)
+                    .panel
+                    .iter()
+                    .all(|hint| hint.action != "$EDITOR"),
                 "{focus:?} does not open an editor"
             );
         }
@@ -1295,6 +1343,7 @@ mod tests {
     fn queries_bar(text: &str) -> HintBar {
         let mut state = fits();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
         for character in text.chars() {
             let key = if character == '\n' {
                 Key::Enter
@@ -1363,6 +1412,7 @@ mod tests {
         ] {
             let mut state = connected(posture, crate::state::SchemaState::Loading);
             state.focus_on(Panel::Queries);
+            state.queries.start_editing();
             for character in cql.chars() {
                 state.queries.edit(Key::Char(character), 1);
             }
