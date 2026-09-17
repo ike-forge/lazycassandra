@@ -136,9 +136,9 @@ No colour is readable on its own — only against a specific background. A
 palette that inherits the terminal's background cannot know what its own
 colours will do there, and the claim "this is legible" becomes untestable:
 the hex that reads at 5.1:1 on white reads at 2.4:1 on a dark grey. So
-LazyCassandra declares its own ground. A theme of ours names `base`,
-`surface` and `selection_bg`, and every colour it spends on text is held to
-4.5:1 against all three by a test that fails the build.
+LazyCassandra declares its own ground. A theme of ours names `base`
+and `selection_bg`, and every colour it spends on text is held to 4.5:1
+against both by a test that fails the build.
 
 This replaces the earlier rule that the background was the user's. That rule
 cost us every distinction it was meant to protect: hedging across unknown

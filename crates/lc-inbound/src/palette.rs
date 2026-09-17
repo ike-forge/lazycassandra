@@ -86,7 +86,7 @@ pub(crate) fn render(
     });
 
     frame.render_widget(Clear, area);
-    frame.buffer_mut().set_style(area, theme.overlay_ground());
+    frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
     let gutter = rows.iter().map(action_width).max().unwrap_or(0);

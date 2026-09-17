@@ -60,7 +60,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[DiagnosticRow], selected: usize,
     });
 
     frame.render_widget(Clear, area);
-    frame.buffer_mut().set_style(area, theme.overlay_ground());
+    frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
     let items: Vec<ListItem> = rows.iter().map(|row| item(row, theme)).collect();

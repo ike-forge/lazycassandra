@@ -12,7 +12,6 @@ use crate::theme::{Palette, rgb};
 )]
 pub(crate) const DARK: Palette = Palette {
     base: rgb(0x282a36),
-    surface: rgb(0x30323f),
     text: rgb(0xe8eaf2),
     dim: rgb(0xbabdc9),
     faint: rgb(0xa3a7b5),
@@ -49,7 +48,6 @@ pub(crate) const DARK: Palette = Palette {
 )]
 pub(crate) const LIGHT: Palette = Palette {
     base: rgb(0xf8f8fb),
-    surface: rgb(0xf0f0f5),
     text: rgb(0x23252c),
     dim: rgb(0x4c4f5b),
     faint: rgb(0x626776),

@@ -63,7 +63,7 @@ pub(crate) fn render(frame: &mut Frame, column: &str, query: &str, theme: Theme)
     let inner = block.inner(area);
 
     frame.render_widget(Clear, area);
-    frame.buffer_mut().set_style(area, theme.overlay_ground());
+    frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
     // The tail rather than the head: the caret sits after the last character

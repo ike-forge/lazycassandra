@@ -1191,8 +1191,8 @@ fn focus_by_number(state: &mut State, key: char) {
 /// A tab the strip does not draw is not a place to arrive at: on a keyspace
 /// the DDL panel offers one tab, and walking stays on it. Queries has no
 /// strip a key can reach this way: `4` is text once its CQL tab has focus,
-/// the same as any other digit, and the Logs tab is reached only by walking
-/// `Tab`/`BackTab`'s cycle of stops (see [`Landing`]).
+/// the same as any other digit, and the Logs tab is reached by walking
+/// `Tab`/`BackTab`'s cycle of stops (see [`Landing`]) or by a click.
 fn walk_tab(state: &mut State, step: Step) {
     if state.focus() != Panel::Ddl {
         return;
@@ -1288,19 +1288,25 @@ fn walk_landing(state: &mut State, step: Step) {
 /// Draws the `tab`th tab of the strip `panel` last drew. `click_at` has
 /// already focused it.
 ///
-/// Reaches the same [`DdlPanel::show`](crate::ddl::DdlPanel::show) that
-/// [`walk_tab`] does, so a tab arrived at by pointer and one arrived at by key
+/// Reaches the same `show` the keys do — [`walk_tab`] for DDL, [`Landing`]
+/// for Queries — so a tab arrived at by pointer and one arrived at by key
 /// cannot diverge.
 fn show_tab(state: &mut State, panel: Panel, tab: usize) {
-    if panel != Panel::Ddl {
-        return;
-    }
-
-    // The map a press was resolved against describes the previous frame, so a
-    // strip that has since lost a tab drops the press rather than showing
-    // whichever tab took that position (design §6).
-    if let Some(tab) = crate::view::ddl_tabs(state).get(tab).copied() {
-        state.ddl.show(tab);
+    match panel {
+        // The map a press was resolved against describes the previous frame,
+        // so a strip that has since lost a tab drops the press rather than
+        // showing whichever tab took that position (design §6).
+        Panel::Ddl => {
+            if let Some(tab) = crate::view::ddl_tabs(state).get(tab).copied() {
+                state.ddl.show(tab);
+            }
+        }
+        Panel::Queries => {
+            if let Some(tab) = QueriesTab::ALL.get(tab).copied() {
+                state.show_queries_tab(tab);
+            }
+        }
+        Panel::Tables | Panel::Contents => {}
     }
 }
 
@@ -10798,6 +10804,22 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(state.focus(), Panel::Ddl);
         assert_eq!(state.ddl.tab(), DdlTab::Columns);
+    }
+
+    #[test]
+    fn a_click_on_the_logs_tab_focuses_queries_and_draws_the_trail() {
+        let mut state = browsing_tables(&[("shop", &["orders"])]);
+
+        point(
+            &mut state,
+            Pointer::Click(Click::Tab {
+                panel: Panel::Queries,
+                tab: 1,
+            }),
+        );
+
+        assert_eq!(state.focus(), Panel::Queries);
+        assert_eq!(state.queries.tab(), QueriesTab::Logs);
     }
 
     /// The same reachability rule the key obeys: on a keyspace the strip has

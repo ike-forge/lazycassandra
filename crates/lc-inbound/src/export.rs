@@ -88,7 +88,7 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     let inner = block.inner(area);
 
     frame.render_widget(Clear, area);
-    frame.buffer_mut().set_style(area, theme.overlay_ground());
+    frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
     let (visible, caret) = window(&view.path, view.cursor, usize::from(inner.width));
@@ -278,7 +278,7 @@ fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) {
     let inner = block.inner(area);
 
     frame.render_widget(Clear, area);
-    frame.buffer_mut().set_style(area, theme.overlay_ground());
+    frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
     frame.render_widget(
         Paragraph::new(vec![

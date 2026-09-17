@@ -73,7 +73,7 @@ pub(crate) fn render(
     });
 
     frame.render_widget(Clear, area);
-    frame.buffer_mut().set_style(area, theme.overlay_ground());
+    frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
     // A term that matched nothing leaves no row to hold, so the picker says so
