@@ -5,9 +5,11 @@
 //! with its own vocabulary rather than another field on `State`
 //! (architecture.md §11).
 
+use std::cmp::Ordering;
+
 use crate::config::MaxColumnWidth;
 use crate::grid::ColumnScroll;
-use crate::model::{KeyspaceKind, Page, QueryId, Row};
+use crate::model::{CqlValue, KeyspaceKind, Page, PagingState, QueryId, Row, Statement};
 use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
 use crate::style::{Segment, Token};
@@ -81,14 +83,157 @@ pub enum ContentsState {
     Loading {
         query: QueryId,
         subject: Subject,
+        /// Kept to resume from: a cursor alone names nothing the driver can
+        /// continue (architecture.md §5).
+        stmt: Statement,
     },
     Loaded {
         subject: Subject,
-        page: GridPage,
+        page: Box<GridPage>,
+        paging: Paging,
     },
     Failed {
         subject: Subject,
     },
+}
+
+/// Whether the cluster holds rows past the ones loaded, and what is fetching
+/// them (docs/superpowers/specs/2026-09-17-grid-paging-design.md §2).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Paging {
+    Ended,
+    More {
+        stmt: Statement,
+        cursor: PagingState,
+        fetch: Fetch,
+    },
+}
+
+/// What `p` or `P` has in flight, or where `P` last stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fetch {
+    Idle,
+    Stopped(Stopped),
+    One(QueryId),
+    All { query: QueryId, stops: Stops },
+}
+
+/// Where a running `P` stops: the next multiple of each step above where it
+/// was pressed (design §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stops {
+    bytes: Bytes,
+    rows: usize,
+}
+
+/// Estimated memory between two memory stops.
+pub const MEMORY_STEP: Bytes = Bytes(100_000_000);
+
+/// Rows between two row stops.
+pub const ROW_STEP: usize = 1_000_000;
+
+impl Stops {
+    const fn above(bytes: Bytes, rows: usize) -> Self {
+        Self {
+            bytes: Bytes((bytes.0 / MEMORY_STEP.0 + 1) * MEMORY_STEP.0),
+            rows: (rows / ROW_STEP + 1) * ROW_STEP,
+        }
+    }
+
+    /// The stop a grid of `bytes` and `rows` has reached, memory first.
+    const fn reached(self, bytes: Bytes, rows: usize) -> Option<Stopped> {
+        if bytes.0 >= self.bytes.0 {
+            Some(Stopped::Memory(self.bytes))
+        } else if rows >= self.rows {
+            Some(Stopped::Rows(self.rows))
+        } else {
+            None
+        }
+    }
+}
+
+/// The stop a `P` halted at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    Memory(Bytes),
+    Rows(usize),
+}
+
+/// Estimated memory, in bytes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Bytes(u64);
+
+impl Bytes {
+    #[must_use]
+    pub const fn new(bytes: u64) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// What `row` is estimated to hold. Never recomputed: a page's estimate is
+    /// added as it lands (design §3).
+    #[must_use]
+    pub fn of_row(row: &Row) -> Self {
+        Self(ROW_OVERHEAD + row.values.iter().map(value_bytes).sum::<u64>())
+    }
+}
+
+const ROW_OVERHEAD: u64 = size_of::<Row>() as u64;
+const VALUE_OVERHEAD: u64 = size_of::<CqlValue>() as u64;
+
+fn value_bytes(value: &CqlValue) -> u64 {
+    let payload = match value {
+        CqlValue::Null
+        | CqlValue::Boolean(_)
+        | CqlValue::Int(_)
+        | CqlValue::Float(_)
+        | CqlValue::Timestamp(_) => 0,
+        CqlValue::Text(text) | CqlValue::Uuid(text) => text.len() as u64,
+        CqlValue::Blob(bytes) => bytes.len() as u64,
+        CqlValue::List(values) | CqlValue::Set(values) => values.iter().map(value_bytes).sum(),
+        CqlValue::Map(entries) => entries
+            .iter()
+            .map(|(key, value)| key.len() as u64 + value_bytes(value))
+            .sum(),
+    };
+
+    VALUE_OVERHEAD + payload
+}
+
+/// A page the panel wants fetched under `query`, continuing `stmt` from
+/// `cursor`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Continue {
+    pub query: QueryId,
+    pub stmt: Statement,
+    pub cursor: PagingState,
+}
+
+/// What a page did to the panel.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Landed {
+    /// Not the panel's query.
+    Elsewhere,
+    /// The read's first rows, or its end.
+    Read,
+    /// An empty first page with a successor, followed under a new query
+    /// rather than shown (design §1).
+    Skipped(Continue),
+    /// A later page, appended, and the one to fetch next if one is due.
+    Appended(Option<Continue>),
+}
+
+/// What a failure for the panel's query cost it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Failure {
+    /// The read never showed a row.
+    Read,
+    /// A later page: the rows already loaded stay.
+    Page,
 }
 
 /// Which way a sorted column is read.
@@ -96,6 +241,15 @@ pub enum ContentsState {
 pub enum Order {
     Descending,
     Ascending,
+}
+
+impl Order {
+    fn compare(self, left: &str, right: &str) -> Ordering {
+        match self {
+            Self::Ascending => left.cmp(right),
+            Self::Descending => right.cmp(left),
+        }
+    }
 }
 
 /// The column a grid is sorted on, and which way.
@@ -164,6 +318,7 @@ pub struct GridPage {
     /// rows in this, so a cursor, a yank and an export cannot disagree about
     /// which row is the third one (design §4).
     order: Vec<usize>,
+    bytes: Bytes,
 }
 
 impl GridPage {
@@ -171,14 +326,87 @@ impl GridPage {
         let widths = crate::grid::widths(&page, cap);
         let filters = vec![None; page.columns.len()];
         let order = (0..page.rows.len()).collect();
+        let bytes = Bytes(page.rows.iter().map(|row| Bytes::of_row(row).0).sum());
 
         Self {
-            page,
+            page: Page { next: None, ..page },
             widths,
             sort: None,
             filters,
             order,
+            bytes,
         }
+    }
+
+    /// Every row fetched, filtered or not — what the footer counts.
+    #[must_use]
+    pub fn fetched(&self) -> usize {
+        self.page.rows.len()
+    }
+
+    /// The memory the fetched rows are estimated to hold.
+    #[must_use]
+    pub const fn bytes(&self) -> Bytes {
+        self.bytes
+    }
+
+    /// Adds `rows` past the last one, widening columns they overflow and
+    /// placing each under the sort and filters standing (design §4).
+    fn append(&mut self, rows: Vec<Row>, cap: MaxColumnWidth) {
+        let added = Page {
+            columns: self.page.columns.clone(),
+            rows,
+            next: None,
+        };
+        for (width, wider) in self.widths.iter_mut().zip(crate::grid::widths(&added, cap)) {
+            *width = (*width).max(wider);
+        }
+
+        let start = self.page.rows.len();
+        self.bytes.0 += added
+            .rows
+            .iter()
+            .map(|row| Bytes::of_row(row).0)
+            .sum::<u64>();
+        self.page.rows.extend(added.rows);
+
+        let kept: Vec<usize> = (start..self.page.rows.len())
+            .filter(|at| self.kept(*at))
+            .collect();
+        match self.sort {
+            None => self.order.extend(kept),
+            Some(sort) => self.merge(sort, kept),
+        }
+    }
+
+    /// Places `added` into the sorted order without re-sorting what is there:
+    /// each lands after every row it ties with, which is where a stable sort
+    /// of the whole grid would put a row that arrived last.
+    fn merge(&mut self, sort: Sort, added: Vec<usize>) {
+        let key = |at: usize| {
+            self.page.rows[at]
+                .values
+                .get(sort.column)
+                .map(crate::cell::text)
+                .unwrap_or_default()
+        };
+        let mut added: Vec<(String, usize)> = added.into_iter().map(|at| (key(at), at)).collect();
+        added.sort_by(|(left, _), (right, _)| sort.order.compare(left, right));
+
+        let mut merged = Vec::with_capacity(self.order.len() + added.len());
+        let mut from = 0;
+        for (new, at) in added {
+            let before = from
+                + self.order[from..].partition_point(|old| {
+                    sort.order.compare(&key(*old), &new) != Ordering::Greater
+                });
+            merged.extend_from_slice(&self.order[from..before]);
+            merged.push(at);
+            from = before;
+        }
+        merged.extend_from_slice(&self.order[from..]);
+
+        self.order = merged;
     }
 
     #[must_use]
@@ -283,10 +511,7 @@ impl GridPage {
             // re-renders a cell on every comparison: `cell::text` allocates,
             // and a blob column would hex-expand once per comparison.
             let mut paired: Vec<(String, usize)> = keys.into_iter().zip(order).collect();
-            paired.sort_by(|(left, _), (right, _)| match sort.order {
-                Order::Ascending => left.cmp(right),
-                Order::Descending => right.cmp(left),
-            });
+            paired.sort_by(|(left, _), (right, _)| sort.order.compare(left, right));
             order = paired.into_iter().map(|(_, at)| at).collect();
         }
 
@@ -513,18 +738,159 @@ impl ContentsPanel {
             .map(|at| (at / columns, at % columns))
     }
 
-    /// The query this panel is waiting on, if any.
+    /// The query this panel is waiting on, if any: the read, or a page `p`
+    /// or `P` asked for.
     #[must_use]
     pub const fn outstanding(&self) -> Option<QueryId> {
-        match self.state {
-            ContentsState::Loading { query, .. } => Some(query),
+        match &self.state {
+            ContentsState::Loading { query, .. }
+            | ContentsState::Loaded {
+                paging:
+                    Paging::More {
+                        fetch: Fetch::One(query) | Fetch::All { query, .. },
+                        ..
+                    },
+                ..
+            } => Some(*query),
+            ContentsState::Empty
+            | ContentsState::Failed { .. }
+            | ContentsState::Loaded {
+                paging:
+                    Paging::Ended
+                    | Paging::More {
+                        fetch: Fetch::Idle | Fetch::Stopped(_),
+                        ..
+                    },
+                ..
+            } => None,
+        }
+    }
+
+    /// Where the loaded result stands against the cluster, `None` with
+    /// nothing loaded.
+    #[must_use]
+    pub const fn paging(&self) -> Option<&Paging> {
+        match &self.state {
+            ContentsState::Loaded { paging, .. } => Some(paging),
+            _ => None,
+        }
+    }
+
+    /// Whether `p` and `P` have a page to ask for, whatever is in flight.
+    #[must_use]
+    pub const fn has_more(&self) -> bool {
+        matches!(self.paging(), Some(Paging::More { .. }))
+    }
+
+    /// Whether `p` or `P` would ask for one now.
+    #[must_use]
+    pub const fn can_fetch(&self) -> bool {
+        matches!(
+            self.paging(),
+            Some(Paging::More {
+                fetch: Fetch::Idle | Fetch::Stopped(_),
+                ..
+            })
+        )
+    }
+
+    /// Whether `P` is running.
+    #[must_use]
+    pub const fn fetching_all(&self) -> bool {
+        matches!(
+            self.paging(),
+            Some(Paging::More {
+                fetch: Fetch::All { .. },
+                ..
+            })
+        )
+    }
+
+    /// `p`: the next page, under `query`, whatever stop `P` last reached.
+    pub fn fetch_one(&mut self, query: impl FnOnce() -> QueryId) -> Option<Continue> {
+        self.fetch(|_| Fetch::One(query()))
+    }
+
+    /// `P`: pages until the result ends or the next stop above the grid as it
+    /// stands is reached.
+    pub fn fetch_all(&mut self, query: impl FnOnce() -> QueryId) -> Option<Continue> {
+        self.fetch(|page| Fetch::All {
+            query: query(),
+            stops: Stops::above(page.bytes, page.fetched()),
+        })
+    }
+
+    fn fetch(&mut self, started: impl FnOnce(&GridPage) -> Fetch) -> Option<Continue> {
+        let ContentsState::Loaded {
+            page,
+            paging:
+                Paging::More {
+                    stmt,
+                    cursor,
+                    fetch: fetch @ (Fetch::Idle | Fetch::Stopped(_)),
+                },
+            ..
+        } = &mut self.state
+        else {
+            return None;
+        };
+
+        *fetch = started(page);
+        let (Fetch::One(query) | Fetch::All { query, .. }) = *fetch else {
+            return None;
+        };
+
+        Some(Continue {
+            query,
+            stmt: stmt.clone(),
+            cursor: cursor.clone(),
+        })
+    }
+
+    /// `Esc` over a running `P`: the page in flight still lands, and nothing
+    /// follows it. Reports whether there was one to stop.
+    pub fn stop_fetching(&mut self) -> bool {
+        let Some(Paging::More { fetch, .. }) = self.paging_mut() else {
+            return false;
+        };
+        let Fetch::All { query, .. } = *fetch else {
+            return false;
+        };
+
+        *fetch = Fetch::One(query);
+        true
+    }
+
+    /// Ends the loaded result where it stands, answering with the page that
+    /// was in flight. A cursor is only good on the session that issued it.
+    pub fn end_paging(&mut self) -> Option<QueryId> {
+        let paging = self.paging_mut()?;
+        let flying = match paging {
+            Paging::More {
+                fetch: Fetch::One(query) | Fetch::All { query, .. },
+                ..
+            } => Some(*query),
+            Paging::Ended | Paging::More { .. } => None,
+        };
+
+        *paging = Paging::Ended;
+        flying
+    }
+
+    fn paging_mut(&mut self) -> Option<&mut Paging> {
+        match &mut self.state {
+            ContentsState::Loaded { paging, .. } => Some(paging),
             _ => None,
         }
     }
 
     /// Starts waiting on `query`, discarding whatever was showing.
-    pub fn requested(&mut self, query: QueryId, subject: Subject) {
-        self.state = ContentsState::Loading { query, subject };
+    pub fn requested(&mut self, query: QueryId, subject: Subject, stmt: Statement) {
+        self.state = ContentsState::Loading {
+            query,
+            subject,
+            stmt,
+        };
         self.cursor = Cursor::default();
         self.column = Cursor::default();
         self.scroll = Scroll::default();
@@ -533,17 +899,152 @@ impl ContentsPanel {
         self.columns = Selection::default();
     }
 
-    /// Applies a page, if it is the one being waited on, its columns capped
-    /// at `cap`.
-    pub fn page_ready(&mut self, query: QueryId, page: Page, cap: MaxColumnWidth) {
-        let Some(subject) = self.awaited(query) else {
-            return;
-        };
+    /// Applies a page, if it is one the panel is waiting on, its columns
+    /// capped at `cap`. `query` names the page that follows, when one does.
+    pub fn page_ready(
+        &mut self,
+        landed: QueryId,
+        page: Page,
+        cap: MaxColumnWidth,
+        query: impl FnOnce() -> QueryId,
+    ) -> Landed {
+        if self.outstanding() != Some(landed) {
+            return Landed::Elsewhere;
+        }
 
-        self.state = ContentsState::Loaded {
-            subject,
-            page: GridPage::new(page, cap),
-        };
+        match self.state {
+            ContentsState::Loading { .. } => self.first_page(page, cap, query),
+            ContentsState::Loaded { .. } => self.later_page(page, cap, query),
+            ContentsState::Empty | ContentsState::Failed { .. } => Landed::Elsewhere,
+        }
+    }
+
+    fn first_page(
+        &mut self,
+        page: Page,
+        cap: MaxColumnWidth,
+        query: impl FnOnce() -> QueryId,
+    ) -> Landed {
+        match &mut self.state {
+            ContentsState::Loading {
+                query: outstanding,
+                subject,
+                stmt,
+            } => {
+                let Page {
+                    columns,
+                    rows,
+                    next,
+                } = page;
+                // An empty page can still have a successor: Cassandra ends a
+                // page on what it scanned, not on what matched a filter or
+                // survived tombstones.
+                let paging = match next {
+                    Some(cursor) if rows.is_empty() => {
+                        *outstanding = query();
+                        return Landed::Skipped(Continue {
+                            query: *outstanding,
+                            stmt: stmt.clone(),
+                            cursor,
+                        });
+                    }
+                    Some(cursor) => Paging::More {
+                        stmt: stmt.clone(),
+                        cursor,
+                        fetch: Fetch::Idle,
+                    },
+                    None => Paging::Ended,
+                };
+                self.state = ContentsState::Loaded {
+                    subject: subject.clone(),
+                    page: Box::new(GridPage::new(
+                        Page {
+                            columns,
+                            rows,
+                            next: None,
+                        },
+                        cap,
+                    )),
+                    paging,
+                };
+                Landed::Read
+            }
+            _ => Landed::Elsewhere,
+        }
+    }
+
+    fn later_page(
+        &mut self,
+        page: Page,
+        cap: MaxColumnWidth,
+        query: impl FnOnce() -> QueryId,
+    ) -> Landed {
+        match &mut self.state {
+            ContentsState::Loaded {
+                page: grid, paging, ..
+            } => {
+                let empty = page.rows.is_empty();
+                let row = grid.order.get(self.cursor.index()).copied();
+                grid.append(page.rows, cap);
+
+                // Rows only arrive past the end of an unsorted grid, so what
+                // the cursor and a range address stays put; under a sort they
+                // move (design §4).
+                if grid.sort.is_some() {
+                    if let Some(at) =
+                        row.and_then(|row| grid.order.iter().position(|at| *at == row))
+                    {
+                        self.cursor.go_to(at, grid.len());
+                    }
+                    self.rows.clear();
+                    if self.mode == SelectionMode::Cell {
+                        self.columns.clear();
+                    }
+                }
+
+                let (
+                    Some(next),
+                    Paging::More {
+                        stmt,
+                        cursor,
+                        fetch,
+                    },
+                ) = (page.next, &mut *paging)
+                else {
+                    *paging = Paging::Ended;
+                    return Landed::Appended(None);
+                };
+                *cursor = next;
+
+                let stopped = match *fetch {
+                    _ if empty => None,
+                    Fetch::All { stops, .. } => stops.reached(grid.bytes, grid.fetched()),
+                    Fetch::Idle | Fetch::Stopped(_) | Fetch::One(_) => {
+                        *fetch = Fetch::Idle;
+                        return Landed::Appended(None);
+                    }
+                };
+                if let Some(stopped) = stopped {
+                    *fetch = Fetch::Stopped(stopped);
+                    return Landed::Appended(None);
+                }
+
+                let following = query();
+                if let Fetch::One(outstanding)
+                | Fetch::All {
+                    query: outstanding, ..
+                } = fetch
+                {
+                    *outstanding = following;
+                }
+                Landed::Appended(Some(Continue {
+                    query: following,
+                    stmt: stmt.clone(),
+                    cursor: cursor.clone(),
+                }))
+            }
+            _ => Landed::Elsewhere,
+        }
     }
 
     /// Records a request that never became a query, because the domain
@@ -559,12 +1060,27 @@ impl ContentsPanel {
     }
 
     /// Records a failure, if it belongs to the query being waited on.
-    pub fn failed(&mut self, query: QueryId) {
-        let Some(subject) = self.awaited(query) else {
-            return;
-        };
+    pub fn failed(&mut self, query: QueryId) -> Option<Failure> {
+        if self.outstanding() != Some(query) {
+            return None;
+        }
 
-        self.state = ContentsState::Failed { subject };
+        match &mut self.state {
+            ContentsState::Loading { subject, .. } => {
+                self.state = ContentsState::Failed {
+                    subject: subject.clone(),
+                };
+                Some(Failure::Read)
+            }
+            ContentsState::Loaded {
+                paging: Paging::More { fetch, .. },
+                ..
+            } => {
+                *fetch = Fetch::Idle;
+                Some(Failure::Page)
+            }
+            _ => None,
+        }
     }
 
     /// The rows on screen, for a cursor that must not run past them — what
@@ -624,17 +1140,6 @@ impl ContentsPanel {
             _ => 0,
         }
     }
-
-    /// What `query` was about, when it is the outstanding one.
-    fn awaited(&self, query: QueryId) -> Option<Subject> {
-        match &self.state {
-            ContentsState::Loading {
-                query: outstanding,
-                subject,
-            } if *outstanding == query => Some(subject.clone()),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -669,7 +1174,11 @@ mod tests {
     fn loading() -> (ContentsPanel, QueryId) {
         let mut panel = ContentsPanel::default();
         let query = QueryId::next();
-        panel.requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        panel.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         (panel, query)
     }
 
@@ -706,6 +1215,7 @@ mod tests {
                 next: None,
             },
             MaxColumnWidth::default(),
+            QueryId::next,
         );
         panel
     }
@@ -780,7 +1290,7 @@ mod tests {
     #[test]
     fn a_page_with_no_rows_has_no_match_to_reach() {
         let (mut panel, query) = loading();
-        panel.page_ready(query, page(0), MaxColumnWidth::default());
+        panel.page_ready(query, page(0), MaxColumnWidth::default(), QueryId::next);
         panel.set_search(Search::new("ali"));
 
         assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
@@ -797,6 +1307,7 @@ mod tests {
                 next: None,
             },
             MaxColumnWidth::default(),
+            QueryId::next,
         );
         panel.set_search(Search::new("ali"));
 
@@ -823,7 +1334,7 @@ mod tests {
     fn the_page_being_waited_on_is_applied() {
         let (mut panel, query) = loading();
 
-        panel.page_ready(query, page(3), MaxColumnWidth::default());
+        panel.page_ready(query, page(3), MaxColumnWidth::default(), QueryId::next);
 
         assert_eq!(panel.row_count(), 3);
         assert_eq!(panel.outstanding(), None, "the wait is over");
@@ -833,7 +1344,12 @@ mod tests {
     fn a_page_for_another_query_is_not_applied() {
         let (mut panel, query) = loading();
 
-        panel.page_ready(QueryId::next(), page(3), MaxColumnWidth::default());
+        panel.page_ready(
+            QueryId::next(),
+            page(3),
+            MaxColumnWidth::default(),
+            QueryId::next,
+        );
 
         assert_eq!(
             panel.outstanding(),
@@ -849,9 +1365,10 @@ mod tests {
         panel.requested(
             QueryId::next(),
             Subject::Table(TableRef::new("shop", "users")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
 
-        panel.page_ready(first, page(3), MaxColumnWidth::default());
+        panel.page_ready(first, page(3), MaxColumnWidth::default(), QueryId::next);
 
         assert_eq!(panel.row_count(), 0);
         let ContentsState::Loading { subject, .. } = panel.state() else {
@@ -884,11 +1401,15 @@ mod tests {
     #[test]
     fn a_new_request_starts_the_cursor_at_the_top() {
         let (mut panel, query) = loading();
-        panel.page_ready(query, page(5), MaxColumnWidth::default());
+        panel.page_ready(query, page(5), MaxColumnWidth::default(), QueryId::next);
         panel.cursor.down(5);
 
         let next = QueryId::next();
-        panel.requested(next, Subject::Table(TableRef::new("shop", "users")));
+        panel.requested(
+            next,
+            Subject::Table(TableRef::new("shop", "users")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
 
         assert_eq!(
             panel.cursor.index(),
@@ -937,6 +1458,7 @@ mod tests {
         panel.requested(
             QueryId::next(),
             Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
 
         assert_eq!(panel.scroll.offset(), 0, "a second table opens at its top");
@@ -984,9 +1506,13 @@ mod tests {
     fn a_typed_subject_travels_the_same_road_a_table_does() {
         let mut panel = ContentsPanel::default();
         let query = QueryId::next();
-        panel.requested(query, Subject::Typed("SELECT 1".to_owned()));
+        panel.requested(
+            query,
+            Subject::Typed("SELECT 1".to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
 
-        panel.page_ready(query, page(3), MaxColumnWidth::default());
+        panel.page_ready(query, page(3), MaxColumnWidth::default(), QueryId::next);
 
         assert_eq!(panel.row_count(), 3);
         assert_eq!(panel.outstanding(), None, "the wait is over");
@@ -1005,7 +1531,12 @@ mod tests {
     fn a_page_arrives_with_its_column_widths_already_measured() {
         let (mut panel, query) = loading();
 
-        panel.page_ready(query, wide_page(3), MaxColumnWidth::default());
+        panel.page_ready(
+            query,
+            wide_page(3),
+            MaxColumnWidth::default(),
+            QueryId::next,
+        );
 
         let ContentsState::Loaded { page, .. } = panel.state() else {
             panic!("the page landed");
@@ -1021,7 +1552,12 @@ mod tests {
     fn a_loaded_page_reports_its_columns() {
         let (mut panel, query) = loading();
 
-        panel.page_ready(query, wide_page(4), MaxColumnWidth::default());
+        panel.page_ready(
+            query,
+            wide_page(4),
+            MaxColumnWidth::default(),
+            QueryId::next,
+        );
 
         assert_eq!(panel.column_count(), 4);
     }
@@ -1029,7 +1565,12 @@ mod tests {
     #[test]
     fn a_request_returns_the_cell_cursor_to_the_first_cell() {
         let (mut panel, query) = loading();
-        panel.page_ready(query, wide_page(4), MaxColumnWidth::default());
+        panel.page_ready(
+            query,
+            wide_page(4),
+            MaxColumnWidth::default(),
+            QueryId::next,
+        );
         panel.cursor.go_to(0, 1);
         panel.column.go_to(3, 4);
         panel.column_scroll.follow(3, &[1, 1, 1, 1], 4);
@@ -1037,6 +1578,7 @@ mod tests {
         panel.requested(
             QueryId::next(),
             Subject::Table(TableRef::new("shop", "carts")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
 
         assert_eq!(panel.column.index(), 0);
@@ -1046,7 +1588,12 @@ mod tests {
     #[test]
     fn a_refusal_returns_the_cell_cursor_to_the_first_cell() {
         let (mut panel, query) = loading();
-        panel.page_ready(query, wide_page(4), MaxColumnWidth::default());
+        panel.page_ready(
+            query,
+            wide_page(4),
+            MaxColumnWidth::default(),
+            QueryId::next,
+        );
         panel.column.go_to(3, 4);
 
         panel.refused(Subject::Table(TableRef::new("shop", "carts")));
@@ -1087,6 +1634,7 @@ mod tests {
         panel.requested(
             QueryId::next(),
             Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
 
         assert_eq!(panel.mode, SelectionMode::Column);
@@ -1101,7 +1649,11 @@ mod tests {
         panel.rows.stop(3);
         panel.columns.start(1);
 
-        panel.requested(QueryId::next(), Subject::Typed("select 1".to_owned()));
+        panel.requested(
+            QueryId::next(),
+            Subject::Typed("select 1".to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
 
         assert!(!panel.rows.is_active());
         assert!(!panel.columns.is_active());
@@ -1129,6 +1681,7 @@ mod tests {
                 next: None,
             },
             MaxColumnWidth::default(),
+            QueryId::next,
         );
         panel
     }
@@ -1297,6 +1850,7 @@ mod tests {
                 next: None,
             },
             MaxColumnWidth::default(),
+            QueryId::next,
         );
 
         panel.cycle_sort(0);
@@ -1324,5 +1878,447 @@ mod tests {
         }
 
         assert_eq!(filter.search(), None, "an empty term is no filter at all");
+    }
+
+    fn more(rows: i64) -> Page {
+        Page {
+            next: Some(PagingState(vec![1])),
+            ..page(rows)
+        }
+    }
+
+    /// A loaded grid of `rows` with a page left to fetch.
+    fn pageable(rows: i64) -> ContentsPanel {
+        let (mut panel, query) = loading();
+        panel.page_ready(query, more(rows), MaxColumnWidth::default(), QueryId::next);
+        panel
+    }
+
+    /// Lands `page` on whatever the panel is waiting on.
+    fn land(panel: &mut ContentsPanel, page: Page) -> Landed {
+        let query = panel.outstanding().expect("a page is outstanding");
+        panel.page_ready(query, page, MaxColumnWidth::default(), QueryId::next)
+    }
+
+    fn fetch_of(panel: &ContentsPanel) -> Option<Fetch> {
+        match panel.paging()? {
+            Paging::More { fetch, .. } => Some(*fetch),
+            Paging::Ended => None,
+        }
+    }
+
+    #[test]
+    fn a_first_page_with_a_successor_leaves_more_to_fetch() {
+        let panel = pageable(3);
+
+        assert_eq!(fetch_of(&panel), Some(Fetch::Idle));
+        assert!(panel.can_fetch());
+        assert_eq!(panel.outstanding(), None, "nothing is in flight");
+    }
+
+    #[test]
+    fn the_next_page_is_appended_and_the_last_ends_the_result() {
+        let mut panel = pageable(3);
+
+        let next = panel.fetch_one(QueryId::next).expect("a page to ask for");
+        assert_eq!(panel.outstanding(), Some(next.query));
+        assert_eq!(land(&mut panel, more(2)), Landed::Appended(None));
+        assert_eq!(panel.row_count(), 5);
+        assert_eq!(fetch_of(&panel), Some(Fetch::Idle));
+
+        panel.fetch_one(QueryId::next).expect("another page");
+        land(&mut panel, page(1));
+
+        assert_eq!(panel.row_count(), 6);
+        assert_eq!(panel.paging(), Some(&Paging::Ended));
+        assert!(!panel.has_more());
+        assert_eq!(
+            panel.fetch_one(QueryId::next),
+            None,
+            "an ended result has nothing to fetch"
+        );
+    }
+
+    #[test]
+    fn nothing_is_fetched_twice_at_once() {
+        let mut panel = pageable(3);
+        panel.fetch_one(QueryId::next).expect("a page");
+
+        assert_eq!(panel.fetch_one(QueryId::next), None);
+        assert_eq!(panel.fetch_all(QueryId::next), None);
+    }
+
+    #[test]
+    fn an_empty_first_page_with_a_successor_is_followed_rather_than_shown() {
+        let (mut panel, query) = loading();
+
+        let landed = panel.page_ready(query, more(0), MaxColumnWidth::default(), QueryId::next);
+
+        let Landed::Skipped(next) = landed else {
+            panic!("the empty page is skipped: {landed:?}");
+        };
+        assert_eq!(panel.outstanding(), Some(next.query));
+        assert!(matches!(panel.state(), ContentsState::Loading { .. }));
+    }
+
+    #[test]
+    fn an_empty_later_page_does_not_count_as_the_one_asked_for() {
+        let mut panel = pageable(3);
+        panel.fetch_one(QueryId::next).expect("a page");
+
+        let Landed::Appended(Some(next)) = land(&mut panel, more(0)) else {
+            panic!("the empty page is followed");
+        };
+        assert_eq!(fetch_of(&panel), Some(Fetch::One(next.query)));
+
+        land(&mut panel, more(2));
+        assert_eq!(fetch_of(&panel), Some(Fetch::Idle));
+        assert_eq!(panel.row_count(), 5);
+    }
+
+    #[test]
+    fn every_page_runs_to_the_end() {
+        let mut panel = pageable(3);
+        panel.fetch_all(QueryId::next).expect("a page");
+
+        assert!(matches!(
+            land(&mut panel, more(3)),
+            Landed::Appended(Some(_))
+        ));
+        assert!(panel.fetching_all());
+        assert_eq!(land(&mut panel, page(3)), Landed::Appended(None));
+
+        assert_eq!(panel.row_count(), 9);
+        assert_eq!(panel.paging(), Some(&Paging::Ended));
+    }
+
+    #[test]
+    fn stopping_every_page_still_appends_the_one_in_flight() {
+        let mut panel = pageable(3);
+        panel.fetch_all(QueryId::next).expect("a page");
+
+        assert!(panel.stop_fetching());
+        assert!(!panel.stop_fetching(), "there is nothing left to stop");
+        assert_eq!(land(&mut panel, more(3)), Landed::Appended(None));
+
+        assert_eq!(panel.row_count(), 6);
+        assert_eq!(fetch_of(&panel), Some(Fetch::Idle));
+    }
+
+    #[test]
+    fn every_page_stops_at_the_next_hundred_megabytes_and_continues_past_it() {
+        let mut panel = pageable(3);
+        if let ContentsState::Loaded { page, .. } = &mut panel.state {
+            page.bytes = Bytes(MEMORY_STEP.get() - 1);
+        }
+
+        panel.fetch_all(QueryId::next).expect("a page");
+        assert_eq!(land(&mut panel, more(1)), Landed::Appended(None));
+        assert_eq!(
+            fetch_of(&panel),
+            Some(Fetch::Stopped(Stopped::Memory(MEMORY_STEP)))
+        );
+
+        panel
+            .fetch_all(QueryId::next)
+            .expect("pressed again, it continues");
+        assert!(matches!(
+            land(&mut panel, more(1)),
+            Landed::Appended(Some(_))
+        ));
+        if let ContentsState::Loaded { page, .. } = &mut panel.state {
+            page.bytes = Bytes(2 * MEMORY_STEP.get());
+        }
+        land(&mut panel, more(1));
+        assert_eq!(
+            fetch_of(&panel),
+            Some(Fetch::Stopped(Stopped::Memory(Bytes(
+                2 * MEMORY_STEP.get()
+            )))),
+            "the next stop is the next multiple"
+        );
+    }
+
+    #[test]
+    fn every_page_stops_at_the_next_million_rows_and_continues_past_it() {
+        let columnless = |rows: usize, next: bool| Page {
+            columns: Vec::new(),
+            rows: vec![Row::default(); rows],
+            next: next.then(|| PagingState(vec![1])),
+        };
+        let (mut panel, query) = loading();
+        panel.page_ready(
+            query,
+            columnless(ROW_STEP - 1, true),
+            MaxColumnWidth::default(),
+            QueryId::next,
+        );
+
+        panel.fetch_all(QueryId::next).expect("a page");
+        land(&mut panel, columnless(2, true));
+        assert_eq!(
+            fetch_of(&panel),
+            Some(Fetch::Stopped(Stopped::Rows(ROW_STEP)))
+        );
+
+        panel
+            .fetch_all(QueryId::next)
+            .expect("pressed again, it continues");
+        assert!(matches!(
+            land(&mut panel, columnless(2, true)),
+            Landed::Appended(Some(_))
+        ));
+    }
+
+    #[test]
+    fn the_next_page_ignores_a_stop() {
+        let mut panel = pageable(3);
+        if let ContentsState::Loaded { page, .. } = &mut panel.state {
+            page.bytes = Bytes(MEMORY_STEP.get() - 1);
+        }
+        panel.fetch_all(QueryId::next).expect("a page");
+        land(&mut panel, more(1));
+
+        assert!(panel.fetch_one(QueryId::next).is_some());
+    }
+
+    #[test]
+    fn ending_the_result_drops_the_page_in_flight() {
+        let mut panel = pageable(3);
+        let next = panel.fetch_all(QueryId::next).expect("a page");
+
+        assert_eq!(panel.end_paging(), Some(next.query));
+
+        assert_eq!(panel.paging(), Some(&Paging::Ended));
+        assert_eq!(panel.row_count(), 3);
+        assert_eq!(panel.outstanding(), None);
+    }
+
+    #[test]
+    fn a_failed_page_keeps_the_rows_already_loaded() {
+        let mut panel = pageable(3);
+        let next = panel.fetch_all(QueryId::next).expect("a page");
+
+        assert_eq!(panel.failed(next.query), Some(Failure::Page));
+
+        assert_eq!(panel.row_count(), 3);
+        assert!(panel.can_fetch(), "the same page can be asked for again");
+    }
+
+    #[test]
+    fn a_page_for_a_superseded_fetch_is_not_applied() {
+        let mut panel = pageable(3);
+        let next = panel.fetch_one(QueryId::next).expect("a page");
+        panel.requested(
+            QueryId::next(),
+            Subject::Table(TableRef::new("shop", "users")),
+            crate::model::Statement::typed("SELECT * FROM shop.users"),
+        );
+
+        assert_eq!(
+            panel.page_ready(
+                next.query,
+                more(2),
+                MaxColumnWidth::default(),
+                QueryId::next
+            ),
+            Landed::Elsewhere
+        );
+    }
+
+    #[test]
+    fn an_append_to_an_unsorted_grid_keeps_the_cursor_and_the_range() {
+        let mut panel = pageable(5);
+        panel.cursor.go_to(3, 5);
+        panel.rows.start(1);
+        panel.rows.stop(3);
+        panel.fetch_one(QueryId::next).expect("a page");
+
+        land(&mut panel, more(4));
+
+        assert_eq!(panel.cursor.index(), 3);
+        assert!(panel.rows.is_active(), "rows only arrived past the end");
+    }
+
+    #[test]
+    fn an_append_to_a_sorted_grid_follows_the_row_and_drops_the_range() {
+        let mut panel = pageable(5);
+        panel.cycle_sort(0);
+        panel.cursor.go_to(0, 5);
+        let under = panel.loaded().and_then(|page| page.row(0)).cloned();
+        panel.rows.start(0);
+        panel.rows.stop(1);
+        panel.fetch_one(QueryId::next).expect("a page");
+
+        land(&mut panel, more(8));
+
+        assert_eq!(
+            panel
+                .loaded()
+                .and_then(|page| page.row(panel.cursor.index()))
+                .cloned(),
+            under,
+            "the cursor stays on the row it was on"
+        );
+        assert!(!panel.rows.is_active());
+    }
+
+    #[test]
+    fn an_appended_page_lands_where_a_sort_of_every_row_puts_it() {
+        let text = |values: &[&str], next: bool| Page {
+            columns: vec!["name".to_owned()],
+            rows: values
+                .iter()
+                .map(|value| Row {
+                    values: vec![CqlValue::Text((*value).to_owned())],
+                })
+                .collect(),
+            next: next.then(|| PagingState(vec![1])),
+        };
+        for order in [Order::Ascending, Order::Descending] {
+            let (mut panel, query) = loading();
+            panel.page_ready(
+                query,
+                text(&["b", "d", "a", "b"], true),
+                MaxColumnWidth::default(),
+                QueryId::next,
+            );
+            panel.cycle_sort(0);
+            if order == Order::Ascending {
+                panel.cycle_sort(0);
+            }
+            panel.set_filter(0, None);
+            panel.fetch_one(QueryId::next).expect("a page");
+
+            land(&mut panel, text(&["c", "b", "e", "a"], false));
+
+            let appended = panel.loaded().expect("a page").order.clone();
+            let mut arranged = panel.loaded().expect("a page").clone();
+            arranged.arrange();
+            assert_eq!(appended, arranged.order, "{order:?}");
+        }
+    }
+
+    #[test]
+    fn an_appended_page_is_filtered_as_it_lands() {
+        let mut panel = arranged_pageable();
+        panel.set_filter(1, Search::new("berlin"));
+        panel.fetch_one(QueryId::next).expect("a page");
+
+        land(
+            &mut panel,
+            Page {
+                columns: vec!["name".to_owned(), "city".to_owned()],
+                rows: ["Dora", "Eli"]
+                    .into_iter()
+                    .zip(["Berlin", "Oslo"])
+                    .map(|(name, city)| Row {
+                        values: vec![
+                            CqlValue::Text(name.to_owned()),
+                            CqlValue::Text(city.to_owned()),
+                        ],
+                    })
+                    .collect(),
+                next: None,
+            },
+        );
+
+        assert_eq!(drawn(&panel, 0), ["Bob", "Cleo", "Dora"]);
+    }
+
+    #[test]
+    fn a_search_reaches_an_appended_row() {
+        let mut panel = pageable(3);
+        panel.set_search(Search::new("7"));
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
+        panel.fetch_one(QueryId::next).expect("a page");
+
+        land(
+            &mut panel,
+            Page {
+                columns: vec!["id".to_owned()],
+                rows: vec![Row {
+                    values: vec![CqlValue::Int(7)],
+                }],
+                next: None,
+            },
+        );
+
+        assert_eq!(panel.next_match((0, 0), Direction::Forwards), Some((3, 0)));
+    }
+
+    #[test]
+    fn a_wider_appended_value_widens_its_column() {
+        let mut panel = pageable(1);
+        panel.fetch_one(QueryId::next).expect("a page");
+
+        land(
+            &mut panel,
+            Page {
+                columns: vec!["id".to_owned()],
+                rows: vec![Row {
+                    values: vec![CqlValue::Text("x".repeat(20))],
+                }],
+                next: None,
+            },
+        );
+
+        assert_eq!(panel.loaded().expect("a page").widths(), [20]);
+    }
+
+    #[test]
+    fn a_rows_estimate_counts_its_text_and_blobs_recursively() {
+        let row = Row {
+            values: vec![
+                CqlValue::Text("abcd".to_owned()),
+                CqlValue::Blob(vec![0; 10]),
+                CqlValue::List(vec![CqlValue::Uuid("u".repeat(36))]),
+                CqlValue::Map([("k".to_owned(), CqlValue::Int(1))].into_iter().collect()),
+                CqlValue::Null,
+            ],
+        };
+
+        assert_eq!(
+            Bytes::of_row(&row).get(),
+            ROW_OVERHEAD + 7 * VALUE_OVERHEAD + 4 + 10 + 36 + 1
+        );
+    }
+
+    #[test]
+    fn a_stop_is_the_next_multiple_above_where_every_page_was_pressed() {
+        let stops = Stops::above(Bytes(MEMORY_STEP.get()), 0);
+
+        assert_eq!(stops.bytes, Bytes(2 * MEMORY_STEP.get()));
+        assert_eq!(stops.rows, ROW_STEP);
+        assert_eq!(stops.reached(Bytes(0), ROW_STEP - 1), None);
+        assert_eq!(
+            stops.reached(Bytes(2 * MEMORY_STEP.get()), ROW_STEP),
+            Some(Stopped::Memory(Bytes(2 * MEMORY_STEP.get()))),
+            "memory first when a page reaches both"
+        );
+    }
+
+    fn arranged_pageable() -> ContentsPanel {
+        let (mut panel, query) = loading();
+        panel.page_ready(
+            query,
+            Page {
+                columns: vec!["name".to_owned(), "city".to_owned()],
+                rows: ["Bob", "Ada", "Cleo"]
+                    .into_iter()
+                    .zip(["Berlin", "Aarhus", "Berlin"])
+                    .map(|(name, city)| Row {
+                        values: vec![
+                            CqlValue::Text(name.to_owned()),
+                            CqlValue::Text(city.to_owned()),
+                        ],
+                    })
+                    .collect(),
+                next: Some(PagingState(vec![1])),
+            },
+            MaxColumnWidth::default(),
+            QueryId::next,
+        );
+        panel
     }
 }

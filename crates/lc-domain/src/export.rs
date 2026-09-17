@@ -5,10 +5,11 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::cell;
+use crate::contents::Paging;
 use crate::contents::Subject;
 use crate::model::{CqlValue, JobId, Row};
 use crate::style::Segment;
-use crate::update::{ROW_LIMIT, Source};
+use crate::update::Source;
 use crate::yank;
 
 /// The form's path field. Re-exported rather than moved wholesale, so a
@@ -205,33 +206,23 @@ pub enum Scope {
 /// cannot be written down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fetched {
-    /// Fewer than [`ROW_LIMIT`] came back, so our limit was not the binding
-    /// constraint and both scopes would write the same file.
+    /// The result ended in what was fetched, so both scopes would write the
+    /// same file.
     Everything(usize),
     Some(usize),
 }
 
 impl Fetched {
-    /// What the panel holds, whichever variant that is.
-    #[must_use]
-    pub const fn of(rows: usize) -> Self {
-        if rows < ROW_LIMIT {
-            Self::Everything(rows)
-        } else {
-            Self::Some(rows)
-        }
-    }
-
-    /// The same question over an arranged grid: `fetched` is what the
-    /// cluster returned and `drawn` what the filters left of it.
+    /// What the panel holds: `fetched` is what the cluster returned and
+    /// `drawn` what the filters left of it.
     ///
-    /// A filter makes the two scopes differ even where our limit did not: the
+    /// A filter makes the two scopes differ even where the result ended: the
     /// whole table and the rows on screen are different files as soon as one
     /// row is hidden, so a filtered grid always offers the Fetched scope
     /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §4).
     #[must_use]
-    pub const fn of_drawn(fetched: usize, drawn: usize) -> Self {
-        if fetched < ROW_LIMIT && drawn == fetched {
+    pub const fn of_drawn(paging: &Paging, fetched: usize, drawn: usize) -> Self {
+        if matches!(paging, Paging::Ended) && drawn == fetched {
             Self::Everything(drawn)
         } else {
             Self::Some(drawn)
@@ -1045,21 +1036,27 @@ mod tests {
     }
 
     #[test]
-    fn a_filtered_grid_offers_the_fetched_scope_even_where_the_limit_did_not() {
+    fn a_filtered_grid_offers_the_fetched_scope_even_where_the_result_ended() {
+        let more = Paging::More {
+            stmt: crate::model::Statement::select_all("shop", "orders"),
+            cursor: crate::model::PagingState(vec![1]),
+            fetch: crate::contents::Fetch::Idle,
+        };
+
         assert_eq!(
-            Fetched::of_drawn(12, 12),
+            Fetched::of_drawn(&Paging::Ended, 12, 12),
             Fetched::Everything(12),
             "a short page drawn whole is both scopes at once"
         );
         assert_eq!(
-            Fetched::of_drawn(12, 5),
+            Fetched::of_drawn(&Paging::Ended, 12, 5),
             Fetched::Some(5),
             "a filter makes the rows on screen a different file from the table"
         );
         assert_eq!(
-            Fetched::of_drawn(ROW_LIMIT, ROW_LIMIT),
-            Fetched::Some(ROW_LIMIT),
-            "and a page cut off at the limit still is"
+            Fetched::of_drawn(&more, 200, 200),
+            Fetched::Some(200),
+            "and a result with pages left still is"
         );
     }
 }

@@ -168,9 +168,8 @@ impl Cluster for CassandraCluster {
         schema(&session.get_cluster_state(), &columns, &options, &indexes)
     }
 
-    /// Unpaged because the statement carries its own `LIMIT`
-    /// (docs/superpowers/specs/2026-08-09-table-contents-design.md §3). `Page::next` is
-    /// `None` for the same reason: there is no cursor to hand back.
+    /// Unpaged: only mutations and DDL come through here, and they return no
+    /// rows to page (grid paging design §1).
     async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError> {
         let session = self.session(conn).await?;
 

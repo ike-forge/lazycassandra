@@ -352,6 +352,13 @@ const LEAVE: Binding = Binding {
     action: "leave",
 };
 
+/// Named while `P` runs, the rung of `esc`'s chain that fires first there
+/// (grid paging design §2).
+const STOP: Binding = Binding {
+    keys: &[Stroke::key(Key::Escape)],
+    action: "stop",
+};
+
 /// Named on the same condition as [`CLEAR`]: `n`/`N` are inert without a
 /// search applied, and a hint that would do nothing this frame is a lie
 /// (docs/shortcuts.md §2, design §5.3).
@@ -479,6 +486,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         .filter(|binding| !completing || !binding.keys.contains(&Stroke::key(Key::Enter)))
         .filter(|binding| !refused(state, binding))
         .filter(|binding| binding.action != "inspect" || crate::update::inspection(state).is_some())
+        .filter(|binding| !pages(binding) || state.contents.has_more())
         .map(|binding| Hint {
             liveness: liveness(state, binding),
             ..rendered(binding)
@@ -499,7 +507,9 @@ pub(crate) fn bar(state: &State) -> HintBar {
             ..rendered(&NEXT_MATCH)
         });
     }
-    if target.is_some() || selected(state) {
+    if state.focus() == Panel::Contents && state.contents.fetching_all() {
+        panel.push(rendered(&STOP));
+    } else if target.is_some() || selected(state) {
         panel.push(rendered(&CLEAR));
     } else if state.focus() != Panel::default() {
         panel.push(rendered(&LEAVE));
@@ -667,6 +677,10 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
         }
     }
 
+    if pages(binding) && !state.contents.can_fetch() {
+        return Liveness::Inert;
+    }
+
     let exports = binding.action == "export";
     if exports && (state.contents.row_count() == 0 || !state.geometry.export_fits()) {
         return Liveness::Inert;
@@ -707,6 +721,10 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
     }
 
     Liveness::Live
+}
+
+fn pages(binding: &Binding) -> bool {
+    *binding == crate::state::NEXT_PAGE || *binding == crate::state::EVERY_PAGE
 }
 
 /// Whether the connection's posture forbids the binding outright. Such a hint

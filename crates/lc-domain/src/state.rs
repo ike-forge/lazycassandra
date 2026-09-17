@@ -485,6 +485,16 @@ const DDL_HINTS: &[Binding] = &[
     },
 ];
 
+pub(crate) const NEXT_PAGE: Binding = Binding {
+    keys: &[Stroke::key(Key::Char('p'))],
+    action: "next page",
+};
+
+pub(crate) const EVERY_PAGE: Binding = Binding {
+    keys: &[Stroke::key(Key::Char('P'))],
+    action: "all",
+};
+
 const CONTENTS_HINTS: &[Binding] = &[
     // Named only where it opens: a selection, an empty grid or a frame too
     // small for the block leaves it off (cell inspector design §6).
@@ -492,6 +502,10 @@ const CONTENTS_HINTS: &[Binding] = &[
         keys: &[Stroke::key(Key::Enter)],
         action: "inspect",
     },
+    // Named only while the result has more to fetch, and greyed while a page
+    // is in flight (grid paging design §6).
+    NEXT_PAGE,
+    EVERY_PAGE,
     Binding {
         keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "export",
@@ -543,6 +557,8 @@ const CONTENTS_COLUMN_HINTS: &[Binding] = &[
         keys: &[Stroke::key(Key::Enter)],
         action: "inspect",
     },
+    NEXT_PAGE,
+    EVERY_PAGE,
     Binding {
         keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "export",

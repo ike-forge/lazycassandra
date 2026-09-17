@@ -63,7 +63,7 @@ pub(super) fn title(state: &State) -> Vec<Segment> {
         ContentsState::Loading { subject, .. } | ContentsState::Failed { subject, .. } => {
             named(BASE, subject, None)
         }
-        ContentsState::Loaded { subject, page } => named(BASE, subject, Some(count(page))),
+        ContentsState::Loaded { subject, page, .. } => named(BASE, subject, Some(count(page))),
     }
 }
 
@@ -123,7 +123,7 @@ pub(super) fn body(state: &State) -> PanelBody {
             text: "query failed — see [4]-Logs".to_owned(),
             token: Some(Token::Severity(Severity::Danger)),
         },
-        ContentsState::Loaded { subject, page } => grid(state, subject, page),
+        ContentsState::Loaded { subject, page, .. } => grid(state, subject, page),
     }
 }
 
@@ -402,12 +402,17 @@ mod tests {
     fn showing(page: Page) -> State {
         let mut state = tabled(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state
-            .contents
-            .page_ready(query, page, crate::config::MaxColumnWidth::default());
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            page,
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
         state
     }
 
@@ -435,12 +440,17 @@ mod tests {
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Typed(cql.to_owned()));
-        state
-            .contents
-            .page_ready(query, page, crate::config::MaxColumnWidth::default());
+        state.contents.requested(
+            query,
+            Subject::Typed(cql.to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            page,
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
         state
     }
 
@@ -451,12 +461,17 @@ mod tests {
     fn showing_typed_in(keyspace: &str, cql: &str, page: Page) -> State {
         let mut state = tabled(&[(keyspace, &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Typed(cql.to_owned()));
-        state
-            .contents
-            .page_ready(query, page, crate::config::MaxColumnWidth::default());
+        state.contents.requested(
+            query,
+            Subject::Typed(cql.to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            page,
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
         state
     }
 
@@ -478,6 +493,7 @@ mod tests {
         state.contents.requested(
             QueryId::next(),
             Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
 
         assert_eq!(
@@ -501,6 +517,7 @@ mod tests {
         state.contents.requested(
             QueryId::next(),
             Subject::Table(TableRef::new(keyspace, table)),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
         state
     }
@@ -543,6 +560,7 @@ mod tests {
         state.contents.requested(
             QueryId::next(),
             Subject::Typed("SELECT *\n  FROM shop.orders".to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
 
         let mut expected = vec![Segment::plain("Table contents — ")];
@@ -562,9 +580,11 @@ mod tests {
     fn failed_state() -> State {
         let mut state = tabled(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.failed(query);
         state
     }
@@ -670,9 +690,11 @@ mod tests {
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             page_of(
@@ -680,6 +702,7 @@ mod tests {
                 &[&[CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]],
             ),
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
 
         let PanelBody::Grid { columns, .. } = contents_body(&state) else {
@@ -840,9 +863,11 @@ mod tests {
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             page_of(
@@ -850,6 +875,7 @@ mod tests {
                 &[&[CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]],
             ),
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
 
         let PanelBody::Grid { rows, .. } = contents_body(&state) else {

@@ -7,7 +7,9 @@
 use crate::clock::Stamp;
 use crate::commands::{CommandsPanel, Run};
 use crate::config::{Config, ConnectionConfig, Diagnostic, PageSize};
-use crate::contents::{ContentsState, Filter, SelectionMode, Subject, TableRef};
+use crate::contents::{
+    ContentsState, Continue, Failure, Filter, Landed, SelectionMode, Subject, TableRef,
+};
 use crate::cql;
 use crate::ddl::DdlTab;
 use crate::drop::{DropPrompt, Target};
@@ -16,7 +18,9 @@ use crate::grid::{self, ColumnScroll};
 use crate::inspect::{Inspected, Inspector};
 use crate::line::Line;
 use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
-use crate::model::{ConnId, DbError, JobId, Key, KeyPress, Page, QueryId, Row, Schema, Statement};
+use crate::model::{
+    ConnId, DbError, JobId, Key, KeyPress, Page, PagingState, QueryId, Row, Schema, Statement,
+};
 use crate::pointer::{Click, Mark, Pointer, Wheel};
 use crate::ports::ExportError;
 use crate::posture::Posture;
@@ -31,12 +35,6 @@ use crate::theme::{BuiltIn, ThemeChoice};
 use crate::tree::Node;
 use std::path::PathBuf;
 use std::time::Duration;
-
-/// How many rows one look at a table brings back.
-///
-/// A wall rather than a window until paging lands
-/// (docs/superpowers/specs/2026-08-09-table-contents-design.md §3).
-pub const ROW_LIMIT: usize = 200;
 
 /// Everything that can happen. Async results re-enter here through the same
 /// channel as a keystroke.
@@ -136,10 +134,20 @@ pub enum Effect {
         target: Box<ConnectionConfig>,
     },
     LoadSchema(ConnId),
+    /// A mutation or DDL, whose result is not paged.
     Execute {
         conn: ConnId,
         query: QueryId,
         stmt: Box<Statement>,
+    },
+    /// One page of a read into Table contents, from `cursor` when it
+    /// continues one (grid paging design §1).
+    ExecutePaged {
+        conn: ConnId,
+        query: QueryId,
+        stmt: Box<Statement>,
+        page_size: PageSize,
+        cursor: Option<PagingState>,
     },
     Cancel(QueryId),
     RecordHistory(Box<Statement>),
@@ -351,21 +359,37 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             if state.in_flight.remove(&query).is_none() {
                 return Vec::new();
             }
-            state.log.complete(
-                Trace::Query(query),
-                Outcome::Succeeded {
-                    detail: format!("{} rows", page.rows.len()),
-                    took,
-                },
-            );
+            let rows = page.rows.len();
             // Answers whichever asked for it. A drop's result reaches the
             // panel too and is dropped there, because the panel is not
             // waiting on that id (drop design §3).
-            state
-                .contents
-                .page_ready(query, *page, state.config.grid.max_column_width);
+            let landed = state.contents.page_ready(
+                query,
+                *page,
+                state.config.grid.max_column_width,
+                QueryId::next,
+            );
             state.mark_dirty();
-            finish_drop(state, query, None)
+
+            match landed {
+                Landed::Elsewhere | Landed::Read => {
+                    state.log.complete(
+                        Trace::Query(query),
+                        Outcome::Succeeded {
+                            detail: format!("{rows} rows"),
+                            took,
+                        },
+                    );
+                    finish_drop(state, query, None)
+                }
+                Landed::Skipped(next) => {
+                    state
+                        .log
+                        .retrace(Trace::Query(query), Trace::Query(next.query));
+                    follow(state, Some(next))
+                }
+                Landed::Appended(next) => follow(state, next),
+            }
         }
 
         // No overlay, unlike `SchemaFailed`: a schema failure disables the
@@ -375,13 +399,24 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             if state.in_flight.remove(&query).is_none() {
                 return Vec::new();
             }
-            state.log.complete(
-                Trace::Query(query),
-                Outcome::Failed {
-                    detail: error.to_string(),
-                },
-            );
-            state.contents.failed(query);
+            let outcome = Outcome::Failed {
+                detail: error.to_string(),
+            };
+            // A later page has no entry of its own to complete, and the rows
+            // already loaded stay, so the trail is the one place it can fail.
+            if state.contents.failed(query) == Some(Failure::Page) {
+                let label = match state.contents.state() {
+                    ContentsState::Loaded { subject, .. } => subject.label(),
+                    _ => String::new(),
+                };
+                logged(
+                    state,
+                    sentence(format!("Reading the next page of {label}")),
+                    outcome,
+                );
+            } else {
+                state.log.complete(Trace::Query(query), outcome);
+            }
             state.mark_dirty();
             finish_drop(state, query, Some(&error))
         }
@@ -948,6 +983,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
             state.contents.set_filter(column_of(state), None);
         }
         Key::Char('d') => open_drop(state),
+        Key::Char('p') => return next_page(state),
+        Key::Char('P') => return every_page(state),
         Key::Char('v') => toggle_visual(state),
         Key::Char('n') => next_match_key(state, Direction::Forwards),
         Key::Char('N') => next_match_key(state, Direction::Backwards),
@@ -1823,6 +1860,12 @@ fn escape(state: &mut State) {
         None => {}
     }
 
+    // Directly under the overlays: a running `P` is still putting rows on
+    // screen (grid paging design §2).
+    if state.focus() == Panel::Contents && state.contents.stop_fetching() {
+        return;
+    }
+
     // Above the search for the reason the overlay is above both: the thing
     // most recently put on screen comes off first (design §1).
     if stop_extending(state) || clear_selection(state) {
@@ -2012,7 +2055,7 @@ pub(crate) fn inspection(state: &State) -> Option<Inspector> {
         return None;
     }
 
-    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+    let ContentsState::Loaded { subject, page, .. } = state.contents.state() else {
         return None;
     };
     let index = state.contents.cursor.index();
@@ -2513,6 +2556,14 @@ fn choose_connection(state: &mut State) -> Vec<Effect> {
 /// (architecture.md §3).
 fn connect(state: &mut State, target: ConnectionConfig) -> Vec<Effect> {
     let conn = ConnId::next();
+    let mut effects = Vec::new();
+
+    // The grid's cursor belongs to the session being left (grid paging design
+    // §2).
+    if let Some(query) = state.contents.end_paging() {
+        state.in_flight.remove(&query);
+        effects.push(Effect::Cancel(query));
+    }
 
     state.connection = ConnectionState::Connecting(conn);
     state.log.push(Entry::new(
@@ -2523,10 +2574,11 @@ fn connect(state: &mut State, target: ConnectionConfig) -> Vec<Effect> {
         },
     ));
 
-    vec![Effect::Connect {
+    effects.push(Effect::Connect {
         conn,
         target: Box::new(target),
-    }]
+    });
+    effects
 }
 
 #[derive(Clone, Copy)]
@@ -2668,7 +2720,12 @@ fn open_export(state: &mut State) {
         return;
     }
 
-    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+    let ContentsState::Loaded {
+        subject,
+        page,
+        paging,
+    } = state.contents.state()
+    else {
         return;
     };
 
@@ -2679,7 +2736,7 @@ fn open_export(state: &mut State) {
 
     let form = ExportForm::opened(
         subject.clone(),
-        Fetched::of_drawn(page.page().rows.len(), rows),
+        Fetched::of_drawn(paging, page.fetched(), rows),
         &state.cwd,
     );
     state.overlay = Some(Overlay::Export(form));
@@ -2911,7 +2968,7 @@ fn start_export(state: &mut State) -> Vec<Effect> {
 /// key claim makes impossible today, and which must not become a panic if it
 /// ever stops being.
 fn source(state: &State, form: &ExportForm) -> Option<Source> {
-    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+    let ContentsState::Loaded { subject, page, .. } = state.contents.state() else {
         return None;
     };
 
@@ -2919,7 +2976,7 @@ fn source(state: &State, form: &ExportForm) -> Option<Source> {
         // Ours is the limit that is dropped; a typed statement's own is the
         // user's and is honoured verbatim (design §3).
         Scope::Whole => Some(Source::Whole(Box::new(match subject {
-            Subject::Table(table) => Statement::select_everything(&table.keyspace, &table.table),
+            Subject::Table(table) => Statement::select_all(&table.keyspace, &table.table),
             Subject::Typed(cql) => Statement::typed(cql),
         }))),
         // What the grid is showing, arrangement and all: a form opened over
@@ -3072,7 +3129,7 @@ fn tree_target(state: &State) -> Option<Target> {
 /// (yank selection modes design §1). Whole rows in every selection mode — a
 /// column range addresses no row, and a cell is not a thing `DELETE` removes.
 fn rows_target(state: &State) -> Option<Target> {
-    let ContentsState::Loaded { subject, page } = state.contents.state() else {
+    let ContentsState::Loaded { subject, page, .. } = state.contents.state() else {
         return None;
     };
     // A typed statement names its table in text this program will not trust
@@ -3280,7 +3337,7 @@ fn finish_drop(state: &mut State, query: QueryId, error: Option<&DbError>) -> Ve
     match dropped.target() {
         Target::Rows { table, .. } => {
             let table = table.clone();
-            let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
+            let stmt = Statement::select_all(&table.keyspace, &table.table);
 
             submit_into_contents(state, Subject::Table(table), stmt)
         }
@@ -3836,7 +3893,7 @@ fn activate(state: &mut State) -> Vec<Effect> {
 fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
     state.focus_on(Panel::Contents);
 
-    let stmt = Statement::select_all(&table.keyspace, &table.table, ROW_LIMIT);
+    let stmt = Statement::select_all(&table.keyspace, &table.table);
     submit_into_contents(state, Subject::Table(table), stmt)
 }
 
@@ -3923,9 +3980,9 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
     // an entry by construction: one arm, not one call per refusal path to
     // remember (query log design §8).
     let log_subject = statement_subject(&stmt);
-    match submit(state, stmt) {
+    match submit(state, stmt.clone()) {
         Ok((query, submitted)) => {
-            state.contents.requested(query, subject);
+            state.contents.requested(query, subject, stmt);
             effects.extend(submitted);
         }
         Err(error) => {
@@ -4165,17 +4222,72 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
         },
     );
 
-    Ok((
+    let execute = if stmt.mutates() {
+        Effect::Execute {
+            conn,
+            query,
+            stmt: Box::new(stmt.clone()),
+        }
+    } else {
+        Effect::ExecutePaged {
+            conn,
+            query,
+            stmt: Box::new(stmt.clone()),
+            page_size: state.config.grid.page_rows.into(),
+            cursor: None,
+        }
+    };
+
+    Ok((query, vec![execute, Effect::RecordHistory(Box::new(stmt))]))
+}
+
+/// `p`: one more page into the grid, whatever stop `P` last reached
+/// (grid paging design §2).
+fn next_page(state: &mut State) -> Vec<Effect> {
+    if state.focus() != Panel::Contents {
+        return Vec::new();
+    }
+
+    let next = state.contents.fetch_one(QueryId::next);
+    follow(state, next)
+}
+
+/// `P`: pages until the result ends or the next stop (grid paging design §3).
+fn every_page(state: &mut State) -> Vec<Effect> {
+    if state.focus() != Panel::Contents {
+        return Vec::new();
+    }
+
+    let next = state.contents.fetch_all(QueryId::next);
+    follow(state, next)
+}
+
+/// Asks for the page the grid wants next, if it wants one. A continuation is
+/// not a new statement: no trail entry and no history (grid paging design §2).
+fn follow(state: &mut State, next: Option<Continue>) -> Vec<Effect> {
+    let Some(Continue {
         query,
-        vec![
-            Effect::Execute {
-                conn,
-                query,
-                stmt: Box::new(stmt.clone()),
-            },
-            Effect::RecordHistory(Box::new(stmt)),
-        ],
-    ))
+        stmt,
+        cursor,
+    }) = next
+    else {
+        return Vec::new();
+    };
+    let Some(conn) = state.conn_id() else {
+        state.contents.failed(query);
+        return Vec::new();
+    };
+
+    state.in_flight.insert(query, stmt.clone());
+    state.mark_dirty();
+
+    vec![Effect::ExecutePaged {
+        conn,
+        query,
+        stmt: Box::new(stmt),
+        page_size: state.config.grid.page_rows.into(),
+        cursor: Some(cursor),
+    }]
 }
 
 #[cfg(test)]
@@ -5890,7 +6002,7 @@ mod tests {
         assert!(
             effects
                 .iter()
-                .any(|effect| matches!(effect, Effect::Execute { .. })),
+                .any(|effect| matches!(effect, Effect::ExecutePaged { .. })),
             "{effects:?} carries no statement to run"
         );
     }
@@ -7399,7 +7511,7 @@ mod tests {
         assert!(
             effects
                 .iter()
-                .any(|effect| matches!(effect, Effect::Execute { .. })),
+                .any(|effect| matches!(effect, Effect::ExecutePaged { .. })),
             "pressing v must not blank the panel before anything has been extended"
         );
     }
@@ -7485,7 +7597,7 @@ mod tests {
             assert!(
                 effects
                     .iter()
-                    .any(|effect| matches!(effect, Effect::Execute { .. })),
+                    .any(|effect| matches!(effect, Effect::ExecutePaged { .. })),
                 "{key:?} on a table row did not read it"
             );
             assert_eq!(state.focus(), Panel::Contents, "{key:?}");
@@ -7544,9 +7656,11 @@ mod tests {
     fn grid_of_rows(columns: usize, rows: usize, width: usize) -> State {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -7559,6 +7673,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state.focus_on(Panel::Contents);
         update(
@@ -8470,6 +8585,17 @@ mod tests {
         }
     }
 
+    /// `grid.page_rows`' default, the size of a page that has a successor.
+    const PAGE: usize = 200;
+
+    /// [`page_of`], with a page after it.
+    fn more_of(rows: usize) -> Page {
+        Page {
+            next: Some(PagingState(vec![1])),
+            ..page_of(rows)
+        }
+    }
+
     #[test]
     fn a_stated_column_width_is_the_grids_cap() {
         let mut state = read_shop_orders();
@@ -8504,7 +8630,7 @@ mod tests {
         effects
             .iter()
             .find_map(|effect| match effect {
-                Effect::Execute { query, .. } => Some(*query),
+                Effect::Execute { query, .. } | Effect::ExecutePaged { query, .. } => Some(*query),
                 _ => None,
             })
             .expect("an Execute effect carrying the query")
@@ -8521,11 +8647,9 @@ mod tests {
         let _ = update(state, Msg::Quit);
     }
 
-    // The trail records what ran. The table-open statement carries the LIMIT
-    // ROW_LIMIT appended, which is the surprise the trail exists to explain
-    // (query log design §6).
+    // The trail records what ran (query log design §6).
     #[test]
-    fn opening_a_table_logs_the_statement_it_issued_limit_and_all() {
+    fn opening_a_table_logs_the_statement_it_issued() {
         let mut state = read_shop_orders();
 
         let _effects = press(&mut state, Key::Enter);
@@ -8533,7 +8657,10 @@ mod tests {
         let entry = state.log.entries().last().expect("an entry per effect");
         let text = entry.subject().text();
         assert!(text.starts_with("SELECT"), "{text}");
-        assert!(text.contains(&format!("LIMIT {ROW_LIMIT}")), "{text}");
+        assert!(
+            !text.contains("LIMIT"),
+            "the grid pages rather than limits: {text}"
+        );
         assert!(matches!(
             entry.outcome(),
             Outcome::Pending {
@@ -8627,12 +8754,14 @@ mod tests {
         assert_eq!(
             effects,
             vec![
-                Effect::Execute {
+                Effect::ExecutePaged {
                     conn,
                     query,
-                    stmt: Box::new(Statement::select_all("shop", "orders", ROW_LIMIT)),
+                    stmt: Box::new(Statement::select_all("shop", "orders")),
+                    page_size: crate::config::PageSize::try_new(200).expect("in range"),
+                    cursor: None,
                 },
-                Effect::RecordHistory(Box::new(Statement::select_all("shop", "orders", ROW_LIMIT))),
+                Effect::RecordHistory(Box::new(Statement::select_all("shop", "orders"))),
             ]
         );
         assert!(state.in_flight.contains_key(&query));
@@ -8819,9 +8948,11 @@ mod tests {
     fn a_yanked_row_carries_every_column_of_the_page() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -8842,6 +8973,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state.focus_on(Panel::Contents);
         update(
@@ -8868,9 +9000,11 @@ mod tests {
     fn grid_of_named_cells(columns: usize, rows: usize) -> State {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -8885,6 +9019,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state.focus_on(Panel::Contents);
         update(
@@ -9367,9 +9502,11 @@ mod tests {
     fn columnar_grid(column: usize) -> State {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -9387,6 +9524,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state.focus_on(Panel::Contents);
         state.contents.mode = SelectionMode::Column;
@@ -9583,14 +9721,16 @@ mod tests {
         state.geometry = Geometry::default().with_export_fits(true);
         state.focus_on(Panel::Contents);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
                 columns: vec!["kind".to_owned()],
-                rows: (0..ROW_LIMIT)
+                rows: (0..PAGE)
                     .map(|row| Row {
                         values: vec![CqlValue::Text(
                             if row % 2 == 0 { "keep" } else { "drop" }.to_owned(),
@@ -9600,6 +9740,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state.contents.set_filter(0, Search::new("keep"));
 
@@ -9621,7 +9762,7 @@ mod tests {
         };
         assert_eq!(
             rows.len(),
-            ROW_LIMIT / 2,
+            PAGE / 2,
             "a form may not write what the grid hides"
         );
     }
@@ -9910,9 +10051,11 @@ mod tests {
         // the page is built here rather than borrowed from it.
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -9926,6 +10069,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state.focus_on(Panel::Contents);
         state.contents.mode = SelectionMode::Row;
@@ -10774,9 +10918,11 @@ mod tests {
     fn showing_rows(count: usize) -> State {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -10791,6 +10937,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state
     }
@@ -10799,9 +10946,11 @@ mod tests {
     fn showing_columns(columns: usize) -> State {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -10814,6 +10963,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state
     }
@@ -10847,7 +10997,7 @@ mod tests {
         assert!(
             matches!(
                 effects.as_slice(),
-                [Effect::Execute { .. }, Effect::RecordHistory(_)]
+                [Effect::ExecutePaged { .. }, Effect::RecordHistory(_)]
             ),
             "got {effects:?}"
         );
@@ -11616,7 +11766,7 @@ mod tests {
         // `Export`'s own `space` needs a state where it does something, and
         // this is that state (`toggle_scope` only fires with a scope to
         // toggle to, hence `ROW_LIMIT` rather than a smaller page).
-        let mut export_open = contents_showing(ROW_LIMIT);
+        let mut export_open = contents_showing_more(PAGE);
         ctrl(&mut export_open, Key::Char('e'));
 
         // The one fixture `n`/`N` do something in: a search applied, with
@@ -11644,6 +11794,9 @@ mod tests {
         tabbed.geometry = geometry;
         tabbed.focus_on(Panel::Ddl);
 
+        // The one fixture `p` and `P` answer in: a result with a page left.
+        let pageable = contents_showing_more(3);
+
         vec![
             covered,
             elsewhere,
@@ -11658,6 +11811,7 @@ mod tests {
             dropping,
             searched,
             tabbed,
+            pageable,
         ]
     }
 
@@ -12609,9 +12763,11 @@ mod tests {
         state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_drop_fits(true);
 
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -12624,6 +12780,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state.focus_on(Panel::Contents);
         state
@@ -12631,7 +12788,9 @@ mod tests {
 
     fn deleted_cql(effects: &[Effect]) -> Option<String> {
         effects.iter().find_map(|effect| match effect {
-            Effect::Execute { stmt, .. } => Some(stmt.cql.clone()),
+            Effect::Execute { stmt, .. } | Effect::ExecutePaged { stmt, .. } => {
+                Some(stmt.cql.clone())
+            }
             _ => None,
         })
     }
@@ -12747,6 +12906,7 @@ mod tests {
         state.contents.requested(
             query,
             Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
         state.contents.page_ready(
             query,
@@ -12761,6 +12921,7 @@ mod tests {
                 next: None,
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
 
         press(&mut state, Key::Char('d'));
@@ -12855,7 +13016,7 @@ mod tests {
         );
         assert_eq!(
             deleted_cql(&effects).as_deref(),
-            Some("SELECT * FROM \"shop\".\"orders\" LIMIT 200"),
+            Some("SELECT * FROM \"shop\".\"orders\""),
             "the grid is re-read so the rows stop being drawn"
         );
         assert!(
@@ -13683,10 +13844,12 @@ mod tests {
         assert_eq!(
             effects,
             vec![
-                Effect::Execute {
+                Effect::ExecutePaged {
                     conn: current_conn(&state),
                     query,
                     stmt: Box::new(Statement::typed("SELECT * FROM shop.orders")),
+                    page_size: crate::config::PageSize::try_new(200).expect("in range"),
+                    cursor: None,
                 },
                 Effect::RecordHistory(Box::new(Statement::typed("SELECT * FROM shop.orders"))),
             ]
@@ -13702,9 +13865,10 @@ mod tests {
         let effects = run_query(&mut state);
 
         assert!(
-            !effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Execute { .. })),
+            !effects.iter().any(|effect| matches!(
+                effect,
+                Effect::Execute { .. } | Effect::ExecutePaged { .. }
+            )),
             "a read-only connection issues nothing"
         );
         let Outcome::Rejected { reason } = state.log.entries().last().unwrap().outcome() else {
@@ -13747,7 +13911,7 @@ mod tests {
         assert!(
             !effects
                 .iter()
-                .any(|effect| matches!(effect, Effect::Execute { .. })),
+                .any(|effect| matches!(effect, Effect::ExecutePaged { .. })),
             "there is no connection to run it on"
         );
         assert_eq!(state.log.len(), before + 1, "the refusal is not silent");
@@ -14211,13 +14375,37 @@ mod tests {
         state.geometry = Geometry::default().with_export_fits(true);
         state.focus_on(Panel::Contents);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             page_of(rows),
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
+        state
+    }
+
+    /// [`contents_showing`] over a result with pages left, so the form's
+    /// fetched-rows scope differs from the whole one.
+    fn contents_showing_more(rows: usize) -> State {
+        let mut state = connected(Posture::ReadOnly);
+        state.geometry = Geometry::default().with_export_fits(true);
+        state.focus_on(Panel::Contents);
+        let query = QueryId::next();
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            Statement::select_all("shop", "orders"),
+        );
+        state.contents.page_ready(
+            query,
+            more_of(rows),
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state
     }
@@ -14227,13 +14415,16 @@ mod tests {
         state.geometry = Geometry::default().with_export_fits(true);
         state.focus_on(Panel::Contents);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Typed(cql.to_owned()));
+        state.contents.requested(
+            query,
+            Subject::Typed(cql.to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
-            page_of(ROW_LIMIT),
+            more_of(PAGE),
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
         state
     }
@@ -14254,7 +14445,7 @@ mod tests {
     fn every_live_hint_the_export_forms_bar_shows_does_something() {
         for tabs in 0..4 {
             let seated = || {
-                let mut state = contents_showing(ROW_LIMIT);
+                let mut state = contents_showing_more(PAGE);
                 open_form(&mut state);
                 for _ in 0..tabs {
                     handle_key(&mut state, KeyPress::new(Key::Tab));
@@ -14292,7 +14483,7 @@ mod tests {
 
     #[test]
     fn the_export_forms_bar_follows_the_stop() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
         let named = |state: &State| {
             let bar = crate::view::hints::bar(state);
@@ -14401,11 +14592,11 @@ mod tests {
             crate::export::Fetched::Everything(7)
         );
 
-        let mut capped = contents_showing(ROW_LIMIT);
+        let mut capped = contents_showing_more(PAGE);
         open_form(&mut capped);
         assert_eq!(
             form_of(&capped).fetched(),
-            crate::export::Fetched::Some(ROW_LIMIT)
+            crate::export::Fetched::Some(PAGE)
         );
     }
 
@@ -14422,7 +14613,7 @@ mod tests {
 
     #[test]
     fn space_toggles_the_focused_radio() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
 
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -14466,7 +14657,7 @@ mod tests {
     /// not write a file.
     #[test]
     fn enter_on_a_radio_group_does_not_run_the_export() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
 
         let effects = handle_key(&mut state, KeyPress::new(Key::Enter));
@@ -14480,7 +14671,7 @@ mod tests {
 
     #[test]
     fn enter_on_the_export_stop_runs_it() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
         for _ in 0..3 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
@@ -14573,7 +14764,7 @@ mod tests {
     /// The rows already in the grid, exported to `destination`, mid-flight —
     /// `export_in_flight`'s `Source::Fetched` counterpart.
     fn export_fetched_in_flight(destination: &str) -> State {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
         handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
         if let Some(Overlay::Export(form)) = &mut state.overlay {
@@ -14589,7 +14780,7 @@ mod tests {
 
     #[test]
     fn exporting_the_whole_table_asks_for_it_without_a_limit() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
 
         let effects = started(&mut state);
 
@@ -14636,7 +14827,7 @@ mod tests {
 
     #[test]
     fn exporting_the_fetched_rows_asks_the_cluster_nothing() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
         for _ in 0..3 {
@@ -14654,13 +14845,13 @@ mod tests {
         else {
             panic!("one export effect carrying the rows");
         };
-        assert_eq!(rows.len(), ROW_LIMIT);
+        assert_eq!(rows.len(), PAGE);
         assert_eq!(columns, &["id".to_owned()]);
     }
 
     #[test]
     fn starting_an_export_closes_the_form_and_records_the_job() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
 
         let effects = started(&mut state);
 
@@ -14674,7 +14865,7 @@ mod tests {
 
     #[test]
     fn progress_is_the_running_total() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         let effects = started(&mut state);
         let [Effect::Export { job, .. }] = effects.as_slice() else {
             panic!("one export effect");
@@ -14693,7 +14884,7 @@ mod tests {
 
     #[test]
     fn progress_for_a_job_that_is_not_running_is_dropped() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         started(&mut state);
 
         update(
@@ -14709,7 +14900,7 @@ mod tests {
 
     #[test]
     fn finishing_clears_the_job_and_says_what_was_written() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         let effects = started(&mut state);
         let [Effect::Export { job, .. }] = effects.as_slice() else {
             panic!("one export effect");
@@ -15076,7 +15267,7 @@ mod tests {
 
     #[test]
     fn a_failure_is_reported_as_a_danger() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         let effects = started(&mut state);
         let [Effect::Export { job, .. }] = effects.as_slice() else {
             panic!("one export effect");
@@ -15102,7 +15293,7 @@ mod tests {
     /// there to go back to (design §7).
     #[test]
     fn an_existing_file_reopens_the_form_asking_to_overwrite() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         let effects = started(&mut state);
         let [Effect::Export { job, .. }] = effects.as_slice() else {
             panic!("one export effect");
@@ -15128,7 +15319,7 @@ mod tests {
     /// picker (final review I2).
     #[test]
     fn an_existing_file_landing_on_an_open_picker_puts_the_theme_back() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         // Room for the picker as well as the form.
         state.geometry = Geometry::new([8, 14, 20, 1], 37, 14)
             .with_export_fits(true)
@@ -15159,7 +15350,7 @@ mod tests {
 
     #[test]
     fn confirming_re_emits_the_export_with_overwrite_set() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         let effects = started(&mut state);
         let [Effect::Export { job, .. }] = effects.as_slice() else {
             panic!("one export effect");
@@ -15188,7 +15379,7 @@ mod tests {
     /// not whatever the panel holds by then (final review I3).
     #[test]
     fn confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
         // Scope: Whole -> Fetched, so the rows themselves ride on the effect.
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -15202,9 +15393,11 @@ mod tests {
         let (job, attempted) = (*job, source.clone());
 
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "audit_log")));
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "audit_log")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
         state.contents.page_ready(
             query,
             Page {
@@ -15212,6 +15405,7 @@ mod tests {
                 ..page_of(3)
             },
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
 
         update(
@@ -15240,16 +15434,18 @@ mod tests {
     /// hand back `None` and `Space` would be a silent no-op.
     #[test]
     fn confirming_still_exports_when_the_panel_has_moved_on_entirely() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         let effects = started(&mut state);
         let [Effect::Export { job, .. }] = effects.as_slice() else {
             panic!("one export effect");
         };
         let job = *job;
 
-        state
-            .contents
-            .requested(QueryId::next(), Subject::Typed("SELECT 1".to_owned()));
+        state.contents.requested(
+            QueryId::next(),
+            Subject::Typed("SELECT 1".to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
 
         update(
             &mut state,
@@ -15266,7 +15462,7 @@ mod tests {
 
     #[test]
     fn esc_from_the_confirmation_goes_back_to_the_form_intact() {
-        let mut state = contents_showing(ROW_LIMIT);
+        let mut state = contents_showing_more(PAGE);
         let effects = started(&mut state);
         let [Effect::Export { job, .. }] = effects.as_slice() else {
             panic!("one export effect");
@@ -15505,6 +15701,296 @@ mod tests {
                     (None, " ".to_owned()),
                     (Some(crate::style::Token::Reference), "id".to_owned()),
                 ]
+            );
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Paging (docs/superpowers/specs/2026-09-17-grid-paging-design.md)
+    // ------------------------------------------------------------------
+
+    /// Lands `page` on whatever the grid is waiting on.
+    fn land_page(state: &mut State, page: Page) -> Vec<Effect> {
+        let query = state.contents.outstanding().expect("a page is outstanding");
+        update(
+            state,
+            Msg::PageReady {
+                query,
+                page: Box::new(page),
+                took: Duration::ZERO,
+            },
+        )
+    }
+
+    /// The cursor of every page `effects` asks for.
+    fn fetched_from(effects: &[Effect]) -> Vec<Option<PagingState>> {
+        effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::ExecutePaged { cursor, .. } => Some(cursor.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn p_fetches_the_next_page_from_where_the_last_one_left_off() {
+        let mut state = contents_showing_more(3);
+        let conn = current_conn(&state);
+
+        let effects = press(&mut state, Key::Char('p'));
+
+        let query = state.contents.outstanding().expect("the page is in flight");
+        assert_eq!(
+            effects,
+            [Effect::ExecutePaged {
+                conn,
+                query,
+                stmt: Box::new(Statement::select_all("shop", "orders")),
+                page_size: crate::config::PageSize::try_new(200).expect("in range"),
+                cursor: Some(PagingState(vec![1])),
+            }],
+            "no history: a continuation is not a new statement"
+        );
+        assert!(state.in_flight.contains_key(&query));
+
+        assert!(land_page(&mut state, page_of(2)).is_empty());
+        assert_eq!(state.contents.row_count(), 5);
+        assert!(!state.contents.has_more(), "the last page ends the result");
+    }
+
+    #[test]
+    fn a_page_asked_for_is_sized_by_grid_page_rows() {
+        let mut state = contents_showing_more(3);
+        let size = crate::config::PageRows::try_new(50).expect("in range");
+        state.config.grid.page_rows = size;
+
+        let effects = press(&mut state, Key::Char('p'));
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::ExecutePaged { page_size, .. }] if *page_size == size.into()
+        ));
+    }
+
+    #[test]
+    fn paging_is_inert_without_more_elsewhere_and_while_a_page_is_in_flight() {
+        for key in [Key::Char('p'), Key::Char('P')] {
+            let mut ended = contents_showing(3);
+            assert!(
+                press(&mut ended, key).is_empty(),
+                "{key:?} on an ended result"
+            );
+
+            let mut elsewhere = contents_showing_more(3);
+            elsewhere.focus_on(Panel::Tables);
+            assert!(
+                press(&mut elsewhere, key).is_empty(),
+                "{key:?} outside the grid"
+            );
+
+            let mut flying = contents_showing_more(3);
+            press(&mut flying, Key::Char('p'));
+            assert!(
+                press(&mut flying, key).is_empty(),
+                "{key:?} with a page in flight"
+            );
+        }
+    }
+
+    #[test]
+    fn shift_p_fetches_pages_until_the_result_ends() {
+        let mut state = contents_showing_more(3);
+
+        assert!(!fetched_from(&press(&mut state, Key::Char('P'))).is_empty());
+        assert!(!fetched_from(&land_page(&mut state, more_of(3))).is_empty());
+        assert!(!fetched_from(&land_page(&mut state, more_of(3))).is_empty());
+        assert!(land_page(&mut state, page_of(3)).is_empty());
+
+        assert_eq!(state.contents.row_count(), 12);
+        assert!(state.in_flight.is_empty());
+    }
+
+    #[test]
+    fn continuation_pages_leave_the_trail_as_it_was() {
+        let mut state = contents_showing_more(3);
+        let before = state.log.len();
+
+        press(&mut state, Key::Char('P'));
+        land_page(&mut state, more_of(3));
+        land_page(&mut state, page_of(3));
+
+        assert_eq!(state.log.len(), before);
+    }
+
+    #[test]
+    fn an_empty_first_page_is_followed_under_the_reads_one_entry() {
+        let mut state = read_shop_orders();
+        press(&mut state, Key::Enter);
+        let entries = state.log.len();
+
+        let effects = land_page(&mut state, more_of(0));
+
+        assert_eq!(fetched_from(&effects), [Some(PagingState(vec![1]))]);
+        assert!(matches!(
+            state.log.entries().last().map(Entry::outcome),
+            Some(Outcome::Pending { .. })
+        ));
+
+        land_page(&mut state, page_of(2));
+
+        assert_eq!(state.log.len(), entries);
+        assert!(matches!(
+            state.log.entries().last().map(Entry::outcome),
+            Some(Outcome::Succeeded { detail, .. }) if detail == "2 rows"
+        ));
+        assert_eq!(state.contents.row_count(), 2);
+    }
+
+    #[test]
+    fn escape_stops_shift_p_and_the_page_in_flight_still_lands() {
+        let mut state = contents_showing_more(3);
+        press(&mut state, Key::Char('P'));
+
+        let effects = press(&mut state, Key::Escape);
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.focus(),
+            Panel::Contents,
+            "stopping is the rung that fired"
+        );
+        assert!(state.contents.outstanding().is_some());
+        assert!(land_page(&mut state, more_of(3)).is_empty());
+        assert_eq!(state.contents.row_count(), 6);
+        assert!(state.contents.can_fetch());
+    }
+
+    #[test]
+    fn escape_ranks_below_an_overlay_and_above_a_range() {
+        let mut state = contents_showing_more(3);
+        press(&mut state, Key::Char('P'));
+        state.contents.rows.start(0);
+        state.overlay = Some(Overlay::Message(Message {
+            title: "t".to_owned(),
+            message: "m".to_owned(),
+            severity: Severity::Info,
+        }));
+
+        press(&mut state, Key::Escape);
+        assert!(state.overlay.is_none());
+        assert!(state.contents.fetching_all(), "the overlay came off first");
+
+        press(&mut state, Key::Escape);
+        assert!(!state.contents.fetching_all());
+        assert!(
+            state.contents.rows.is_active(),
+            "the range is the next rung"
+        );
+    }
+
+    #[test]
+    fn reading_another_table_supersedes_a_running_shift_p() {
+        let mut state = contents_showing_more(3);
+        press(&mut state, Key::Char('P'));
+        let running = state.contents.outstanding().expect("a page in flight");
+
+        let effects = read(&mut state, TableRef::new("shop", "users"));
+
+        assert!(effects.contains(&Effect::Cancel(running)));
+        assert!(!state.in_flight.contains_key(&running));
+        let late = update(
+            &mut state,
+            Msg::PageReady {
+                query: running,
+                page: Box::new(more_of(3)),
+                took: Duration::ZERO,
+            },
+        );
+        assert!(late.is_empty(), "a superseded page asks for nothing more");
+        assert!(matches!(
+            state.contents.state(),
+            ContentsState::Loading { .. }
+        ));
+    }
+
+    #[test]
+    fn a_failed_page_keeps_the_grid_and_says_so_in_the_trail() {
+        let mut state = contents_showing_more(3);
+        press(&mut state, Key::Char('p'));
+        let query = state.contents.outstanding().expect("a page in flight");
+
+        update(
+            &mut state,
+            Msg::Failed {
+                query,
+                error: DbError::Invalid("timed out".to_owned()),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert_eq!(state.contents.row_count(), 3);
+        assert!(state.contents.can_fetch());
+        let last = state.log.entries().last().expect("an entry");
+        assert_eq!(
+            last.subject().text(),
+            "Reading the next page of shop.orders"
+        );
+        assert!(matches!(last.outcome(), Outcome::Failed { .. }));
+    }
+
+    #[test]
+    fn the_bar_names_paging_only_while_there_is_more() {
+        let named = |state: &State| {
+            crate::view::hints::bar(state)
+                .panel
+                .into_iter()
+                .map(|hint| (format!("{} {}", hint.keys, hint.action), hint.liveness))
+                .collect::<Vec<_>>()
+        };
+        let live = crate::view::Liveness::Live;
+        let inert = crate::view::Liveness::Inert;
+
+        let mut state = contents_showing_more(3);
+        assert!(named(&state).contains(&("p next page".to_owned(), live)));
+        assert!(named(&state).contains(&("P all".to_owned(), live)));
+
+        press(&mut state, Key::Char('P'));
+        assert!(named(&state).contains(&("p next page".to_owned(), inert)));
+        assert!(named(&state).contains(&("esc stop".to_owned(), live)));
+
+        let ended = contents_showing(3);
+        assert!(
+            !named(&ended)
+                .iter()
+                .any(|(hint, _)| hint.contains("page") || hint == "P all")
+        );
+    }
+
+    #[test]
+    fn the_palette_greys_paging_once_the_result_has_ended() {
+        let liveness = |state: &State, action: &str| {
+            crate::commands::rows(None, state.posture(), &state.contents)
+                .into_iter()
+                .find_map(|row| match row {
+                    crate::commands::CommandRow::Command {
+                        action: named,
+                        liveness,
+                        ..
+                    } if named == action => Some(liveness),
+                    _ => None,
+                })
+                .expect("the row is listed")
+        };
+
+        for action in ["fetch the next page", "fetch every page"] {
+            assert_eq!(
+                liveness(&contents_showing_more(3), action),
+                crate::view::Liveness::Live
+            );
+            assert_eq!(
+                liveness(&contents_showing(3), action),
+                crate::view::Liveness::Inert
             );
         }
     }

@@ -13,7 +13,6 @@ use lc_domain::model::{
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
-use lc_domain::update::ROW_LIMIT;
 use lc_outbound::cassandra::CassandraCluster;
 
 /// The fixture, as a connection the adapter now takes at connect time rather
@@ -286,7 +285,12 @@ async fn read(keyspace: &str, table: &str) -> lc_domain::model::Page {
         .await
         .expect("the fixture is up");
     cluster
-        .execute(conn, &Statement::select_all(keyspace, table, ROW_LIMIT))
+        .execute_paged(
+            conn,
+            &Statement::select_all(keyspace, table),
+            PageSize::default(),
+            None,
+        )
         .await
         .expect("the read succeeds")
 }
@@ -462,7 +466,7 @@ async fn a_null_is_distinct_from_an_empty_value() {
 }
 
 #[tokio::test]
-async fn a_read_is_bounded_by_the_limit_it_carries() {
+async fn a_typed_read_is_bounded_by_the_limit_it_carries() {
     let conn = ConnId::next();
     let cluster = CassandraCluster::new();
     cluster
@@ -471,9 +475,11 @@ async fn a_read_is_bounded_by_the_limit_it_carries() {
         .expect("the fixture is up");
 
     let page = cluster
-        .execute(
+        .execute_paged(
             conn,
-            &Statement::select_all("typezoo", "all_scalar_types", 1),
+            &Statement::typed("SELECT * FROM typezoo.all_scalar_types LIMIT 1"),
+            PageSize::default(),
+            None,
         )
         .await
         .expect("the read succeeds");
@@ -491,7 +497,12 @@ async fn a_statement_the_cluster_rejects_comes_back_as_an_error_not_a_panic() {
         .expect("the fixture is up");
 
     let result = cluster
-        .execute(conn, &Statement::select_all("typezoo", "no_such_table", 1))
+        .execute_paged(
+            conn,
+            &Statement::select_all("typezoo", "no_such_table"),
+            PageSize::default(),
+            None,
+        )
         .await;
 
     assert!(matches!(result, Err(DbError::Invalid(_))));
@@ -557,7 +568,7 @@ async fn paging_walks_a_table_larger_than_one_driver_page() {
 
     // shop.audit_log_by_day's single seeded partition is 10 000 rows
     // (docker/seed.sh), which outruns the driver's 5 000-row default page.
-    let stmt = Statement::select_everything("shop", "audit_log_by_day");
+    let stmt = Statement::select_all("shop", "audit_log_by_day");
 
     let mut cursor = None;
     let mut seen = 0;
@@ -593,7 +604,7 @@ async fn a_page_holds_no_more_rows_than_the_page_size_asked_for() {
         .connect(conn, &fixture())
         .await
         .expect("the fixture is up");
-    let stmt = Statement::select_everything("shop", "audit_log_by_day");
+    let stmt = Statement::select_all("shop", "audit_log_by_day");
     let size = PageSize::try_new(7).expect("in range");
 
     let first = cluster

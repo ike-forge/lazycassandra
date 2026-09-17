@@ -157,6 +157,27 @@ pub(crate) async fn run_with_writer(
                     },
                 }]
             }
+            Effect::ExecutePaged {
+                conn,
+                query,
+                stmt,
+                page_size,
+                cursor,
+            } => vec![match cluster
+                .execute_paged(conn, &stmt, page_size, cursor.as_ref())
+                .await
+            {
+                Ok(page) => Msg::PageReady {
+                    query,
+                    page: Box::new(page),
+                    took: Duration::ZERO,
+                },
+                Err(error) => Msg::Failed {
+                    query,
+                    error,
+                    took: Duration::ZERO,
+                },
+            }],
             Effect::Export {
                 conn,
                 job,

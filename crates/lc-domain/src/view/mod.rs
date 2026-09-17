@@ -330,7 +330,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
     match state.overlay.as_ref()? {
         Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
         Overlay::Commands(panel) => Some(OverlayView::Commands {
-            rows: commands::rows(panel.search().as_ref(), state.posture()),
+            rows: commands::rows(panel.search().as_ref(), state.posture(), &state.contents),
             selected: panel.selected(),
             sift: panel.sift().map(sift_view),
         }),
@@ -1005,7 +1005,7 @@ mod tests {
         assert_eq!(
             view_model(&state).overlay,
             Some(OverlayView::Commands {
-                rows: crate::commands::rows(None, state.posture()),
+                rows: crate::commands::rows(None, state.posture(), &state.contents),
                 selected: 1,
                 sift: None,
             })
@@ -1123,15 +1123,18 @@ mod tests {
     fn every_contents_state() -> Vec<State> {
         let query = QueryId::next();
         let mut loading = tabled(&[("shop", &["orders"])]);
-        loading
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
+        loading.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
 
         let mut loaded = loading.clone();
         loaded.contents.page_ready(
             query,
             Page::default(),
             crate::config::MaxColumnWidth::default(),
+            QueryId::next,
         );
 
         let mut failed = loading.clone();

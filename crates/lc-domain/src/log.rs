@@ -116,6 +116,19 @@ impl Log {
         }
     }
 
+    /// Moves the entry pending on `from` to wait on `to` instead: a read that
+    /// skipped an empty page is still the one statement (grid paging design
+    /// §2).
+    pub fn retrace(&mut self, from: Trace, to: Trace) {
+        let pending = self.entries.iter_mut().rev().find(
+            |entry| matches!(entry.outcome, Outcome::Pending { trace: waiting } if waiting == from),
+        );
+
+        if let Some(entry) = pending {
+            entry.outcome = Outcome::Pending { trace: to };
+        }
+    }
+
     /// The trail, oldest first.
     #[must_use]
     pub fn entries(&self) -> impl DoubleEndedIterator<Item = &Entry> {

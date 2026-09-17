@@ -1765,12 +1765,17 @@ mod tests {
         });
         state.focus_on(Panel::Contents);
         let query = QueryId::next();
-        state
-            .contents
-            .requested(query, Subject::Table(TableRef::new("shop", "orders")));
-        state
-            .contents
-            .page_ready(query, page, lc_domain::config::MaxColumnWidth::default());
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            lc_domain::model::Statement::select_all("shop", "orders"),
+        );
+        state.contents.page_ready(
+            query,
+            page,
+            lc_domain::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
         state
     }
 

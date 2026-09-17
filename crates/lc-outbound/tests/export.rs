@@ -8,17 +8,19 @@ use lc_domain::model::{CqlValue, DbError, Key, KeyPress, Page, PagingState, Row}
 use lc_domain::posture::Posture;
 use lc_domain::state::{Geometry, Message, Overlay};
 use lc_domain::style::Severity;
-use lc_domain::update::ROW_LIMIT;
 use lc_domain::{Effect, Msg, Source, State, init, update};
 use lc_outbound::fake::{FakeCluster, FakeWriter};
 
 mod support;
 use support::{press, run_with_writer, tabled_schema_of};
 
-/// `count` rows, `ROW_LIMIT` of them exactly, so the panel's read is
-/// incomplete and the form's fetched-rows scope is reachable at all
-/// (design §3): a complete read makes the two scopes write the same file
-/// and disables the choice between them.
+/// Rows per page the grid reads by default.
+const PAGE: usize = 200;
+
+/// `count` rows with a page after them, so the panel's read is incomplete
+/// and the form's fetched-rows scope is reachable at all (design §3): a
+/// complete read makes the two scopes write the same file and disables the
+/// choice between them.
 fn full_page(count: usize) -> Page {
     Page {
         columns: vec!["id".to_owned(), "email".to_owned()],
@@ -30,7 +32,7 @@ fn full_page(count: usize) -> Page {
                 ],
             })
             .collect(),
-        next: None,
+        next: Some(PagingState(vec![1])),
     }
 }
 
@@ -172,7 +174,7 @@ async fn a_fetched_export_asks_the_cluster_nothing() {
         tabled_schema_of(&[("shop", &["orders"])]),
         Posture::ReadOnly,
     )
-    .returning(full_page(ROW_LIMIT));
+    .paging(vec![full_page(PAGE)]);
     let writer = FakeWriter::default();
     let mut state = on_a_read_table(&cluster).await;
     let read = cluster.executed();
@@ -206,17 +208,13 @@ async fn a_fetched_export_asks_the_cluster_nothing() {
     assert_eq!(lines.next(), Some("id,email"));
     assert_eq!(
         lines.clone().count(),
-        ROW_LIMIT,
+        PAGE,
         "the file holds exactly the panel's rows, one line each"
     );
     assert_eq!(lines.next(), Some("id-0,user0@example.com"));
     assert_eq!(
         lines.last(),
-        Some(format!(
-            "id-{last},user{last}@example.com",
-            last = ROW_LIMIT - 1
-        ))
-        .as_deref()
+        Some(format!("id-{last},user{last}@example.com", last = PAGE - 1)).as_deref()
     );
 }
 
