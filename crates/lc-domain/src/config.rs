@@ -59,9 +59,17 @@ macro_rules! bounded {
 // 30 holds a millisecond timestamp and stops short of a uuid's 36
 // (cell inspector design §1).
 bounded!(MaxColumnWidth, u16, "max_column_width", 1, 512, 30);
-bounded!(RowLimit, u32, "row_limit", 1, 1_000_000, 500);
+bounded!(PageRows, u32, "page_rows", 1, 100_000, 200);
 bounded!(PageSize, u32, "page_size", 1, 100_000, 5_000);
 bounded!(Millis, u32, "milliseconds", 1, 600_000, 5_000);
+
+/// Infallible: the two share one range, so every grid page size is one the
+/// driver takes.
+impl From<PageRows> for PageSize {
+    fn from(rows: PageRows) -> Self {
+        Self(rows.0)
+    }
+}
 
 /// The three shares `lc-inbound`'s layout is built from.
 ///
@@ -331,7 +339,9 @@ pub struct ConnectionConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GridConfig {
     pub max_column_width: MaxColumnWidth,
-    pub row_limit: RowLimit,
+    /// Rows per page read into the grid
+    /// (docs/superpowers/specs/2026-09-17-grid-paging-design.md §1).
+    pub page_rows: PageRows,
 }
 
 /// Driver-level settings applied to every connection.
@@ -435,6 +445,7 @@ mod tests {
         let config = Config::default();
 
         assert_eq!(config.grid.max_column_width.get(), 30);
+        assert_eq!(config.grid.page_rows.get(), 200);
         assert_eq!(config.layout.sidebar(), 25);
         assert_eq!(config.layout.ddl(), 60);
         assert_eq!(config.layout.queries(), 10);
@@ -443,6 +454,14 @@ mod tests {
         assert_eq!(config.background, Background::Theme);
         assert!(config.connections.is_empty());
         assert!(config.default_connection.is_none());
+    }
+
+    #[test]
+    fn every_grid_page_size_is_a_driver_page_size() {
+        assert!(PageRows::try_new(100_000).is_ok());
+        assert!(PageRows::try_new(100_001).is_err());
+        assert!(PageSize::try_new(100_000).is_ok());
+        assert_eq!(PageSize::from(PageRows::default()).get(), 200);
     }
 
     #[test]

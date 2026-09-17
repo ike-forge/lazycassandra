@@ -239,8 +239,8 @@ mod tests {
     #[test]
     fn a_file_stating_nothing_gets_the_key_before_the_first_table() {
         assert_eq!(
-            saved("icons = true\n\n[grid]\nrow_limit = 500\n"),
-            "icons = true\n\ntheme = \"quill-dark\"\n[grid]\nrow_limit = 500\n",
+            saved("icons = true\n\n[grid]\npage_rows = 500\n"),
+            "icons = true\n\ntheme = \"quill-dark\"\n[grid]\npage_rows = 500\n",
             "a root key after a [section] header lands in that table and is reported as unknown"
         );
     }

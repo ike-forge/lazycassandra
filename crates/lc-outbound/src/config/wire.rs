@@ -102,7 +102,7 @@ impl Layer {
         }
         if let Some(grid) = self.grid.as_mut() {
             at(grid.max_column_width.as_mut(), source, origin);
-            at(grid.row_limit.as_mut(), source, origin);
+            at(grid.page_rows.as_mut(), source, origin);
         }
         if let Some(driver) = self.driver.as_mut() {
             at(driver.page_size.as_mut(), source, origin);
@@ -139,7 +139,7 @@ pub(crate) struct LayoutLayer {
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct GridLayer {
     pub(crate) max_column_width: Option<Located<u16>>,
-    pub(crate) row_limit: Option<Located<u32>>,
+    pub(crate) page_rows: Option<Located<u32>>,
     #[serde(flatten)]
     pub(crate) unknown: Unknown,
 }

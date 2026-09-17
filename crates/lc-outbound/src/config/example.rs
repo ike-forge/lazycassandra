@@ -148,7 +148,7 @@ mod tests {
         "queries",
         "[grid]",
         "max_column_width",
-        "row_limit",
+        "page_rows",
         "[driver]",
         "page_size",
         "request_timeout_ms",
