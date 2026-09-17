@@ -921,7 +921,7 @@ mod tests {
 
         assert_eq!(
             row(&buffer, 23).trim_end(),
-            " ⏎ open | / search | d drop | v select | tab panel | q quit",
+            " ⏎ open | / search | v select | tab panel | q quit",
             "the whole row is the bar's: the loader draws on panel borders now"
         );
         assert!(

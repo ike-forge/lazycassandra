@@ -16,36 +16,24 @@ pub struct Binding {
     pub action: &'static str,
 }
 
-/// One way of pressing a binding: a key on its own, or keys typed in order.
-///
-/// A chord is not two alternatives spelled side by side. `g` on its own moves
-/// nothing and only arms what the next press completes, so a slice of
-/// [`KeyPress`] cannot say what `gg` is without claiming that a lone `g` goes
-/// to the start (docs/shortcuts.md §1).
+/// One way of pressing a binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stroke {
-    Key(KeyPress),
-    Chord(&'static [KeyPress]),
-}
+pub struct Stroke(KeyPress);
 
 impl Stroke {
     #[must_use]
     pub const fn key(key: Key) -> Self {
-        Self::Key(KeyPress::new(key))
+        Self(KeyPress::new(key))
     }
 
     #[must_use]
     pub const fn ctrl(key: Key) -> Self {
-        Self::Key(KeyPress::ctrl(key))
+        Self(KeyPress::ctrl(key))
     }
 
-    /// The presses that perform it, in the order they are typed.
     #[must_use]
-    pub fn presses(self) -> Vec<KeyPress> {
-        match self {
-            Self::Key(press) => vec![press],
-            Self::Chord(presses) => presses.to_vec(),
-        }
+    pub const fn press(self) -> KeyPress {
+        self.0
     }
 }
 
@@ -439,6 +427,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         .hints()
         .iter()
         .filter(|binding| !completing || !binding.keys.contains(&Stroke::key(Key::Enter)))
+        .filter(|binding| !refused(state, binding))
         .map(|binding| Hint {
             liveness: liveness(state, binding),
             ..rendered(binding)
@@ -594,13 +583,12 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
     // `d` names a question, so it is greyed wherever there is none to ask —
     // read off the very derivation the key itself reads, so the bar cannot
     // promise one `open_drop` would refuse (drop design §1). That covers the
-    // posture and the frame, which a user cannot see for themselves, and the
-    // grid's own gate: a page whose primary key is not present addresses no
-    // row, and the greyed key is where that is said (design §3.1).
+    // frame, which a user cannot see for themselves, and the grid's own gate:
+    // a page whose primary key is not present addresses no row, and the greyed
+    // key is where that is said (design §3.1).
     let drops = binding.keys == [Stroke::key(Key::Char('d'))];
     if drops
-        && (!state.posture().permits_mutation()
-            || !state.geometry.drop_fits()
+        && (!state.geometry.drop_fits()
             || state.dropping.is_some()
             || crate::update::drop_target(state).is_none())
     {
@@ -608,6 +596,14 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
     }
 
     Liveness::Live
+}
+
+/// Whether the connection's posture forbids the binding outright. Such a hint
+/// is left off the bar rather than greyed; the palette still names it.
+///
+/// `ctrl-r` is not one: whether it is refused follows the buffer as typed.
+fn refused(state: &State, binding: &Binding) -> bool {
+    binding.keys == [Stroke::key(Key::Char('d'))] && !state.posture().permits_mutation()
 }
 
 /// Whether `n`/`N` would move `target`'s cursor this frame: whether the
@@ -648,21 +644,11 @@ fn rendered(binding: &Binding) -> Hint {
     }
 }
 
-/// Alternatives are separated, a chord's presses are run together: `home/gg`
-/// is two ways to reach one place, and the second is two keystrokes.
 pub(crate) fn label(keys: &[Stroke]) -> String {
     keys.iter()
-        .copied()
-        .map(stroke_name)
+        .map(|stroke| name(stroke.press()))
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn stroke_name(stroke: Stroke) -> String {
-    match stroke {
-        Stroke::Key(press) => name(press),
-        Stroke::Chord(presses) => presses.iter().copied().map(name).collect(),
-    }
 }
 
 fn name(press: KeyPress) -> String {
@@ -1366,9 +1352,9 @@ mod tests {
         state
     }
 
-    /// Each half of the gate on its own, since none of the three is visible
-    /// on screen: a connection that would refuse the statement, a frame with
-    /// no room for the block, and a cursor naming nothing (drop design §1).
+    /// Each half of the gate on its own, since neither is visible on screen: a
+    /// frame with no room for the block, and a cursor naming nothing (drop
+    /// design §1).
     #[test]
     fn the_drop_hint_is_live_only_where_the_key_would_open_something() {
         let loading = crate::state::SchemaState::Loading;
@@ -1376,15 +1362,6 @@ mod tests {
             "shop",
             &["orders"],
         )]));
-
-        let mut state = connected(crate::Posture::ReadOnly, loaded.clone());
-        state.focus_on(Panel::Tables);
-        state.geometry = state.geometry.with_drop_fits(true);
-        assert_eq!(
-            hint(&state, "drop"),
-            Liveness::Inert,
-            "a read-only connection would refuse the statement"
-        );
 
         let mut state = connected(crate::Posture::Writable, loaded.clone());
         state.focus_on(Panel::Tables);
@@ -1407,6 +1384,25 @@ mod tests {
         state.focus_on(Panel::Tables);
         state.geometry = state.geometry.with_drop_fits(true);
         assert_eq!(hint(&state, "drop"), Liveness::Live);
+    }
+
+    #[test]
+    fn a_read_only_connection_leaves_d_off_the_bar() {
+        let loaded = crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
+            "shop",
+            &["orders"],
+        )]));
+
+        for panel in [Panel::Tables, Panel::Contents] {
+            let mut state = connected(crate::Posture::ReadOnly, loaded.clone());
+            state.focus_on(panel);
+            state.geometry = state.geometry.with_drop_fits(true);
+
+            assert!(
+                bar(&state).panel.iter().all(|hint| hint.keys != "d"),
+                "{panel:?} names a key the posture refuses"
+            );
+        }
     }
 
     /// The grid's own gate: with no page loaded there is no row to address,

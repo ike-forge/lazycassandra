@@ -178,6 +178,7 @@ fn item(
             keys,
             action,
             liveness,
+            refused,
         } => {
             // The cursor still lands on an inert row, and it still reads at
             // full contrast there — a row you cannot run is still a row you
@@ -201,6 +202,12 @@ fn item(
                 format!("{GAP}{keys}"),
                 theme.style(key).remove_modifier(Modifier::UNDERLINED),
             ));
+            if let Some(posture) = refused {
+                spans.push(Span::styled(
+                    format!(" (disabled, {})", posture.label()),
+                    theme.style(Token::Muted),
+                ));
+            }
 
             ListItem::new(Line::from(spans))
         }
@@ -219,6 +226,7 @@ fn action_width(row: &CommandRow) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lc_domain::Posture;
     use lc_domain::view::Liveness;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -243,6 +251,7 @@ mod tests {
             keys: "tab".to_owned(),
             action,
             liveness,
+            refused: None,
         }
     }
 
@@ -337,6 +346,62 @@ mod tests {
                 .style(Token::HintAction)
                 .fg
                 .expect("a live action spends a colour")
+        );
+    }
+
+    #[test]
+    fn a_refused_row_names_the_posture_after_its_keys_in_muted() {
+        let refused = CommandRow::Command {
+            keys: "d".to_owned(),
+            action: "drop this",
+            liveness: Liveness::Live,
+            refused: Some(Posture::ReadOnly),
+        };
+        let rows = [
+            CommandRow::Heading("Drop and delete"),
+            refused,
+            row("export these rows", Liveness::Live),
+            row("select, or export", Liveness::Live),
+            row("close the form", Liveness::Live),
+            row("previous field", Liveness::Live),
+        ];
+        // Wide enough that the palette reaches MAX_W and clips nothing.
+        let wide = 2 * MAX_W;
+        let area = rect(Rect::new(0, 0, wide, HEIGHT), rows.len()).expect("fits this frame");
+        let mut terminal =
+            Terminal::new(TestBackend::new(wide, HEIGHT)).expect("TestBackend always initialises");
+        terminal
+            .draw(|frame| render(frame, &rows, rows.len(), 0, None, Theme::default()))
+            .expect("TestBackend always draws");
+        let buffer = terminal.backend().buffer().clone();
+        let theme = Theme::default();
+        let x = area.x + 1 + PAD;
+        let y = area.y + 2;
+        let line: String = (x..area.right() - 1)
+            .map(|column| buffer.cell((column, y)).expect("inside the block").symbol())
+            .collect();
+        let suffix = " (disabled, read-only)";
+        let at = line.find(suffix).expect("the refusal is named");
+        let column = |offset: usize| x + u16::try_from(offset).expect("within the frame");
+
+        assert!(line[..at].ends_with('d'), "right after the keys: {line:?}");
+        assert_eq!(
+            buffer
+                .cell((column(at + 1), y))
+                .expect("inside the block")
+                .fg,
+            theme.style(Token::Muted).fg.expect("muted spends a colour")
+        );
+        assert_eq!(
+            buffer
+                .cell((column(at - 1), y))
+                .expect("inside the block")
+                .fg,
+            theme
+                .style(Token::HintKey)
+                .fg
+                .expect("a key spends a colour"),
+            "the key itself reads as a key"
         );
     }
 

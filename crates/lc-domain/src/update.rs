@@ -23,7 +23,7 @@ use crate::queries::{QueriesTab, Refresh};
 use crate::search::{Direction, Origin, Prompt, Search, Searched, Sift};
 use crate::state::{
     ConnectionState, Cursor, DiagnosticsPanel, Dropping, ExportJob, Flash, Geometry, Message,
-    Overlay, Panel, Prefix, Range, Ranges, SchemaState, Scroll, Selection, State,
+    Overlay, Panel, Range, Ranges, SchemaState, Scroll, Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
@@ -754,10 +754,10 @@ fn log_entries(state: &State) -> Option<String> {
     ))
 }
 
-/// Which end of a list `gg` and `G` reach.
+/// Which end of a list `g` and `G` reach.
 ///
 /// Narrower than [`Motion`] on purpose: only two of that enum's six landings
-/// can be spelled this way, and an overlay resolving `gg` has no paging arm
+/// can be spelled this way, and an overlay resolving `g` has no paging arm
 /// to fall through to.
 #[derive(Clone, Copy)]
 enum Edge {
@@ -797,13 +797,6 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         };
     }
 
-    // The prefix is spent by the very next press, whatever that press turns
-    // out to be: `g` then `j` is a `j`, not a chord nobody bound. Taken here
-    // rather than in the arm that reads it, so every path below — the ctrl
-    // layer, an overlay, a panel that takes text — disarms it
-    // (docs/shortcuts.md §1).
-    let pending = state.pending.take();
-
     // alt turns a key into a separate binding and none is bound, so it is
     // refused rather than reinterpreted — including on top of ctrl, where a
     // two-modifier chord is a third layer and no layer is designed. ctrl is
@@ -819,18 +812,14 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return ctrl_key(state, press.key);
     }
 
-    // `gg`/`G` are decided above the overlays, because they mean the same
+    // `g`/`G` are decided above the overlays, because they mean the same
     // thing in all of them: the list this frame is driving, whichever that is
     // (docs/shortcuts.md §1). Refused wherever a key is text, which is the one
     // reading `goto` cannot resolve.
     if !takes_text(state) {
         match press.key {
             Key::Char('g') => {
-                if matches!(pending, Some(Prefix::G)) {
-                    goto(state, Edge::Start);
-                } else {
-                    state.pending = Some(Prefix::G);
-                }
+                goto(state, Edge::Start);
                 return Vec::new();
             }
             Key::Char('G') => {
@@ -969,7 +958,7 @@ fn takes_text(state: &State) -> bool {
     match &state.overlay {
         Some(Overlay::Search(_) | Overlay::Export(_) | Overlay::Filter(_)) => true,
         // Only on the spelling that has a name to type into. A `y`/`n`
-        // confirmation takes no text, so `gg`/`G` are decided above it and
+        // confirmation takes no text, so `g`/`G` are decided above it and
         // find nothing to move (drop design §2.1).
         Some(Overlay::Drop(prompt)) => prompt.takes_text(),
         // A sift up makes the overlay itself a text field (overlay search
@@ -986,7 +975,7 @@ fn takes_text(state: &State) -> bool {
     }
 }
 
-/// `gg`/`G`, resolved against whatever list the frame is driving: the overlay
+/// `g`/`G`, resolved against whatever list the frame is driving: the overlay
 /// that captures keys if one is up, and the focused panel otherwise.
 ///
 /// The two landings `Home`/`End` already make, reached through the same
@@ -1042,8 +1031,6 @@ const WHEEL_ROWS: usize = 3;
 /// notch is repeated motions.
 fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect> {
     state.mark_dirty();
-    // A prefix waits for a key, and a gesture is not one (docs/shortcuts.md §1).
-    state.pending = None;
 
     // The overlay is modal: it spends the click that dismisses it rather than
     // letting it act on a row it was covering (design §2). Routed through
@@ -1919,13 +1906,7 @@ fn run_selected(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     };
 
-    // Every press of the stroke, in order: a chord is performed by typing it,
-    // and its first key on its own only arms the prefix.
-    stroke
-        .presses()
-        .into_iter()
-        .flat_map(|press| handle_key(state, press))
-        .collect()
+    handle_key(state, stroke.press())
 }
 
 /// What an open diagnostics overlay responds to.
@@ -2069,7 +2050,7 @@ fn open_themes(state: &mut State) {
 /// design §1).
 ///
 /// `q` still quits, for the reason [`palette_key`] gives. The ends are
-/// reachable here as they are in every other list, `home`/`end` and `gg`/`G`
+/// reachable here as they are in every other list, `home`/`end` and `g`/`G`
 /// alike: paging does land on either end in one press in a list this short,
 /// but a hand that types `G` in the panels and gets nothing in the picker has
 /// found the one list that is different, which costs more than the arm
@@ -5151,14 +5132,8 @@ mod tests {
         update(state, Msg::Input(binding))
     }
 
-    /// Types a binding's stroke, press by press: a chord does nothing until
-    /// the press that completes it.
     fn press_stroke(state: &mut State, stroke: Stroke) -> Vec<Effect> {
-        stroke
-            .presses()
-            .into_iter()
-            .flat_map(|press| press_binding(state, press))
-            .collect()
+        press_binding(state, stroke.press())
     }
 
     /// A frame big enough for a palette and a picker. `browsing` leaves
@@ -5359,7 +5334,7 @@ mod tests {
         assert_eq!(theme_picker(&state), Some(origin), "and moved nothing");
     }
 
-    /// `gg`/`G` are decided above the overlays (docs/shortcuts.md §1), but
+    /// `g`/`G` are decided above the overlays (docs/shortcuts.md §1), but
     /// with a sift up the picker takes text (overlay search design §5), so
     /// both letters type themselves rather than jumping the cursor.
     #[test]
@@ -5513,7 +5488,7 @@ mod tests {
         assert_eq!(panel.sift().map(Sift::query), Some("q?"));
     }
 
-    /// `gg`/`G` are decided above the overlays (docs/shortcuts.md §1), but
+    /// `g`/`G` are decided above the overlays (docs/shortcuts.md §1), but
     /// with a sift up the palette takes text (overlay search design §5), so
     /// both letters type themselves rather than jumping the cursor.
     #[test]
@@ -6244,9 +6219,6 @@ mod tests {
             );
 
             press(&mut state, start);
-            if matches!(start, Key::Char('g')) {
-                press(&mut state, start);
-            }
             assert_eq!(theme_picker(&state), Some(0), "{start:?} reaches the first");
         }
     }
@@ -10081,7 +10053,7 @@ mod tests {
     }
 
     #[test]
-    fn gg_and_shift_g_reach_the_ends_of_the_tree() {
+    fn g_and_shift_g_reach_the_ends_of_the_tree() {
         let mut state = browsing(&["a", "b", "c", "d"]);
         sized(&mut state, [3, 0, 0, 0], 0);
 
@@ -10089,45 +10061,11 @@ mod tests {
         assert_eq!(state.tables.cursor.index(), 3);
 
         press(&mut state, Key::Char('g'));
-        press(&mut state, Key::Char('g'));
         assert_eq!(state.tables.cursor.index(), 0);
     }
 
     #[test]
-    fn a_lone_g_moves_nothing() {
-        let mut state = browsing(&["a", "b", "c", "d"]);
-        sized(&mut state, [3, 0, 0, 0], 0);
-        press(&mut state, Key::Char('G'));
-        let before = crate::view::view_model(&state);
-
-        press(&mut state, Key::Char('g'));
-
-        assert_eq!(
-            crate::view::view_model(&state),
-            before,
-            "the prefix is armed, and arming it is not a motion"
-        );
-    }
-
-    #[test]
-    fn a_key_between_the_two_gs_spends_the_prefix() {
-        let mut state = browsing(&["a", "b", "c", "d"]);
-        sized(&mut state, [3, 0, 0, 0], 0);
-        press(&mut state, Key::Char('G'));
-
-        press(&mut state, Key::Char('g'));
-        press(&mut state, Key::Char('k'));
-        press(&mut state, Key::Char('g'));
-
-        assert_eq!(
-            state.tables.cursor.index(),
-            2,
-            "the k is a k, and the g after it starts a chord rather than finishing one"
-        );
-    }
-
-    #[test]
-    fn gg_and_shift_g_reach_the_ends_of_the_ddl_rows() {
+    fn g_and_shift_g_reach_the_ends_of_the_ddl_rows() {
         let mut state = read_shop_orders();
         state.focus_on(Panel::Ddl);
         let rows = crate::view::ddl_rows(&state);
@@ -10136,12 +10074,11 @@ mod tests {
         assert_eq!(state.ddl.cursor.index(), rows - 1);
 
         press(&mut state, Key::Char('g'));
-        press(&mut state, Key::Char('g'));
         assert_eq!(state.ddl.cursor.index(), 0);
     }
 
     #[test]
-    fn gg_and_shift_g_reach_the_ends_of_the_grids_rows() {
+    fn g_and_shift_g_reach_the_ends_of_the_grids_rows() {
         let mut state = grid_of_rows(4, 12, 80);
         state.contents.mode = SelectionMode::Cell;
         press(&mut state, Key::Char('l'));
@@ -10155,12 +10092,11 @@ mod tests {
         );
 
         press(&mut state, Key::Char('g'));
-        press(&mut state, Key::Char('g'));
         assert_eq!(state.contents.cursor.index(), 0);
     }
 
     #[test]
-    fn gg_and_shift_g_reach_the_ends_of_an_open_palette() {
+    fn g_and_shift_g_reach_the_ends_of_an_open_palette() {
         let mut state = measured(&["a", "b", "c"]);
         press(&mut state, Key::Char('?'));
 
@@ -10171,7 +10107,6 @@ mod tests {
         );
 
         press(&mut state, Key::Char('g'));
-        press(&mut state, Key::Char('g'));
         assert_eq!(
             palette(&state).expect("still open").selected(),
             1,
@@ -10180,14 +10115,13 @@ mod tests {
     }
 
     #[test]
-    fn gg_and_shift_g_reach_the_ends_of_the_diagnostics() {
+    fn g_and_shift_g_reach_the_ends_of_the_diagnostics() {
         let diagnostics = vec![diagnostic("one"), diagnostic("two"), diagnostic("three")];
         let (mut state, _) = init(Config::default(), diagnostics, Stamp::default());
 
         press(&mut state, Key::Char('G'));
         assert_eq!(diagnostics_cursor(&state), 2);
 
-        press(&mut state, Key::Char('g'));
         press(&mut state, Key::Char('g'));
         assert_eq!(diagnostics_cursor(&state), 0);
     }
@@ -10552,17 +10486,18 @@ mod tests {
     /// design §3) — so pressing it and demanding a change would be asserting
     /// the opposite of what the bar says.
     ///
-    /// `hints::bar` renders the panel's bindings in order, which is what lets
-    /// the two be zipped. The bar appends `esc leave` after them on every
-    /// panel but Tables; `escape_leaves_every_panel_for_tables` presses it.
+    /// A binding the posture refuses is left off the bar, so the two are
+    /// paired by action. The bar appends `esc leave` on every panel but
+    /// Tables; `escape_leaves_every_panel_for_tables` presses it.
     #[test]
     fn every_hint_the_bar_shows_does_something() {
         for panel in Panel::ALL {
             let shown = crate::view::hints::bar(&populated(panel)).panel;
-            let leave = usize::from(panel != Panel::default());
-            assert_eq!(shown.len(), panel.hints().len() + leave);
 
-            for (binding, hint) in panel.hints().iter().zip(&shown) {
+            for binding in panel.hints() {
+                let Some(hint) = shown.iter().find(|hint| hint.action == binding.action) else {
+                    continue;
+                };
                 if hint.liveness == crate::view::Liveness::Inert {
                     continue;
                 }
@@ -11383,7 +11318,7 @@ mod tests {
             .flat_map(|group| group.commands)
             .flat_map(|command| command.binding.keys)
             .copied()
-            .flat_map(Stroke::presses)
+            .map(Stroke::press)
             .collect()
     }
 

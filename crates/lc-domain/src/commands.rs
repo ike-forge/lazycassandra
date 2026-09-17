@@ -6,7 +6,7 @@
 //! `KeyPress` values rather than a string, so a row cannot describe a press no
 //! arm of `handle_key` claims.
 
-use crate::model::{Key, KeyPress};
+use crate::model::Key;
 use crate::posture::Posture;
 use crate::search::{Search, Sift};
 use crate::state::{Cursor, Panel};
@@ -37,15 +37,14 @@ pub struct Command {
 /// What a command needs from the connection before it does anything.
 ///
 /// An enum over a `bool`, for conventions.md §1's reason: `mutates: true` on
-/// a row would say nothing about *why* the palette greys it, and the greying
-/// rule the renderer applies is the same shape as [`Run::Inert`]'s.
+/// a row would say nothing about *why* the palette refuses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gate {
     /// Runs under any posture.
     Anywhere,
-    /// Changes the cluster, so a read-only connection greys it and refuses
-    /// it. The refusal is `update`'s, not this enum's — this is what the
-    /// palette draws (posture design §3).
+    /// Changes the cluster, so a read-only connection refuses it. The refusal
+    /// is `update`'s, not this enum's — this is what the palette draws
+    /// (posture design §3).
     Mutates,
 }
 
@@ -99,20 +98,18 @@ impl Run {
 }
 
 impl Command {
-    /// How this row is drawn under `posture`: faint where `⏎` on it would do
-    /// nothing, whether that is because the row is documentation or because
-    /// the connection forbids it.
+    /// The posture that refuses this row, if `posture` does.
     ///
-    /// The row is still listed either way. The palette claims to be complete
-    /// (command palette design §2), and a key that vanishes on a read-only
-    /// connection would teach a user that the tool cannot drop a table at all
-    /// (posture design §3).
+    /// The row is still listed. The palette claims to be complete (command
+    /// palette design §2), and a key that vanishes on a read-only connection
+    /// would teach a user that the tool cannot drop a table at all (posture
+    /// design §3).
     #[must_use]
-    pub const fn liveness(&self, posture: Posture) -> Liveness {
+    pub const fn refused(&self, posture: Posture) -> Option<Posture> {
         if self.gate.permitted(posture) {
-            self.run.liveness()
+            None
         } else {
-            Liveness::Inert
+            Some(posture)
         }
     }
 }
@@ -211,14 +208,8 @@ const MOTION: &[Command] = &[
         "up one screen",
         Run::Here,
     ),
-    // `gg` is one row's second spelling rather than a row of its own: it is
-    // the landing `home` already makes, in the spelling a vim hand types
-    // (docs/shortcuts.md §1).
     Command::new(
-        &[
-            Stroke::key(Key::Home),
-            Stroke::Chord(&[KeyPress::new(Key::Char('g')), KeyPress::new(Key::Char('g'))]),
-        ],
+        &[Stroke::key(Key::Home), Stroke::key(Key::Char('g'))],
         "to the start",
         Run::Here,
     ),
@@ -429,12 +420,13 @@ pub enum CommandRow {
     Command {
         keys: String,
         action: &'static str,
-        /// Faint when `⏎` on it would do nothing: the row is documentation
-        /// rather than a command, or the connection's posture forbids what it
-        /// does. A row that looks live and is not is the one way this list can
-        /// mislead (docs/superpowers/specs/2026-08-15-palette-execution-design.md
-        /// §8, posture design §3).
+        /// Faint when the row is documentation rather than a command. A row
+        /// that looks live and is not is the one way this list can mislead
+        /// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §8).
         liveness: Liveness,
+        /// The posture that forbids what the row does, named beside its keys
+        /// (posture design §3).
+        refused: Option<Posture>,
     },
     /// What a term that matched nothing leaves behind. A row rather than an
     /// empty block: a search still typing towards its first match is not a
@@ -480,7 +472,8 @@ impl Slot {
             Self::Command { command, .. } => CommandRow::Command {
                 keys: label(command.binding.keys),
                 action: command.binding.action,
-                liveness: command.liveness(posture),
+                liveness: command.run.liveness(),
+                refused: command.refused(posture),
             },
         }
     }
@@ -797,7 +790,7 @@ mod tests {
         CATALOGUE.iter().flat_map(|group| group.commands).collect()
     }
 
-    /// The palette under a posture that greys nothing, which is what every
+    /// The palette under a posture that refuses nothing, which is what every
     /// test about the *shape* of the list wants. The posture's own effect on
     /// it is tested against `Posture::ReadOnly` explicitly.
     fn rows(search: Option<&Search>) -> Vec<CommandRow> {
@@ -818,8 +811,15 @@ mod tests {
         liveness
     }
 
+    fn refusal_of(action: &str, posture: Posture) -> Option<Posture> {
+        let CommandRow::Command { refused, .. } = row_for(action, posture) else {
+            unreachable!("row_for only returns commands")
+        };
+        refused
+    }
+
     #[test]
-    fn a_read_only_connection_greys_every_command_that_would_change_the_cluster() {
+    fn a_read_only_connection_refuses_every_command_that_would_change_the_cluster() {
         for action in [
             "drop this",
             "delete these rows",
@@ -827,14 +827,14 @@ mod tests {
             "drop the typed name",
         ] {
             assert_eq!(
-                liveness_of(action, Posture::ReadOnly),
-                Liveness::Inert,
-                "`{action}` would be refused, so the palette may not offer it"
+                refusal_of(action, Posture::ReadOnly),
+                Some(Posture::ReadOnly),
+                "`{action}` would be refused, so the palette says so"
             );
         }
     }
 
-    /// Greyed, not dropped. The palette claims to be complete, and a row that
+    /// Named, not dropped. The palette claims to be complete, and a row that
     /// disappeared on a read-only connection would teach that the tool cannot
     /// drop a table at all (posture design §3).
     #[test]
@@ -847,9 +847,10 @@ mod tests {
     }
 
     #[test]
-    fn a_writable_connection_greys_only_what_the_run_already_greyed() {
+    fn a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys() {
         for action in ["drop this", "delete these rows"] {
             assert_eq!(liveness_of(action, Posture::Writable), Liveness::Live);
+            assert_eq!(refusal_of(action, Posture::Writable), None);
         }
 
         // `Run::Inert` outranks nothing and is outranked by nothing: these two
@@ -861,7 +862,7 @@ mod tests {
     }
 
     /// The way out of a confirmation is not a mutation, so the posture does
-    /// not grey it.
+    /// not refuse it.
     #[test]
     fn cancelling_a_drop_is_not_gated_on_the_posture() {
         let cancel = commands()
@@ -905,18 +906,14 @@ mod tests {
         }
     }
 
-    /// A chord is spelled as it is typed, and set beside the key that does
-    /// the same thing rather than given a row of its own.
     #[test]
-    fn the_chord_is_spelled_as_one_stroke() {
-        assert!(
-            rows(None).contains(&CommandRow::Command {
-                keys: "home/gg".to_owned(),
-                action: "to the start",
-                liveness: Liveness::Live,
-            }),
-            "the palette must spell gg as two presses of one key, not two alternatives"
-        );
+    fn g_is_set_beside_home() {
+        assert!(rows(None).contains(&CommandRow::Command {
+            keys: "home/g".to_owned(),
+            action: "to the start",
+            liveness: Liveness::Live,
+            refused: None,
+        }));
     }
 
     #[test]
@@ -951,6 +948,7 @@ mod tests {
                 keys: "ctrl-r".to_owned(),
                 action: "run the buffer",
                 liveness: Liveness::Live,
+                refused: None,
             }),
             "the palette claims to be complete, and ctrl-r is the one binding no key types"
         );
@@ -970,6 +968,7 @@ mod tests {
                     keys: "2".to_owned(),
                     action: "focus Table DDL",
                     liveness: Liveness::Live,
+                    refused: None,
                 }
             })
             .expect("no row focuses the DDL panel");
@@ -981,11 +980,13 @@ mod tests {
                     keys: "2".to_owned(),
                     action: "focus Table columns",
                     liveness: Liveness::Live,
+                    refused: None,
                 },
                 CommandRow::Command {
                     keys: "2".to_owned(),
                     action: "focus Table indexes",
                     liveness: Liveness::Live,
+                    refused: None,
                 },
             ]
         );
@@ -997,6 +998,7 @@ mod tests {
             keys: "v".to_owned(),
             action: "select rows",
             liveness: Liveness::Live,
+            refused: None,
         }));
     }
 
@@ -1007,6 +1009,7 @@ mod tests {
                 keys: "ctrl-e".to_owned(),
                 action: "open in $EDITOR",
                 liveness: Liveness::Live,
+                refused: None,
             }),
             "the palette claims to be complete"
         );
@@ -1064,6 +1067,7 @@ mod tests {
                 keys: "q".to_owned(),
                 action: "quit",
                 liveness: Liveness::Live,
+                refused: None,
             }
         );
         assert_eq!(rows.len(), row_count(None));
@@ -1449,6 +1453,7 @@ mod tests {
                     keys: label(&[Stroke::ctrl(Key::Char('t'))]),
                     action: "choose a theme",
                     liveness: Liveness::Live,
+                    refused: None,
                 },
             ],
             "one heading, one command, and no rule above the first group kept"

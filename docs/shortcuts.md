@@ -148,7 +148,7 @@ before the panel underneath is consulted (§2).
 |---|---|
 | `j` `k` `↑` `↓` | Move the cursor, command to command. Headings and rules are stepped over. |
 | `PageDown` `PageUp` `ctrl-d` `ctrl-u` | Page the list. |
-| `Home` `gg`, `End` `G` | The first command, the last command. |
+| `Home` `g`, `End` `G` | The first command, the last command. |
 | `⏎` | Close the palette and perform the selected command. |
 | `?` `Esc` | Close it. |
 | `q` | Quits, as everywhere else. |
@@ -249,7 +249,7 @@ was before config existed.
 |---|---|
 | `j` / `k`, `Down` / `Up` | Moves the cursor, **and sets `State.theme`** — the frame repaints in that theme immediately. |
 | `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen — which here is the whole list. |
-| `Home` / `End`, `gg` / `G` | The first theme, the last theme — previewing it, as every motion here does. |
+| `Home` / `End`, `g` / `G` | The first theme, the last theme — previewing it, as every motion here does. |
 | `Enter` | Closes, keeping whatever theme is set — and writes it to the config file it is read from, so the next launch opens on it ([theme persistence design](superpowers/specs/2026-08-22-theme-persistence-design.md) §2). |
 | `Esc` | Sets `State.theme` back to the theme the picker opened on, then closes. |
 | `q` | Quits, as everywhere else. The picker takes motion, not text, so it leaves `q` alone — the palette's rule (§2). |
@@ -268,8 +268,8 @@ back. See §2's rule below for the key itself
 The ends are reachable here as they are in every other list. Paging does land
 on either end in one press — the list is every theme there is and always
 shorter than the block drawing it, so a screen *is* the whole list — and
-`Home`/`End` and `gg`/`G` were inert here for exactly that reason until the
-chord arrived. What changed the answer is that a hand which types `G` in the
+`Home`/`End` and `g`/`G` were inert here for exactly that reason until the
+vim spellings arrived. What changed the answer is that a hand which types `G` in the
 panels and in the palette and gets nothing in the picker has found the one
 list that is different, which costs more than the arm does.
 
@@ -303,7 +303,7 @@ panels and no explanation. A config that names a default skips it and connects.
 |---|---|
 | `j` / `k`, `Down` / `Up` | Moves the cursor. Previews nothing — opening a connection is a round trip, not a repaint. |
 | `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen. |
-| `Home` / `End`, `gg` / `G` | The first connection, the last. |
+| `Home` / `End`, `g` / `G` | The first connection, the last. |
 | `Enter` | Opens the connection under the cursor, and closes. |
 | `Esc` | Closes, leaving the tool connected to whatever it already was — at startup, nothing. |
 | `q` | Quits, as everywhere else. The picker takes motion, not text (§2). |
@@ -336,7 +336,7 @@ file has a problem it never appears at all.
 |---|---|
 | `j` / `k`, `Down` / `Up` | Moves the cursor. |
 | `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen. |
-| `Home` / `End`, `gg` / `G` | To the first / last diagnostic. |
+| `Home` / `End`, `g` / `G` | To the first / last diagnostic. |
 | `Esc` | Closes it. |
 
 Unlike the palette, the prompt and the theme picker, `q` does nothing here
@@ -392,9 +392,9 @@ already running. Two panels for one key, gated on focus, exactly as `ctrl-e`
 is. A frame that shrinks past the block closes it, the same rule the export
 form follows.
 
-The bar greys `d` wherever the key would open nothing, and it does so by
-reading the very derivation the key reads — so the bar cannot promise a
-question `d` refuses.
+The bar leaves `d` off on a connection whose posture refuses it, and greys it
+wherever else the key would open nothing, reading the very derivation the key
+reads — so the bar cannot promise a question `d` refuses.
 
 Like the form it outranks focus and claims every key before the panel sees
 one, `q` included. The block names the statement it would run, because every
@@ -424,8 +424,9 @@ A `DELETE` restricts the whole primary key or it deletes something else. See
 what is refused.
 
 On a connection whose posture permits no mutation `d` opens nothing at all and
-says so, rather than being one of the silent refusals above: the bar greys it,
-and pressing it raises the read-only modal (posture design §3).
+says so, rather than being one of the silent refusals above: the bar leaves it
+off, the palette marks its rows `(disabled, read-only)`, and pressing it raises
+the read-only modal (posture design §3).
 
 What the block asks depends on what is being taken away and on the
 connection's posture. A keyspace is always typed back — it takes every table
@@ -483,22 +484,20 @@ Queries moves the cursor through its buffer.
 | `h` / `←` | Left one column in Contents, the same way; fold it in Tables, stepping out from a table row first. |
 | `PageDown` / `ctrl-d` | Down one panel height. |
 | `PageUp` / `ctrl-u` | Up one panel height. |
-| `Home`, `gg` | To the start (to the **line**'s start in Queries — §2). |
+| `Home`, `g` | To the start (to the **line**'s start in Queries — §2). |
 | `End`, `G` | To the end (to the **line**'s end in Queries — §2). |
 
-`gg` and `G` are the vim spelling of `Home` and `End`, and reach the same
+`g` and `G` are the vim-style spelling of `Home` and `End`, and reach the same
 `Motion::Start`/`Motion::End` rather than a copy of them — the relation
 `ctrl-d`/`ctrl-u` already have to `PageDown`/`PageUp` (§2). They apply to
 whatever list the frame is driving: the focused panel, or the overlay in front
 of it when that overlay takes motion — the command palette, the diagnostics
 list and the theme picker all answer them.
 
-`g` on its own is a prefix, not a motion: it arms the chord and moves nothing,
-and the very next press spends it whatever that press is, so `g` then `j` is a
-`j`. It is armed in `State.pending`, taken at the top of `handle_key` so every
-path below — the ctrl layer, an overlay, a panel that takes text — disarms it,
-and a pointer gesture clears it too. In Queries and under a search prompt both
-keys are text, the panel-that-takes-text rule as everywhere else.
+`g` is one press rather than vim's `gg`: no other binding starts with `g`, so
+a prefix would only cost a keystroke and a pending state. In Queries and under
+a search prompt both keys are text, the panel-that-takes-text rule as
+everywhere else.
 
 `ctrl-d`/`ctrl-u` are the vim spelling of the two paging keys and reach the
 same code rather than a copy of it, overlays included: whatever `PageDown`
@@ -809,7 +808,7 @@ read, query and export. Reached only by `Tab`/`Shift-Tab` walking the cycle
 of `(panel, tab)` stops (§1) — `4` does not walk onto it, and the paragraph
 above explains why. Once drawn it takes no text at all, unlike the Cql tab
 beside it: `j`/`k` and the arrows move the cursor entry to entry, `PageUp`/
-`PageDown` and `ctrl-d`/`ctrl-u` page it, `Home`/`End` and `gg`/`G` reach
+`PageDown` and `ctrl-d`/`ctrl-u` page it, `Home`/`End` and `g`/`G` reach
 either end, `v` starts or freezes a selection of whole entries, `/` searches
 it and `n`/`N` walk the matches, `y` yanks — the held selection if one is
 active, otherwise the entry under the cursor — each entry as its two rows
@@ -875,7 +874,7 @@ kinds of duplicate survive, and only these three: the arrows and
 reaches a list at all (vision.md §4, principle 2); the pointer, which
 necessarily repeats what the keyboard does (§7); and `ctrl-d`/`ctrl-u`, which
 are the vim spelling of a paging key rather than a second implementation of
-paging — they dispatch to `PageDown`/`PageUp`'s own arm, and `gg`/`G` are the
+paging — they dispatch to `PageDown`/`PageUp`'s own arm, and `g`/`G` are the
 same kind of spelling for `Home`/`End` (§1's motion table). `Space` on a tree
 row was a duplicate of the fourth kind and is gone.
 
@@ -885,8 +884,8 @@ own, not a synonym for the plain one. `T` was an exception and has been
 given back — the theme picker moved to `ctrl-t` (§1's picker subsection).
 Two exceptions remain: `N`, which walks a search backwards and is not a
 synonym for `n` (§1's global table; search highlight design §5.3), and `G`,
-which reaches the end of a list and is not a synonym for `g` — `g` alone is a
-prefix that moves nothing (§1's motion table). A
+which reaches the end of a list and is not a synonym for `g`, which reaches
+the start (§1's motion table). A
 shifted arrow is left as a synonym for the plain one, and stays that way:
 `v` is how a selection extends, so no arrow needs a shifted meaning of its
 own. Binding one now would be a fourth kind of duplicate — the same key,
@@ -1022,14 +1021,15 @@ than think about whether it belongs on the bar. `esc` is still omitted from the
 other three bars rather than greyed there: it would be grey in most frames, and
 a permanently grey hint teaches nothing.
 
-**A key the connection's posture refuses is greyed everywhere, and answered
-when it is pressed.** A read-only connection greys `d` on both panels it is
-bound in, greys the palette's four drop-and-delete rows, and greys `ctrl-r`
-against a buffer holding anything but a read — that last one against the text
-as typed, because the same key in the same frame runs a `SELECT` and would be
-refused a `DELETE`. Greyed, not omitted: the palette claims to be complete, and
-a row that vanished on a read-only connection would teach that the tool cannot
-drop a table at all. Pressing one anyway raises a modal naming the posture and
+**A key the connection's posture refuses is off the bar, named as refused in
+the palette, and answered when it is pressed.** A read-only connection leaves
+`d` off the bar on both panels it is bound in, and draws the palette's four
+drop-and-delete rows with a muted `(disabled, read-only)` after their keys.
+`ctrl-r` is greyed rather than dropped, against a buffer holding anything but a
+read: the same key in the same frame runs a `SELECT` and would be refused a
+`DELETE`, so it follows the text as typed. The palette keeps its rows: it
+claims to be complete, and a row that vanished on a read-only connection would
+teach that the tool cannot drop a table at all. Pressing one anyway raises a modal naming the posture and
 the config key that changes it — greying alone leaves a user who pressed the
 key with nothing, and no bar can say *which* connection is the read-only one.
 There is no way past the modal, deliberately: a posture is a property of the
@@ -1154,8 +1154,6 @@ Taken, lowercase: `c` `d` `f` `g` `h` `j` `k` `l` `m` `n` `q` `s` `v` `y`,
 plus `?` and `/`. `c`, `f` and `s` are taken by Table contents' column mode
 alone — a panel's claim on a letter stops at that panel's border, and this
 one stops at a mode's (§1's Table contents subsection).
-`g` is spent as a prefix rather than as a binding: it is the first half of
-`gg` and does nothing alone, which spends it just the same.
 Taken, digits: `1` `2` `3` `4`.
 Taken, punctuation: `[` and `]`.
 Taken, uppercase: `N` and `G` — the only shifted letters bound (§2).
@@ -1284,9 +1282,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The trail is searchable, and `n` walks its matches | `the_trail_is_searchable`, `n_walks_the_trails_matches_and_wraps`, `escape_over_the_trail_clears_its_search` |
 | `y` yanks an entry's two rows, or a held selection's | `yanking_an_entry_copies_its_statement_and_its_outcome`, `yanking_a_visual_selection_joins_every_selected_entrys_two_rows`, `yanking_the_trail_lights_the_entries_it_took`, `y_on_the_cql_tab_yanks_nothing` |
 | Paging and `Home`/`End` | `page_down_moves_the_tree_by_one_panel_height`, `home_and_end_reach_the_ends_of_the_tree_in_one_key` |
-| `gg`/`G` reach the ends of a panel's list | `gg_and_shift_g_reach_the_ends_of_the_tree`, `gg_and_shift_g_reach_the_ends_of_the_ddl_rows`, `gg_and_shift_g_reach_the_ends_of_the_grids_rows` |
-| `g` alone is a prefix, and the next key spends it | `a_lone_g_moves_nothing`, `a_key_between_the_two_gs_spends_the_prefix` |
-| `gg`/`G` reach the ends of an overlay's list too | `gg_and_shift_g_reach_the_ends_of_an_open_palette`, `gg_and_shift_g_reach_the_ends_of_the_diagnostics`, `the_ends_are_reachable_in_the_picker` |
+| `g`/`G` reach the ends of a panel's list | `g_and_shift_g_reach_the_ends_of_the_tree`, `g_and_shift_g_reach_the_ends_of_the_ddl_rows`, `g_and_shift_g_reach_the_ends_of_the_grids_rows` |
+| `g`/`G` reach the ends of an overlay's list too | `g_and_shift_g_reach_the_ends_of_an_open_palette`, `g_and_shift_g_reach_the_ends_of_the_diagnostics`, `the_ends_are_reachable_in_the_picker` |
 | Both are text where a panel or a prompt takes text | `g_is_text_in_queries_and_under_a_prompt` |
 | Ctrl/alt are not synonyms | `an_unbound_ctrl_key_does_nothing`, `an_alt_modified_key_is_not_a_binding` |
 | `ctrl-d`/`ctrl-u` page whatever `PageDown`/`PageUp` page | `ctrl_d_and_ctrl_u_page_the_focused_panel`, `ctrl_d_pages_an_open_palette_rather_than_the_panel_underneath`, `ctrl_d_pages_the_editor_the_way_pgdn_does`, `ctrl_d_and_ctrl_u_page_the_picker_too`, `ctrl_d_is_inert_under_a_search_prompt` |
@@ -1432,7 +1429,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The posture names itself rather than the confirmation | `a_destructive_statement_on_a_read_only_connection_blames_the_posture` |
 | A posture refusal survives the modal in the trail | `a_statement_the_posture_refuses_says_so_in_the_trail_too` |
 | The bar greys `ctrl-r` against a buffer the posture would refuse | `the_run_hint_greys_against_a_buffer_the_posture_would_refuse` (`view/hints.rs`) |
-| The palette greys every mutating row on a read-only connection, and drops none | `a_read_only_connection_greys_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_greys_only_what_the_run_already_greyed`, `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_or_a_delete` (`commands.rs`) |
+| The palette names the posture on every mutating row on a read-only connection, and drops none | `a_read_only_connection_refuses_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys`, `a_refused_row_names_the_posture_after_its_keys_in_muted` (`inbound/palette.rs`), `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_or_a_delete` (`commands.rs`) |
 | A second modifier is not a binding | `ctrl_alt_r_does_not_run_the_buffer` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
 | A statement is classified by the verb opening it, comments and strings scanned past | `a_leading_comment_does_not_hide_the_verb`, `a_semicolon_inside_a_string_does_not_open_a_statement`, `a_trailing_semicolon_adds_no_statement` (`model/statement.rs`) |
@@ -1489,7 +1486,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The typed spelling runs only on the name it asked for, matched verbatim | `enter_on_a_mismatched_name_does_nothing`, `enter_on_the_typed_name_drops_the_keyspace`, `a_typed_confirmation_runs_only_on_the_name_it_asked_for`, `a_name_is_matched_verbatim_rather_than_folded` (`drop.rs`) |
 | Every printable key is text there, `n` and `d` included | `n_is_text_on_a_typed_confirmation`, `a_typed_confirmation_takes_text_rather_than_quitting_or_moving`, `a_second_d_leaves_the_open_confirmation_as_it_was` |
 | `d` is refused where the question could not be answered | `d_is_inert_where_the_frame_cannot_draw_the_block`, `d_is_inert_while_a_drop_is_running`, `d_is_inert_over_a_multi_row_selection`, `d_does_nothing_outside_the_tree`, `a_read_only_connection_drops_nothing` (`outbound/scenario.rs`) |
-| The bar greys `d` where it is refused | `the_drop_hint_is_live_only_where_the_key_would_open_something` (`view/hints.rs`) |
+| The bar greys `d` where it would open nothing, and leaves it off where the posture refuses it | `the_drop_hint_is_live_only_where_the_key_would_open_something`, `a_read_only_connection_leaves_d_off_the_bar` (`view/hints.rs`) |
 | A read-only connection refuses `d` on both panels, and says why | `d_on_a_read_only_connection_asks_nothing_and_says_why`, `the_read_only_refusal_names_the_way_out_of_it`, `a_delete_is_refused_on_a_read_only_connection`, `a_read_only_connection_drops_nothing` (`outbound/scenario.rs`) |
 | A frame that shrank past the block closes it | `a_frame_that_shrank_past_the_drop_block_closes_it` |
 | A successful drop re-reads the schema; a failed one reloads nothing | `a_completed_drop_re_reads_the_schema`, `a_failed_drop_reloads_nothing_and_says_why`, `a_page_for_an_ordinary_read_reloads_nothing`, `dropping_a_table_removes_it_from_the_tree`, `dropping_a_keyspace_takes_its_name_typed_back` (`outbound/scenario.rs`) |

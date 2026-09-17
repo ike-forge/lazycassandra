@@ -84,21 +84,6 @@ pub struct State {
     /// is, and for one more: a second would race the schema reload the first
     /// owes (drop design §1, §4).
     pub dropping: Option<Dropping>,
-    /// The prefix the last press armed, if it armed one. Spent by the next
-    /// key whatever that key is, so `g` followed by anything but `g` is that
-    /// key on its own (docs/shortcuts.md §1).
-    pub pending: Option<Prefix>,
-}
-
-/// A key that means nothing on its own and waits for the one after it.
-///
-/// An enum with a single variant rather than a flag: what is held is *which*
-/// prefix is armed, and a second prefix must not arrive as a second bool
-/// (conventions.md §1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Prefix {
-    /// `g`, waiting for the `g` that completes `gg`.
-    G,
 }
 
 /// A running export.
