@@ -258,10 +258,6 @@ impl Theme {
             Token::PartitionKey => fg(palette.partition).add_modifier(Modifier::BOLD),
             Token::PartitionKeyValue => fg(palette.partition),
             Token::ClusteringKey | Token::ClusteringKeyValue => fg(palette.clustering),
-            // `accent`, which the loader also spends: they never share a
-            // surface — one is a column in the Table DDL panel, the other the
-            // spinner on the bar row — the same argument that lets `warning`
-            // and `partition` share a yellow in the Catppuccin flavours.
             Token::StaticColumn => fg(palette.accent),
             Token::Keyspace => fg(palette.keyspace),
             Token::Table => fg(palette.table),

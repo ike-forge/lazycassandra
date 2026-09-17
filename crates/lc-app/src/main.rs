@@ -24,7 +24,7 @@ use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, MissedTickBehavior, interval};
 
-/// The interval `ratatui_opentui_loader` is built around. Real time enters the
+/// The loader's frame interval. Real time enters the
 /// program here and nowhere else — the domain sees only `Msg::Tick`, and
 /// discards one that changes nothing (design §4.2).
 const TICK: Duration = Duration::from_millis(40);

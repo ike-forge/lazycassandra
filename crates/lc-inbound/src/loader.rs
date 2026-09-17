@@ -1,44 +1,27 @@
 //! A panel's loader: whether that panel is waiting on the cluster.
 //!
-//! The widget's `tick` is an integer advance over a fixed cycle, so the phase
-//! can live in the domain and reach here as a frame number. That is what keeps
+//! The phase lives in the domain and reaches here as a frame number. That keeps
 //! the renderer a pure function of the [`ViewModel`](lc_domain::ViewModel) and
 //! the render tier deterministic — no clock is read on this side of the
 //! boundary (docs/superpowers/specs/2026-08-09-visual-polish-design.md §4.3).
 
 use crate::theme::Theme;
+use lc_domain::style::Token;
 use lc_domain::view::Activity;
 use ratatui::layout::Rect;
-use ratatui::text::Line;
-use ratatui_opentui_loader::KittLoader;
+use ratatui::text::{Line, Span};
 
 /// Cells the scanner occupies, and the border it keeps between itself and the
 /// corner it is drawn beside.
 pub(crate) const WIDTH: u16 = 8;
 pub(crate) const INSET: u16 = 1;
 
-/// Frames before the cycle repeats: `WIDTH` out, `HOLD_END` at the right edge,
-/// `WIDTH - 1` back, `HOLD_START` at the left. The widget keeps its own frame
-/// counter private, so `the_cycle_is_the_length_the_domain_is_folded_into`
-/// pins this rather than a comment claiming it.
-const PERIOD: usize = 36;
-const TRAIL: usize = 6;
-/// The pause at the left edge, cut from the 30 frames the bar's loader held
-/// for: a scanner on a border spends that pause as its dimmest dots against
-/// border glyphs, and 1.2s of that per cycle reads as a spinner that has
-/// stopped rather than one that is breathing.
-const HOLD_START: usize = 12;
-const HOLD_END: usize = 9;
-/// Brightness of a dot the head has left behind, and the floor the held edges
-/// breathe down to.
-///
-/// Both lifted off the bar's values (0.25 and 0.55): at those, a held dot came
-/// out at 0.14 of the accent — darker than the base the panel is painted on,
-/// so the loader's colour disappeared for the whole hold. The scanner has to
-/// stay recognisably the accent through every frame of its cycle, because on a
-/// border there is nothing else marking the cells as the loader's.
-const INACTIVE: f64 = 0.45;
-const MIN_FADE: f64 = 0.8;
+/// Cells lit behind and including the head; the trail dissolves into the
+/// border during each hold.
+const TRAIL: usize = 3;
+const HOLD_START: usize = 4;
+const HOLD_END: usize = 4;
+const PERIOD: usize = 2 * WIDTH as usize - 1 + HOLD_START + HOLD_END;
 
 /// Where the scanner is drawn on `block`, the panel's bordered rect: the
 /// bottom border, `INSET` columns short of the corner, mirroring the search
@@ -65,29 +48,42 @@ pub(crate) fn placement(block: Rect) -> Option<Rect> {
 /// A resting panel draws no loader rather than a still one: an animation
 /// frozen on a border reads as chrome the panel always has, and the whole
 /// point of moving it off the bar is that it names *which* panel is waiting.
+///
+/// Spends `Muted` and `Faint` rather than a hue, and leaves idle cells
+/// unstyled so they take the border's own colour, focused or not: the
+/// scanner is a pulse along the frame, not a mark competing with the content.
 pub(crate) fn line(activity: Activity, theme: Theme) -> Option<Line<'static>> {
     let frame = match activity {
         Activity::Resting => return None,
         Activity::Working { frame } => frame % PERIOD,
     };
+    let width = usize::from(WIDTH);
 
-    let mut loader = KittLoader::build(
-        theme.palette().accent,
-        usize::from(WIDTH),
-        TRAIL,
-        HOLD_START,
-        HOLD_END,
-        INACTIVE,
-        MIN_FADE,
-    );
-    // `KittLoader` exposes no way to seek, and the cycle is 54 integer
-    // increments; holding one across frames would cost the renderer the
-    // statelessness that makes it testable.
-    for _ in 0..frame {
-        loader.tick();
-    }
+    let (head, forward, hold) = if frame < width {
+        (frame, true, 0)
+    } else if frame < width + HOLD_END {
+        (width - 1, true, frame - width)
+    } else if frame < 2 * width - 1 + HOLD_END {
+        (2 * width - 2 + HOLD_END - frame, false, 0)
+    } else {
+        (0, false, frame - (2 * width - 1 + HOLD_END))
+    };
 
-    Some(loader.into_line(usize::from(WIDTH)))
+    let spans = (0..width).map(|cell| {
+        let behind = if forward {
+            head.checked_sub(cell)
+        } else {
+            cell.checked_sub(head)
+        };
+
+        match behind.map(|behind| behind + hold) {
+            Some(0) => Span::styled("■", theme.style(Token::Muted)),
+            Some(distance) if distance < TRAIL => Span::styled("■", theme.style(Token::Faint)),
+            _ => Span::raw("⬝"),
+        }
+    });
+
+    Some(spans.collect())
 }
 
 /// The glyphs a pending entry's outcome spins through in the Logs trail, one
@@ -104,7 +100,7 @@ pub(crate) fn spin(frame: usize) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::style::Color;
+    use ratatui::style::Style;
 
     fn drawn(activity: Activity) -> Line<'static> {
         line(activity, Theme::default()).expect("working frames draw a scanner")
@@ -115,19 +111,9 @@ mod tests {
     }
 
     #[test]
-    fn the_cycle_is_the_length_the_domain_is_folded_into() {
-        let start = drawn(Activity::Working { frame: 0 });
-
-        assert_eq!(
-            drawn(Activity::Working { frame: PERIOD }),
-            start,
-            "PERIOD has to be the widget's own cycle, or the fold jumps the animation"
-        );
-        assert_ne!(
-            drawn(Activity::Working { frame: PERIOD - 1 }),
-            start,
-            "and it has to be the shortest such length"
-        );
+    fn the_cycle_rests_at_the_left_edge_before_it_repeats() {
+        assert_eq!(text(Activity::Working { frame: PERIOD - 1 }), "⬝".repeat(8));
+        assert_eq!(head(Activity::Working { frame: PERIOD }), Some(0));
     }
 
     #[test]
@@ -158,16 +144,15 @@ mod tests {
         }
     }
 
-    /// Where the bright head is, if it is on screen at all: the hold phases
-    /// dissolve the trail entirely, which is the animation resting rather than
-    /// a frame with nothing in it.
+    /// Where the head is, if it is on screen at all: the holds dissolve the
+    /// trail entirely.
     fn head(activity: Activity) -> Option<usize> {
-        let accent = Theme::default().palette().accent;
+        let muted = Theme::default().style(Token::Muted);
 
         drawn(activity)
             .spans
             .iter()
-            .position(|span| span.style.fg == Some(accent))
+            .position(|span| span.style == muted)
     }
 
     #[test]
@@ -189,37 +174,13 @@ mod tests {
         );
     }
 
-    /// The floor an idle dot has to keep, as a fraction of the accent: below
-    /// this the scanner's colour is gone and the cells read as border.
-    const VISIBLE: f64 = 0.3;
-
     #[test]
-    fn an_idle_dot_stays_recognisably_the_accent_in_every_frame() {
-        let theme = Theme::default();
-        let Color::Rgb(accent, _, _) = theme.palette().accent else {
-            panic!("the default palette is spelled in rgb");
-        };
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a fraction of a u8 channel"
-        )]
-        let floor = (f64::from(accent) * VISIBLE) as u8;
-
+    fn idle_cells_take_the_border_colour_they_are_drawn_on() {
         for frame in 0..PERIOD {
             for span in drawn(Activity::Working { frame }).spans {
-                if span.content != "⬝" {
-                    continue;
+                if span.content == "⬝" {
+                    assert_eq!(span.style, Style::new(), "frame {frame}");
                 }
-
-                let Some(Color::Rgb(red, _, _)) = span.style.fg else {
-                    panic!("every cell is coloured");
-                };
-
-                assert!(
-                    red >= floor,
-                    "frame {frame} faded an idle dot to {red}, under the {floor} floor"
-                );
             }
         }
     }
