@@ -684,7 +684,7 @@ below.
 
 | Key | Action |
 |---|---|
-| `Enter` | Open the inspector over the row under the cursor in row mode, or the cell under it in cell and column mode. Inert with nothing loaded, on an empty grid, while a range is held, and on a frame with no room to draw the block. See the inspector's own subsection below. |
+| `Enter` | Open the inspector over the row under the cursor in row mode, or the cell under it in cell mode. Inert in column mode, with nothing loaded, on an empty grid, while a range is held, and on a frame with no room to draw the block. See the inspector's own subsection below. |
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
 | `p` | Fetch the next page of the result and append it. Inert once the result has ended and while a page is in flight. |
 | `P` | Fetch pages until the result ends or a stop is reached. Inert where `p` is. |
@@ -749,7 +749,8 @@ panel underneath sees one, `q` included.
 at `grid.max_column_width` (30 by default) and ellipsises the rest, widening
 truncated columns into whatever room a grid that fits leaves; this is where a
 value is read whole. Row mode shows every column of the row under the
-cursor, one field to a column; cell and column mode show the cell under it.
+cursor, one field to a column; cell mode shows the cell under it. Column
+mode opens nothing: its cursor is a column, not one value.
 It reads the grid as drawn, sorted and filtered. JSON text is re-indented
 without a token changing, and a collection is laid out one element to a line.
 Like the palette it dims the panels, claims every key and leaves `q` quitting.
@@ -1555,7 +1556,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A delete is a `Write`, so `Posture::Protected` still answers it with `y` | `a_delete_is_a_write_rather_than_a_destructive_statement` (`model/statement.rs`), `a_protected_connection_still_answers_a_delete_with_y` |
 | A completed delete re-reads the grid rather than the schema | `a_completed_delete_re_reads_the_grid_rather_than_the_schema`, `deleting_the_selected_rows_re_reads_the_grid` (`outbound/scenario.rs`) |
 | The block counts the rows, and counts one in the singular | `a_delete_block_counts_the_rows_in_its_border_and_in_its_warning`, `one_row_is_counted_in_the_singular_everywhere_it_is_counted`, `a_long_batch_is_elided_in_the_middle_and_says_how_much` (`inbound/drop.rs`) |
-| `Enter` over the grid inspects the row or the cell, as drawn | `enter_in_row_mode_inspects_the_whole_row`, `enter_in_cell_and_column_mode_inspects_the_cell_under_the_cursor`, `enter_inspects_the_row_as_the_grid_draws_it` |
+| `Enter` over the grid inspects the row or the cell, as drawn | `enter_in_row_mode_inspects_the_whole_row`, `enter_in_cell_mode_inspects_the_cell_under_the_cursor`, `enter_in_column_mode_is_inert`, `enter_inspects_the_row_as_the_grid_draws_it` |
 | `Enter` over the grid is refused where it names nothing, or several things | `enter_is_inert_with_nothing_loaded`, `enter_is_inert_on_an_empty_grid`, `enter_is_inert_while_a_range_is_held`, `enter_is_inert_on_a_frame_with_no_room_for_the_block` |
 | The inspector scrolls, closes, quits and swallows the rest | `j_k_and_the_arrows_scroll_a_line`, `the_paging_keys_scroll_a_body_height`, `g_home_g_and_end_reach_the_top_and_the_bottom`, `scrolling_stops_at_the_last_line`, `enter_and_escape_close_it`, `q_quits_from_the_inspector`, `every_other_key_is_inert` |
 | `y` in the inspector yanks per mode and leaves it open | `y_yanks_the_bare_value_and_leaves_the_inspector_open`, `y_yanks_the_row_as_one_csv_line`, `y_over_a_null_yanks_nothing` |
