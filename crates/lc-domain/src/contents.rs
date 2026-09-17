@@ -877,6 +877,21 @@ impl ContentsPanel {
         flying
     }
 
+    /// Puts a loaded result with more to fetch in `fetch` over `bytes` of
+    /// estimate, which no fast test can afford to fetch for real.
+    #[cfg(test)]
+    pub(crate) fn pretend(&mut self, bytes: Bytes, to: Fetch) {
+        if let ContentsState::Loaded {
+            page,
+            paging: Paging::More { fetch, .. },
+            ..
+        } = &mut self.state
+        {
+            page.bytes = bytes;
+            *fetch = to;
+        }
+    }
+
     fn paging_mut(&mut self) -> Option<&mut Paging> {
         match &mut self.state {
             ContentsState::Loaded { paging, .. } => Some(paging),

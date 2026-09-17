@@ -14,6 +14,7 @@ mod diagnostics;
 mod drop;
 mod export;
 mod filter;
+mod footer;
 mod highlight;
 mod hints;
 pub mod hit;

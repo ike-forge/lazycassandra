@@ -15,7 +15,7 @@ mod tables;
 mod title;
 
 pub use crate::style::Segment;
-pub use contents::{GridCell, GridColumn};
+pub use contents::{Footer, GridCell, GridColumn, SIZE_SHOWN_FROM};
 pub use details::{ColumnKind, DetailRow, Details, Group, Heading, IdentityKind, Section};
 pub use hints::{Binding, Hint, HintBar, Liveness, Stroke};
 pub use logs::{LogRow, RUNNING};
@@ -473,6 +473,9 @@ pub struct PanelView {
     /// Whether this panel is waiting on the cluster, and how far into the
     /// loader's cycle that wait is.
     pub activity: Activity,
+    /// What the bottom border says about how much is loaded. Table contents
+    /// alone has one.
+    pub footer: Option<Footer>,
 }
 
 /// What a panel has to show.
@@ -610,6 +613,10 @@ pub fn view_model(state: &State) -> ViewModel {
                 }
             } else {
                 Activity::Resting
+            },
+            footer: match panel {
+                Panel::Contents => contents::footer(state),
+                Panel::Tables | Panel::Ddl | Panel::Queries => None,
             },
         }),
         focus: state.focus(),

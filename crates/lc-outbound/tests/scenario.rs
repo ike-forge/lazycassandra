@@ -746,11 +746,24 @@ async fn a_read_pages_through_p_and_then_shift_p_to_the_end() {
     run(&cluster, &mut state, effects).await;
     assert_eq!(state.contents.row_count(), 4);
     assert!(state.contents.can_fetch(), "one page, and no further");
+    let footer = view_model(&state).panels[2]
+        .footer
+        .clone()
+        .expect("a footer");
+    assert_eq!(
+        (footer.rows.as_str(), footer.status.as_deref()),
+        ("4 rows", Some("more"))
+    );
 
     let effects = press(&mut state, Key::Char('P'));
     run(&cluster, &mut state, effects).await;
     assert_eq!(state.contents.row_count(), 6);
     assert!(!state.contents.has_more());
+    let footer = view_model(&state).panels[2]
+        .footer
+        .clone()
+        .expect("a footer");
+    assert_eq!((footer.rows.as_str(), footer.status), ("6 rows", None));
 
     assert_eq!(
         cluster.executed(),
