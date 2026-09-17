@@ -210,3 +210,11 @@ CREATE TABLE IF NOT EXISTS big_cells (
     thumbnail   blob,
     PRIMARY KEY ((id))
 );
+
+-- ~100 KB of text a row over 1 200 rows, about 120 MB: past the 100 MB where
+-- the grid's P stops. Written by seed.sh with COPY FROM, which generates it.
+CREATE TABLE IF NOT EXISTS heavy_rows (
+    id   int,
+    body text,
+    PRIMARY KEY ((id))
+);

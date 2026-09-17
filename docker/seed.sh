@@ -16,6 +16,7 @@
 #     silently mangles
 #   - the 100-column row, whose column list is arithmetic
 #   - the big cells, 60 rows of kilobyte-sized values
+#   - the heavy rows, 120 MB of CSV for COPY FROM
 
 set -euo pipefail
 
@@ -28,6 +29,7 @@ AUDIT_ROWS=10000
 AUDIT_BATCH=100
 VECTOR_DIMS=384
 BIG_CELL_ROWS=60
+HEAVY_ROWS=1200
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -201,6 +203,26 @@ BEGIN {
 }' > "$WORK/big-cells.cql"
 cql_file "$WORK/big-cells.cql"
 
+step "Generating ${HEAVY_ROWS} rows of ~100 KB text (edge_cases.heavy_rows)"
+# Each body is a slice of one prebuilt text, its length and start a function
+# of the row index: concatenating 100 KB a row is quadratic in awk.
+awk -v rows="$HEAVY_ROWS" '
+BEGIN {
+    text = "Row after row of the same plain prose keeps the grid busy. "
+    while (length(text) < 120000) text = text text
+    for (i = 0; i < rows; i++) {
+        size = 95000 + (i * 37) % 10001
+        printf "%d,\"%s\"\n", i, substr(text, 1 + (i * 13) % 997, size)
+    }
+}' > "$WORK/heavy-rows.csv"
+# One row a batch: a single-partition batch is exempt from
+# batch_size_fail_threshold, which 100 KB is twice.
+cat > "$WORK/heavy-rows.cql" <<EOF
+COPY edge_cases.heavy_rows (id, body) FROM '$WORK/heavy-rows.csv'
+    WITH MAXBATCHSIZE = 1 AND CHUNKSIZE = 50;
+EOF
+cql_file "$WORK/heavy-rows.cql"
+
 step "Summary"
 # Via -f, not -e: cqlsh's -e splitter mis-handles statements that span lines
 # and reports a spurious trailing syntax error.
@@ -210,6 +232,7 @@ SELECT keyspace_name, table_name FROM system_schema.tables
 SELECT keyspace_name, view_name FROM system_schema.views
   WHERE keyspace_name IN ('shop', 'typezoo', 'edge_cases');
 SELECT count(*) AS audit_rows FROM shop.audit_log_by_day WHERE day = '${AUDIT_DAY}';
+SELECT count(*) AS heavy_rows FROM edge_cases.heavy_rows;
 EOF
 cql_file "$WORK/summary.cql"
 
