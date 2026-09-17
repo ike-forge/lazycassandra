@@ -5587,18 +5587,18 @@ mod tests {
             (
                 footer(
                     "812,000 rows",
-                    Some(("≈ 104 MB", warning)),
-                    Some("stopped at 100 MB"),
+                    Some(("≈ 104.4 MB", warning)),
+                    Some("stopped at 100.0 MB"),
                 ),
-                "─ 812,000 rows · ≈ 104 MB · stopped at 100 MB ─",
+                "─ 812,000 rows · ≈ 104.4 MB · stopped at 100.0 MB ─",
             ),
             (
                 footer(
                     "1,000,000 rows",
-                    Some(("≈ 61 MB", Token::Muted)),
+                    Some(("≈ 61.0 MB", Token::Muted)),
                     Some("stopped at 1,000,000 rows"),
                 ),
-                "─ 1,000,000 rows · ≈ 61 MB · stopped at 1,000,000 rows ─",
+                "─ 1,000,000 rows · ≈ 61.0 MB · stopped at 1,000,000 rows ─",
             ),
         ] {
             let bottom = contents_bottom(&drawn_with_footer(160, &state, footer));
@@ -5615,7 +5615,7 @@ mod tests {
             &state,
             footer(
                 "3 rows",
-                Some(("≈ 104 MB", Token::Severity(Severity::Warning))),
+                Some(("≈ 104.4 MB", Token::Severity(Severity::Warning))),
                 Some("more"),
             ),
         );
@@ -5663,8 +5663,8 @@ mod tests {
         let stopped = || {
             footer(
                 "812,000 rows",
-                Some(("≈ 104 MB", Token::Muted)),
-                Some("stopped at 100 MB"),
+                Some(("≈ 104.4 MB", Token::Muted)),
+                Some("stopped at 100.0 MB"),
             )
         };
 
@@ -5672,9 +5672,9 @@ mod tests {
         let middling = contents_bottom(&drawn_with_footer(70, &state, stopped()));
         let narrow = contents_bottom(&drawn_with_footer(40, &state, stopped()));
 
-        assert!(wide.contains("≈ 104 MB"), "{wide:?}");
+        assert!(wide.contains("≈ 104.4 MB"), "{wide:?}");
         assert!(
-            middling.starts_with("─ 812,000 rows · stopped at 100 MB ─"),
+            middling.starts_with("─ 812,000 rows · stopped at 100.0 MB ─"),
             "{middling:?}"
         );
         assert!(!narrow.contains("rows"), "{narrow:?}");

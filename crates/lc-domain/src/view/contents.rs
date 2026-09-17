@@ -6,10 +6,11 @@
 
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
+use crate::bytes::Bytes;
 use crate::cell;
 use crate::contents::{
-    Bytes, ContentsState, Fetch, GridPage, MEMORY_STEP, Order, Paging, SelectionMode, Stopped,
-    Subject, TableRef,
+    ContentsState, Fetch, GridPage, MEMORY_STEP, Order, Paging, SelectionMode, Stopped, Subject,
+    TableRef,
 };
 use crate::inspect::{Inspected, Inspector};
 use crate::model::{CqlValue, Schema};
@@ -76,7 +77,7 @@ pub struct Footer {
 }
 
 /// The estimate below which the footer leaves it out.
-pub const SIZE_SHOWN_FROM: Bytes = Bytes::new(10_000_000);
+pub const SIZE_SHOWN_FROM: Bytes = Bytes::MB.times(10);
 
 pub(super) fn footer(state: &State) -> Option<Footer> {
     let ContentsState::Loaded { page, paging, .. } = state.contents.state() else {
@@ -91,7 +92,7 @@ pub(super) fn footer(state: &State) -> Option<Footer> {
         },
         size: (bytes >= SIZE_SHOWN_FROM).then(|| {
             Segment::styled(
-                format!("≈ {}", megabytes(bytes)),
+                format!("≈ {bytes}"),
                 if bytes >= MEMORY_STEP {
                     Token::Severity(Severity::Warning)
                 } else {
@@ -104,18 +105,13 @@ pub(super) fn footer(state: &State) -> Option<Footer> {
             Paging::More { fetch, .. } => Some(match fetch {
                 Fetch::Idle => "more".to_owned(),
                 Fetch::One(_) | Fetch::All { .. } => "loading".to_owned(),
-                Fetch::Stopped(Stopped::Memory(at)) => format!("stopped at {}", megabytes(*at)),
+                Fetch::Stopped(Stopped::Memory(at)) => format!("stopped at {at}"),
                 Fetch::Stopped(Stopped::Rows(at)) => {
                     format!("stopped at {} rows", thousands(*at))
                 }
             }),
         },
     })
-}
-
-/// Whole megabytes, rounded down: `104 MB`.
-fn megabytes(bytes: Bytes) -> String {
-    format!("{} MB", bytes.get() / 1_000_000)
 }
 
 /// `1234567` as `1,234,567`.
@@ -1372,12 +1368,12 @@ mod tests {
     fn a_memory_stop_names_the_estimate_in_the_warning_colour() {
         let mut state = showing(with_more(ids(812)));
         state.contents.pretend(
-            Bytes::new(104_000_000),
+            Bytes::new(109_470_105),
             Fetch::Stopped(Stopped::Memory(MEMORY_STEP)),
         );
 
         let footer = footer_of(&state).expect("a footer");
-        assert_eq!(said(&footer), "812 rows · ≈ 104 MB · stopped at 100 MB");
+        assert_eq!(said(&footer), "812 rows · ≈ 104.4 MB · stopped at 100.0 MB");
         assert_eq!(
             footer.size.and_then(|size| size.token),
             Some(Token::Severity(Severity::Warning))
@@ -1388,14 +1384,14 @@ mod tests {
     fn a_row_stop_names_the_rows_it_stopped_at() {
         let mut state = showing(with_more(ids(3)));
         state.contents.pretend(
-            Bytes::new(61_000_000),
+            Bytes::MB.times(61),
             Fetch::Stopped(Stopped::Rows(1_000_000)),
         );
 
         let footer = footer_of(&state).expect("a footer");
         assert_eq!(
             said(&footer),
-            "3 rows · ≈ 61 MB · stopped at 1,000,000 rows"
+            "3 rows · ≈ 61.0 MB · stopped at 1,000,000 rows"
         );
         assert_eq!(
             footer.size.and_then(|size| size.token),

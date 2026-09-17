@@ -724,7 +724,7 @@ it was pressed, whichever comes first; pressed again it continues to the next
 multiple. `p` ignores both stops. `Esc` stops a running `P`: the page in flight
 lands and no further one is asked for. The bottom border counts the rows
 fetched and says whether there is more, a page is loading or `P` stopped, with
-the estimate from 10 MB up. Export streams and is bound by neither stop.
+the estimate from 10 MB up; every size is 1024-based. Export streams and is bound by neither stop.
 See [grid paging design](superpowers/specs/2026-09-17-grid-paging-design.md).
 
 ### The filter prompt

@@ -7,6 +7,7 @@
 
 use std::cmp::Ordering;
 
+use crate::bytes::Bytes;
 use crate::config::MaxColumnWidth;
 use crate::grid::ColumnScroll;
 use crate::model::{CqlValue, KeyspaceKind, Page, PagingState, QueryId, Row, Statement};
@@ -127,7 +128,7 @@ pub struct Stops {
 }
 
 /// Estimated memory between two memory stops.
-pub const MEMORY_STEP: Bytes = Bytes(100_000_000);
+pub const MEMORY_STEP: Bytes = Bytes::MB.times(100);
 
 /// Rows between two row stops.
 pub const ROW_STEP: usize = 1_000_000;
@@ -135,14 +136,14 @@ pub const ROW_STEP: usize = 1_000_000;
 impl Stops {
     const fn above(bytes: Bytes, rows: usize) -> Self {
         Self {
-            bytes: Bytes((bytes.0 / MEMORY_STEP.0 + 1) * MEMORY_STEP.0),
+            bytes: MEMORY_STEP.times(bytes.get() / MEMORY_STEP.get() + 1),
             rows: (rows / ROW_STEP + 1) * ROW_STEP,
         }
     }
 
     /// The stop a grid of `bytes` and `rows` has reached, memory first.
     const fn reached(self, bytes: Bytes, rows: usize) -> Option<Stopped> {
-        if bytes.0 >= self.bytes.0 {
+        if bytes.get() >= self.bytes.get() {
             Some(Stopped::Memory(self.bytes))
         } else if rows >= self.rows {
             Some(Stopped::Rows(self.rows))
@@ -159,26 +160,12 @@ pub enum Stopped {
     Rows(usize),
 }
 
-/// Estimated memory, in bytes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Bytes(u64);
-
 impl Bytes {
-    #[must_use]
-    pub const fn new(bytes: u64) -> Self {
-        Self(bytes)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-
     /// What `row` is estimated to hold. Never recomputed: a page's estimate is
     /// added as it lands (design §3).
     #[must_use]
     pub fn of_row(row: &Row) -> Self {
-        Self(ROW_OVERHEAD + row.values.iter().map(value_bytes).sum::<u64>())
+        Self::new(ROW_OVERHEAD + row.values.iter().map(value_bytes).sum::<u64>())
     }
 }
 
@@ -326,7 +313,7 @@ impl GridPage {
         let widths = crate::grid::widths(&page, cap);
         let filters = vec![None; page.columns.len()];
         let order = (0..page.rows.len()).collect();
-        let bytes = Bytes(page.rows.iter().map(|row| Bytes::of_row(row).0).sum());
+        let bytes = page.rows.iter().map(Bytes::of_row).sum();
 
         Self {
             page: Page { next: None, ..page },
@@ -363,11 +350,7 @@ impl GridPage {
         }
 
         let start = self.page.rows.len();
-        self.bytes.0 += added
-            .rows
-            .iter()
-            .map(|row| Bytes::of_row(row).0)
-            .sum::<u64>();
+        self.bytes = self.bytes + added.rows.iter().map(Bytes::of_row).sum();
         self.page.rows.extend(added.rows);
 
         let kept: Vec<usize> = (start..self.page.rows.len())
@@ -2024,7 +2007,7 @@ mod tests {
     fn every_page_stops_at_the_next_hundred_megabytes_and_continues_past_it() {
         let mut panel = pageable(3);
         if let ContentsState::Loaded { page, .. } = &mut panel.state {
-            page.bytes = Bytes(MEMORY_STEP.get() - 1);
+            page.bytes = Bytes::new(MEMORY_STEP.get() - 1);
         }
 
         panel.fetch_all(QueryId::next).expect("a page");
@@ -2042,14 +2025,12 @@ mod tests {
             Landed::Appended(Some(_))
         ));
         if let ContentsState::Loaded { page, .. } = &mut panel.state {
-            page.bytes = Bytes(2 * MEMORY_STEP.get());
+            page.bytes = MEMORY_STEP.times(2);
         }
         land(&mut panel, more(1));
         assert_eq!(
             fetch_of(&panel),
-            Some(Fetch::Stopped(Stopped::Memory(Bytes(
-                2 * MEMORY_STEP.get()
-            )))),
+            Some(Fetch::Stopped(Stopped::Memory(MEMORY_STEP.times(2)))),
             "the next stop is the next multiple"
         );
     }
@@ -2089,7 +2070,7 @@ mod tests {
     fn the_next_page_ignores_a_stop() {
         let mut panel = pageable(3);
         if let ContentsState::Loaded { page, .. } = &mut panel.state {
-            page.bytes = Bytes(MEMORY_STEP.get() - 1);
+            page.bytes = Bytes::new(MEMORY_STEP.get() - 1);
         }
         panel.fetch_all(QueryId::next).expect("a page");
         land(&mut panel, more(1));
@@ -2301,14 +2282,14 @@ mod tests {
 
     #[test]
     fn a_stop_is_the_next_multiple_above_where_every_page_was_pressed() {
-        let stops = Stops::above(Bytes(MEMORY_STEP.get()), 0);
+        let stops = Stops::above(MEMORY_STEP, 0);
 
-        assert_eq!(stops.bytes, Bytes(2 * MEMORY_STEP.get()));
+        assert_eq!(stops.bytes, MEMORY_STEP.times(2));
         assert_eq!(stops.rows, ROW_STEP);
-        assert_eq!(stops.reached(Bytes(0), ROW_STEP - 1), None);
+        assert_eq!(stops.reached(Bytes::new(0), ROW_STEP - 1), None);
         assert_eq!(
-            stops.reached(Bytes(2 * MEMORY_STEP.get()), ROW_STEP),
-            Some(Stopped::Memory(Bytes(2 * MEMORY_STEP.get()))),
+            stops.reached(MEMORY_STEP.times(2), ROW_STEP),
+            Some(Stopped::Memory(MEMORY_STEP.times(2))),
             "memory first when a page reaches both"
         );
     }
