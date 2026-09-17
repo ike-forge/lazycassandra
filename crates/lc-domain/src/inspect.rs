@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::bytes::Bytes;
 use crate::cell;
 use crate::contents::Subject;
 use crate::model::CqlValue;
@@ -139,32 +140,8 @@ impl Inspector {
             other => cell::text(other).len(),
         };
 
-        Some(size(bytes))
+        Some(Bytes::new(bytes as u64).to_string())
     }
-}
-
-/// `bytes` in the largest 1024-based unit that keeps a whole part, to one
-/// decimal: `812 B`, `1.2 KB`, `3.4 MB`.
-#[must_use]
-pub fn size(bytes: usize) -> String {
-    const UNIT: usize = 1024;
-
-    if bytes < UNIT {
-        return format!("{bytes} B");
-    }
-
-    let kilo = tenths(bytes, UNIT);
-    if kilo < UNIT * 10 {
-        return format!("{}.{} KB", kilo / 10, kilo % 10);
-    }
-
-    let mega = tenths(bytes, UNIT * UNIT);
-    format!("{}.{} MB", mega / 10, mega % 10)
-}
-
-/// `bytes / unit` in tenths, rounded half up.
-const fn tenths(bytes: usize, unit: usize) -> usize {
-    (bytes.saturating_mul(10) + unit / 2) / unit
 }
 
 /// `value` laid out for reading, one string per line, leading spaces its
@@ -445,16 +422,6 @@ mod tests {
             lines(&text("sgr[\u{1b}[31mRED\u{1b}[0m] tab[\t] lf[\n]")),
             ["sgr[[31mRED[0m] tab[] lf[]"]
         );
-    }
-
-    #[test]
-    fn a_size_is_1024_based_to_one_decimal() {
-        assert_eq!(size(0), "0 B");
-        assert_eq!(size(812), "812 B");
-        assert_eq!(size(1023), "1023 B");
-        assert_eq!(size(1024), "1.0 KB");
-        assert_eq!(size(1229), "1.2 KB");
-        assert_eq!(size(3_565_158), "3.4 MB");
     }
 
     fn cell(value: CqlValue) -> Inspector {

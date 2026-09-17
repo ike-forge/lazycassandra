@@ -211,8 +211,9 @@ CREATE TABLE IF NOT EXISTS big_cells (
     PRIMARY KEY ((id))
 );
 
--- ~100 KB of text a row over 1 200 rows, about 120 MB: past the 100 MB where
--- the grid's P stops. Written by seed.sh with COPY FROM, which generates it.
+-- ~100 KB of text a row over 2 400 rows, about 229 MB: past both the 100 MB
+-- and 200 MB stops of the grid's P before the result ends. Written by seed.sh
+-- with COPY FROM, which generates it.
 CREATE TABLE IF NOT EXISTS heavy_rows (
     id   int,
     body text,
