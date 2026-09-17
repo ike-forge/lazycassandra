@@ -11,7 +11,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use crate::config::{Config, ConnectionConfig, Credential, Diagnostic};
+use crate::config::{Config, ConnectionConfig, Credential, Diagnostic, PageSize};
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
 use crate::theme::ThemeChoice;
@@ -33,7 +33,8 @@ pub trait Cluster: Send + Sync {
     async fn describe(&self, conn: ConnId) -> Result<Schema, DbError>;
     async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError>;
 
-    /// One page of `stmt`, continuing from `cursor` when there is one.
+    /// One page of at most `page_size` rows of `stmt`, continuing from
+    /// `cursor` when there is one.
     ///
     /// Replaces a `fetch_page(conn, cursor)` that could not be implemented:
     /// scylla's `query_single_page` needs the statement alongside the paging
@@ -43,6 +44,7 @@ pub trait Cluster: Send + Sync {
         &self,
         conn: ConnId,
         stmt: &Statement,
+        page_size: PageSize,
         cursor: Option<&PagingState>,
     ) -> Result<Page, DbError>;
 }

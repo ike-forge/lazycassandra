@@ -122,6 +122,7 @@ pub(crate) fn run(
             destination,
             format,
             overwrite,
+            page_size,
         } => crate::export::spawn(
             tx,
             cluster,
@@ -133,6 +134,7 @@ pub(crate) fn run(
                 destination: destination.clone(),
                 format: *format,
                 overwrite: *overwrite,
+                page_size: *page_size,
             },
         ),
 

@@ -2,6 +2,7 @@
 //! (docs/superpowers/specs/2026-08-14-export-design.md §9).
 
 use lc_domain::clock::Stamp;
+use lc_domain::config::PageSize;
 use lc_domain::export::{Confirm, Format, Stop};
 use lc_domain::model::{CqlValue, DbError, Key, KeyPress, Page, PagingState, Row};
 use lc_domain::posture::Posture;
@@ -131,6 +132,8 @@ async fn a_whole_table_export_writes_a_header_and_every_page() {
     .paging(three_pages());
     let writer = FakeWriter::default();
     let mut state = on_a_read_table(&cluster).await;
+    let size = PageSize::try_new(3).expect("in range");
+    state.config.driver.page_size = size;
 
     let effects = run_export_form(&mut state, Format::Csv);
     let export = expect_export(&effects).clone();
@@ -144,6 +147,12 @@ async fn a_whole_table_export_writes_a_header_and_every_page() {
     ));
 
     run_with_writer(&cluster, Some(&writer), &mut state, effects).await;
+
+    assert!(
+        cluster.page_sizes().ends_with(&[size; 3]),
+        "every page export asked for is driver.page_size: {:?}",
+        cluster.page_sizes()
+    );
 
     assert_eq!(
         writer.written(),

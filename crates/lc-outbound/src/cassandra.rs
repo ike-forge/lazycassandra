@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use lc_domain::config::{ConnectionConfig, Discovery};
+use lc_domain::config::{ConnectionConfig, Discovery, PageSize};
 use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Index, IndexKind, IndexTarget,
     Keyspace, Page, PagingState, PrimaryKey, Replication, Row, Schema, Statement, Table,
@@ -186,16 +186,21 @@ impl Cluster for CassandraCluster {
         &self,
         conn: ConnId,
         stmt: &Statement,
+        page_size: PageSize,
         cursor: Option<&PagingState>,
     ) -> Result<Page, DbError> {
         let session = self.session(conn).await?;
+        // `PageSize` tops out far below `i32::MAX`, and scylla panics on a
+        // size that is not positive.
+        let statement = scylla::statement::unprepared::Statement::new(stmt.cql.as_str())
+            .with_page_size(i32::try_from(page_size.get()).unwrap_or(i32::MAX));
         let paging = cursor.map_or(
             scylla::response::PagingState::start(),
             |PagingState(bytes)| scylla::response::PagingState::new_from_raw_bytes(bytes.clone()),
         );
 
         let (result, response) = session
-            .query_single_page(stmt.cql.as_str(), &[], paging)
+            .query_single_page(statement, &[], paging)
             .await
             .map_err(|error| DbError::Invalid(error.to_string()))?;
 

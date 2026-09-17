@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use lc_domain::config::{ConnectionConfig, ConnectionName};
+use lc_domain::config::{ConnectionConfig, ConnectionName, PageSize};
 use lc_domain::model::{
     ClusteringOrder, ConnId, CqlValue, DbError, IndexKind, Keyspace, KeyspaceKind, Replication,
     Statement,
@@ -564,7 +564,7 @@ async fn paging_walks_a_table_larger_than_one_driver_page() {
     let mut pages = 0;
     loop {
         let page = cluster
-            .execute_paged(conn, &stmt, cursor.as_ref())
+            .execute_paged(conn, &stmt, PageSize::default(), cursor.as_ref())
             .await
             .expect("a page");
         seen += page.rows.len();
@@ -583,6 +583,32 @@ async fn paging_walks_a_table_larger_than_one_driver_page() {
         seen >= 10_000,
         "every row of the wide partition came back, and then some"
     );
+}
+
+#[tokio::test]
+async fn a_page_holds_no_more_rows_than_the_page_size_asked_for() {
+    let conn = ConnId::next();
+    let cluster = CassandraCluster::new();
+    cluster
+        .connect(conn, &fixture())
+        .await
+        .expect("the fixture is up");
+    let stmt = Statement::select_everything("shop", "audit_log_by_day");
+    let size = PageSize::try_new(7).expect("in range");
+
+    let first = cluster
+        .execute_paged(conn, &stmt, size, None)
+        .await
+        .expect("a page");
+    let second = cluster
+        .execute_paged(conn, &stmt, size, first.next.as_ref())
+        .await
+        .expect("a page");
+
+    assert_eq!(first.rows.len(), 7);
+    assert!(first.next.is_some(), "10 000 rows do not fit in 7");
+    assert_eq!(second.rows.len(), 7);
+    assert_ne!(first.rows, second.rows, "the cursor moved on");
 }
 
 #[tokio::test]

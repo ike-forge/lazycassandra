@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
+use lc_domain::config::PageSize;
 use lc_domain::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
 use lc_domain::posture::Posture;
@@ -37,6 +38,8 @@ pub struct FakeCluster {
     /// The statements `execute` was asked for, in order. Behind a lock
     /// because the port takes `&self`; a scenario asserts on it afterwards.
     executed: Mutex<Vec<Statement>>,
+    /// The page size each `execute_paged` call asked for, in order.
+    page_sizes: Mutex<Vec<PageSize>>,
     /// Pages `execute_paged` walks, in order. Empty means one page — whatever
     /// `execute` would return — and no cursor.
     pages: Vec<Page>,
@@ -118,6 +121,15 @@ impl FakeCluster {
             .clone()
     }
 
+    /// The page size every `execute_paged` call has asked for, in order.
+    #[must_use]
+    pub fn page_sizes(&self) -> Vec<PageSize> {
+        self.page_sizes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// A cluster that cannot be reached at all.
     #[must_use]
     pub fn failing(error: DbError) -> Self {
@@ -176,12 +188,17 @@ impl Cluster for FakeCluster {
         &self,
         _conn: ConnId,
         stmt: &Statement,
+        page_size: PageSize,
         cursor: Option<&PagingState>,
     ) -> Result<Page, DbError> {
         self.executed
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(stmt.clone());
+        self.page_sizes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(page_size);
 
         if let Some(error) = self.execute_error.clone() {
             return Err(error);
@@ -345,21 +362,21 @@ mod tests {
         let stmt = Statement::typed("SELECT * FROM shop.orders");
 
         let first = cluster
-            .execute_paged(conn, &stmt, None)
+            .execute_paged(conn, &stmt, PageSize::default(), None)
             .await
             .expect("a page");
         assert_eq!(first, page(1, Some(1)));
 
         let cursor = first.next.clone().expect("a cursor");
         let second = cluster
-            .execute_paged(conn, &stmt, Some(&cursor))
+            .execute_paged(conn, &stmt, PageSize::default(), Some(&cursor))
             .await
             .expect("a page");
         assert_eq!(second, page(2, Some(2)));
 
         let cursor = second.next.clone().expect("a cursor");
         let third = cluster
-            .execute_paged(conn, &stmt, Some(&cursor))
+            .execute_paged(conn, &stmt, PageSize::default(), Some(&cursor))
             .await
             .expect("a page");
         assert_eq!(third.next, None, "the last page hands back no cursor");
@@ -370,7 +387,12 @@ mod tests {
         let cluster = FakeCluster::default();
 
         let page = cluster
-            .execute_paged(ConnId::next(), &Statement::typed("SELECT 1"), None)
+            .execute_paged(
+                ConnId::next(),
+                &Statement::typed("SELECT 1"),
+                PageSize::default(),
+                None,
+            )
             .await
             .expect("a page");
 

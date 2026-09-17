@@ -6,7 +6,7 @@
 
 use crate::clock::Stamp;
 use crate::commands::{CommandsPanel, Run};
-use crate::config::{Config, ConnectionConfig, Diagnostic};
+use crate::config::{Config, ConnectionConfig, Diagnostic, PageSize};
 use crate::contents::{ContentsState, Filter, SelectionMode, Subject, TableRef};
 use crate::cql;
 use crate::ddl::DdlTab;
@@ -167,6 +167,9 @@ pub enum Effect {
         destination: PathBuf,
         format: Format,
         overwrite: bool,
+        /// `driver.page_size`: export streams, so it pages by the driver's
+        /// size rather than the grid's (grid paging design §3).
+        page_size: PageSize,
     },
     Quit,
 }
@@ -2898,6 +2901,7 @@ fn start_export(state: &mut State) -> Vec<Effect> {
         destination,
         format,
         overwrite,
+        page_size: state.config.driver.page_size,
     }]
 }
 

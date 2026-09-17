@@ -13,6 +13,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use lc_domain::config::PageSize;
 use lc_domain::export::{Encoder, Format};
 use lc_domain::model::{ConnId, JobId, Page, Statement};
 use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
@@ -28,6 +29,7 @@ pub(crate) struct Job {
     pub(crate) destination: PathBuf,
     pub(crate) format: Format,
     pub(crate) overwrite: bool,
+    pub(crate) page_size: PageSize,
 }
 
 pub(crate) fn spawn(
@@ -119,7 +121,7 @@ async fn pages(
 
     loop {
         let page: Page = cluster
-            .execute_paged(job.conn, statement, cursor.as_ref())
+            .execute_paged(job.conn, statement, job.page_size, cursor.as_ref())
             .await
             .map_err(ExportError::Cluster)?;
 
