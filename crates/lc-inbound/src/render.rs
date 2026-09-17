@@ -5588,10 +5588,16 @@ mod tests {
     // ------------------------------------------------------------------
 
     fn footer(rows: &str, size: Option<(&str, Token)>, status: Option<&str>) -> Footer {
+        let (status, hint) = status.map_or((None, None), |status| match status.split_once(" — ") {
+            Some((status, hint)) => (Some(status.to_owned()), Some(hint.to_owned())),
+            None => (Some(status.to_owned()), None),
+        });
+
         Footer {
             rows: rows.to_owned(),
             size: size.map(|(text, token)| lc_domain::style::Segment::styled(text, token)),
-            status: status.map(str::to_owned),
+            status,
+            hint,
         }
     }
 
@@ -5621,17 +5627,17 @@ mod tests {
                 footer(
                     "812,000 rows",
                     Some(("≈ 104.4 MB", warning)),
-                    Some("stopped at 100.0 MB"),
+                    Some("paused past 100 MB — P for more"),
                 ),
-                "─ 812,000 rows · ≈ 104.4 MB · stopped at 100.0 MB ─",
+                "─ 812,000 rows · ≈ 104.4 MB · paused past 100 MB — P for more ─",
             ),
             (
                 footer(
                     "1,000,000 rows",
                     Some(("≈ 61.0 MB", Token::Muted)),
-                    Some("stopped at 1,000,000 rows"),
+                    Some("paused past 1,000,000 rows — P for more"),
                 ),
-                "─ 1,000,000 rows · ≈ 61.0 MB · stopped at 1,000,000 rows ─",
+                "─ 1,000,000 rows · ≈ 61.0 MB · paused past 1,000,000 rows — P for more ─",
             ),
         ] {
             let bottom = contents_bottom(&drawn_with_footer(160, &state, footer));
@@ -5691,23 +5697,31 @@ mod tests {
     }
 
     #[test]
-    fn a_narrow_border_drops_the_estimate_then_the_footer() {
+    fn a_narrow_border_drops_the_hint_then_the_estimate_then_the_footer() {
         let state = showing(sized_page(1, 3));
         let stopped = || {
             footer(
                 "812,000 rows",
                 Some(("≈ 104.4 MB", Token::Muted)),
-                Some("stopped at 100.0 MB"),
+                Some("paused past 100 MB — P for more"),
             )
         };
 
         let wide = contents_bottom(&drawn_with_footer(160, &state, stopped()));
+        let roomy = contents_bottom(&drawn_with_footer(95, &state, stopped()));
         let middling = contents_bottom(&drawn_with_footer(70, &state, stopped()));
         let narrow = contents_bottom(&drawn_with_footer(40, &state, stopped()));
 
-        assert!(wide.contains("≈ 104.4 MB"), "{wide:?}");
         assert!(
-            middling.starts_with("─ 812,000 rows · stopped at 100.0 MB ─"),
+            wide.contains("≈ 104.4 MB · paused past 100 MB — P for more"),
+            "{wide:?}"
+        );
+        assert!(
+            roomy.starts_with("─ 812,000 rows · ≈ 104.4 MB · paused past 100 MB ─"),
+            "{roomy:?}"
+        );
+        assert!(
+            middling.starts_with("─ 812,000 rows · paused past 100 MB ─"),
             "{middling:?}"
         );
         assert!(!narrow.contains("rows"), "{narrow:?}");

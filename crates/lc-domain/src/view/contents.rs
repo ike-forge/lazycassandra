@@ -74,6 +74,9 @@ pub struct Footer {
     pub size: Option<Segment>,
     /// `None` once the result ended.
     pub status: Option<String>,
+    /// The key that continues a stopped `P`. Dropped first on a narrow border:
+    /// the hint bar names it too.
+    pub hint: Option<String>,
 }
 
 /// The estimate below which the footer leaves it out.
@@ -105,12 +108,24 @@ pub(super) fn footer(state: &State) -> Option<Footer> {
             Paging::More { fetch, .. } => Some(match fetch {
                 Fetch::Idle => "more".to_owned(),
                 Fetch::One(_) | Fetch::All { .. } => "loading".to_owned(),
-                Fetch::Stopped(Stopped::Memory(at)) => format!("stopped at {at}"),
+                // A stop is a whole multiple of `MEMORY_STEP`, and the page that
+                // crossed it landed whole, so the estimate sits past it.
+                Fetch::Stopped(Stopped::Memory(at)) => {
+                    format!("paused past {} MB", at.get() / Bytes::MB.get())
+                }
                 Fetch::Stopped(Stopped::Rows(at)) => {
-                    format!("stopped at {} rows", thousands(*at))
+                    format!("paused past {} rows", thousands(*at))
                 }
             }),
         },
+        hint: matches!(
+            paging,
+            Paging::More {
+                fetch: Fetch::Stopped(_),
+                ..
+            }
+        )
+        .then(|| "P for more".to_owned()),
     })
 }
 
@@ -1332,6 +1347,10 @@ mod tests {
         .flatten()
         .collect::<Vec<_>>()
         .join(" · ")
+            + &footer
+                .hint
+                .as_ref()
+                .map_or_else(String::new, |hint| format!(" — {hint}"))
     }
 
     fn with_more(page: Page) -> Page {
@@ -1375,7 +1394,10 @@ mod tests {
         );
 
         let footer = footer_of(&state).expect("a footer");
-        assert_eq!(said(&footer), "812 rows · ≈ 104.4 MB · stopped at 100.0 MB");
+        assert_eq!(
+            said(&footer),
+            "812 rows · ≈ 104.4 MB · paused past 100 MB — P for more"
+        );
         assert_eq!(
             footer.size.and_then(|size| size.token),
             Some(Token::Severity(Severity::Warning))
@@ -1393,7 +1415,7 @@ mod tests {
         let footer = footer_of(&state).expect("a footer");
         assert_eq!(
             said(&footer),
-            "3 rows · ≈ 61.0 MB · stopped at 1,000,000 rows"
+            "3 rows · ≈ 61.0 MB · paused past 1,000,000 rows — P for more"
         );
         assert_eq!(
             footer.size.and_then(|size| size.token),
