@@ -221,9 +221,25 @@ impl Cluster for CassandraCluster {
 /// `execute_paged`, which differ only in how they got the result and what
 /// they do with `Page::next` afterwards.
 fn to_page(result: scylla::response::query_result::QueryResult) -> Result<Page, DbError> {
-    let result = result
-        .into_rows_result()
-        .map_err(|error| DbError::Invalid(error.to_string()))?;
+    use scylla::response::query_result::IntoRowsResultError;
+
+    let result = match result.into_rows_result() {
+        Ok(result) => result,
+        // A mutation and a DDL statement answer with a `Void` result, which
+        // is not an error: `Cluster::execute` is the unpaged path and every
+        // statement that comes through it returns no rows (§5). The driver
+        // spells "no rows to read" as a failed downcast, so the empty page is
+        // built here rather than reported as a rejection the cluster never
+        // made.
+        Err(IntoRowsResultError::ResultNotRows(_)) => {
+            return Ok(Page {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                next: None,
+            });
+        }
+        Err(error) => return Err(DbError::Invalid(error.to_string())),
+    };
 
     let columns = result
         .column_specs()

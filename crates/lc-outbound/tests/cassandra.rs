@@ -671,3 +671,41 @@ async fn the_option_set_covers_what_the_layout_rule_expects_of_cassandra_5() {
     );
     assert_eq!(table.options.get("table_name"), None);
 }
+
+/// A mutation answers with a `Void` result, which `into_rows_result` reports
+/// as a failed downcast. Every statement reaching `execute` is one — it is the
+/// unpaged path (architecture.md §5) — so a `Void` is an empty page rather
+/// than a rejection the cluster never made. Only the real driver produces one,
+/// which is why this lives here and not in the scenario tier.
+#[tokio::test]
+async fn a_mutation_answers_with_an_empty_page_rather_than_an_error() {
+    let conn = ConnId::next();
+    let cluster = CassandraCluster::new();
+    let mut writable = fixture();
+    writable.posture = Posture::Writable;
+
+    cluster
+        .connect(conn, &writable)
+        .await
+        .expect("the fixture cluster is up");
+
+    let page = cluster
+        .execute(
+            conn,
+            &Statement::update_row(
+                "shop",
+                "customers_by_id",
+                &[("country_code".to_owned(), "'GB'".to_owned())],
+                &[(
+                    "customer_id".to_owned(),
+                    "a0000000-0000-4000-8000-000000000003".to_owned(),
+                )],
+            ),
+        )
+        .await
+        .expect("an UPDATE is not an error");
+
+    assert!(page.rows.is_empty());
+    assert!(page.columns.is_empty());
+    assert!(page.next.is_none());
+}
