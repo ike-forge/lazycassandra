@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 
 use crate::bytes::Bytes;
 use crate::config::MaxColumnWidth;
+use crate::edit::{Edited, Edits};
 use crate::grid::ColumnScroll;
 use crate::model::{CqlValue, DbError, KeyspaceKind, Page, PagingState, QueryId, Row, Statement};
 use crate::search::{Direction, Search};
@@ -314,6 +315,12 @@ pub struct GridPage {
     /// which row is the third one (design §4).
     order: Vec<usize>,
     bytes: Bytes,
+    /// Cells typed into and not yet written, keyed by page row rather than by
+    /// drawn position. Here for the sort's and the filters' reason: an edit
+    /// addresses the page it was made on, and a new page replaces this whole
+    /// value — so a re-read discards them, which is the honest outcome
+    /// (cell editing design §4).
+    edits: Edits,
 }
 
 impl GridPage {
@@ -332,6 +339,7 @@ impl GridPage {
             filters,
             order,
             bytes,
+            edits: Edits::default(),
         }
     }
 
@@ -413,6 +421,92 @@ impl GridPage {
     #[must_use]
     pub const fn page(&self) -> &Page {
         &self.page
+    }
+
+    /// The uncommitted edits standing on this page.
+    #[must_use]
+    pub const fn edits(&self) -> &Edits {
+        &self.edits
+    }
+
+    /// The value the `index`th drawn row's `column`th cell says — the edit
+    /// where there is one, and what the cluster sent otherwise.
+    ///
+    /// The one answer every reader takes, so the grid, the inspector, a yank,
+    /// an export and a search cannot disagree about what a cell says — the
+    /// rule [`Self::order`] already sets for which row is the third one
+    /// (design §4).
+    #[must_use]
+    pub fn value(&self, index: usize, column: usize) -> Option<&CqlValue> {
+        let at = *self.order.get(index)?;
+
+        Some(match self.edits.get(at, column) {
+            Some(edited) => edited.value(),
+            None => self.page.rows.get(at)?.values.get(column)?,
+        })
+    }
+
+    /// Whether the `index`th drawn row's `column`th cell has been typed into
+    /// and not yet written.
+    #[must_use]
+    pub fn is_edited(&self, index: usize, column: usize) -> bool {
+        self.order
+            .get(index)
+            .is_some_and(|at| self.edits.get(*at, column).is_some())
+    }
+
+    /// The rows as the grid draws them — the arrangement applied and every
+    /// edit in place. What a yank and an export of the fetched rows copy:
+    /// both copy what is on screen (design §4).
+    #[must_use]
+    pub fn drawn_rows(&self) -> Vec<Row> {
+        (0..self.order.len())
+            .map(|index| Row {
+                values: (0..self.page.columns.len())
+                    .map(|column| self.value(index, column).cloned().unwrap_or(CqlValue::Null))
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// Records `edited` over the `index`th drawn row's `column`th cell.
+    ///
+    /// An edit naming the value already there records nothing and clears what
+    /// was: an edit that restores what it started from is not an edit
+    /// (design §1).
+    pub fn set_edit(&mut self, index: usize, column: usize, edited: Edited) {
+        let Some(&at) = self.order.get(index) else {
+            return;
+        };
+        let original = self
+            .page
+            .rows
+            .get(at)
+            .and_then(|row| row.values.get(column));
+
+        let kept = (original != Some(edited.value())).then_some(edited);
+        self.edits.set(at, column, kept);
+    }
+
+    /// Writes every edit into the rows themselves and drops them: what the
+    /// cluster has now taken is what the page holds.
+    ///
+    /// The page is not re-read — a re-read costs the user their place, their
+    /// paging and their arrangement, and these are exactly the values the
+    /// cluster was sent (design §5). The arrangement is left alone for the
+    /// same reason it was left alone while they were dirty: re-sorting here
+    /// would move the row out from under the cursor that edited it.
+    pub fn commit_edits(&mut self) {
+        for ((row, column), edited) in self.edits.drain() {
+            if let Some(cell) = self
+                .page
+                .rows
+                .get_mut(row)
+                .and_then(|row| row.values.get_mut(column))
+            {
+                *cell = edited.value().clone();
+            }
+        }
     }
 
     /// Each column's capped width, measured as rows land.
@@ -747,8 +841,7 @@ impl ContentsPanel {
             })
             .find(|at| {
                 let (row, column) = (at / columns, at % columns);
-                page.row(row)
-                    .and_then(|row| row.values.get(column))
+                page.value(row, column)
                     .is_some_and(|value| search.matches(&crate::cell::text(value)))
             })
             .map(|at| (at / columns, at % columns))
@@ -1134,6 +1227,15 @@ impl ContentsPanel {
     #[must_use]
     pub const fn loaded(&self) -> Option<&GridPage> {
         match &self.state {
+            ContentsState::Loaded { page, .. } => Some(page),
+            _ => None,
+        }
+    }
+
+    /// The loaded page, for the two writers that change a cell rather than
+    /// read one: the edit `⏎` accepts and the write-back a commit does.
+    pub const fn loaded_mut(&mut self) -> Option<&mut GridPage> {
+        match &mut self.state {
             ContentsState::Loaded { page, .. } => Some(page),
             _ => None,
         }

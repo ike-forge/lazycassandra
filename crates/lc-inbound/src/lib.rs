@@ -8,6 +8,7 @@
 //! concrete `ratatui` style.
 
 mod body;
+mod commit;
 mod connections;
 mod details;
 mod diagnostics;

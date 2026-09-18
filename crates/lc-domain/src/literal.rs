@@ -64,10 +64,10 @@ pub fn of(cql_type: &str, value: &CqlValue) -> Option<String> {
     }
 }
 
-/// The type as the whitelist spells it: lower case, and with a `frozen<…>`
+/// The type as a whitelist spells it: lower case, and with a `frozen<…>`
 /// wrapper taken off. `system_schema` reports what was declared, and a
 /// declaration's case is the user's.
-fn normalised(cql_type: &str) -> String {
+pub(crate) fn normalised(cql_type: &str) -> String {
     let trimmed = cql_type.trim().to_ascii_lowercase();
 
     trimmed
@@ -79,7 +79,7 @@ fn normalised(cql_type: &str) -> String {
 /// A CQL string literal. The single quote is the only character with a
 /// meaning inside one, and it is escaped by doubling — the rule
 /// `Statement::quoted` follows for identifiers, with the other quote.
-fn quoted(text: &str) -> String {
+pub(crate) fn quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 

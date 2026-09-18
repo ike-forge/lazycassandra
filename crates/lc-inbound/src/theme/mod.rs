@@ -257,7 +257,11 @@ impl Theme {
             Token::Posture(Posture::Protected) | Token::Severity(Severity::Danger) => {
                 fg(palette.danger).add_modifier(Modifier::BOLD)
             }
-            Token::Severity(Severity::Warning) => fg(palette.warning),
+            // `Dirty` shares the warning colour rather than declaring a
+            // role of its own: an uncommitted value is a claim about the
+            // screen the cluster has not agreed to yet, which is what this
+            // colour already says (cell editing design §7).
+            Token::Severity(Severity::Warning) | Token::Dirty => fg(palette.warning),
             Token::Severity(Severity::Info) => fg(palette.info),
             Token::PropertyName => fg(palette.label),
             Token::Muted | Token::HintAction => fg(palette.dim),

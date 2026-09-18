@@ -288,12 +288,48 @@ const DROP: &[Command] = &[
     ),
 ];
 
+/// Editing a value, and writing what has been edited
+/// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7).
+///
+/// `e` is inert: it answers inside the inspector alone, and the palette
+/// pressing it outside one would find nothing — the rule the column keys
+/// under `CONTENTS` already follow. The last two mean something only inside
+/// the confirmation, and their keys mean something else outside it, so the
+/// palette may not run them either (palette execution design §5).
+const EDIT: &[Command] = &[
+    Command::mutating(
+        &[Stroke::key(Key::Char('e'))],
+        "edit this value",
+        Run::Inert,
+    ),
+    Command::mutating(
+        &[Stroke::ctrl(Key::Char('s'))],
+        "commit the edits",
+        Run::In(Panel::Contents),
+    ),
+    Command::mutating(
+        &[Stroke::key(Key::Char('y'))],
+        "yes, write them",
+        Run::Inert,
+    ),
+    Command::new(
+        &[Stroke::key(Key::Char('n')), Stroke::key(Key::Escape)],
+        "cancel the commit",
+        Run::Inert,
+    ),
+];
+
 const CONTENTS: &[Command] = &[
     Command::new(
         &[Stroke::key(Key::Enter)],
         "inspect",
         Run::In(Panel::Contents),
     ),
+    // Inert for the column keys' reason below: it answers inside the
+    // inspector alone, and the palette pressing it outside one would find
+    // nothing. Listed because the palette may not omit what a key does
+    // somewhere (cell inspector design §4, §6).
+    Command::new(&[Stroke::key(Key::Char('Y'))], "copy this line", Run::Inert),
     Command::paging(&[Stroke::key(Key::Char('p'))], "fetch the next page"),
     Command::paging(&[Stroke::key(Key::Char('P'))], "fetch every page"),
     Command::new(
@@ -426,6 +462,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Drop and delete",
         commands: DROP,
+    },
+    Group {
+        heading: "Edit",
+        commands: EDIT,
     },
     Group {
         heading: "Export",
@@ -916,16 +956,16 @@ mod tests {
         assert_eq!(cancel.gate, Gate::Anywhere);
     }
 
-    /// Every gated command lives under the one heading that holds them, which
-    /// is what keeps this list reviewable: a new mutating binding filed
-    /// elsewhere is a row this test asks about.
+    /// Every gated command lives under one of the two headings that hold
+    /// them, which is what keeps this list reviewable: a new mutating binding
+    /// filed elsewhere is a row this test asks about.
     #[test]
-    fn every_gated_command_is_a_drop_or_a_delete() {
+    fn every_gated_command_is_a_drop_a_delete_or_an_edit() {
         for command in commands() {
             if command.gate == Gate::Mutates {
                 assert!(
-                    DROP.contains(command),
-                    "`{}` is gated but is not in the Drop and delete group",
+                    DROP.contains(command) || EDIT.contains(command),
+                    "`{}` is gated but is in neither mutating group",
                     command.binding.action
                 );
             }

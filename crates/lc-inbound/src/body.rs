@@ -958,7 +958,14 @@ fn number(index: usize, gutter: u16, theme: Theme) -> TextSpan<'static> {
 /// `"null"` draw alike; the tokens carry no modifier to tell them apart by
 /// (design §4.1).
 fn cell_style(cell: &GridCell, theme: Theme) -> Option<Style> {
-    let base = cell.token.map(|token| theme.style(token));
+    // Dirty outranks the column's own colour, and a search match still
+    // composes over it: an uncommitted cell the user went looking for has to
+    // read as both (cell editing design §7).
+    let base = if cell.dirty {
+        Some(theme.style(Token::Dirty))
+    } else {
+        cell.token.map(|token| theme.style(token))
+    };
 
     if !cell.matched {
         return base;

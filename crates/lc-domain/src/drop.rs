@@ -9,42 +9,11 @@
 //! dispatch, the renderer or the round trip has to know about separately.
 
 use crate::contents::TableRef;
+use crate::key::{self, RowKey};
 use crate::line::Line;
 use crate::model::{KeyspaceKind, Row, Statement, Table};
 use crate::posture::Posture;
 use crate::style::{Segment, Token};
-
-/// One row's primary key: every key column, in key order, paired with the
-/// CQL literal that addresses it.
-///
-/// Private field and one fallible constructor, which is the whole point: a
-/// key holding a value [`crate::literal`] could not spell cannot be built,
-/// so [`Statement::delete_row`] is total and no `WHERE` clause is ever
-/// written from a guess (design §3.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RowKey(Vec<(String, String)>);
-
-impl RowKey {
-    /// `row`'s key, or `None` where any key column is missing from the page
-    /// or holds a value with no literal.
-    ///
-    /// `key` is `(column name, declared CQL type)` in key order.
-    fn of(key: &[(&str, &str)], columns: &[String], row: &Row) -> Option<Self> {
-        key.iter()
-            .map(|(name, cql_type)| {
-                let at = columns.iter().position(|column| column == name)?;
-                let literal = crate::literal::of(cql_type, row.values.get(at)?)?;
-
-                Some(((*name).to_owned(), literal))
-            })
-            .collect::<Option<Vec<_>>>()
-            .map(Self)
-    }
-
-    fn pairs(&self) -> &[(String, String)] {
-        &self.0
-    }
-}
 
 /// What `d` is aimed at.
 ///
@@ -79,24 +48,7 @@ impl Target {
         columns: &[String],
         selected: impl Iterator<Item = &'a Row>,
     ) -> Option<Self> {
-        let key: Vec<(&str, &str)> = schema_table
-            .primary_key
-            .partition
-            .iter()
-            .map(|column| (column.name.as_str(), column.cql_type.as_str()))
-            .chain(
-                schema_table
-                    .primary_key
-                    .clustering
-                    .iter()
-                    .map(|clustering| {
-                        (
-                            clustering.column.name.as_str(),
-                            clustering.column.cql_type.as_str(),
-                        )
-                    }),
-            )
-            .collect();
+        let key = key::columns(schema_table);
 
         if key.is_empty() {
             return None;

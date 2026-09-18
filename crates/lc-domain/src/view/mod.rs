@@ -146,6 +146,14 @@ pub enum OverlayView {
     /// The drop confirmation, flattened the way the export form is.
     Drop(Box<DropView>),
     Inspect(Box<InspectView>),
+    /// The commit confirmation: the CQL every uncommitted edit would run
+    /// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5).
+    Commit(Box<CommitView>),
+    /// The quit warning. One sentence and a question, so it carries no type
+    /// of its own (design §6).
+    Discard {
+        message: String,
+    },
     /// A startup failure with no dismissal, only `q`/`esc` ending the
     /// process (query log design §7).
     Fatal(Message),
@@ -253,6 +261,22 @@ pub struct InspectView {
     pub cursor: usize,
     /// The first wrapped line drawn.
     pub offset: usize,
+    /// The open edit field, drawn in place of the value it is typing over
+    /// (cell editing design §3).
+    pub editing: Option<EditView>,
+}
+
+/// The open edit field as a renderer needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditView {
+    /// The drawn field it sits over, counted as [`InspectView::cursor`]
+    /// counts.
+    pub field: usize,
+    pub text: String,
+    /// A character offset into `text`, for the drawn caret.
+    pub cursor: usize,
+    /// Why `⏎` is greyed, `None` while it is not.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,6 +298,13 @@ pub struct InspectValue {
     /// The token the grid draws the same value in: faint for a null, a key
     /// column's colour for a key.
     pub token: Option<Token>,
+    /// Whether this value has been typed into and not yet written.
+    ///
+    /// A field of its own rather than a second meaning for `token`, for the
+    /// reason `GridCell::matched` is one: overwriting a key column's colour
+    /// would hide the primary key exactly where a write is about to land
+    /// (cell editing design §7).
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,6 +314,17 @@ pub struct InspectField {
     /// The heading's token in the grid.
     pub token: Option<Token>,
     pub value: InspectValue,
+}
+
+/// The commit confirmation as a renderer needs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitView {
+    pub title: Vec<Segment>,
+    /// The statement, one line each, unwrapped: the block wraps to its own
+    /// width and reports the count back, as the inspector's body does.
+    pub lines: Vec<String>,
+    /// The first wrapped line drawn.
+    pub offset: usize,
 }
 
 /// The typed confirmation's field.
@@ -416,6 +458,14 @@ fn overlay(state: &State) -> Option<OverlayView> {
         Overlay::Inspect(inspector) => Some(OverlayView::Inspect(Box::new(contents::inspect(
             state, inspector,
         )))),
+        Overlay::Commit(prompt) => Some(OverlayView::Commit(Box::new(CommitView {
+            title: prompt.title(),
+            lines: prompt.lines(),
+            offset: prompt.offset(),
+        }))),
+        Overlay::Discard(discard) => Some(OverlayView::Discard {
+            message: discard.message(),
+        }),
         Overlay::Fatal(message) => Some(OverlayView::Fatal(message.clone())),
     }
 }

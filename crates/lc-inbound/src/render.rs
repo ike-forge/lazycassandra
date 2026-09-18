@@ -46,13 +46,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         frame.buffer_mut().set_style(area, ground);
     }
 
-    let command_rows =
-        crate::palette::visible_rows(frame.area(), lc_domain::commands::row_count(None));
-    let theme_rows = crate::themes::visible_rows(frame.area());
-    let connection_rows = crate::connections::visible_rows(frame.area());
-    let export_fits = crate::export::fits(frame.area());
-    let drop_fits = crate::drop::fits(frame.area());
-    let inspector_rows = crate::inspect::visible_rows(frame.area());
+    let room = Room::of(frame.area());
     let rects = match layout(frame.area(), queries_height(view)) {
         Shell::Panels(rects) => rects,
         Shell::TooSmall(area) => {
@@ -157,33 +151,70 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         hint_bar,
     );
 
-    let (inspector_lines, inspector_selection) = render_overlay(frame, view, hint_bar, theme);
+    let Wrapped {
+        inspector_lines,
+        inspector_selection,
+        commit_lines,
+    } = render_overlay(frame, view, hint_bar, theme);
 
     Rendered {
-        geometry: Geometry::new(heights, ddl_lines, command_rows)
+        geometry: Geometry::new(heights, ddl_lines, room.command_rows)
             .with_ddl_selection(ddl_selection)
             .with_log(log_lines, log_selection)
-            .with_export_fits(export_fits)
-            .with_drop_fits(drop_fits)
+            .with_export_fits(room.export_fits)
+            .with_drop_fits(room.drop_fits)
             .with_grid_width(grid_width)
-            .with_theme_rows(theme_rows)
-            .with_connection_rows(connection_rows)
-            .with_inspector(inspector_rows, inspector_lines, inspector_selection),
+            .with_theme_rows(room.theme_rows)
+            .with_connection_rows(room.connection_rows)
+            .with_inspector(room.inspector_rows, inspector_lines, inspector_selection)
+            .with_commit(room.commit_rows, commit_lines),
         map: FrameMap::new(hits),
+    }
+}
+
+/// What each overlay's own block would have room for in this frame.
+///
+/// A function of the terminal size alone, every field of it — which is the
+/// invariant `Geometry` rests on (architecture.md §3). Gathered in one place
+/// because each block is measured by the module that draws it, and there are
+/// now seven of them.
+struct Room {
+    command_rows: usize,
+    theme_rows: usize,
+    connection_rows: usize,
+    export_fits: bool,
+    drop_fits: bool,
+    inspector_rows: usize,
+    commit_rows: usize,
+}
+
+impl Room {
+    fn of(area: Rect) -> Self {
+        Self {
+            command_rows: crate::palette::visible_rows(area, lc_domain::commands::row_count(None)),
+            theme_rows: crate::themes::visible_rows(area),
+            connection_rows: crate::connections::visible_rows(area),
+            export_fits: crate::export::fits(area),
+            drop_fits: crate::drop::fits(area),
+            inspector_rows: crate::inspect::visible_rows(area),
+            commit_rows: crate::commit::visible_rows(area),
+        }
     }
 }
 
 /// The one overlay this frame is showing, if any — the modal over the
 /// panels, and, for the two that carry a live search, the prompt on the hint
-/// bar row after it (overlay search design §7). Answers with the lines the
-/// inspector wrapped to and the span it drew its cursor line at, both empty
-/// for every other overlay.
-fn render_overlay(
-    frame: &mut Frame,
-    view: &ViewModel,
-    hint_bar: Rect,
-    theme: Theme,
-) -> (usize, Selection) {
+/// bar row after it (overlay search design §7). Answers with what each
+/// wrapping overlay measured, all of it zero for the overlays that wrap
+/// nothing.
+#[derive(Default)]
+struct Wrapped {
+    inspector_lines: usize,
+    inspector_selection: Selection,
+    commit_lines: usize,
+}
+
+fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) -> Wrapped {
     match &view.overlay {
         Some(OverlayView::Message(message) | OverlayView::Fatal(message)) => {
             crate::overlay::render(frame, message, theme);
@@ -256,11 +287,28 @@ fn render_overlay(
             crate::filter::render(frame, column, query, theme);
         }
         Some(OverlayView::Drop(view)) => crate::drop::render(frame, view, theme),
-        Some(OverlayView::Inspect(view)) => return crate::inspect::render(frame, view, theme),
+        Some(OverlayView::Inspect(view)) => {
+            let (inspector_lines, inspector_selection) = crate::inspect::render(frame, view, theme);
+
+            return Wrapped {
+                inspector_lines,
+                inspector_selection,
+                commit_lines: 0,
+            };
+        }
+        Some(OverlayView::Commit(view)) => {
+            return Wrapped {
+                commit_lines: crate::commit::render(frame, view, theme),
+                ..Wrapped::default()
+            };
+        }
+        Some(OverlayView::Discard { message }) => {
+            crate::commit::render_discard(frame, message, theme);
+        }
         None => {}
     }
 
-    (0, Selection::default())
+    Wrapped::default()
 }
 
 /// `rect` split at `taken` columns from its left edge, clamped to what `rect`
@@ -329,7 +377,11 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             | OverlayView::Drop(_)
             // The value it shows is copied out of the grid, and the title
             // names where from (cell inspector design §3).
-            | OverlayView::Inspect(_),
+            | OverlayView::Inspect(_)
+            // Both ask about edits their own border counts, not about the
+            // grid beneath (cell editing design §5, §6).
+            | OverlayView::Commit(_)
+            | OverlayView::Discard { .. },
         ) => true,
         // The filter modal is not one either, for the export form's reason:
         // it narrows the grid beneath it, and a modal that dimmed its own
@@ -5809,6 +5861,7 @@ mod tests {
         Footer {
             rows: rows.to_owned(),
             size: size.map(|(text, token)| lc_domain::style::Segment::styled(text, token)),
+            dirty: None,
             status,
             hint,
         }
@@ -5938,5 +5991,52 @@ mod tests {
             "{middling:?}"
         );
         assert!(!narrow.contains("rows"), "{narrow:?}");
+    }
+
+    // Editing (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7)
+
+    #[test]
+    fn the_footer_counts_the_uncommitted_cells_in_the_warning_colour() {
+        let state = showing(sized_page(1, 3));
+        let buffer = drawn_with_footer(
+            60,
+            &state,
+            Footer {
+                dirty: Some("2 uncommitted".to_owned()),
+                ..footer("3 rows", None, None)
+            },
+        );
+
+        let border = (0..buffer.area.height)
+            .map(|y| row(&buffer, y))
+            .find(|line| line.contains("2 uncommitted"))
+            .expect("the count is on the border");
+        assert!(border.contains("3 rows · 2 uncommitted"), "{border:?}");
+    }
+
+    #[test]
+    fn a_dirty_cell_is_drawn_in_the_uncommitted_colour() {
+        let mut view = view_model(&showing(sized_page(1, 3)));
+        let lc_domain::view::PanelBody::Grid { rows, .. } = &mut view.panels[2].body else {
+            panic!("the Contents panel draws a grid");
+        };
+        let cell = rows
+            .first_mut()
+            .and_then(|row| row.first_mut())
+            .expect("a cell");
+        cell.dirty = true;
+        let want = cell.text.clone();
+
+        let buffer = draw_view(60, 12, &view);
+        let dirty = Theme::default().style(Token::Dirty);
+
+        assert!(
+            (0..buffer.area.height).any(|y| (0..buffer.area.width).any(|x| {
+                buffer.cell((x, y)).is_some_and(|cell| {
+                    want.starts_with(cell.symbol()) && cell.style().fg == dirty.fg
+                })
+            })),
+            "no cell wears Token::Dirty"
+        );
     }
 }

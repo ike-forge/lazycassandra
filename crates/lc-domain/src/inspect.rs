@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use crate::bytes::Bytes;
 use crate::cell;
 use crate::contents::Subject;
+use crate::edit::{Edited, Field};
 use crate::model::CqlValue;
 use crate::state::{Scroll, Span};
 use crate::style::Segment;
@@ -22,7 +23,14 @@ use crate::style::Segment;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inspected {
     /// The value under the cell cursor, in cell and column mode.
-    Cell { column: String, value: CqlValue },
+    Cell {
+        /// The column's index in the page, which is what an edit is keyed by
+        /// — the name alone addresses nothing
+        /// (cell editing design §4).
+        at: usize,
+        column: String,
+        value: CqlValue,
+    },
     /// Every column of the row, in row mode.
     Row {
         /// The gutter's number, one-based.
@@ -40,6 +48,32 @@ impl Inspected {
             Self::Row { values, .. } => values,
         }
     }
+
+    /// The page column the `at`th drawn value belongs to. In row mode a field
+    /// *is* a column, in column order; in cell mode there is one field and it
+    /// is the column the grid cursor was on.
+    fn column_of(&self, at: usize) -> Option<(usize, &str)> {
+        match self {
+            Self::Cell { at: column, .. } if at == 0 => Some((*column, "")),
+            Self::Cell { .. } => None,
+            Self::Row { columns, .. } => columns.get(at).map(|name| (at, name.as_str())),
+        }
+    }
+
+    /// Replaces the `at`th drawn value, so the block redraws what was just
+    /// typed into it: the inspector holds a copy of the page, and a copy that
+    /// did not follow the edit would show the value the user replaced.
+    fn set(&mut self, at: usize, value: CqlValue) {
+        match self {
+            Self::Cell { value: held, .. } if at == 0 => *held = value,
+            Self::Cell { .. } => {}
+            Self::Row { values, .. } => {
+                if let Some(held) = values.get_mut(at) {
+                    *held = value;
+                }
+            }
+        }
+    }
 }
 
 /// An open inspector: what it shows, which line the cursor is on, and how
@@ -51,21 +85,136 @@ impl Inspected {
 /// last frame drew it at, the way the Logs tab's does (design §5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Inspector {
+    /// The drawn row the grid was standing on, which is what an edit made
+    /// here is applied back to (cell editing design §4).
+    row: usize,
     subject: Subject,
     inspected: Inspected,
     cursor: usize,
     scroll: Scroll,
+    /// The open edit field, while one is.
+    ///
+    /// A field on the inspector rather than a sibling overlay: a field with
+    /// no value under it is not a state, the argument the export form makes
+    /// for its overwrite confirmation (export design §7).
+    field: Option<Field>,
+    /// Which drawn fields have been typed into and not yet written. Indices
+    /// into the values the block draws, so the projection can band them
+    /// without going back to the page.
+    edited: Vec<usize>,
 }
 
 impl Inspector {
     #[must_use]
-    pub fn opened(subject: Subject, inspected: Inspected) -> Self {
+    pub fn opened(row: usize, subject: Subject, inspected: Inspected) -> Self {
         Self {
+            row,
             subject,
             inspected,
             cursor: 0,
             scroll: Scroll::default(),
+            field: None,
+            edited: Vec::new(),
         }
+    }
+
+    /// The drawn grid row this was opened over.
+    #[must_use]
+    pub const fn row(&self) -> usize {
+        self.row
+    }
+
+    /// Marks the drawn fields already dirty when the block opened, so a
+    /// reopened inspector says so too.
+    #[must_use]
+    pub fn with_edited(self, edited: Vec<usize>) -> Self {
+        Self { edited, ..self }
+    }
+
+    /// The drawn fields typed into and not yet written.
+    #[must_use]
+    pub fn edited(&self) -> &[usize] {
+        &self.edited
+    }
+
+    /// The open field, while one is.
+    #[must_use]
+    pub const fn field(&self) -> Option<&Field> {
+        self.field.as_ref()
+    }
+
+    pub const fn field_mut(&mut self) -> Option<&mut Field> {
+        self.field.as_mut()
+    }
+
+    /// The drawn field the cursor's line belongs to, and the page column and
+    /// name it names. `None` where the cursor is on a value that belongs to
+    /// no column of the page.
+    #[must_use]
+    pub fn at_field(&self) -> Option<(usize, usize, &str)> {
+        let at = self.field_at_cursor();
+
+        self.inspected
+            .column_of(at)
+            .map(|(column, name)| (at, column, name))
+    }
+
+    /// The value the cursor's line belongs to, as the block draws it.
+    #[must_use]
+    pub fn value_at_cursor(&self) -> Option<&CqlValue> {
+        self.inspected.values().get(self.field_at_cursor())
+    }
+
+    /// Opens `field` over the value the cursor is on.
+    pub fn start_edit(&mut self, field: Field) {
+        self.field = Some(field);
+    }
+
+    pub fn cancel_edit(&mut self) {
+        self.field = None;
+    }
+
+    /// Accepts the open field: closes it, redraws the value it typed, and
+    /// answers with the drawn field and what was accepted — which is what
+    /// `update` carries back to the page.
+    ///
+    /// `None` while the text does not parse, which leaves the field open:
+    /// a keystroke that loses what was typed is worse than no validation
+    /// (design §3).
+    pub fn accept_edit(&mut self) -> Option<(usize, usize, Edited)> {
+        let field = self.field.as_ref()?;
+        let edited = field.parsed()?;
+        let (at, column, _) = self.at_field()?;
+
+        self.inspected.set(at, edited.value().clone());
+        self.field = None;
+        if !self.edited.contains(&at) {
+            self.edited.push(at);
+        }
+
+        Some((at, column, edited))
+    }
+
+    /// Unmarks the `at`th drawn field, for an edit that restored the value it
+    /// started from (design §1).
+    pub fn unmark(&mut self, at: usize) {
+        self.edited.retain(|marked| *marked != at);
+    }
+
+    /// Which drawn value the cursor's line falls in.
+    fn field_at_cursor(&self) -> usize {
+        let mut at = self.cursor;
+
+        for (index, value) in self.inspected.values().iter().enumerate() {
+            let laid = lines(value).len();
+
+            if at < laid {
+                return index;
+            }
+            at -= laid;
+        }
+
+        self.inspected.values().len().saturating_sub(1)
     }
 
     #[must_use]
@@ -497,8 +646,10 @@ mod tests {
 
     fn cell(value: CqlValue) -> Inspector {
         Inspector::opened(
+            0,
             Subject::Table(TableRef::new("shop", "orders")),
             Inspected::Cell {
+                at: 0,
                 column: "note".to_owned(),
                 value,
             },
@@ -518,6 +669,7 @@ mod tests {
     #[test]
     fn a_rows_lines_run_on_from_one_field_to_the_next() {
         let mut row = Inspector::opened(
+            0,
             Subject::Table(TableRef::new("shop", "orders")),
             Inspected::Row {
                 number: 1,
@@ -558,6 +710,7 @@ mod tests {
         );
 
         let row = Inspector::opened(
+            0,
             Subject::Typed("SELECT *\n  FROM t".to_owned()),
             Inspected::Row {
                 number: 3,
@@ -574,6 +727,7 @@ mod tests {
         assert_eq!(cell(CqlValue::Null).yank(), None);
 
         let row = Inspector::opened(
+            0,
             Subject::Table(TableRef::new("shop", "orders")),
             Inspected::Row {
                 number: 1,

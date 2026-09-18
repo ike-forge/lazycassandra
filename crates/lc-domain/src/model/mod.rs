@@ -21,5 +21,5 @@ pub use schema::{
     ClusteringColumn, ClusteringOrder, CollectionPart, Column, Index, IndexKind, IndexTarget,
     Keyspace, KeyspaceKind, PrimaryKey, Replication, Schema, Table, TableOptions,
 };
-pub use statement::{Statement, StatementKind};
+pub use statement::{Statement, StatementKind, UpdatedRow};
 pub use value::CqlValue;

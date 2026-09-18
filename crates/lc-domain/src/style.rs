@@ -129,6 +129,14 @@ pub enum Token {
     /// feedback. Swapping ground for text needs nothing new from a ported
     /// palette (docs/superpowers/specs/2026-08-14-visual-mode-design.md §6.1).
     Flash,
+    /// A cell typed into and not yet written to the cluster.
+    ///
+    /// Named for what it marks rather than for the colour it gets, like
+    /// [`Token::Marker`], and mapped to a role a palette already declares:
+    /// an uncommitted value is a claim about the screen that the cluster has
+    /// not agreed to yet, which is what the warning colour already says
+    /// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7).
+    Dirty,
     /// A sort or filter mark over a grid heading, while it is in force.
     ///
     /// Named for what it marks rather than for the colour it gets, like

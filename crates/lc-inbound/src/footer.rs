@@ -56,8 +56,15 @@ fn line(footer: &Footer, sized: bool, hinted: bool, theme: Theme) -> Line<'stati
             size.token.map_or(muted, |token| theme.style(token)),
         )
     });
+    // In the warning colour the dirty cells themselves wear, so the border
+    // and the grid say the same thing about them (cell editing design §7).
+    let dirty = footer
+        .dirty
+        .clone()
+        .map(|dirty| Span::styled(dirty, theme.style(Token::Dirty)));
     let parts = std::iter::once(Span::styled(footer.rows.clone(), muted))
         .chain(size)
+        .chain(dirty)
         .chain(
             footer
                 .status

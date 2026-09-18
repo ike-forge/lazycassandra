@@ -45,7 +45,13 @@ splits the buffer into the statements a run acts on — a `;` outside a batch
 ends one, and `BEGIN … APPLY BATCH` is one whole — so a closed Cql tab bands
 the statement its cursor is in, `j`/`k` step that band, and `ctrl-r` sends one
 statement rather than the buffer
-(docs/superpowers/specs/2026-09-18-cql-statement-selection-design.md).
+(docs/superpowers/specs/2026-09-18-cql-statement-selection-design.md). Data
+is editable for the first time: `e` inside the inspector opens a field over
+one value, an accepted value is held uncommitted on the `GridPage` beside the
+sort and the filters, `ctrl-s` turns every one of them into an `UPDATE` —
+one bare, several as one logged batch — behind a scrollable confirmation, and
+`q` with anything outstanding warns before it discards
+(docs/superpowers/specs/2026-09-18-cell-editing-design.md).
 **Last updated:** 2026-09-18
 
 ---

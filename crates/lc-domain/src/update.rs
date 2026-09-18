@@ -6,6 +6,7 @@
 
 use crate::clock::Stamp;
 use crate::commands::{CommandsPanel, Run};
+use crate::commit::{CommitPrompt, Discard};
 use crate::config::{Config, ConnectionConfig, Diagnostic, PageSize};
 use crate::contents::{
     ContentsState, Continue, Failure, Filter, Landed, SelectionMode, Subject, TableRef,
@@ -13,13 +14,16 @@ use crate::contents::{
 use crate::cql;
 use crate::ddl::DdlTab;
 use crate::drop::{DropPrompt, Target};
+use crate::edit::Field;
 use crate::export::{Confirm, ExportForm, Fetched, Format, Pending, Scope, Stop};
 use crate::grid::{self, ColumnScroll};
 use crate::inspect::{Inspected, Inspector};
+use crate::key::{self, RowKey};
 use crate::line::Line;
 use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
 use crate::model::{
-    ConnId, DbError, JobId, Key, KeyPress, Page, PagingState, QueryId, Row, Schema, Statement,
+    ConnId, CqlValue, DbError, JobId, Key, KeyPress, Page, PagingState, QueryId, Row, Schema,
+    Statement, UpdatedRow,
 };
 use crate::pointer::{Click, Mark, Pointer, Wheel};
 use crate::ports::ExportError;
@@ -27,8 +31,8 @@ use crate::posture::Posture;
 use crate::queries::{CqlMode, QueriesTab, Refresh};
 use crate::search::{Direction, Origin, Prompt, Search, Searched, Sift};
 use crate::state::{
-    ConnectionState, Cursor, DiagnosticsPanel, Dropping, ExportJob, Flash, Geometry, Message,
-    Overlay, Panel, Range, Ranges, SchemaState, Scroll, Selection, State,
+    Committing, ConnectionState, Cursor, DiagnosticsPanel, Dropping, ExportJob, Flash, Geometry,
+    Message, Overlay, Panel, Range, Ranges, SchemaState, Scroll, Selection, State,
 };
 use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
@@ -381,7 +385,9 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                             took,
                         },
                     );
-                    finish_drop(state, query, None)
+                    let mut effects = finish_drop(state, query, None);
+                    effects.extend(finish_commit(state, query, None));
+                    effects
                 }
                 Landed::Skipped(next) => {
                     state
@@ -419,7 +425,9 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                 state.log.complete(Trace::Query(query), outcome);
             }
             state.mark_dirty();
-            finish_drop(state, query, Some(&error))
+            let mut effects = finish_drop(state, query, Some(&error));
+            effects.extend(finish_commit(state, query, Some(&error)));
+            effects
         }
 
         Msg::EditorClosed { buffer } => editor_closed(state, &buffer),
@@ -623,7 +631,27 @@ fn theme_save_failed(state: &mut State, reason: String) -> Vec<Effect> {
     Vec::new()
 }
 
+/// `q`, from wherever it was pressed.
+///
+/// The guard is here rather than at each key that reaches it, so the palette's
+/// quit row, the inspector's `q` and `Msg::Quit` are all caught by
+/// construction and `Effect::Quit` still leaves from one place
+/// (cell editing design §6).
 fn quit(state: &mut State) -> Vec<Effect> {
+    let (cells, rows) = uncommitted(state);
+
+    if cells > 0 {
+        state.overlay = Some(Overlay::Discard(Discard::of(cells, rows)));
+        state.mark_dirty();
+        return Vec::new();
+    }
+
+    quit_now(state)
+}
+
+/// Quitting past the guard: what `q` does with nothing outstanding, and what
+/// answering the warning with `y` does.
+fn quit_now(state: &mut State) -> Vec<Effect> {
     state.should_quit = true;
     let in_flight: Vec<QueryId> = state.in_flight.keys().copied().collect();
     for query in &in_flight {
@@ -749,7 +777,7 @@ fn contents(state: &State) -> Option<String> {
     // yank copies what is on screen, so a filtered-out row is not in it and
     // a sorted grid copies in the order it reads
     // (grid sort and filter design §4).
-    let drawn: Vec<Row> = page.rows().cloned().collect();
+    let drawn: Vec<Row> = page.drawn_rows();
     let (rows, columns) = grid_extent(state);
     let whole = |len: usize| Ranges::of(Range::new(0, len.saturating_sub(1)));
     let rows = if rows.is_empty() {
@@ -958,6 +986,18 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         return drop_key(state, press.key);
     }
 
+    // The commit confirmation, on the same terms — a body to read and one
+    // question to answer (cell editing design §5).
+    if matches!(state.overlay, Some(Overlay::Commit(_))) {
+        return commit_key(state, press.key);
+    }
+
+    // The quit warning claims every key, `q` included: the question has to be
+    // answered rather than pressed past (cell editing design §6).
+    if matches!(state.overlay, Some(Overlay::Discard(_))) {
+        return discard_key(state, press.key);
+    }
+
     // An open buffer claims every printable key and the editing keys; what it
     // does not claim keeps the global meaning it has everywhere else (design
     // §3). No key is carved out, its own number included: `WHERE id = 4` has
@@ -1057,7 +1097,14 @@ fn takes_text(state: &State) -> bool {
         // it before this is consulted — but written down anyway, rather than
         // grouped with `Message`/`None`, because neither it nor `Diagnostics`
         // has text of its own to type into.
-        Some(Overlay::Diagnostics(_) | Overlay::Inspect(_) | Overlay::Fatal(_)) => false,
+        // The inspector takes text on exactly the frames a field is open,
+        // the rule the prompt and the form follow (cell editing design §3).
+        Some(Overlay::Inspect(inspector)) => inspector.field().is_some(),
+        // Neither confirmation has a field to type into either; the commit
+        // block drives a body `g`/`G` move, which `goto` answers below.
+        Some(
+            Overlay::Diagnostics(_) | Overlay::Fatal(_) | Overlay::Commit(_) | Overlay::Discard(_),
+        ) => false,
         Some(Overlay::Message(_)) | None => state.takes_text(),
     }
 }
@@ -1071,6 +1118,7 @@ fn takes_text(state: &State) -> bool {
 fn goto(state: &mut State, edge: Edge) {
     let last = BuiltIn::ALL.len() + state.config.themes.len();
     let connections = state.config.connections.len();
+    let (commit_lines, commit_rows) = commit_extent(state);
 
     match &mut state.overlay {
         Some(Overlay::Commands(panel)) => match edge {
@@ -1080,6 +1128,10 @@ fn goto(state: &mut State, edge: Edge) {
         Some(Overlay::Inspect(inspector)) => match edge {
             Edge::Start => inspector.to_start(),
             Edge::End => inspector.to_end(),
+        },
+        Some(Overlay::Commit(prompt)) => match edge {
+            Edge::Start => prompt.to_start(),
+            Edge::End => prompt.to_end(commit_lines, commit_rows),
         },
         Some(Overlay::Diagnostics(panel)) => match edge {
             Edge::Start => panel.to_start(),
@@ -1104,7 +1156,8 @@ fn goto(state: &mut State, edge: Edge) {
             | Overlay::Search(_)
             | Overlay::Export(_)
             | Overlay::Filter(_)
-            | Overlay::Drop(_),
+            | Overlay::Drop(_)
+            | Overlay::Discard(_),
         ) => {}
     }
 }
@@ -1886,7 +1939,12 @@ fn escape(state: &mut State) {
             | Overlay::Inspect(_)
             | Overlay::Export(_)
             | Overlay::Filter(_)
-            | Overlay::Drop(_),
+            | Overlay::Drop(_)
+            // Both confirmations abandon on `Esc`, leaving the edits standing:
+            // dismissing a question is not answering it
+            // (cell editing design §5).
+            | Overlay::Commit(_)
+            | Overlay::Discard(_),
         ) => {
             // The diagnostics modal is what claims startup's first frame when
             // the config had anything wrong with it; closing it is where the
@@ -2117,27 +2175,46 @@ pub(crate) fn inspection(state: &State) -> Option<Inspector> {
         return None;
     };
     let index = state.contents.cursor.index();
-    let row = page.row(index)?;
+    page.row(index)?;
     let columns = &page.page().columns;
 
     let inspected = match state.contents.mode {
         SelectionMode::Row => Inspected::Row {
             number: index + 1,
             columns: columns.clone(),
-            values: row.values.clone(),
+            values: (0..columns.len())
+                .map(|at| page.value(index, at).cloned().unwrap_or(CqlValue::Null))
+                .collect(),
         },
         SelectionMode::Column => return None,
         SelectionMode::Cell => {
             let at = state.contents.column.index();
 
             Inspected::Cell {
+                at,
                 column: columns.get(at)?.clone(),
-                value: row.values.get(at)?.clone(),
+                value: page.value(index, at)?.clone(),
             }
         }
     };
 
-    Some(Inspector::opened(subject.clone(), inspected))
+    // The dirty marks the grid is already drawing, carried onto the block:
+    // a reopened inspector says the same thing about the same cells.
+    let edited = match state.contents.mode {
+        SelectionMode::Row => (0..columns.len())
+            .filter(|at| page.is_edited(index, *at))
+            .collect(),
+        SelectionMode::Cell | SelectionMode::Column => {
+            let at = state.contents.column.index();
+            if page.is_edited(index, at) {
+                vec![0]
+            } else {
+                Vec::new()
+            }
+        }
+    };
+
+    Some(Inspector::opened(index, subject.clone(), inspected).with_edited(edited))
 }
 
 fn open_inspector(state: &mut State) {
@@ -2150,6 +2227,17 @@ fn open_inspector(state: &mut State) {
 /// is inert, so no key means "close" in one frame and something else in the
 /// next.
 fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
+    // An open field claims every printable key and the editing keys, the same
+    // rule the prompt, the form and the typed drop confirmation follow
+    // (cell editing design §3).
+    if matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.field().is_some()) {
+        return field_key(state, key);
+    }
+
+    if matches!(key, Key::Char('e')) {
+        return start_edit(state);
+    }
+
     let (_, height) = inspector_extent(state);
     let Some(Overlay::Inspect(inspector)) = &mut state.overlay else {
         return Vec::new();
@@ -2170,6 +2258,421 @@ fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 
     Vec::new()
+}
+
+/// `e` over the inspector: opens a field over the value the cursor is on, or
+/// says why it cannot (cell editing design §2).
+///
+/// Every refusal is spoken rather than silent, unlike the inspector's inert
+/// keys. A key that does nothing and explains nothing teaches that the value
+/// is unreachable rather than that this one is — the argument the posture
+/// refusal already makes (posture design §3).
+fn start_edit(state: &mut State) -> Vec<Effect> {
+    if !state.posture().permits_mutation() {
+        refuse_read_only(state, "editing a value");
+        return Vec::new();
+    }
+
+    match editable(state) {
+        Ok(field) => {
+            if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
+                inspector.start_edit(field);
+            }
+        }
+        Err(refusal) => raise(
+            state,
+            Message {
+                title: "Not editable".to_owned(),
+                message: refusal,
+                severity: Severity::Warning,
+            },
+        ),
+    }
+
+    Vec::new()
+}
+
+/// Whether `e` would open a field this frame. Read by the hint bar, so the
+/// key is greyed exactly where §2 refuses it.
+#[must_use]
+pub(crate) fn editable_here(state: &State) -> bool {
+    state.posture().permits_mutation() && editable(state).is_ok()
+}
+
+/// Whether anything is uncommitted — what the `ctrl-s` hint is named on.
+#[must_use]
+pub(crate) fn has_uncommitted(state: &State) -> bool {
+    uncommitted(state).0 > 0
+}
+
+/// The field `e` would open, or the sentence saying why it opens none.
+fn editable(state: &State) -> Result<Field, String> {
+    let Some(Overlay::Inspect(inspector)) = &state.overlay else {
+        return Err(String::new());
+    };
+    // A typed statement's columns belong to no one table, so there is no
+    // table to `UPDATE` and no schema to check a type against (design §2).
+    let Subject::Table(table) = inspector.subject() else {
+        return Err(
+            "Only a table's own rows can be edited. This grid came from a typed statement."
+                .to_owned(),
+        );
+    };
+    let Some(described) = state
+        .schema()
+        .and_then(|schema| schema.keyspaces.get(&table.keyspace))
+        .and_then(|keyspace| keyspace.tables.get(&table.table))
+    else {
+        return Err(format!(
+            "The loaded schema no longer has {}.",
+            table.qualified()
+        ));
+    };
+
+    let Some((_, column, name)) = inspector.at_field() else {
+        return Err("The cursor is not on a column of this table.".to_owned());
+    };
+    let Some(declared) = described.column(name) else {
+        return Err(format!("{name} is not a column of {}.", table.qualified()));
+    };
+
+    if key::columns(described).iter().any(|(key, _)| *key == name) {
+        return Err(format!(
+            "{name} is part of the primary key. A key column cannot be updated."
+        ));
+    }
+    if !crate::edit::editable(&declared.cql_type) {
+        return Err(format!(
+            "A column of type {} cannot be edited here.",
+            declared.cql_type
+        ));
+    }
+    if row_key(state, described).is_none() {
+        return Err("This row cannot be addressed: its primary key is not in the page.".to_owned());
+    }
+
+    let value = inspector
+        .value_at_cursor()
+        .map_or_else(String::new, |value| {
+            match value {
+                // A null is typed over from empty rather than from the word the
+                // grid draws in its place: `null` is not what the cell holds.
+                CqlValue::Null => String::new(),
+                other => crate::cell::text(other),
+            }
+        });
+
+    Ok(Field::opened(column, name, &declared.cql_type, value))
+}
+
+/// The primary key of the row the inspector was opened over, `None` where
+/// this program cannot spell one (design §2).
+fn row_key(state: &State, described: &crate::model::Table) -> Option<RowKey> {
+    let Some(Overlay::Inspect(inspector)) = &state.overlay else {
+        return None;
+    };
+    let ContentsState::Loaded { page, .. } = state.contents.state() else {
+        return None;
+    };
+    let key = key::columns(described);
+
+    if key.is_empty() {
+        return None;
+    }
+
+    // The row as the cluster sent it, not as the grid now draws it: an
+    // uncommitted edit to a non-key column changes no key column, and a
+    // `WHERE` written from an edited row would address a row the cluster
+    // does not have.
+    RowKey::of(&key, &page.page().columns, page.row(inspector.row())?)
+}
+
+/// Every key the open field claims: `⏎` accepts, `Esc` abandons, and every
+/// printable key is text — the rule the prompt, the form and the typed drop
+/// confirmation all follow (design §3).
+fn field_key(state: &mut State, key: Key) -> Vec<Effect> {
+    let accepted = {
+        let Some(Overlay::Inspect(inspector)) = &mut state.overlay else {
+            return Vec::new();
+        };
+
+        match key {
+            Key::Escape => {
+                inspector.cancel_edit();
+                return Vec::new();
+            }
+            Key::Enter => inspector.accept_edit(),
+            _ => {
+                if let Some(field) = inspector.field_mut() {
+                    edit_line(field.line_mut(), key);
+                }
+                return Vec::new();
+            }
+        }
+    };
+
+    // `None` is text that does not parse: the field stays open with the
+    // reason under it rather than losing what was typed (design §3).
+    let Some((at, column, edited)) = accepted else {
+        return Vec::new();
+    };
+
+    let row = match &state.overlay {
+        Some(Overlay::Inspect(inspector)) => inspector.row(),
+        _ => return Vec::new(),
+    };
+    if let Some(page) = state.contents.loaded_mut() {
+        page.set_edit(row, column, edited);
+
+        // An edit that restored the value it started from left no mark on the
+        // page, so it leaves none on the block either (design §1).
+        let dirty = page.is_edited(row, column);
+        if !dirty && let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
+            inspector.unmark(at);
+        }
+    }
+
+    Vec::new()
+}
+
+/// The commit block's wrapped line count and body height, as the last frame
+/// measured them.
+const fn commit_extent(state: &State) -> (usize, usize) {
+    (state.geometry.commit_lines(), state.geometry.commit_rows())
+}
+
+/// `ctrl-s`: builds one statement from every uncommitted edit and opens the
+/// confirmation over it (design §5).
+///
+/// Silently inert with nothing dirty and on a frame with no room for the
+/// block; spoken on a read-only connection, for [`start_edit`]'s reason.
+fn open_commit(state: &mut State) -> Vec<Effect> {
+    if !state.posture().permits_mutation() {
+        refuse_read_only(state, "committing an edit");
+        return Vec::new();
+    }
+    if state.committing.is_some() || state.geometry.commit_rows() == 0 {
+        return Vec::new();
+    }
+
+    let Some((table, statement, rows, cells)) = pending_commit(state) else {
+        return Vec::new();
+    };
+
+    state.overlay = Some(Overlay::Commit(CommitPrompt::opened(
+        table, statement, rows, cells,
+    )));
+    state.mark_dirty();
+    Vec::new()
+}
+
+/// The statement every uncommitted edit becomes, with the table and the counts
+/// the confirmation's border names.
+///
+/// `None` with nothing dirty, and where the page's rows cannot all be
+/// addressed — the same [`RowKey`] gate `e` applies per row, re-applied here
+/// because a schema can be reloaded between the two.
+fn pending_commit(state: &State) -> Option<(TableRef, Statement, usize, usize)> {
+    let ContentsState::Loaded { subject, page, .. } = state.contents.state() else {
+        return None;
+    };
+    let Subject::Table(table) = subject else {
+        return None;
+    };
+    if page.edits().is_empty() {
+        return None;
+    }
+    let described = state
+        .schema()?
+        .keyspaces
+        .get(&table.keyspace)?
+        .tables
+        .get(&table.table)?;
+    let key = key::columns(described);
+    if key.is_empty() {
+        return None;
+    }
+
+    let columns = &page.page().columns;
+    let rows: Vec<UpdatedRow> = page
+        .edits()
+        .by_row()
+        .map(|(at, edited)| {
+            let sets = edited
+                .into_iter()
+                .map(|(column, edited)| {
+                    Some((columns.get(column)?.clone(), edited.literal().to_owned()))
+                })
+                .collect::<Option<Vec<_>>>()?;
+
+            Some((
+                sets,
+                RowKey::of(&key, columns, page.page().rows.get(at)?)?
+                    .pairs()
+                    .to_vec(),
+            ))
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    let cells = page.edits().cells();
+    let statement = Statement::update_rows(&table.keyspace, &table.table, &rows);
+
+    Some((table.clone(), statement, rows.len(), cells))
+}
+
+/// Every key the commit confirmation claims. A body to read, and one question
+/// to answer: `y` runs it, `n` and `Esc` abandon it, and `⏎` answers nothing
+/// — an `UPDATE` is a `Write`, so there is no typed spelling (design §5).
+fn commit_key(state: &mut State, key: Key) -> Vec<Effect> {
+    let (lines, height) = commit_extent(state);
+    state.mark_dirty();
+
+    let Some(Overlay::Commit(prompt)) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char('j') | Key::Down => prompt.down(lines, height),
+        Key::Char('k') | Key::Up => prompt.up(),
+        Key::PageDown => prompt.page_down(lines, height),
+        Key::PageUp => prompt.page_up(height),
+        Key::Home => prompt.to_start(),
+        Key::End => prompt.to_end(lines, height),
+        Key::Char('y') => return start_commit(state),
+        Key::Char('n') | Key::Escape => state.overlay = None,
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+/// Turns the answered confirmation into the statement it was asking about.
+///
+/// `submit` is where the posture guard lives, so [`open_commit`]'s own gate is
+/// convenience and a posture that changed under a held-open confirmation is
+/// still refused here — `start_drop`'s arrangement, and its reason.
+fn start_commit(state: &mut State) -> Vec<Effect> {
+    let Some(Overlay::Commit(prompt)) = state.overlay.take() else {
+        return Vec::new();
+    };
+
+    let table = prompt.table().clone();
+    let stmt = prompt.statement().clone();
+    let log_subject = statement_subject(&stmt);
+
+    match submit(state, stmt) {
+        Ok((query, effects)) => {
+            state.committing = Some(Committing::started(query, table));
+            effects
+        }
+        Err(error) => {
+            logged(
+                state,
+                log_subject,
+                Outcome::Rejected {
+                    reason: error.to_string(),
+                },
+            );
+            raise(
+                state,
+                Message {
+                    title: "Not committed".to_owned(),
+                    message: error.to_string(),
+                    severity: Severity::Danger,
+                },
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// A commit ended. `error` is `None` on the success the cluster reported.
+///
+/// Dropped where `query` is not the commit outstanding, which is every
+/// ordinary read: this is called from both result arms and the id is the only
+/// thing separating a commit's answer from a grid's (architecture.md §3).
+///
+/// The success arm writes the edits into the page rather than re-reading it:
+/// a re-read costs the user their place, their paging and their arrangement,
+/// and the values now in the page are exactly the ones the cluster was sent
+/// (design §5). A failure leaves them dirty — nothing was written, so nothing
+/// about the page has changed.
+fn finish_commit(state: &mut State, query: QueryId, error: Option<&DbError>) -> Vec<Effect> {
+    if state.committing.as_ref().map(Committing::query) != Some(query) {
+        return Vec::new();
+    }
+    let Some(committed) = state.committing.take() else {
+        return Vec::new();
+    };
+    state.dirty = true;
+
+    if let Some(error) = error {
+        raise(
+            state,
+            Message {
+                title: "Not committed".to_owned(),
+                message: error.to_string(),
+                severity: Severity::Danger,
+            },
+        );
+        return Vec::new();
+    }
+
+    let cells = state.contents.loaded_mut().map_or(0, |page| {
+        let cells = page.edits().cells();
+        page.commit_edits();
+        cells
+    });
+
+    // The inspector may still be up over the row that was just written, and
+    // its copy of the page carries the marks it drew them with.
+    if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
+        for at in inspector.edited().to_vec() {
+            inspector.unmark(at);
+        }
+    }
+
+    raise(
+        state,
+        Message {
+            title: "Committed".to_owned(),
+            message: format!(
+                "{cells} {} written to {}.",
+                if cells == 1 { "cell" } else { "cells" },
+                committed.table().qualified()
+            ),
+            severity: Severity::Info,
+        },
+    );
+
+    Vec::new()
+}
+
+/// Every key the quit warning claims. `y` quits and discards, `n` and `Esc`
+/// stay, and everything else — a second `q` included — is inert: the question
+/// has to be answered rather than pressed past (design §6).
+fn discard_key(state: &mut State, key: Key) -> Vec<Effect> {
+    state.mark_dirty();
+
+    match key {
+        Key::Char('y') => {
+            state.overlay = None;
+            quit_now(state)
+        }
+        Key::Char('n') | Key::Escape => {
+            state.overlay = None;
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// What is uncommitted, as `(cells, rows)`. `(0, 0)` with nothing loaded.
+fn uncommitted(state: &State) -> (usize, usize) {
+    match state.contents.state() {
+        ContentsState::Loaded { page, .. } => (page.edits().cells(), page.edits().rows()),
+        _ => (0, 0),
+    }
 }
 
 /// Where `choice` sits in the picker's list: the built-ins, then the
@@ -2727,6 +3230,8 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
                 | Overlay::Export(_)
                 | Overlay::Filter(_)
                 | Overlay::Drop(_)
+                | Overlay::Commit(_)
+                | Overlay::Discard(_)
         )
     ) {
         return Vec::new();
@@ -2747,6 +3252,7 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
             Vec::new()
         }
         Key::Char('e') => ctrl_e(state),
+        Key::Char('s') => open_commit(state),
         Key::Char('f') => {
             format_buffer(state);
             Vec::new()
@@ -3069,7 +3575,7 @@ fn source(state: &State, form: &ExportForm) -> Option<Source> {
         // (grid sort and filter design §4).
         Scope::Fetched => Some(Source::Fetched {
             columns: page.page().columns.clone(),
-            rows: page.rows().cloned().collect(),
+            rows: page.drawn_rows(),
         }),
     }
 }
@@ -3228,14 +3734,17 @@ fn rows_target(state: &State) -> Option<Target> {
         .tables
         .get(&table.table)?;
 
-    let page = page.page();
     let selected = spanned(&state.contents.rows, state.contents.cursor.index());
+    // `GridPage::row`, not `page.rows[index]`: the cursor and the range count
+    // drawn rows, and only the page resolves one through its arrangement. A
+    // sorted or filtered grid otherwise confirms one row and deletes another
+    // (grid sort and filter design §4).
     let rows: Vec<&Row> = selected
         .indices()
-        .map(|index| page.rows.get(index))
+        .map(|index| page.row(index))
         .collect::<Option<Vec<_>>>()?;
 
-    Target::rows(table, described, &page.columns, rows.into_iter())
+    Target::rows(table, described, &page.page().columns, rows.into_iter())
 }
 
 /// `d` opens the confirmation over whatever [`drop_target`] names.
@@ -3457,12 +3966,14 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         // the form and the filter modal have nothing paged either, and the
         // confirmation drives no list. `Fatal` is unreachable here for
         // `takes_text`'s reason.
+        Some(Overlay::Commit(_)) => commit_key(state, key),
         Some(
             Overlay::Fatal(_)
             | Overlay::Search(_)
             | Overlay::Export(_)
             | Overlay::Filter(_)
-            | Overlay::Drop(_),
+            | Overlay::Drop(_)
+            | Overlay::Discard(_),
         ) => Vec::new(),
         Some(Overlay::Message(_)) | None => {
             if state.takes_text() {
@@ -3757,6 +4268,23 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         inspector.clamp_to(lines, height);
 
         if inspector.offset() != before {
+            state.dirty = true;
+        }
+    }
+
+    // The commit confirmation shrinks out on its own gate, the inspector's
+    // arrangement without its cursor: an offset to pull back, and no line to
+    // follow (cell editing design §5).
+    if matches!(state.overlay, Some(Overlay::Commit(_))) && geometry.commit_rows() == 0 {
+        state.overlay = None;
+        state.mark_dirty();
+    }
+    let (lines, height) = commit_extent(state);
+    if let Some(Overlay::Commit(prompt)) = &mut state.overlay {
+        let before = prompt.offset();
+        prompt.clamp_to(lines, height);
+
+        if prompt.offset() != before {
             state.dirty = true;
         }
     }
@@ -5513,6 +6041,8 @@ mod tests {
             | Overlay::Filter(_)
             | Overlay::Drop(_)
             | Overlay::Inspect(_)
+            | Overlay::Commit(_)
+            | Overlay::Discard(_)
             | Overlay::Fatal(_) => None,
         }
     }
@@ -12050,6 +12580,17 @@ mod tests {
         // The one fixture `p` and `P` answer in: a result with a page left.
         let pageable = contents_showing_more(3);
 
+        // The two the `Edit` group needs: the inspector open on an editable
+        // column, so `e` opens a field, and a grid with an edit standing on
+        // it, so `ctrl-s` has something to ask about. The open field is left
+        // out for the reason the editor and the typed confirmation are —
+        // every printable key is text there
+        // (`enter_accepts_the_field_and_the_cell_goes_dirty` covers it).
+        let mut editing = inspecting_row(3);
+        on_email(&mut editing);
+
+        let dirty = committable(1);
+
         vec![
             covered,
             elsewhere,
@@ -12065,6 +12606,8 @@ mod tests {
             searched,
             tabbed,
             pageable,
+            editing,
+            dirty,
         ]
     }
 
@@ -12221,8 +12764,10 @@ mod tests {
         };
 
         state.overlay = Some(Overlay::Inspect(Inspector::opened(
+            0,
             inspector.subject().clone(),
             Inspected::Cell {
+                at: 0,
                 column: "c1".to_owned(),
                 value: CqlValue::List((0..38).map(CqlValue::Int).collect()),
             },
@@ -12262,6 +12807,7 @@ mod tests {
         assert_eq!(
             inspecting(&state).map(Inspector::inspected),
             Some(&Inspected::Cell {
+                at: 1,
                 column: "c1".to_owned(),
                 value: CqlValue::Text("r2c1".to_owned()),
             })
@@ -12609,7 +13155,7 @@ mod tests {
                 .chain(&bar.global)
                 .map(|hint| format!("{} {}", hint.keys, hint.action))
                 .collect::<Vec<_>>(),
-            ["j/k move", "y copy", "Y copy line", "esc close"]
+            ["j/k move", "y copy", "Y copy line", "e edit", "esc close"]
         );
     }
 
@@ -16428,6 +16974,571 @@ mod tests {
         assert!(
             state.dirty,
             "the projection holds only as many rows as fitted"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Editing cells (docs/superpowers/specs/2026-09-18-cell-editing-design.md)
+    // ------------------------------------------------------------------
+
+    /// The fixture table with `email text` added as a regular column: the
+    /// shared one is all primary key, and §2 refuses every column of it.
+    fn schema_with_email() -> Schema {
+        let mut schema = tabled_schema(&[("shop", &["orders"])]);
+        if let Some(table) = schema
+            .keyspaces
+            .get_mut("shop")
+            .and_then(|keyspace| keyspace.tables.get_mut("orders"))
+        {
+            table.regular_columns.push(crate::model::Column {
+                name: "email".to_owned(),
+                cql_type: "text".to_owned(),
+            });
+        }
+        schema
+    }
+
+    /// A grid over `shop.orders` — key `(id uuid, created_at timestamp)`, one
+    /// editable column — with room for the inspector and the confirmation.
+    /// The cursor lands on `id`, so a test walks to `email` before `e` opens
+    /// anything.
+    fn editable_grid(rows: usize) -> State {
+        editable_grid_at(rows, Posture::Writable)
+    }
+
+    fn editable_grid_at(rows: usize, posture: Posture) -> State {
+        let mut state = connected(posture);
+        let conn = current_conn(&state);
+        update(
+            &mut state,
+            Msg::SchemaLoaded {
+                conn,
+                schema: Box::new(schema_with_email()),
+                took: Duration::ZERO,
+            },
+        );
+
+        let query = QueryId::next();
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["id".to_owned(), "created_at".to_owned(), "email".to_owned()],
+                rows: (0..rows)
+                    .map(|index| Row {
+                        values: vec![
+                            CqlValue::Uuid(format!("8f14e45f-000{index}")),
+                            CqlValue::Timestamp(
+                                1_699_999_999_000 + i64::try_from(index).unwrap_or_default(),
+                            ),
+                            CqlValue::Text("ada@example.com".to_owned()),
+                        ],
+                    })
+                    .collect(),
+                next: None,
+            },
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
+        state.focus_on(Panel::Contents);
+        state.geometry = Geometry::new([8, 14, 20, 1], 37, 14)
+            .with_inspector(10, 40, Span::default())
+            .with_commit(10, 4);
+        state
+    }
+
+    fn inspecting_row(rows: usize) -> State {
+        let mut state = editable_grid(rows);
+        press(&mut state, Key::Enter);
+        assert!(
+            matches!(state.overlay, Some(Overlay::Inspect(_))),
+            "the fixture opens the inspector"
+        );
+        state
+    }
+
+    /// Walks the inspector's cursor onto `email`, the one editable column of
+    /// the fixture: `id` and `created_at` are its primary key.
+    fn on_email(state: &mut State) {
+        for _ in 0..2 {
+            press(state, Key::Char('j'));
+        }
+    }
+
+    fn field_text(state: &State) -> Option<String> {
+        match &state.overlay {
+            Some(Overlay::Inspect(inspector)) => Some(inspector.field()?.line().text().to_owned()),
+            _ => None,
+        }
+    }
+
+    fn refusal(state: &State) -> Option<String> {
+        match &state.overlay {
+            Some(Overlay::Message(message)) => Some(message.message.clone()),
+            _ => None,
+        }
+    }
+
+    fn dirty_cells(state: &State) -> usize {
+        state
+            .contents
+            .loaded()
+            .map_or(0, |page| page.edits().cells())
+    }
+
+    #[test]
+    fn e_opens_a_field_seeded_with_what_the_cell_says() {
+        let mut state = inspecting_row(3);
+        on_email(&mut state);
+
+        press(&mut state, Key::Char('e'));
+
+        assert_eq!(field_text(&state).as_deref(), Some("ada@example.com"));
+    }
+
+    #[test]
+    fn a_key_column_is_refused_with_the_reason_rather_than_silently() {
+        let mut state = inspecting_row(3);
+
+        press(&mut state, Key::Char('e'));
+
+        assert_eq!(
+            refusal(&state).as_deref(),
+            Some("id is part of the primary key. A key column cannot be updated.")
+        );
+    }
+
+    #[test]
+    fn a_read_only_connection_is_refused_before_anything_else_is_asked() {
+        let mut state = editable_grid_at(1, Posture::ReadOnly);
+        press(&mut state, Key::Enter);
+        on_email(&mut state);
+
+        press(&mut state, Key::Char('e'));
+
+        assert!(
+            refusal(&state).is_some_and(|message| message.contains("open read-only")),
+            "{:?}",
+            refusal(&state)
+        );
+    }
+
+    #[test]
+    fn a_typed_statement_has_no_table_to_update() {
+        let mut state = editable_grid(1);
+        let query = QueryId::next();
+        state.contents.requested(
+            query,
+            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["email".to_owned()],
+                rows: vec![Row {
+                    values: vec![CqlValue::Text("ada@example.com".to_owned())],
+                }],
+                next: None,
+            },
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
+        press(&mut state, Key::Enter);
+
+        press(&mut state, Key::Char('e'));
+
+        assert_eq!(
+            refusal(&state).as_deref(),
+            Some("Only a table's own rows can be edited. This grid came from a typed statement.")
+        );
+    }
+
+    #[test]
+    fn enter_accepts_the_field_and_the_cell_goes_dirty() {
+        let mut state = inspecting_row(3);
+        on_email(&mut state);
+        press(&mut state, Key::Char('e'));
+        type_in(&mut state, "!");
+
+        press(&mut state, Key::Enter);
+
+        assert_eq!(field_text(&state), None, "the field closed");
+        assert_eq!(dirty_cells(&state), 1);
+        assert_eq!(
+            state
+                .contents
+                .loaded()
+                .and_then(|page| page.value(0, 2))
+                .map(crate::cell::text)
+                .as_deref(),
+            Some("ada@example.com!")
+        );
+    }
+
+    #[test]
+    fn an_edit_that_restores_the_value_it_started_from_leaves_no_mark() {
+        let mut state = inspecting_row(3);
+        on_email(&mut state);
+        press(&mut state, Key::Char('e'));
+        type_in(&mut state, "!");
+        press(&mut state, Key::Enter);
+        assert_eq!(dirty_cells(&state), 1);
+
+        press(&mut state, Key::Char('e'));
+        press(&mut state, Key::Backspace);
+        press(&mut state, Key::Enter);
+
+        assert_eq!(dirty_cells(&state), 0);
+    }
+
+    #[test]
+    fn escape_abandons_the_field_and_changes_nothing() {
+        let mut state = inspecting_row(3);
+        on_email(&mut state);
+        press(&mut state, Key::Char('e'));
+        type_in(&mut state, "!");
+
+        press(&mut state, Key::Escape);
+
+        assert_eq!(field_text(&state), None);
+        assert_eq!(dirty_cells(&state), 0);
+        assert!(
+            matches!(state.overlay, Some(Overlay::Inspect(_))),
+            "`esc` closes the field, not the block under it"
+        );
+    }
+
+    /// The edits are keyed by page row, so a sort that re-orders the grid
+    /// carries each one with the row it was made on (design §4).
+    #[test]
+    fn an_edit_survives_a_sort_that_moves_its_row() {
+        let mut state = inspecting_row(3);
+        on_email(&mut state);
+        press(&mut state, Key::Char('e'));
+        type_in(&mut state, "!");
+        press(&mut state, Key::Enter);
+        press(&mut state, Key::Escape);
+
+        state.contents.cycle_sort(0);
+        state.contents.cycle_sort(0);
+
+        let page = state.contents.loaded().expect("a page");
+        assert_eq!(page.edits().cells(), 1);
+        assert!(
+            (0..3).any(|at| page.is_edited(at, 2)),
+            "the mark followed its row"
+        );
+    }
+
+    #[test]
+    fn a_re_read_discards_the_uncommitted_edits() {
+        let mut state = inspecting_row(3);
+        on_email(&mut state);
+        press(&mut state, Key::Char('e'));
+        type_in(&mut state, "!");
+        press(&mut state, Key::Enter);
+        press(&mut state, Key::Escape);
+
+        let query = QueryId::next();
+        state.contents.requested(
+            query,
+            Subject::Table(TableRef::new("shop", "orders")),
+            crate::model::Statement::typed("SELECT * FROM shop.orders"),
+        );
+        state.contents.page_ready(
+            query,
+            Page {
+                columns: vec!["id".to_owned(), "created_at".to_owned(), "email".to_owned()],
+                rows: Vec::new(),
+                next: None,
+            },
+            crate::config::MaxColumnWidth::default(),
+            QueryId::next,
+        );
+
+        assert_eq!(dirty_cells(&state), 0);
+    }
+
+    fn committable(rows: usize) -> State {
+        let mut state = inspecting_row(rows);
+        for row in 0..rows {
+            if row > 0 {
+                press(&mut state, Key::Escape);
+                for _ in 0..row {
+                    press(&mut state, Key::Char('j'));
+                }
+                press(&mut state, Key::Enter);
+            }
+            on_email(&mut state);
+            press(&mut state, Key::Char('e'));
+            type_in(&mut state, "!");
+            press(&mut state, Key::Enter);
+        }
+        press(&mut state, Key::Escape);
+        state
+    }
+
+    fn committing(state: &State) -> Option<&CommitPrompt> {
+        match &state.overlay {
+            Some(Overlay::Commit(prompt)) => Some(prompt),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn ctrl_s_shows_the_update_it_would_run() {
+        let mut state = committable(1);
+
+        ctrl(&mut state, Key::Char('s'));
+
+        let prompt = committing(&state).expect("the confirmation is up");
+        assert_eq!(
+            prompt.statement().cql,
+            "UPDATE \"shop\".\"orders\" SET \"email\" = 'ada@example.com!' \
+             WHERE \"id\" = 8f14e45f-0000 AND \"created_at\" = 1699999999000"
+        );
+    }
+
+    #[test]
+    fn several_edited_rows_become_one_batch() {
+        let mut state = committable(2);
+
+        ctrl(&mut state, Key::Char('s'));
+
+        let prompt = committing(&state).expect("the confirmation is up");
+        assert!(
+            prompt.statement().cql.starts_with("BEGIN BATCH"),
+            "{}",
+            prompt.statement().cql
+        );
+        assert_eq!(prompt.lines().len(), 4, "the two verbs and both brackets");
+    }
+
+    #[test]
+    fn ctrl_s_with_nothing_dirty_is_inert() {
+        let mut state = editable_grid(3);
+
+        ctrl(&mut state, Key::Char('s'));
+
+        assert!(committing(&state).is_none());
+    }
+
+    #[test]
+    fn y_runs_the_statement_and_n_leaves_the_edits_standing() {
+        let mut state = committable(1);
+        ctrl(&mut state, Key::Char('s'));
+
+        press(&mut state, Key::Char('n'));
+        assert!(committing(&state).is_none());
+        assert_eq!(dirty_cells(&state), 1, "cancelling writes nothing back");
+
+        ctrl(&mut state, Key::Char('s'));
+        let effects = press(&mut state, Key::Char('y'));
+
+        assert!(
+            deleted_cql(&effects).is_some_and(|cql| cql.starts_with("UPDATE")),
+            "{effects:?}"
+        );
+        assert!(state.committing.is_some());
+    }
+
+    #[test]
+    fn a_committed_write_lands_in_the_page_and_clears_the_marks() {
+        let mut state = committable(1);
+        ctrl(&mut state, Key::Char('s'));
+        press(&mut state, Key::Char('y'));
+        let query = state.committing.as_ref().expect("in flight").query();
+
+        update(
+            &mut state,
+            Msg::PageReady {
+                query,
+                page: Box::new(Page {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    next: None,
+                }),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert_eq!(dirty_cells(&state), 0);
+        assert!(state.committing.is_none());
+        assert_eq!(
+            state
+                .contents
+                .loaded()
+                .and_then(|page| page.page().rows.first())
+                .and_then(|row| row.values.get(2))
+                .map(crate::cell::text)
+                .as_deref(),
+            Some("ada@example.com!"),
+            "the page holds what the cluster was sent"
+        );
+    }
+
+    #[test]
+    fn a_failed_commit_leaves_the_edits_dirty() {
+        let mut state = committable(1);
+        ctrl(&mut state, Key::Char('s'));
+        press(&mut state, Key::Char('y'));
+        let query = state.committing.as_ref().expect("in flight").query();
+
+        update(
+            &mut state,
+            Msg::Failed {
+                query,
+                error: DbError::Unreachable("boom".to_owned()),
+                took: Duration::ZERO,
+            },
+        );
+
+        assert_eq!(dirty_cells(&state), 1);
+        assert!(state.committing.is_none());
+        assert!(
+            refusal(&state).is_some_and(|message| message.contains("boom")),
+            "{:?}",
+            refusal(&state)
+        );
+    }
+
+    #[test]
+    fn q_warns_before_it_discards_and_y_quits_through_the_warning() {
+        let mut state = committable(1);
+
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(effects.is_empty(), "nothing quits behind the question");
+        assert!(!state.should_quit);
+        assert!(matches!(state.overlay, Some(Overlay::Discard(_))));
+
+        // A second `q` is inert: the question has to be answered (design §6).
+        let effects = press(&mut state, Key::Char('q'));
+        assert!(effects.is_empty());
+        assert!(!state.should_quit);
+
+        let effects = press(&mut state, Key::Char('y'));
+        assert!(state.should_quit);
+        assert!(effects.contains(&Effect::Quit));
+    }
+
+    #[test]
+    fn n_leaves_the_warning_and_the_edits_where_they_were() {
+        let mut state = committable(1);
+        press(&mut state, Key::Char('q'));
+
+        press(&mut state, Key::Char('n'));
+
+        assert!(state.overlay.is_none());
+        assert!(!state.should_quit);
+        assert_eq!(dirty_cells(&state), 1);
+    }
+
+    #[test]
+    fn q_with_nothing_dirty_still_quits_outright() {
+        let mut state = editable_grid(1);
+
+        let effects = press(&mut state, Key::Char('q'));
+
+        assert!(state.should_quit);
+        assert!(effects.contains(&Effect::Quit));
+    }
+
+    #[test]
+    fn the_bar_greys_e_where_the_column_cannot_be_edited_and_lights_it_where_it_can() {
+        let named = |state: &State| {
+            crate::view::hints::bar(state)
+                .panel
+                .iter()
+                .find(|hint| hint.action == "edit")
+                .map(|hint| hint.liveness)
+        };
+
+        // The cursor opens on `id`, which is a key column.
+        let mut state = inspecting_row(3);
+        assert_eq!(named(&state), Some(crate::view::Liveness::Inert));
+
+        on_email(&mut state);
+        assert_eq!(named(&state), Some(crate::view::Liveness::Live));
+    }
+
+    #[test]
+    fn an_open_field_names_only_the_two_keys_it_answers() {
+        let mut state = inspecting_row(3);
+        on_email(&mut state);
+        press(&mut state, Key::Char('e'));
+
+        let bar = crate::view::hints::bar(&state);
+
+        assert_eq!(
+            bar.panel
+                .iter()
+                .chain(&bar.global)
+                .map(|hint| format!("{} {}", hint.keys, hint.action))
+                .collect::<Vec<_>>(),
+            ["⏎ save", "esc cancel"]
+        );
+    }
+
+    #[test]
+    fn the_save_hint_greys_while_the_text_does_not_parse() {
+        let mut state = editable_grid(1);
+        // `created_at` is a key column, so the one non-key typed column is
+        // `email`; a type that refuses text needs a column of its own.
+        press(&mut state, Key::Enter);
+        on_email(&mut state);
+        press(&mut state, Key::Char('e'));
+
+        let live = |state: &State| {
+            crate::view::hints::bar(state)
+                .global
+                .iter()
+                .find(|hint| hint.action == "save")
+                .map(|hint| hint.liveness)
+        };
+
+        assert_eq!(
+            live(&state),
+            Some(crate::view::Liveness::Live),
+            "text takes anything"
+        );
+    }
+
+    #[test]
+    fn the_contents_bar_names_commit_only_while_something_is_uncommitted() {
+        let named = |state: &State| {
+            crate::view::hints::bar(state)
+                .panel
+                .iter()
+                .any(|hint| hint.action == "commit")
+        };
+
+        assert!(!named(&editable_grid(3)));
+        assert!(named(&committable(1)));
+    }
+
+    /// The cursor counts drawn rows and `GridPage::order` is what resolves one,
+    /// so `d` has to ask the page rather than index its unarranged rows — a
+    /// sorted grid otherwise confirms one row and deletes another.
+    #[test]
+    fn d_over_a_sorted_grid_asks_about_the_row_the_cursor_is_actually_on() {
+        let mut state = deletable(3);
+        // Descending on `id`, which reverses the three fixture rows.
+        state.contents.cycle_sort(0);
+
+        press(&mut state, Key::Char('d'));
+
+        let prompt = dropping(&state).expect("the confirmation is up");
+        assert_eq!(
+            prompt.statement().cql,
+            "DELETE FROM \"shop\".\"orders\" WHERE \"id\" = 8f14e45f-0002 \
+             AND \"created_at\" = 1699999999002",
+            "the cursor is on the first drawn row, which sorting made the last fetched one"
         );
     }
 }

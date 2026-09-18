@@ -241,7 +241,7 @@ fn set_caret(frame: &mut Frame, inner: Rect, view: &DropView, typed: &TypedName)
 /// the label beside it dim. A key that would do nothing this frame recedes to
 /// `Faint` with its label, an inert hint rather than a live one — the promise
 /// the bar's greyed hints already keep (docs/shortcuts.md §2).
-fn keys(pairs: &[(&str, &str, bool)], theme: Theme) -> TextLine<'static> {
+pub(crate) fn keys(pairs: &[(&str, &str, bool)], theme: Theme) -> TextLine<'static> {
     let mut spans = Vec::new();
 
     for (index, (key, label, live)) in pairs.iter().enumerate() {

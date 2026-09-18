@@ -57,6 +57,9 @@ pub struct GridCell {
     /// overwriting the null marker on a match would lose that distinction
     /// for exactly the cells the user went looking for (design §4.3).
     pub matched: bool,
+    /// Whether this cell has been typed into and not yet written — `matched`'s
+    /// argument, for the same reason (cell editing design §7).
+    pub dirty: bool,
 }
 
 /// How much of a result Table contents holds, drawn on its bottom border
@@ -72,6 +75,9 @@ pub struct Footer {
     /// The estimate, from [`SIZE_SHOWN_FROM`] up, in the warning colour from
     /// the first memory stop up.
     pub size: Option<Segment>,
+    /// Cells typed into and not yet written, `None` while there are none
+    /// (cell editing design §7).
+    pub dirty: Option<String>,
     /// `None` once the result ended.
     pub status: Option<String>,
     /// The key that continues a stopped `P`. Dropped first on a narrow border:
@@ -102,6 +108,10 @@ pub(super) fn footer(state: &State) -> Option<Footer> {
                     Token::Muted
                 },
             )
+        }),
+        dirty: (!page.edits().is_empty()).then(|| {
+            let cells = page.edits().cells();
+            format!("{cells} uncommitted")
         }),
         status: match paging {
             Paging::Ended => None,
@@ -279,23 +289,20 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
             .collect(),
         // Unmeasured, the panel has no height to window by, and draws from
         // the offset on.
-        rows: grid_page
-            .rows()
-            .skip(offset)
+        rows: (offset..grid_page.len())
             .take(match state.geometry.height(Panel::Contents) {
                 0 => usize::MAX,
                 height => height,
             })
-            .map(|row| {
-                row.values
-                    .iter()
-                    .enumerate()
-                    .map(|(index, value)| {
-                        grid_cell(
-                            value,
+            .map(|at| {
+                (0..grid_page.page().columns.len())
+                    .filter_map(|index| {
+                        Some(grid_cell(
+                            grid_page.value(at, index)?,
                             tokens.get(index).copied().flatten(),
                             state.contents.search(),
-                        )
+                            grid_page.is_edited(at, index),
+                        ))
                     })
                     .collect()
             })
@@ -313,7 +320,12 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
     }
 }
 
-fn grid_cell(value: &CqlValue, column: Option<Token>, search: Option<&Search>) -> GridCell {
+fn grid_cell(
+    value: &CqlValue,
+    column: Option<Token>,
+    search: Option<&Search>,
+    dirty: bool,
+) -> GridCell {
     let text = cell::text(value);
 
     GridCell {
@@ -323,6 +335,7 @@ fn grid_cell(value: &CqlValue, column: Option<Token>, search: Option<&Search>) -
             _ => key_token(column),
         },
         text,
+        dirty,
     }
 }
 
@@ -376,19 +389,21 @@ fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str)
 pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
     let table = grid_table(state, inspector.subject());
     let column = |name: &str| column_token(state.schema(), table.as_ref(), name);
-    let value = |name: &str, value: &CqlValue| InspectValue {
+    let value = |at: usize, name: &str, value: &CqlValue| InspectValue {
         lines: crate::inspect::lines(value),
         token: match value {
             CqlValue::Null => Some(Token::Faint),
             _ => key_token(column(name)),
         },
+        dirty: inspector.edited().contains(&at),
     };
 
     let body = match inspector.inspected() {
         Inspected::Cell {
             column: name,
             value: inspected,
-        } => InspectBody::Cell(value(name, inspected)),
+            ..
+        } => InspectBody::Cell(value(0, name, inspected)),
         Inspected::Row {
             columns, values, ..
         } => {
@@ -405,10 +420,11 @@ pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
                 fields: columns
                     .iter()
                     .zip(values)
-                    .map(|(name, inspected)| InspectField {
+                    .enumerate()
+                    .map(|(at, (name, inspected))| InspectField {
                         name: fitted(name, names),
                         token: column(name),
-                        value: value(name, inspected),
+                        value: value(at, name, inspected),
                     })
                     .collect(),
             }
@@ -421,6 +437,14 @@ pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
         body,
         cursor: inspector.cursor(),
         offset: inspector.offset(),
+        editing: inspector.field().and_then(|field| {
+            Some(super::EditView {
+                field: inspector.at_field()?.0,
+                text: field.line().text().to_owned(),
+                cursor: field.line().cursor(),
+                error: field.error(),
+            })
+        }),
     }
 }
 
@@ -1278,6 +1302,7 @@ mod tests {
             &[&[CqlValue::Int(7), CqlValue::Null]],
         ));
         let inspector = Inspector::opened(
+            0,
             Subject::Table(TableRef::new("shop", "orders")),
             Inspected::Row {
                 number: 1,
@@ -1301,6 +1326,7 @@ mod tests {
                         value: InspectValue {
                             lines: vec!["7".to_owned()],
                             token: Some(Token::PartitionKeyValue),
+                            dirty: false,
                         },
                     },
                     InspectField {
@@ -1309,6 +1335,7 @@ mod tests {
                         value: InspectValue {
                             lines: vec!["null".to_owned()],
                             token: Some(Token::Faint),
+                            dirty: false,
                         },
                     },
                 ],
@@ -1320,8 +1347,10 @@ mod tests {
     fn a_cell_projects_its_value_laid_out_and_its_size() {
         let state = showing(page_of(&["note"], &[&[CqlValue::Text("[1,2]".to_owned())]]));
         let inspector = Inspector::opened(
+            0,
             Subject::Table(TableRef::new("shop", "orders")),
             Inspected::Cell {
+                at: 0,
                 column: "note".to_owned(),
                 value: CqlValue::Text("[1,2]".to_owned()),
             },
@@ -1335,6 +1364,7 @@ mod tests {
             InspectBody::Cell(InspectValue {
                 lines: ["[", "  1,", "  2", "]"].map(str::to_owned).to_vec(),
                 token: None,
+                dirty: false,
             })
         );
     }

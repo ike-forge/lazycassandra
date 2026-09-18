@@ -37,6 +37,13 @@ impl StatementKind {
     }
 }
 
+/// One row of an `UPDATE`: the columns it assigns, then the key columns that
+/// address it, both `(column, literal)`.
+///
+/// A named type because the pair is the vocabulary [`Statement::update_rows`]
+/// is written in, not merely a tuple it happens to take.
+pub type UpdatedRow = (Vec<(String, String)>, Vec<(String, String)>);
+
 impl Statement {
     #[must_use]
     pub const fn mutates(&self) -> bool {
@@ -129,6 +136,64 @@ impl Statement {
         }
     }
 
+    /// One row's named columns, set to the literals given, addressed by its
+    /// whole primary key.
+    ///
+    /// `sets` and `key` are both `(column, literal)`, already spelled by
+    /// [`crate::edit`] and [`crate::literal`] respectively — which is what
+    /// makes this total, the same way [`Self::delete_row`] is
+    /// (cell editing design §5).
+    ///
+    /// [`StatementKind::Write`], as `kind_of` classifies a typed `UPDATE`:
+    /// the builders and the sniffer must not disagree about one verb.
+    #[must_use]
+    pub fn update_row(
+        keyspace: &str,
+        table: &str,
+        sets: &[(String, String)],
+        key: &[(String, String)],
+    ) -> Self {
+        Self {
+            cql: format!(
+                "UPDATE {}.{} SET {} WHERE {}",
+                quoted(keyspace),
+                quoted(table),
+                assignments(sets),
+                restriction(key)
+            ),
+            kind: StatementKind::Write,
+        }
+    }
+
+    /// Several rows, as one batch — [`Self::delete_rows`]' rule and its
+    /// reason: a confirmation that said "3 rows" has promised three rows, and
+    /// an unlogged batch that half-applies has told the user something
+    /// untrue. A single row is a bare `UPDATE`.
+    #[must_use]
+    pub fn update_rows(keyspace: &str, table: &str, rows: &[UpdatedRow]) -> Self {
+        if let [(sets, key)] = rows {
+            return Self::update_row(keyspace, table, sets, key);
+        }
+
+        let mut cql = "BEGIN BATCH\n".to_owned();
+        for (sets, key) in rows {
+            let _ = writeln!(
+                cql,
+                "  UPDATE {}.{} SET {} WHERE {};",
+                quoted(keyspace),
+                quoted(table),
+                assignments(sets),
+                restriction(key)
+            );
+        }
+        cql.push_str("APPLY BATCH");
+
+        Self {
+            cql,
+            kind: StatementKind::Write,
+        }
+    }
+
     /// A statement typed by hand, classified by the verb that opens it.
     ///
     /// A sniffer rather than a parser, but a scanning one: the verb is read
@@ -162,6 +227,15 @@ fn restriction(key: &[(String, String)]) -> String {
         .map(|(column, literal)| format!("{} = {literal}", quoted(column)))
         .collect::<Vec<_>>()
         .join(" AND ")
+}
+
+/// The `SET` clause: every column assigned, in the order given. The names are
+/// quoted for [`quoted`]'s reason; the values arrive already spelled.
+fn assignments(sets: &[(String, String)]) -> String {
+    sets.iter()
+        .map(|(column, literal)| format!("{} = {literal}", quoted(column)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Every verb that opens a statement changing nothing on the cluster.
@@ -446,6 +520,7 @@ mod tests {
             Statement::drop_table("shop", "orders"),
             Statement::drop_keyspace("shop"),
             Statement::delete_row("shop", "orders", &key()),
+            Statement::update_row("shop", "orders", &sets(), &key()),
         ] {
             assert_eq!(
                 built.kind,
@@ -458,6 +533,59 @@ mod tests {
 
     fn key() -> Vec<(String, String)> {
         vec![("id".to_owned(), "8f14e45f".to_owned())]
+    }
+
+    fn sets() -> Vec<(String, String)> {
+        vec![("note".to_owned(), "'x'".to_owned())]
+    }
+
+    #[test]
+    fn updating_a_row_sets_in_the_order_given_and_quotes_every_name() {
+        assert_eq!(
+            Statement::update_row(
+                "shop",
+                "orders",
+                &[
+                    ("note".to_owned(), "'o''hara'".to_owned()),
+                    ("qty".to_owned(), "7".to_owned()),
+                ],
+                &key()
+            )
+            .cql,
+            "UPDATE \"shop\".\"orders\" SET \"note\" = 'o''hara', \"qty\" = 7 \
+             WHERE \"id\" = 8f14e45f"
+        );
+    }
+
+    #[test]
+    fn one_updated_row_is_a_statement_and_several_are_a_batch() {
+        assert_eq!(
+            Statement::update_rows("shop", "orders", &[(sets(), key())]).cql,
+            Statement::update_row("shop", "orders", &sets(), &key()).cql
+        );
+
+        let two = vec![
+            (sets(), key()),
+            (
+                vec![("qty".to_owned(), "7".to_owned())],
+                vec![("id".to_owned(), "c9f0f895".to_owned())],
+            ),
+        ];
+        assert_eq!(
+            Statement::update_rows("shop", "orders", &two).cql,
+            "BEGIN BATCH\n  \
+             UPDATE \"shop\".\"orders\" SET \"note\" = 'x' WHERE \"id\" = 8f14e45f;\n  \
+             UPDATE \"shop\".\"orders\" SET \"qty\" = 7 WHERE \"id\" = c9f0f895;\n\
+             APPLY BATCH"
+        );
+    }
+
+    #[test]
+    fn an_update_is_a_write_a_read_only_connection_still_refuses() {
+        let stmt = Statement::update_row("shop", "orders", &sets(), &key());
+
+        assert_eq!(stmt.kind, StatementKind::Write);
+        assert!(stmt.mutates());
     }
 
     #[test]

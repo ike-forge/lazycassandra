@@ -1,0 +1,286 @@
+//! The commit confirmation and the quit warning, drawn over the panels
+//! (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5, §6).
+//!
+//! Unlike the drop confirmation, which elides a long batch down to its head,
+//! this block *scrolls*: thirty edited rows is thirty-plus lines of CQL, and
+//! a summary of what a write will do is not a preview of it. Wrapping is the
+//! renderer's, so the line count goes back to the domain through `Geometry`,
+//! the way the inspector's does.
+
+use lc_domain::style::{Severity, Token};
+use lc_domain::view::CommitView;
+use ratatui::Frame;
+use ratatui::layout::{Margin, Rect};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+
+use crate::body::Extent;
+use crate::theme::Theme;
+
+/// Past this an `UPDATE` is longer than an eye tracks back from, and it wraps
+/// instead — `inspect::MAX_WIDTH`'s reason.
+const MAX_WIDTH: u16 = 100;
+/// Two columns of frame each side, and two rows above and below.
+const MARGIN: u16 = 4;
+const MIN_WIDTH: u16 = 44;
+/// Both borders, a blank line, one line of statement, a blank line, and the
+/// keys.
+const MIN_HEIGHT: u16 = 7;
+/// Between each border and the text.
+const PAD: u16 = 1;
+/// A blank line above the body and, below it, a blank line and the keys row.
+const CHROME: u16 = 3;
+
+/// The block's size is a function of the frame's alone, so the height the
+/// domain bounds an offset by never moves with the statement (design §5).
+fn rect(area: Rect) -> Option<Rect> {
+    let width = area.width.saturating_sub(MARGIN).min(MAX_WIDTH);
+    let height = area.height.saturating_sub(MARGIN);
+
+    if width < MIN_WIDTH || height < MIN_HEIGHT {
+        return None;
+    }
+
+    Some(Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    ))
+}
+
+fn body(block: Rect) -> Rect {
+    let inner = block.inner(Margin {
+        horizontal: 1 + PAD,
+        vertical: 1,
+    });
+
+    Rect {
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(CHROME),
+        ..inner
+    }
+}
+
+/// Rows of statement the block would show in `area`; zero where it does not
+/// fit, which is what makes `ctrl-s` inert there.
+pub(crate) fn visible_rows(area: Rect) -> usize {
+    rect(area).map_or(0, |block| usize::from(body(block).height))
+}
+
+/// Draws the block and answers with the lines its statement wrapped to.
+pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> usize {
+    let Some(area) = rect(frame.area()) else {
+        return 0;
+    };
+    let inner = body(area);
+    let wrapped = wrapped(view, usize::from(inner.width));
+
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(theme.style(Token::Severity(Severity::Warning)))
+        .title(crate::drop::title(&view.title, theme));
+
+    frame.render_widget(Clear, area);
+    frame.buffer_mut().set_style(area, theme.ground());
+    frame.render_widget(block, area);
+
+    let offset = u16::try_from(view.offset).unwrap_or(u16::MAX);
+    let lines: Vec<Line<'static>> = wrapped
+        .iter()
+        .map(|line| Line::from(Span::styled(line.clone(), theme.style(Token::Keyword))))
+        .collect();
+    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
+
+    let keys = Rect {
+        y: inner.y + inner.height + 1,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(
+        Paragraph::new(crate::drop::keys(
+            &[("y", "Yes, write them", true), ("n", "Cancel", true)],
+            theme,
+        )),
+        keys,
+    );
+
+    let extent = Extent {
+        position: view.offset,
+        total: wrapped.len(),
+        visible: usize::from(inner.height),
+    };
+    if extent.overflows() {
+        crate::render::scrollbar(frame, area, &extent, theme.focus_border(), theme);
+    }
+
+    wrapped.len()
+}
+
+/// Every statement line wrapped to `width`, a continuation keeping the
+/// indent a batch's members are written with.
+fn wrapped(view: &CommitView, width: usize) -> Vec<String> {
+    view.lines
+        .iter()
+        .flat_map(|line| {
+            let text = line.trim_start_matches(' ');
+            let indent = (line.len() - text.len() + 2).min(width.saturating_sub(1));
+            let rows = crate::wrap::plain(text, width, indent);
+
+            if rows.is_empty() {
+                vec![String::new()]
+            } else {
+                rows
+            }
+        })
+        .collect()
+}
+
+/// The quit warning: one sentence and one question, in a block sized to them.
+///
+/// Fixed height and no scrolling, unlike the confirmation above — there is
+/// nothing here to read past.
+pub(crate) fn render_discard(frame: &mut Frame, message: &str, theme: Theme) {
+    let width = MIN_WIDTH.min(frame.area().width);
+    let height = MIN_HEIGHT;
+    if frame.area().width < width || frame.area().height < height {
+        return;
+    }
+
+    let area = Rect::new(
+        (frame.area().width - width) / 2,
+        (frame.area().height - height) / 2,
+        width,
+        height,
+    );
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(theme.style(Token::Severity(Severity::Warning)))
+        .title("Uncommitted changes");
+    let inner = block.inner(area).inner(Margin {
+        horizontal: PAD,
+        vertical: 0,
+    });
+
+    frame.render_widget(Clear, area);
+    frame.buffer_mut().set_style(area, theme.ground());
+    frame.render_widget(block, area);
+
+    let mut lines = vec![Line::default()];
+    lines.extend(
+        crate::wrap::plain(message, usize::from(inner.width), 0)
+            .into_iter()
+            .map(Line::from),
+    );
+    lines.push(Line::default());
+    lines.push(crate::drop::keys(
+        &[("y", "Quit and discard", true), ("n", "Stay", true)],
+        theme,
+    ));
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use lc_domain::commit::CommitPrompt;
+    use lc_domain::contents::TableRef;
+    use lc_domain::model::{Statement, UpdatedRow};
+    use lc_domain::state::{Overlay, State};
+    use lc_domain::view::{OverlayView, view_model};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::{Buffer, Cell};
+
+    use super::*;
+
+    fn row(id: &str) -> UpdatedRow {
+        (
+            vec![("note".to_owned(), "'x'".to_owned())],
+            vec![("id".to_owned(), id.to_owned())],
+        )
+    }
+
+    fn prompt(rows: usize) -> CommitPrompt {
+        let rows: Vec<_> = (0..rows).map(|at| row(&at.to_string())).collect();
+
+        CommitPrompt::opened(
+            TableRef::new("shop", "orders"),
+            Statement::update_rows("shop", "orders", &rows),
+            rows.len(),
+            rows.len(),
+        )
+    }
+
+    fn drawn(width: u16, height: u16, prompt: CommitPrompt) -> (Buffer, usize) {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Commit(prompt));
+        let Some(OverlayView::Commit(view)) = view_model(&state).overlay else {
+            panic!("the confirmation projects");
+        };
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a backend");
+        let mut lines = 0;
+
+        terminal
+            .draw(|frame| lines = render(frame, &view, Theme::default()))
+            .expect("TestBackend always draws");
+
+        (terminal.backend().buffer().clone(), lines)
+    }
+
+    fn rows(buffer: &Buffer) -> Vec<String> {
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .map(Cell::symbol)
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_row_draws_the_statement_and_the_two_keys() {
+        let (buffer, lines) = drawn(80, 12, prompt(1));
+        let drawn = rows(&buffer);
+
+        assert_eq!(lines, 1, "the statement fits this frame unwrapped");
+        assert!(
+            drawn
+                .iter()
+                .any(|row| row.contains("Write 1 cell in 1 row of shop.orders")),
+            "{drawn:#?}"
+        );
+        assert!(
+            drawn.iter().any(
+                |row| row.contains(r#"UPDATE "shop"."orders" SET "note" = 'x' WHERE "id" = 0"#)
+            ),
+            "{drawn:#?}"
+        );
+        assert!(
+            drawn.iter().any(|row| row.contains("Yes, write them")),
+            "{drawn:#?}"
+        );
+    }
+
+    #[test]
+    fn a_batch_longer_than_the_body_scrolls_rather_than_eliding() {
+        // The whole difference from the drop confirmation: every statement a
+        // commit would run is readable, not just its head (design §5).
+        let (buffer, lines) = drawn(80, 14, prompt(30));
+
+        assert_eq!(lines, 32, "the thirty verbs and both brackets");
+        assert!(
+            rows(&buffer).iter().any(|row| row.contains('▐')),
+            "{:#?}",
+            rows(&buffer)
+        );
+    }
+
+    #[test]
+    fn a_frame_too_small_for_the_block_draws_none_and_reports_no_room() {
+        assert_eq!(rect(Rect::new(0, 0, 47, 10)), None);
+        assert_eq!(visible_rows(Rect::new(0, 0, 47, 10)), 0);
+        assert!(visible_rows(Rect::new(0, 0, 48, 11)) > 0);
+    }
+}

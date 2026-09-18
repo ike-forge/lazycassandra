@@ -158,6 +158,60 @@ const INSPECT_GLOBAL: &[Binding] = &[Binding {
     action: "close",
 }];
 
+/// The `e` hint, appended to the inspector's bar and greyed wherever §2
+/// refuses it — so the refusal is visible before the key is pressed, the
+/// promise every greyed hint keeps
+/// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7).
+const EDIT: Binding = Binding {
+    keys: &[Stroke::key(Key::Char('e'))],
+    action: "edit",
+};
+
+/// What the bar names while a field is open. No panel group and no `q`: the
+/// field claims every printable key, so naming anything else would be the
+/// lie this bar exists to prevent (design §3).
+const FIELD: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "save",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Escape)],
+        action: "cancel",
+    },
+];
+
+/// The commit confirmation's own bar, and the quit warning's.
+const COMMIT: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('y'))],
+        action: "write them",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('n')), Stroke::key(Key::Escape)],
+        action: "cancel",
+    },
+];
+
+const DISCARD: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('y'))],
+        action: "quit and discard",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('n')), Stroke::key(Key::Escape)],
+        action: "stay",
+    },
+];
+
+/// The `ctrl-s` hint, appended to Table contents' bar wherever anything is
+/// uncommitted and left off entirely where nothing is: a key that would do
+/// nothing at all is not an affordance (design §7).
+const COMMIT_HINT: Binding = Binding {
+    keys: &[Stroke::ctrl(Key::Char('s'))],
+    action: "commit",
+};
+
 /// What the bar names in place of the focused panel's group while the picker
 /// is open. Moving is the whole panel group, and it is named "preview"
 /// because that is what the press does — the cursor writes `State.theme` on
@@ -450,7 +504,23 @@ fn overlay_bar(state: &State, export: Option<&String>) -> Option<HintBar> {
     }
 
     if let Some(Overlay::Inspect(inspector)) = &state.overlay {
-        return Some(inspect_bar(inspector, export));
+        return Some(inspect_bar(state, inspector, export));
+    }
+
+    if matches!(state.overlay, Some(Overlay::Commit(_))) {
+        return Some(HintBar {
+            panel: Vec::new(),
+            global: COMMIT.iter().map(rendered).collect(),
+            export,
+        });
+    }
+
+    if matches!(state.overlay, Some(Overlay::Discard(_))) {
+        return Some(HintBar {
+            panel: Vec::new(),
+            global: DISCARD.iter().map(rendered).collect(),
+            export,
+        });
     }
 
     if matches!(state.overlay, Some(Overlay::Search(_) | Overlay::Filter(_))) {
@@ -530,6 +600,9 @@ pub(crate) fn bar(state: &State) -> HintBar {
             ..rendered(&NEXT_MATCH)
         });
     }
+    if state.focus() == Panel::Contents && crate::update::has_uncommitted(state) {
+        panel.push(rendered(&COMMIT_HINT));
+    }
     if state.focus() == Panel::Contents && state.contents.fetching_all() {
         panel.push(rendered(&STOP));
     } else if state.takes_text() {
@@ -577,25 +650,62 @@ fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar
 
 /// The inspector's own bar. Each copy key is greyed where it copies nothing:
 /// `y` over a null value, `Y` over a null field's line.
-fn inspect_bar(inspector: &crate::inspect::Inspector, export: Option<String>) -> HintBar {
+fn inspect_bar(
+    state: &State,
+    inspector: &crate::inspect::Inspector,
+    export: Option<String>,
+) -> HintBar {
+    // An open field claims every key the block otherwise answers, so its bar
+    // names only what it answers itself (design §3).
+    if inspector.field().is_some() {
+        return HintBar {
+            panel: Vec::new(),
+            global: FIELD
+                .iter()
+                .map(|binding| Hint {
+                    liveness: if binding.keys == [Stroke::key(Key::Enter)]
+                        && inspector
+                            .field()
+                            .is_none_or(|field| field.parsed().is_none())
+                    {
+                        Liveness::Inert
+                    } else {
+                        Liveness::Live
+                    },
+                    ..rendered(binding)
+                })
+                .collect(),
+            export,
+        };
+    }
+
     let copies = |action: &str| match action {
         "copy" => inspector.yank().is_some(),
         "copy line" => inspector.line().is_some(),
         _ => true,
     };
+    let mut panel: Vec<Hint> = INSPECT
+        .iter()
+        .map(|binding| Hint {
+            liveness: if copies(binding.action) {
+                Liveness::Live
+            } else {
+                Liveness::Inert
+            },
+            ..rendered(binding)
+        })
+        .collect();
+    panel.push(Hint {
+        liveness: if crate::update::editable_here(state) {
+            Liveness::Live
+        } else {
+            Liveness::Inert
+        },
+        ..rendered(&EDIT)
+    });
 
     HintBar {
-        panel: INSPECT
-            .iter()
-            .map(|binding| Hint {
-                liveness: if copies(binding.action) {
-                    Liveness::Live
-                } else {
-                    Liveness::Inert
-                },
-                ..rendered(binding)
-            })
-            .collect(),
+        panel,
         global: INSPECT_GLOBAL.iter().map(rendered).collect(),
         export,
     }

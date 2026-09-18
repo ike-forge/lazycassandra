@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 
 use crate::clock::Stamp;
 use crate::commands::CommandsPanel;
+use crate::commit::{CommitPrompt, Discard};
 use crate::config::{Config, ConnectionName, Diagnostic};
-use crate::contents::{ContentsPanel, Filter, SelectionMode};
+use crate::contents::{ContentsPanel, Filter, SelectionMode, TableRef};
 use crate::ddl::DdlPanel;
 use crate::drop::{DropPrompt, Target};
 use crate::export::ExportForm;
@@ -85,6 +86,10 @@ pub struct State {
     /// is, and for one more: a second would race the schema reload the first
     /// owes (drop design §1, §4).
     pub dropping: Option<Dropping>,
+    /// The one commit in flight, if any. One at a time for the drop's reason:
+    /// a second would race the first's write back into the page
+    /// (cell editing design §5).
+    pub committing: Option<Committing>,
 }
 
 /// A running export.
@@ -177,6 +182,35 @@ impl Dropping {
     #[must_use]
     pub const fn target(&self) -> &Target {
         &self.target
+    }
+}
+
+/// A commit in flight: the query, and the table it is writing to.
+///
+/// [`Dropping`]'s shape and its reason: the page the edits were read from is
+/// live for the whole round trip, so what the message names when the answer
+/// arrives is carried here rather than read again
+/// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Committing {
+    query: QueryId,
+    table: TableRef,
+}
+
+impl Committing {
+    #[must_use]
+    pub const fn started(query: QueryId, table: TableRef) -> Self {
+        Self { query, table }
+    }
+
+    #[must_use]
+    pub const fn query(&self) -> QueryId {
+        self.query
+    }
+
+    #[must_use]
+    pub const fn table(&self) -> &TableRef {
+        &self.table
     }
 }
 
@@ -336,6 +370,13 @@ pub enum Overlay {
     /// A value or a row read whole, over the grid it came from
     /// (docs/superpowers/specs/2026-09-17-cell-inspector-design.md).
     Inspect(Inspector),
+    /// The commit confirmation: every uncommitted edit, as the CQL that would
+    /// write them (cell editing design §5).
+    Commit(CommitPrompt),
+    /// `q` with edits outstanding. A variant rather than a `Message`, so the
+    /// type says that answering it ends the process — `Fatal`'s argument
+    /// (cell editing design §6).
+    Discard(Discard),
     /// A startup failure: the connection or the schema read, either of which
     /// happens before there is an application to put a trail in. Its only
     /// exit is `Effect::Quit`.
@@ -1296,6 +1337,12 @@ pub struct Geometry {
     /// Where the frame wrapped the inspector's cursor line to, which is what
     /// its offset follows (cell inspector design §5).
     inspector_selection: Span,
+    /// Rows the commit confirmation's body has, and the lines its statement
+    /// wrapped to. Measured the way the inspector's are, and for the same
+    /// reason: the block is sized from the terminal alone, so neither depends
+    /// on the offset they bound (cell editing design §5).
+    commit_rows: usize,
+    commit_lines: usize,
 }
 
 impl Geometry {
@@ -1319,6 +1366,8 @@ impl Geometry {
             inspector_rows: 0,
             inspector_lines: 0,
             inspector_selection: Span { first: 0, lines: 0 },
+            commit_rows: 0,
+            commit_lines: 0,
         }
     }
 
@@ -1388,6 +1437,28 @@ impl Geometry {
     #[must_use]
     pub const fn drop_fits(self) -> bool {
         self.drop_fits
+    }
+
+    /// Rows of body the commit confirmation could show. Zero is what makes
+    /// `ctrl-s` inert and closes an open confirmation, the gate
+    /// `inspector_rows` is for `Enter`.
+    #[must_use]
+    pub const fn commit_rows(self) -> usize {
+        self.commit_rows
+    }
+
+    #[must_use]
+    pub const fn commit_lines(self) -> usize {
+        self.commit_lines
+    }
+
+    #[must_use]
+    pub const fn with_commit(self, commit_rows: usize, commit_lines: usize) -> Self {
+        Self {
+            commit_rows,
+            commit_lines,
+            ..self
+        }
     }
 
     /// Whether the frame could draw the drop confirmation. Split from

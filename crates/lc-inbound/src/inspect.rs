@@ -6,7 +6,7 @@
 
 use lc_domain::state::Span;
 use lc_domain::style::Token;
-use lc_domain::view::{InspectBody, InspectValue, InspectView};
+use lc_domain::view::{EditView, InspectBody, InspectValue, InspectView};
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
@@ -68,7 +68,7 @@ pub(crate) fn render(frame: &mut Frame, view: &InspectView, theme: Theme) -> (us
         return (0, Span::default());
     };
     let inner = body(area);
-    let (lines, selection) = lay_out(&view.body, view.cursor, usize::from(inner.width), theme);
+    let (lines, selection) = lay_out(view, usize::from(inner.width), theme);
     let total = lines.len();
 
     let mut block = Block::bordered()
@@ -104,16 +104,19 @@ pub(crate) fn render(frame: &mut Frame, view: &InspectView, theme: Theme) -> (us
     (total, selection)
 }
 
-fn lay_out(
-    body: &InspectBody,
-    cursor: usize,
-    width: usize,
-    theme: Theme,
-) -> (Vec<Line<'static>>, Span) {
+fn lay_out(view: &InspectView, width: usize, theme: Theme) -> (Vec<Line<'static>>, Span) {
+    let (body, cursor) = (&view.body, view.cursor);
     let mut laid = Laid::default();
+    // The field is drawn in place of the value it is typing over, so the
+    // block does not say two things about one cell (design §3).
+    let typing = |at: usize| view.editing.as_ref().filter(|edit| edit.field == at);
 
     match body {
         InspectBody::Cell(value) => {
+            if let Some(edit) = typing(0) {
+                laid.field(edit, 0, width, theme);
+                return (laid.lines, laid.selection);
+            }
             let style = value_style(value, theme);
 
             for (at, rows) in wrapped(value, width, 0).into_iter().enumerate() {
@@ -130,11 +133,26 @@ fn lay_out(
             let hang = names + GAP;
             let mut at = 0;
 
-            for field in fields {
+            for (index, field) in fields.iter().enumerate() {
                 let style = value_style(&field.value, theme);
                 let name = field
                     .token
                     .map_or_else(|| theme.style(Token::Muted), |token| theme.style(token));
+
+                if let Some(edit) = typing(index) {
+                    let label = field.name.clone();
+                    let pad = names.saturating_sub(field.name.width());
+                    laid.field_under(
+                        edit,
+                        &format!("{label}{}", " ".repeat(pad + GAP)),
+                        name,
+                        hang,
+                        width,
+                        theme,
+                    );
+                    at += field.value.lines.len();
+                    continue;
+                }
 
                 for (line, rows) in wrapped(&field.value, width, hang).into_iter().enumerate() {
                     let rows = rows
@@ -175,6 +193,61 @@ struct Laid {
 }
 
 impl Laid {
+    /// The open field, drawn where its value would be: the text on the
+    /// selection band with a caret after it, and the reason it does not parse
+    /// on the line below (design §3).
+    fn field(&mut self, edit: &EditView, hang: usize, width: usize, theme: Theme) {
+        self.field_under(
+            edit,
+            &" ".repeat(hang),
+            theme.style(Token::Muted),
+            hang,
+            width,
+            theme,
+        );
+    }
+
+    fn field_under(
+        &mut self,
+        edit: &EditView,
+        label: &str,
+        label_style: Style,
+        hang: usize,
+        width: usize,
+        theme: Theme,
+    ) {
+        let room = width.saturating_sub(hang).max(1);
+        // The tail rather than the head: a caret typing past the right edge
+        // has to stay on screen, and what was typed last is what is being
+        // looked at.
+        let shown: String = edit
+            .text
+            .chars()
+            .skip(edit.cursor.saturating_sub(room.saturating_sub(1)))
+            .collect();
+        let typed = format!("{shown}▏");
+
+        self.selection = Span {
+            first: self.lines.len(),
+            lines: 1,
+        };
+        self.lines.push(Line::from(vec![
+            TextSpan::styled(label.to_owned(), label_style),
+            TextSpan::styled(typed, theme.style(Token::Selected)),
+        ]));
+
+        if let Some(error) = &edit.error {
+            self.lines.push(Line::from(vec![
+                TextSpan::raw(" ".repeat(hang)),
+                TextSpan::styled(
+                    error.clone(),
+                    theme.style(Token::Severity(lc_domain::style::Severity::Danger)),
+                ),
+            ]));
+            self.selection.lines = 2;
+        }
+    }
+
     /// One laid-out line's wrapped rows, banded across the body where the
     /// cursor is on it — every row of it, the way a wrapped Logs entry is
     /// banded whole.
@@ -193,7 +266,14 @@ impl Laid {
     }
 }
 
+/// A dirty value carries [`Token::Dirty`] over whatever token the grid gives
+/// it: an uncommitted cell is the one thing about it worth saying first
+/// (design §7).
 fn value_style(value: &InspectValue, theme: Theme) -> Style {
+    if value.dirty {
+        return theme.style(Token::Dirty);
+    }
+
     value
         .token
         .map_or_else(Style::default, |token| theme.style(token))
@@ -250,8 +330,11 @@ mod tests {
         cursor: usize,
     ) -> (Buffer, usize, Span) {
         let mut state = State::default();
-        let mut inspector =
-            Inspector::opened(Subject::Table(TableRef::new("shop", "orders")), inspected);
+        let mut inspector = Inspector::opened(
+            0,
+            Subject::Table(TableRef::new("shop", "orders")),
+            inspected,
+        );
         for _ in 0..cursor {
             inspector.down();
         }
@@ -295,6 +378,7 @@ mod tests {
 
     fn cell(value: CqlValue) -> Inspected {
         Inspected::Cell {
+            at: 0,
             column: "spec".to_owned(),
             value,
         }
@@ -401,6 +485,7 @@ mod tests {
     fn the_frame_reports_the_body_height_and_the_wrapped_lines() {
         let mut state = State::default();
         state.overlay = Some(Overlay::Inspect(Inspector::opened(
+            0,
             Subject::Table(TableRef::new("shop", "orders")),
             cell(CqlValue::List(vec![CqlValue::Int(1), CqlValue::Int(2)])),
         )));
@@ -454,6 +539,73 @@ mod tests {
         assert_eq!(
             rect(Rect::new(0, 0, 200, 50)),
             Some(Rect::new(50, 2, 100, 46))
+        );
+    }
+
+    #[test]
+    fn an_open_field_is_drawn_in_place_of_the_value_it_types_over() {
+        let mut state = State::default();
+        let mut inspector = Inspector::opened(
+            0,
+            Subject::Table(TableRef::new("shop", "orders")),
+            cell(CqlValue::Text("ada".to_owned())),
+        );
+        let mut field = lc_domain::edit::Field::opened(0, "spec", "int", "ada".to_owned());
+        field.line_mut().insert('!');
+        inspector.start_edit(field);
+        state.overlay = Some(Overlay::Inspect(inspector));
+        let Some(OverlayView::Inspect(view)) = view_model(&state).overlay else {
+            panic!("the inspector projects");
+        };
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).expect("a backend");
+        terminal
+            .draw(|frame| {
+                render(frame, &view, Theme::default());
+            })
+            .expect("TestBackend always draws");
+
+        let drawn = rows(terminal.backend().buffer());
+        assert!(
+            drawn.iter().any(|row| row.contains("ada!▏")),
+            "the field and its caret: {drawn:#?}"
+        );
+        assert!(
+            drawn.iter().any(|row| row.contains("Not a int.")),
+            "the reason it does not parse: {drawn:#?}"
+        );
+    }
+
+    #[test]
+    fn a_dirty_field_is_drawn_in_the_uncommitted_colour() {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Inspect(
+            Inspector::opened(
+                0,
+                Subject::Table(TableRef::new("shop", "orders")),
+                cell(CqlValue::Text("ada".to_owned())),
+            )
+            .with_edited(vec![0]),
+        ));
+        let Some(OverlayView::Inspect(view)) = view_model(&state).overlay else {
+            panic!("the inspector projects");
+        };
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).expect("a backend");
+        terminal
+            .draw(|frame| {
+                render(frame, &view, Theme::default());
+            })
+            .expect("TestBackend always draws");
+
+        let theme = Theme::default();
+        let buffer = terminal.backend().buffer();
+        let dirty = theme.style(Token::Dirty);
+        assert!(
+            (0..buffer.area.height).any(|y| (0..buffer.area.width).any(|x| {
+                buffer
+                    .cell((x, y))
+                    .is_some_and(|cell| cell.symbol() == "a" && cell.style().fg == dirty.fg)
+            })),
+            "the value wears Token::Dirty"
         );
     }
 }
