@@ -74,6 +74,15 @@ fn run(source: &[char], at: usize) -> (Kind, usize) {
         return (Kind::Identifier, quoted(source, at, '"'));
     }
 
+    // Before the word run below: a uuid may open with a hex letter, and the
+    // word run would otherwise swallow its first group and leave the dashes
+    // as operators — which the formatter then spaces out as subtraction.
+    if first.is_ascii_hexdigit()
+        && let Some(len) = uuid(source, at)
+    {
+        return (Kind::Literal, len);
+    }
+
     if first.is_ascii_digit() {
         return (Kind::Literal, number(source, at));
     }
@@ -171,10 +180,6 @@ fn dollar_quoted(source: &[char], at: usize) -> usize {
 /// A number, or a uuid — which starts with a digit as often as not, and whose
 /// hyphens would otherwise scan as three subtractions.
 fn number(source: &[char], at: usize) -> usize {
-    if let Some(len) = uuid(source, at) {
-        return len;
-    }
-
     if source[at] == '0' && matches!(source.get(at + 1), Some('x' | 'X')) {
         return while_matching(source, at + 2, char::is_alphanumeric) + 2;
     }
@@ -358,6 +363,24 @@ mod tests {
                 "123e4567-e89b-12d3-a456-426614174000".to_owned()
             )]
         );
+    }
+
+    /// `timeuuid` version 1 puts the timestamp's high nibbles first, so a
+    /// uuid from `now()` opens with a letter about as often as with a digit.
+    #[test]
+    fn a_uuid_opening_with_a_hex_letter_is_one_literal_too() {
+        assert_eq!(
+            kinds("c1000000-0000-4000-8000-000000000002"),
+            vec![(
+                Kind::Literal,
+                "c1000000-0000-4000-8000-000000000002".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_name_spelled_in_hex_letters_is_still_a_name() {
+        assert_eq!(kinds_only("deadbeef"), vec![Kind::Identifier]);
     }
 
     #[test]

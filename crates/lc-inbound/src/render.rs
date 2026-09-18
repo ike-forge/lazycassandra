@@ -6055,6 +6055,9 @@ mod tests {
         assert!(border.contains("3 rows · 2 uncommitted"), "{border:?}");
     }
 
+    /// On the cursor row, which is where an edit has just been made: ratatui
+    /// paints `row_highlight_style` over the row after its cells, so this is
+    /// the case a background alone would lose (cell editing design §7).
     #[test]
     fn a_dirty_cell_is_drawn_in_the_uncommitted_colour() {
         let mut view = view_model(&showing(sized_page(1, 3)));
@@ -6074,7 +6077,9 @@ mod tests {
         assert!(
             (0..buffer.area.height).any(|y| (0..buffer.area.width).any(|x| {
                 buffer.cell((x, y)).is_some_and(|cell| {
-                    want.starts_with(cell.symbol()) && cell.style().fg == dirty.fg
+                    want.starts_with(cell.symbol())
+                        && cell.style().fg == dirty.fg
+                        && cell.style().add_modifier.contains(Modifier::REVERSED)
                 })
             })),
             "no cell wears Token::Dirty"

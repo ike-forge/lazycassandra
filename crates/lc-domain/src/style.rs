@@ -134,7 +134,9 @@ pub enum Token {
     /// Named for what it marks rather than for the colour it gets, like
     /// [`Token::Marker`], and mapped to a role a palette already declares:
     /// an uncommitted value is a claim about the screen that the cluster has
-    /// not agreed to yet, which is what the warning colour already says
+    /// not agreed to yet, which is what the warning colour already says. Worn
+    /// as a ground rather than as text, so the cell is found in a full grid
+    /// rather than read once the eye is already on it
     /// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7).
     Dirty,
     /// A sort or filter mark over a grid heading, while it is in force.

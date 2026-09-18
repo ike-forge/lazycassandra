@@ -15,7 +15,7 @@ use lc_domain::view::{Activity, LogRow, RUNNING};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::{Line, Span as TextSpan};
+use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::body::{Marked, barred, patched};
@@ -160,7 +160,7 @@ fn entry_lines(
 ) -> Vec<Line<'static>> {
     let indent = usize::from(STAMP_W);
 
-    let mut subject = crate::wrap::wrap(&chars_of(&row.subject, theme), width, indent);
+    let mut subject = crate::wrap::wrap(&crate::wrap::chars_of(&row.subject, theme), width, indent);
     if let Some(at) = row.at.as_deref()
         && let Some(first) = subject.first_mut()
     {
@@ -168,12 +168,12 @@ fn entry_lines(
     }
 
     let animated = animated_outcome(&row.outcome, activity);
-    let outcome = crate::wrap::wrap(&chars_of(&animated, theme), width, indent);
+    let outcome = crate::wrap::wrap(&crate::wrap::chars_of(&animated, theme), width, indent);
 
     subject
         .into_iter()
         .chain(outcome)
-        .map(|chars| styled(chars, search, theme))
+        .map(|chars| crate::wrap::line(chars, search, theme))
         .collect()
 }
 
@@ -212,23 +212,6 @@ fn running_tail() -> &'static str {
     }
 }
 
-/// `segments`, flattened to one character per element, each carrying the
-/// style its own segment's [`Token`] resolves to.
-fn chars_of(segments: &[Segment], theme: Theme) -> Vec<(char, Style)> {
-    segments
-        .iter()
-        .flat_map(|segment| {
-            let style = segment
-                .token
-                .map_or_else(Style::default, |token| theme.style(token));
-            segment
-                .text
-                .chars()
-                .map(move |character| (character, style))
-        })
-        .collect()
-}
-
 /// `line`'s leading [`STAMP_W`] characters replaced with `at`, faint —
 /// overwriting the blank indent [`crate::wrap::wrap`] always opens a line
 /// with, since the indent and the stamp column are the same width by
@@ -245,32 +228,6 @@ fn stamped(line: Vec<(char, Style)>, at: &str, theme: Theme) -> Vec<(char, Style
                 .map_or((character, style), |&glyph| (glyph, stamp))
         })
         .collect()
-}
-
-/// `chars` as a [`Line`], grouped into spans wherever the style changes and
-/// split further at whatever `search` matches inside each run — the same
-/// split [`crate::highlight::spans`] does for a uniformly-styled value,
-/// applied once per run rather than once per line.
-fn styled(chars: Vec<(char, Style)>, search: Option<&Search>, theme: Theme) -> Line<'static> {
-    let mut spans: Vec<TextSpan<'static>> = Vec::new();
-    let mut run = String::new();
-    let mut run_style: Option<Style> = None;
-
-    for (character, style) in chars {
-        if run_style != Some(style) {
-            if let Some(previous) = run_style.take() {
-                spans.extend(crate::highlight::spans(&run, search, previous, theme));
-                run.clear();
-            }
-            run_style = Some(style);
-        }
-        run.push(character);
-    }
-    if let Some(style) = run_style {
-        spans.extend(crate::highlight::spans(&run, search, style, theme));
-    }
-
-    Line::from(spans)
 }
 
 #[cfg(test)]

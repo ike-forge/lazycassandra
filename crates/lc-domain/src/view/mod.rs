@@ -320,9 +320,10 @@ pub struct InspectField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitView {
     pub title: Vec<Segment>,
-    /// The statement, one line each, unwrapped: the block wraps to its own
-    /// width and reports the count back, as the inspector's body does.
-    pub lines: Vec<String>,
+    /// The statement, syntax-coloured and one line each, unwrapped: the
+    /// block wraps to its own width and reports the count back, as the
+    /// inspector's body does.
+    pub lines: Vec<Vec<Segment>>,
     /// The first wrapped line drawn.
     pub offset: usize,
 }

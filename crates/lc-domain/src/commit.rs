@@ -49,10 +49,17 @@ impl CommitPrompt {
         &self.table
     }
 
-    /// The statement as the block draws it, one line each.
+    /// The statement as the block draws it: laid out, coloured, one line
+    /// each.
+    ///
+    /// Laid out for the preview alone — [`Self::statement`] keeps the CQL the
+    /// builders spelled. [`crate::cql::format`] rewrites from a scan rather
+    /// than a parse, and a scan it gets wrong rewrites a literal into an
+    /// expression; what the user is asked to approve may be re-laid, what the
+    /// cluster is sent may not (cell editing design §5).
     #[must_use]
-    pub fn lines(&self) -> Vec<String> {
-        self.statement.cql.lines().map(str::to_owned).collect()
+    pub fn lines(&self) -> Vec<Vec<Segment>> {
+        crate::cql::highlight(&crate::cql::format(&self.statement.cql))
     }
 
     #[must_use]
@@ -174,8 +181,36 @@ mod tests {
         );
     }
 
+    fn drawn(prompt: &CommitPrompt) -> Vec<String> {
+        prompt
+            .lines()
+            .iter()
+            .map(|line| crate::style::text(line))
+            .collect()
+    }
+
     #[test]
-    fn a_batch_draws_one_statement_to_a_line() {
+    fn the_statement_is_laid_out_a_clause_to_a_line() {
+        assert_eq!(
+            drawn(&prompt(1, 1)),
+            [
+                "UPDATE \"shop\".\"orders\"",
+                "SET \"note\" = 'x'",
+                "WHERE \"id\" = 7"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_statement_is_coloured_as_cql() {
+        let opening = prompt(1, 1).lines()[0][0].clone();
+
+        assert_eq!(opening.text, "UPDATE");
+        assert_eq!(opening.token, Some(crate::style::Token::Keyword));
+    }
+
+    #[test]
+    fn a_batch_indents_its_members_under_the_brackets() {
         let batch = CommitPrompt::opened(
             TableRef::new("shop", "orders"),
             Statement::update_rows(
@@ -196,7 +231,19 @@ mod tests {
             2,
         );
 
-        assert_eq!(batch.lines().len(), 4, "the two verbs and both brackets");
+        assert_eq!(
+            drawn(&batch),
+            [
+                "BEGIN BATCH",
+                "  UPDATE \"shop\".\"orders\"",
+                "  SET \"note\" = 'x'",
+                "  WHERE \"id\" = 7;",
+                "  UPDATE \"shop\".\"orders\"",
+                "  SET \"note\" = 'y'",
+                "  WHERE \"id\" = 8;",
+                "APPLY BATCH"
+            ]
+        );
     }
 
     #[test]

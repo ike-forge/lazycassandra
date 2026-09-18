@@ -17316,7 +17316,21 @@ mod tests {
             "{}",
             prompt.statement().cql
         );
-        assert_eq!(prompt.lines().len(), 4, "the two verbs and both brackets");
+        let drawn: Vec<String> = prompt
+            .lines()
+            .iter()
+            .map(|line| crate::style::text(line))
+            .collect();
+        assert_eq!(drawn.first().map(String::as_str), Some("BEGIN BATCH"));
+        assert_eq!(drawn.last().map(String::as_str), Some("APPLY BATCH"));
+        assert_eq!(
+            drawn
+                .iter()
+                .filter(|line| line.starts_with("  UPDATE "))
+                .count(),
+            2,
+            "one verb per edited row, indented under the brackets"
+        );
     }
 
     #[test]

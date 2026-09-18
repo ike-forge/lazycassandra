@@ -1,7 +1,7 @@
 //! Table contents' bottom border: how much of a result is loaded
 //! (docs/superpowers/specs/2026-09-17-grid-paging-design.md §5).
 
-use lc_domain::style::Token;
+use lc_domain::style::{Severity, Token};
 use lc_domain::view::Footer;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -56,12 +56,14 @@ fn line(footer: &Footer, sized: bool, hinted: bool, theme: Theme) -> Line<'stati
             size.token.map_or(muted, |token| theme.style(token)),
         )
     });
-    // In the warning colour the dirty cells themselves wear, so the border
-    // and the grid say the same thing about them (cell editing design §7).
+    // The warning colour the dirty cells are grounded in, so the border and
+    // the grid say the same thing about them. As text, not as a ground: a
+    // count in the border names cells elsewhere rather than being one
+    // (cell editing design §7).
     let dirty = footer
         .dirty
         .clone()
-        .map(|dirty| Span::styled(dirty, theme.style(Token::Dirty)));
+        .map(|dirty| Span::styled(dirty, theme.style(Token::Severity(Severity::Warning))));
     let parts = std::iter::once(Span::styled(footer.rows.clone(), muted))
         .chain(size)
         .chain(dirty)

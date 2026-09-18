@@ -38,6 +38,10 @@ struct Layout {
     /// Bracket nesting. A clause keyword inside brackets is a function
     /// argument or a collection's contents, not a clause.
     depth: usize,
+    /// Whether a `BEGIN BATCH` is open: its members are written one indent in,
+    /// so where one statement ends and the next begins is visible without
+    /// reading for the `;` (design §4.2).
+    batched: bool,
     previous: Option<Piece>,
 }
 
@@ -49,6 +53,16 @@ impl Layout {
             kind: piece.kind,
             text: Self::written(piece),
         };
+
+        // `APPLY BATCH` closes the block rather than sitting in it. The
+        // indent for its line was written when the last member's `;` wrapped,
+        // so it has to be taken back out.
+        if piece.text == "APPLY" {
+            self.batched = false;
+            if self.blank() {
+                self.line.clear();
+            }
+        }
 
         if self.breaks_before(piece) {
             self.wrap(continues(&piece.text));
@@ -137,6 +151,15 @@ impl Layout {
     }
 
     fn track(&mut self, piece: &Piece) {
+        if piece.text == "BATCH"
+            && self
+                .previous
+                .as_ref()
+                .is_some_and(|previous| previous.text == "BEGIN")
+        {
+            self.batched = true;
+        }
+
         match piece.text.as_str() {
             "(" | "[" | "{" => self.depth += 1,
             ")" | "]" | "}" => self.depth = self.depth.saturating_sub(1),
@@ -156,7 +179,7 @@ impl Layout {
         }
 
         self.lines.push(std::mem::take(&mut self.line));
-        if indented {
+        for _ in 0..usize::from(self.batched) + usize::from(indented) {
             self.line.push_str(INDENT);
         }
     }
@@ -275,6 +298,24 @@ mod tests {
         assert_eq!(
             formatted("SELECT * FROM t WHERE a = 1 AND b = 2 AND c = 3"),
             "SELECT *\nFROM t\nWHERE a = 1\n  AND b = 2\n  AND c = 3"
+        );
+    }
+
+    #[test]
+    fn a_batch_indents_its_members_and_not_its_brackets() {
+        assert_eq!(
+            formatted(
+                "BEGIN BATCH UPDATE t SET a = 1 WHERE id = 7; DELETE FROM t WHERE id = 8; APPLY BATCH"
+            ),
+            "BEGIN BATCH\n  UPDATE t\n  SET a = 1\n  WHERE id = 7;\n  DELETE FROM t\n  WHERE id = 8;\nAPPLY BATCH"
+        );
+    }
+
+    #[test]
+    fn a_conjunction_inside_a_batch_is_indented_under_its_member() {
+        assert_eq!(
+            formatted("BEGIN BATCH UPDATE t SET a = 1 WHERE id = 7 AND at = 8; APPLY BATCH"),
+            "BEGIN BATCH\n  UPDATE t\n  SET a = 1\n  WHERE id = 7\n    AND at = 8;\nAPPLY BATCH"
         );
     }
 

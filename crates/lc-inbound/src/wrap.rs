@@ -9,7 +9,12 @@
 //! character belongs to (query log design §6). [`plain`] is the degenerate
 //! case a uniformly-styled value uses, `details.rs`'s original shape.
 
+use lc_domain::search::Search;
+use lc_domain::style::Segment;
 use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+
+use crate::theme::Theme;
 
 /// `chars`, wrapped to lines of at most `width` columns. Every line, the
 /// first included, opens with `indent` blank columns — so a caller meaning
@@ -64,6 +69,54 @@ pub(crate) fn plain(text: &str, width: usize, indent: usize) -> Vec<String> {
         .into_iter()
         .map(|line| line.into_iter().map(|(character, _)| character).collect())
         .collect()
+}
+
+/// `segments`, flattened to one character per element, each carrying the
+/// style its own segment's [`Token`](lc_domain::style::Token) resolves to —
+/// the form [`wrap`] takes.
+pub(crate) fn chars_of(segments: &[Segment], theme: Theme) -> Vec<(char, Style)> {
+    segments
+        .iter()
+        .flat_map(|segment| {
+            let style = segment
+                .token
+                .map_or_else(Style::default, |token| theme.style(token));
+            segment
+                .text
+                .chars()
+                .map(move |character| (character, style))
+        })
+        .collect()
+}
+
+/// `chars` as a [`Line`], grouped into spans wherever the style changes and
+/// split further at whatever `search` matches inside each run — the same
+/// split [`crate::highlight::spans`] does for a uniformly-styled value,
+/// applied once per run rather than once per line.
+pub(crate) fn line(
+    chars: Vec<(char, Style)>,
+    search: Option<&Search>,
+    theme: Theme,
+) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut run_style: Option<Style> = None;
+
+    for (character, style) in chars {
+        if run_style != Some(style) {
+            if let Some(previous) = run_style.take() {
+                spans.extend(crate::highlight::spans(&run, search, previous, theme));
+                run.clear();
+            }
+            run_style = Some(style);
+        }
+        run.push(character);
+    }
+    if let Some(style) = run_style {
+        spans.extend(crate::highlight::spans(&run, search, style, theme));
+    }
+
+    Line::from(spans)
 }
 
 fn prefixed(prefix: &[(char, Style)], line: Vec<(char, Style)>) -> Vec<(char, Style)> {

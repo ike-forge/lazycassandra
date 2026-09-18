@@ -11,7 +11,8 @@ use lc_domain::style::{Severity, Token};
 use lc_domain::view::CommitView;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
-use ratatui::text::{Line, Span};
+use ratatui::style::Style;
+use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::body::Extent;
@@ -74,7 +75,7 @@ pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> usiz
         return 0;
     };
     let inner = body(area);
-    let wrapped = wrapped(view, usize::from(inner.width));
+    let wrapped = wrapped(view, usize::from(inner.width), theme);
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -88,7 +89,7 @@ pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> usiz
     let offset = u16::try_from(view.offset).unwrap_or(u16::MAX);
     let lines: Vec<Line<'static>> = wrapped
         .iter()
-        .map(|line| Line::from(Span::styled(line.clone(), theme.style(Token::Keyword))))
+        .map(|line| crate::wrap::line(line.clone(), None, theme))
         .collect();
     frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), inner);
 
@@ -118,17 +119,21 @@ pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> usiz
 }
 
 /// Every statement line wrapped to `width`, a continuation keeping the
-/// indent a batch's members are written with.
-fn wrapped(view: &CommitView, width: usize) -> Vec<String> {
+/// indent the formatter laid the line out with, plus one step.
+fn wrapped(view: &CommitView, width: usize, theme: Theme) -> Vec<Vec<(char, Style)>> {
     view.lines
         .iter()
         .flat_map(|line| {
-            let text = line.trim_start_matches(' ');
-            let indent = (line.len() - text.len() + 2).min(width.saturating_sub(1));
-            let rows = crate::wrap::plain(text, width, indent);
+            let chars = crate::wrap::chars_of(line, theme);
+            let laid = chars
+                .iter()
+                .position(|&(character, _)| character != ' ')
+                .unwrap_or(chars.len());
+            let indent = (laid + 2).min(width.saturating_sub(1));
+            let rows = crate::wrap::wrap(&chars[laid..], width, indent);
 
             if rows.is_empty() {
-                vec![String::new()]
+                vec![Vec::new()]
             } else {
                 rows
             }
@@ -244,19 +249,23 @@ mod tests {
         let (buffer, lines) = drawn(80, 12, prompt(1));
         let drawn = rows(&buffer);
 
-        assert_eq!(lines, 1, "the statement fits this frame unwrapped");
+        assert_eq!(lines, 3, "a clause a line, none of them wrapped");
         assert!(
             drawn
                 .iter()
                 .any(|row| row.contains("Write 1 cell in 1 row of shop.orders")),
             "{drawn:#?}"
         );
-        assert!(
-            drawn.iter().any(
-                |row| row.contains(r#"UPDATE "shop"."orders" SET "note" = 'x' WHERE "id" = 0"#)
-            ),
-            "{drawn:#?}"
-        );
+        for clause in [
+            r#"UPDATE "shop"."orders""#,
+            r#"SET "note" = 'x'"#,
+            r#"WHERE "id" = 0"#,
+        ] {
+            assert!(
+                drawn.iter().any(|row| row.contains(clause)),
+                "{clause}: {drawn:#?}"
+            );
+        }
         assert!(
             drawn.iter().any(|row| row.contains("Yes, write them")),
             "{drawn:#?}"
@@ -269,7 +278,7 @@ mod tests {
         // commit would run is readable, not just its head (design §5).
         let (buffer, lines) = drawn(80, 14, prompt(30));
 
-        assert_eq!(lines, 32, "the thirty verbs and both brackets");
+        assert_eq!(lines, 92, "three clauses a verb, and both brackets");
         assert!(
             rows(&buffer).iter().any(|row| row.contains('▐')),
             "{:#?}",

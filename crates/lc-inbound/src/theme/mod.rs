@@ -257,11 +257,17 @@ impl Theme {
             Token::Posture(Posture::Protected) | Token::Severity(Severity::Danger) => {
                 fg(palette.danger).add_modifier(Modifier::BOLD)
             }
-            // `Dirty` shares the warning colour rather than declaring a
-            // role of its own: an uncommitted value is a claim about the
-            // screen the cluster has not agreed to yet, which is what this
-            // colour already says (cell editing design §7).
-            Token::Severity(Severity::Warning) | Token::Dirty => fg(palette.warning),
+            Token::Severity(Severity::Warning) => fg(palette.warning),
+            // The warning colour as a ground rather than as text: an
+            // uncommitted cell has to be findable in a full grid, and a
+            // foreground alone is one colour among the twenty the columns
+            // already spend. Reversed rather than `bg(warning)`, for
+            // `Token::Flash`'s reason and one more: ratatui paints
+            // `row_highlight_style` over the whole cursor row after its
+            // cells, so a background stated here is the one background the
+            // grid can lose — and the cursor row is where an edit was just
+            // made. A modifier survives it (cell editing design §7).
+            Token::Dirty => fg(palette.warning).add_modifier(Modifier::REVERSED),
             Token::Severity(Severity::Info) => fg(palette.info),
             Token::PropertyName => fg(palette.label),
             Token::Muted | Token::HintAction => fg(palette.dim),
