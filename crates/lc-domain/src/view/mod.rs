@@ -1165,7 +1165,10 @@ mod tests {
         );
 
         let mut failed = loading.clone();
-        failed.contents.failed(query);
+        failed.contents.failed(
+            query,
+            &crate::model::DbError::Invalid("undefined column name total".to_owned()),
+        );
 
         vec![State::default(), loading, loaded, failed]
     }

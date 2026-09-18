@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 use crate::bytes::Bytes;
 use crate::config::MaxColumnWidth;
 use crate::grid::ColumnScroll;
-use crate::model::{CqlValue, KeyspaceKind, Page, PagingState, QueryId, Row, Statement};
+use crate::model::{CqlValue, DbError, KeyspaceKind, Page, PagingState, QueryId, Row, Statement};
 use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
 use crate::style::{Segment, Token};
@@ -96,6 +96,10 @@ pub enum ContentsState {
     },
     Failed {
         subject: Subject,
+        /// Drawn in the panel rather than only in the trail: the sentence
+        /// that says what to fix belongs where the failure is
+        /// (supersedes query log design §8).
+        error: String,
     },
 }
 
@@ -1076,8 +1080,11 @@ impl ContentsPanel {
 
     /// Records a request that never became a query, because the domain
     /// refused it before it could.
-    pub fn refused(&mut self, subject: Subject) {
-        self.state = ContentsState::Failed { subject };
+    pub fn refused(&mut self, subject: Subject, error: &DbError) {
+        self.state = ContentsState::Failed {
+            subject,
+            error: error.to_string(),
+        };
         self.cursor = Cursor::default();
         self.column = Cursor::default();
         self.scroll = Scroll::default();
@@ -1087,7 +1094,7 @@ impl ContentsPanel {
     }
 
     /// Records a failure, if it belongs to the query being waited on.
-    pub fn failed(&mut self, query: QueryId) -> Option<Failure> {
+    pub fn failed(&mut self, query: QueryId, error: &DbError) -> Option<Failure> {
         if self.outstanding() != Some(query) {
             return None;
         }
@@ -1096,6 +1103,7 @@ impl ContentsPanel {
             ContentsState::Loading { subject, .. } => {
                 self.state = ContentsState::Failed {
                     subject: subject.clone(),
+                    error: error.to_string(),
                 };
                 Some(Failure::Read)
             }
@@ -1173,6 +1181,10 @@ impl ContentsPanel {
 mod tests {
     use super::*;
     use crate::model::{CqlValue, Row};
+
+    fn rejection() -> DbError {
+        DbError::Invalid("undefined column name total".to_owned())
+    }
 
     fn page(rows: i64) -> Page {
         Page {
@@ -1308,7 +1320,7 @@ mod tests {
     #[test]
     fn a_failed_panel_has_no_page_to_search() {
         let (mut panel, query) = loading();
-        panel.failed(query);
+        panel.failed(query, &rejection());
         panel.set_search(Search::new("ali"));
 
         assert_eq!(panel.next_match((0, 0), Direction::Forwards), None);
@@ -1408,19 +1420,20 @@ mod tests {
     fn a_failure_for_the_outstanding_query_is_recorded_against_its_table() {
         let (mut panel, query) = loading();
 
-        panel.failed(query);
+        panel.failed(query, &rejection());
 
-        let ContentsState::Failed { subject } = panel.state() else {
+        let ContentsState::Failed { subject, error } = panel.state() else {
             panic!("the failure is showing");
         };
         assert_eq!(subject.label(), "shop.orders");
+        assert_eq!(error, &rejection().to_string());
     }
 
     #[test]
     fn a_failure_for_another_query_is_ignored() {
         let (mut panel, query) = loading();
 
-        panel.failed(QueryId::next());
+        panel.failed(QueryId::next(), &rejection());
 
         assert_eq!(panel.outstanding(), Some(query));
     }
@@ -1458,12 +1471,16 @@ mod tests {
     fn a_refused_request_shows_against_the_table_it_was_about() {
         let mut panel = ContentsPanel::default();
 
-        panel.refused(Subject::Table(TableRef::new("shop", "orders")));
+        panel.refused(
+            Subject::Table(TableRef::new("shop", "orders")),
+            &rejection(),
+        );
 
-        let ContentsState::Failed { subject } = panel.state() else {
+        let ContentsState::Failed { subject, error } = panel.state() else {
             panic!("the refusal is showing");
         };
         assert_eq!(subject.label(), "shop.orders");
+        assert_eq!(error, &rejection().to_string());
         assert_eq!(
             panel.outstanding(),
             None,
@@ -1498,7 +1515,10 @@ mod tests {
         panel.scroll.follow(40, 5);
         panel.cursor.go_to(40, 60);
 
-        panel.refused(Subject::Table(TableRef::new("shop", "orders")));
+        panel.refused(
+            Subject::Table(TableRef::new("shop", "orders")),
+            &rejection(),
+        );
 
         assert_eq!(panel.scroll.offset(), 0);
         assert_eq!(panel.cursor.index(), 0);
@@ -1623,7 +1643,7 @@ mod tests {
         );
         panel.column.go_to(3, 4);
 
-        panel.refused(Subject::Table(TableRef::new("shop", "carts")));
+        panel.refused(Subject::Table(TableRef::new("shop", "carts")), &rejection());
 
         assert_eq!(panel.column.index(), 0);
         assert_eq!(panel.column_scroll.first(), 0);
@@ -2124,7 +2144,7 @@ mod tests {
         let mut panel = pageable(3);
         let next = panel.fetch_all(QueryId::next).expect("a page");
 
-        assert_eq!(panel.failed(next.query), Some(Failure::Page));
+        assert_eq!(panel.failed(next.query, &rejection()), Some(Failure::Page));
 
         assert_eq!(panel.row_count(), 3);
         assert!(panel.can_fetch(), "the same page can be asked for again");
