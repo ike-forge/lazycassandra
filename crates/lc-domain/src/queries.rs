@@ -75,12 +75,37 @@ impl QueriesTab {
     }
 }
 
+/// Whether the Cql tab's buffer is taking text.
+///
+/// The tab opens on [`CqlMode::Browsing`], where every global key keeps its
+/// meaning — `4` included, which is what lets a second `4` reach Logs.
+/// `Enter` or `i` opens the buffer, `Esc` closes it (cql edit mode design §2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CqlMode {
+    #[default]
+    Browsing,
+    Editing,
+}
+
+/// The drawn tab, carrying the mode only the Cql tab has, so an editing Logs
+/// tab is unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    Cql(CqlMode),
+    Logs,
+}
+
+impl Default for Shown {
+    fn default() -> Self {
+        Self::Cql(CqlMode::default())
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueriesPanel {
     buffer: Editor,
     completion: Option<Completion>,
-    /// The tab the panel is showing.
-    tab: QueriesTab,
+    shown: Shown,
 }
 
 impl QueriesPanel {
@@ -93,13 +118,54 @@ impl QueriesPanel {
     /// The tab the panel is showing.
     #[must_use]
     pub const fn tab(&self) -> QueriesTab {
-        self.tab
+        match self.shown {
+            Shown::Cql(_) => QueriesTab::Cql,
+            Shown::Logs => QueriesTab::Logs,
+        }
     }
 
-    /// Draws `tab`. Arriving at the tab already drawn is not a change: `4` is
-    /// how focus comes back to the panel.
+    /// The Cql tab's mode, or `None` while Logs is drawn.
+    #[must_use]
+    pub const fn mode(&self) -> Option<CqlMode> {
+        match self.shown {
+            Shown::Cql(mode) => Some(mode),
+            Shown::Logs => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_editing(&self) -> bool {
+        matches!(self.shown, Shown::Cql(CqlMode::Editing))
+    }
+
+    /// Draws `tab`. Arriving at the tab already drawn is not a change, so an
+    /// open buffer stays open.
     pub fn show(&mut self, tab: QueriesTab) {
-        self.tab = tab;
+        if self.tab() == tab {
+            return;
+        }
+
+        self.stop_editing();
+        self.shown = match tab {
+            QueriesTab::Cql => Shown::Cql(CqlMode::Browsing),
+            QueriesTab::Logs => Shown::Logs,
+        };
+    }
+
+    /// Opens the buffer for typing. Inert on the Logs tab.
+    pub fn start_editing(&mut self) {
+        if let Shown::Cql(mode) = &mut self.shown {
+            *mode = CqlMode::Editing;
+        }
+    }
+
+    /// Closes the buffer. The popup goes with it: it offers against a caret
+    /// that is no longer drawn.
+    pub fn stop_editing(&mut self) {
+        if let Shown::Cql(mode) = &mut self.shown {
+            *mode = CqlMode::Browsing;
+        }
+        self.completion = None;
     }
 
     #[must_use]
@@ -163,14 +229,19 @@ impl QueriesPanel {
     }
 
     /// Offers `key` to the buffer, answering what it did — `None` where the
-    /// key is not the editor's to claim, so it keeps its global meaning.
+    /// key is not the editor's to claim, so it keeps its global meaning, and
+    /// for every key while the buffer is not open.
     ///
     /// Exhaustive over [`Key`], so a new key has to decide whether an editor
     /// claims it rather than defaulting into one side.
     pub fn edit(&mut self, key: Key, height: usize) -> Option<Refresh> {
+        if !self.is_editing() {
+            return None;
+        }
+
         // Above the buffer: with a popup up, these five are the popup's
         // (design §5.5). Without one they are what they are everywhere else —
-        // `Tab` moves focus, `Enter` splits the line, `Esc` leaves the panel,
+        // `Tab` moves focus, `Enter` splits the line, `Esc` closes the buffer,
         // `↑`/`↓` move the cursor — so none of them is claimed.
         //
         // `Enter` beside `Tab` because both are what accepting is spelled as
@@ -267,10 +338,71 @@ mod tests {
         assert_eq!(panel.tab(), QueriesTab::Logs);
     }
 
+    #[test]
+    fn a_panel_opens_browsing_and_claims_no_key_until_opened() {
+        let mut panel = QueriesPanel::default();
+
+        assert_eq!(panel.mode(), Some(CqlMode::Browsing));
+        assert_eq!(panel.edit(Key::Char('4'), 1), None);
+        assert_eq!(panel.text(), "");
+
+        panel.start_editing();
+
+        assert_eq!(panel.edit(Key::Char('4'), 1), Some(Refresh::Recompute));
+        assert_eq!(panel.text(), "4");
+    }
+
+    #[test]
+    fn the_logs_tab_cannot_be_opened_for_typing() {
+        let mut panel = QueriesPanel::default();
+        panel.show(QueriesTab::Logs);
+
+        panel.start_editing();
+
+        assert_eq!(panel.mode(), None);
+        assert!(!panel.is_editing());
+    }
+
+    #[test]
+    fn leaving_the_cql_tab_closes_the_buffer_and_coming_back_does_not_reopen_it() {
+        let mut panel = QueriesPanel::default();
+        panel.start_editing();
+
+        panel.show(QueriesTab::Logs);
+        panel.show(QueriesTab::Cql);
+
+        assert_eq!(panel.mode(), Some(CqlMode::Browsing));
+    }
+
+    #[test]
+    fn showing_the_cql_tab_again_keeps_the_buffer_open() {
+        let mut panel = QueriesPanel::default();
+        panel.start_editing();
+
+        panel.show(QueriesTab::Cql);
+
+        assert!(panel.is_editing());
+    }
+
+    #[test]
+    fn closing_the_buffer_takes_the_popup_down() {
+        let mut panel = typed("se");
+
+        panel.stop_editing();
+
+        assert!(panel.completion().is_none());
+    }
+
+    fn opened() -> QueriesPanel {
+        let mut panel = QueriesPanel::default();
+        panel.start_editing();
+        panel
+    }
+
     /// Types `text`, offering against the schema after each character — the
     /// loop `update` runs for real.
     fn typed(text: &str) -> QueriesPanel {
-        let mut panel = QueriesPanel::default();
+        let mut panel = opened();
         let schema = schema();
 
         for character in text.chars() {
@@ -319,7 +451,7 @@ mod tests {
 
     #[test]
     fn tab_with_no_popup_up_is_not_the_editors_to_claim() {
-        let mut panel = QueriesPanel::default();
+        let mut panel = opened();
 
         assert_eq!(panel.edit(Key::Tab, 1), None, "tab still moves focus");
     }
@@ -334,7 +466,7 @@ mod tests {
         assert_eq!(
             panel.edit(Key::Escape, 1),
             None,
-            "with the popup down, escape is the way out of the panel again"
+            "with the popup down, escape closes the buffer again"
         );
     }
 
@@ -360,7 +492,7 @@ mod tests {
 
     #[test]
     fn walking_the_popup_leaves_the_cursor_where_it_is() {
-        let mut panel = QueriesPanel::default();
+        let mut panel = opened();
         panel.replace("SELECT *\nFROM shop.");
         assert_eq!(panel.edit(Key::Char('o'), 1), Some(Refresh::Recompute));
         panel.offer(suggest(panel.buffer(), Some(&schema()), Some("shop")));
@@ -374,7 +506,7 @@ mod tests {
 
     #[test]
     fn an_arrow_with_no_popup_up_is_a_motion_again() {
-        let mut panel = QueriesPanel::default();
+        let mut panel = opened();
         panel.replace("SELECT *\nFROM shop.orders");
 
         assert_eq!(panel.edit(Key::Up, 1), Some(Refresh::Close));

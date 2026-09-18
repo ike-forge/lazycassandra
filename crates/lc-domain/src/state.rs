@@ -18,7 +18,7 @@ use crate::inspect::Inspector;
 use crate::log::{Log, Outcome};
 use crate::model::{ConnId, DbError, JobId, Key, QueryId, Schema, Statement};
 use crate::posture::Posture;
-use crate::queries::{QueriesPanel, QueriesTab};
+use crate::queries::{CqlMode, QueriesPanel, QueriesTab};
 use crate::search::{Prompt, Search, Searched, Sift};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
@@ -577,10 +577,29 @@ const CONTENTS_COLUMN_HINTS: &[Binding] = &[
     },
 ];
 
+/// The Cql tab before its buffer is open. `⏎` first: typing is what the tab
+/// is for, and nothing else on screen says how to start (cql edit mode design
+/// §3).
+const CQL_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "edit",
+    },
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('r'))],
+        action: "run",
+    },
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('e'))],
+        action: "$EDITOR",
+    },
+];
+
+/// The Cql tab with its buffer open.
 const QUERIES_HINTS: &[Binding] = &[
     // First: it is what the panel is for. `⏎ newline` is what it does on the
-    // way there, and `esc leave` — appended by the bar, on the frames no
-    // search or range claims `esc` first — is the way back out.
+    // way there, and `esc done` — appended by the bar, on the frames no
+    // popup claims `esc` first — closes the buffer again.
     Binding {
         keys: &[Stroke::ctrl(Key::Char('r'))],
         action: "run",
@@ -590,7 +609,7 @@ const QUERIES_HINTS: &[Binding] = &[
     // buffer (external editor design §5).
     Binding {
         keys: &[Stroke::ctrl(Key::Char('e'))],
-        action: "edit",
+        action: "$EDITOR",
     },
     // Greyed on a buffer already laid out, for the reason `ctrl-r` is greyed
     // on an empty one (query editor design §4.3).
@@ -1518,7 +1537,10 @@ impl State {
             // The panel's unfocused height is a function of its buffer
             // (layout.rs), so an unfocused Logs tab would be sized by
             // something it is not drawing (query log design §5.2).
-            Panel::Queries => self.show_queries_tab(QueriesTab::Cql),
+            Panel::Queries => {
+                self.show_queries_tab(QueriesTab::Cql);
+                self.queries.stop_editing();
+            }
         }
 
         self.focus = panel;
@@ -1551,10 +1573,10 @@ impl State {
     /// Whether the focused panel is taking text this frame.
     ///
     /// A question about `State` rather than about `Panel`: the Queries panel
-    /// takes text only while its CQL tab is drawn (query log design §5.1).
+    /// takes text only while its Cql buffer is open (cql edit mode design §2).
     #[must_use]
     pub fn takes_text(&self) -> bool {
-        self.focus() == Panel::Queries && self.queries.tab() == QueriesTab::Cql
+        self.focus() == Panel::Queries && self.queries.is_editing()
     }
 
     /// What the focused panel responds to this frame.
@@ -1569,7 +1591,11 @@ impl State {
     #[must_use]
     pub fn hints(&self) -> &'static [Binding] {
         match self.focus() {
-            Panel::Queries if self.queries.tab() == QueriesTab::Logs => LOGS_HINTS,
+            Panel::Queries => match self.queries.mode() {
+                None => LOGS_HINTS,
+                Some(CqlMode::Browsing) => CQL_HINTS,
+                Some(CqlMode::Editing) => QUERIES_HINTS,
+            },
             Panel::Contents if self.contents.mode == SelectionMode::Column => CONTENTS_COLUMN_HINTS,
             panel => panel.hints(),
         }

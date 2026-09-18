@@ -1079,8 +1079,8 @@ mod tests {
             bars[2]
         );
         assert!(
-            bars[3].contains("⏎ newline"),
-            "Queries takes text: {:?}",
+            bars[3].contains("⏎ edit"),
+            "Queries opens its buffer: {:?}",
             bars[3]
         );
     }
@@ -4590,9 +4590,11 @@ mod tests {
     }
 
     /// A state focused on `focus`, with `text` in the Queries buffer.
+    /// `text` typed into the buffer, left open when `focus` is Queries.
     fn with_query(text: &str, focus: Panel) -> State {
         let mut state = State::default();
         state.focus_on(focus);
+        state.queries.start_editing();
         for character in text.chars() {
             let key = if character == '\n' {
                 Key::Enter
@@ -4600,6 +4602,9 @@ mod tests {
                 Key::Char(character)
             };
             state.queries.edit(key, 1);
+        }
+        if focus != Panel::Queries {
+            state.queries.stop_editing();
         }
         state
     }
@@ -4843,6 +4848,16 @@ mod tests {
             Some("T"),
             "the cursor sits one cell past the last character typed, not inside or short of it"
         );
+    }
+
+    #[test]
+    fn a_closed_buffer_draws_no_cursor_though_its_panel_is_focused() {
+        let mut state = with_query("SELECT", Panel::Queries);
+        state.queries.stop_editing();
+
+        let (_, cursor) = drawn_with_cursor(80, 24, &state);
+
+        assert_eq!(cursor, None, "the caret is what says the buffer takes text");
     }
 
     #[test]

@@ -359,6 +359,13 @@ const STOP: Binding = Binding {
     action: "stop",
 };
 
+/// `esc` while the Cql buffer is open: it closes the buffer and keeps focus,
+/// so [`LEAVE`] would promise a move that does not happen.
+const DONE: Binding = Binding {
+    keys: &[Stroke::key(Key::Escape)],
+    action: "done",
+};
+
 /// Named on the same condition as [`CLEAR`]: `n`/`N` are inert without a
 /// search applied, and a hint that would do nothing this frame is a lie
 /// (docs/shortcuts.md §2, design §5.3).
@@ -391,20 +398,19 @@ fn connections_bar(state: &State, export: Option<String>) -> HintBar {
     }
 }
 
-pub(crate) fn bar(state: &State) -> HintBar {
-    let export = state
-        .export
-        .as_ref()
-        .map(|job| format!("exporting {} rows…", job.rows()));
+/// The bar an overlay draws in place of the focused panel's, or `None` where
+/// no overlay claims the row. Split out of [`bar`] only for its length.
+fn overlay_bar(state: &State, export: Option<&String>) -> Option<HintBar> {
+    let export = export.cloned();
 
     // An overlay with a prompt up is a panel that takes text, and the two
     // ways out are the prompt's two (overlay search design §8).
     if sifting(state) {
-        return HintBar {
+        return Some(HintBar {
             panel: Vec::new(),
             global: SEARCH_GLOBAL.iter().map(rendered).collect(),
             export,
-        };
+        });
     }
 
     // No panel group: moving — by a row, by a screen, or to an end — is
@@ -412,51 +418,64 @@ pub(crate) fn bar(state: &State) -> HintBar {
     // (docs/shortcuts.md §2). What is left, `⏎ run` and the two ways out,
     // is all global (palette execution design §12).
     if matches!(state.overlay, Some(Overlay::Commands(_))) {
-        return HintBar {
+        return Some(HintBar {
             panel: Vec::new(),
             global: PALETTE_GLOBAL.iter().map(rendered).collect(),
             export,
-        };
+        });
     }
 
     if matches!(state.overlay, Some(Overlay::Themes { .. })) {
-        return HintBar {
+        return Some(HintBar {
             panel: THEMES.iter().map(rendered).collect(),
             global: THEMES_GLOBAL.iter().map(rendered).collect(),
             export,
-        };
+        });
     }
 
     if matches!(state.overlay, Some(Overlay::Connections { .. })) {
-        return connections_bar(state, export);
+        return Some(connections_bar(state, export));
     }
 
     if matches!(state.overlay, Some(Overlay::Diagnostics(_))) {
-        return HintBar {
+        return Some(HintBar {
             panel: Vec::new(),
             global: DIAGNOSTICS_GLOBAL.iter().map(rendered).collect(),
             export,
-        };
+        });
     }
 
     if let Some(Overlay::Inspect(inspector)) = &state.overlay {
-        return inspect_bar(inspector, export);
+        return Some(inspect_bar(inspector, export));
     }
 
     if matches!(state.overlay, Some(Overlay::Search(_) | Overlay::Filter(_))) {
-        return HintBar {
+        return Some(HintBar {
             panel: Vec::new(),
             global: SEARCH_GLOBAL.iter().map(rendered).collect(),
             export,
-        };
+        });
     }
 
     if let Some(Overlay::Export(form)) = &state.overlay {
-        return export_bar(form, export);
+        return Some(export_bar(form, export));
     }
 
     if let Some(Overlay::Drop(prompt)) = &state.overlay {
-        return drop_bar(prompt, export);
+        return Some(drop_bar(prompt, export));
+    }
+
+    None
+}
+
+pub(crate) fn bar(state: &State) -> HintBar {
+    let export = state
+        .export
+        .as_ref()
+        .map(|job| format!("exporting {} rows…", job.rows()));
+
+    if let Some(bar) = overlay_bar(state, export.as_ref()) {
+        return bar;
     }
 
     // `?` promises a palette that draws; below `command_rows()` it would
@@ -509,6 +528,8 @@ pub(crate) fn bar(state: &State) -> HintBar {
     }
     if state.focus() == Panel::Contents && state.contents.fetching_all() {
         panel.push(rendered(&STOP));
+    } else if state.takes_text() {
+        panel.push(rendered(&DONE));
     } else if target.is_some() || selected(state) {
         panel.push(rendered(&CLEAR));
     } else if state.focus() != Panel::default() {
@@ -926,6 +947,7 @@ mod tests {
     fn a_panel_that_takes_text_does_not_claim_q_quits() {
         let mut state = fits();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         let bar = bar(&state);
 
@@ -1314,6 +1336,7 @@ mod tests {
     fn the_queries_bar_names_the_run_binding() {
         let mut state = fits();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         let panel = bar(&state).panel;
 
@@ -1328,6 +1351,7 @@ mod tests {
     fn the_queries_bar_names_the_editor_binding_after_run() {
         let mut state = fits();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
 
         let panel = bar(&state).panel;
 
@@ -1337,9 +1361,42 @@ mod tests {
                 .map(|hint| (hint.keys.as_str(), hint.action))
                 .take(2)
                 .collect::<Vec<_>>(),
-            [("ctrl-r", "run"), ("ctrl-e", "edit")],
+            [("ctrl-r", "run"), ("ctrl-e", "$EDITOR")],
             "the panel exists to run queries; editing one is the next thing it does"
         );
+    }
+
+    #[test]
+    fn a_closed_buffer_names_the_way_in_first_and_still_offers_quit() {
+        let mut state = fits();
+        state.focus_on(Panel::Queries);
+
+        let bar = bar(&state);
+
+        assert_eq!(
+            bar.panel
+                .first()
+                .map(|hint| (hint.keys.as_str(), hint.action)),
+            Some(("⏎", "edit"))
+        );
+        assert!(bar.global.iter().any(|hint| hint.action == "quit"));
+        assert!(bar.panel.iter().any(|hint| hint.action == "leave"));
+    }
+
+    #[test]
+    fn an_open_buffer_names_esc_as_done_rather_than_leave() {
+        let mut state = fits();
+        state.focus_on(Panel::Queries);
+        state.queries.start_editing();
+
+        let panel = bar(&state).panel;
+
+        assert!(
+            panel
+                .iter()
+                .any(|hint| (hint.keys.as_str(), hint.action) == ("esc", "done"))
+        );
+        assert!(panel.iter().all(|hint| hint.action != "leave"));
     }
 
     #[test]
@@ -1349,7 +1406,10 @@ mod tests {
             state.focus_on(focus);
 
             assert!(
-                bar(&state).panel.iter().all(|hint| hint.action != "edit"),
+                bar(&state)
+                    .panel
+                    .iter()
+                    .all(|hint| hint.action != "$EDITOR"),
                 "{focus:?} does not open an editor"
             );
         }
@@ -1359,6 +1419,7 @@ mod tests {
     fn queries_bar(text: &str) -> HintBar {
         let mut state = fits();
         state.focus_on(Panel::Queries);
+        state.queries.start_editing();
         for character in text.chars() {
             let key = if character == '\n' {
                 Key::Enter
@@ -1427,6 +1488,7 @@ mod tests {
         ] {
             let mut state = connected(posture, crate::state::SchemaState::Loading);
             state.focus_on(Panel::Queries);
+            state.queries.start_editing();
             for character in cql.chars() {
                 state.queries.edit(Key::Char(character), 1);
             }

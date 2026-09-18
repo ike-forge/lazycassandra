@@ -95,6 +95,9 @@ pub enum Run {
     Here,
     /// Focus this panel, then press it.
     In(Panel),
+    /// Focus Queries and open its buffer, then press it: the row is an edit,
+    /// and a closed buffer claims no key (cql edit mode design §5).
+    Editing,
     /// Not pressed at all: the row means something only inside a mode that is
     /// not up, and its key means something else outside that mode (design §5).
     Inert,
@@ -104,7 +107,7 @@ impl Run {
     const fn liveness(self) -> Liveness {
         match self {
             Self::Inert => Liveness::Inert,
-            Self::Here | Self::In(_) => Liveness::Live,
+            Self::Here | Self::In(_) | Self::Editing => Liveness::Live,
         }
     }
 }
@@ -345,6 +348,12 @@ const EXPORT: &[Command] = &[
 // (docs/shortcuts.md §2). What is listed is what a key does *not* do elsewhere.
 const QUERIES: &[Command] = &[
     Command::new(
+        &[Stroke::key(Key::Enter), Stroke::key(Key::Char('i'))],
+        "edit the buffer",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(&[Stroke::key(Key::Escape)], "stop editing", Run::Editing),
+    Command::new(
         &[Stroke::ctrl(Key::Char('r'))],
         "run the buffer",
         Run::In(Panel::Queries),
@@ -362,7 +371,7 @@ const QUERIES: &[Command] = &[
     Command::new(
         &[Stroke::ctrl(Key::Char('n')), Stroke::ctrl(Key::Char('p'))],
         "walk the completions",
-        Run::In(Panel::Queries),
+        Run::Editing,
     ),
     // Inert for the reason the export form's rows are: `tab` and `⏎` accept a
     // completion only while one is being offered, and mean what they mean
@@ -373,26 +382,14 @@ const QUERIES: &[Command] = &[
         "accept completion",
         Run::Inert,
     ),
-    Command::new(
-        &[Stroke::key(Key::Enter)],
-        "split the line",
-        Run::In(Panel::Queries),
-    ),
+    Command::new(&[Stroke::key(Key::Enter)], "split the line", Run::Editing),
     Command::new(
         &[Stroke::key(Key::Backspace), Stroke::key(Key::Delete)],
         "delete a character",
-        Run::In(Panel::Queries),
+        Run::Editing,
     ),
-    Command::new(
-        &[Stroke::key(Key::Home)],
-        "line start",
-        Run::In(Panel::Queries),
-    ),
-    Command::new(
-        &[Stroke::key(Key::End)],
-        "line end",
-        Run::In(Panel::Queries),
-    ),
+    Command::new(&[Stroke::key(Key::Home)], "line start", Run::Editing),
+    Command::new(&[Stroke::key(Key::End)], "line end", Run::Editing),
 ];
 
 /// Every binding, grouped as the palette lists them.
@@ -1358,7 +1355,7 @@ mod tests {
                 .filter(|command| {
                     command.binding.keys != [Stroke::key(Key::Tab), Stroke::key(Key::Enter)]
                 })
-                .all(|command| command.run == Run::In(Panel::Queries)),
+                .all(|command| matches!(command.run, Run::In(Panel::Queries) | Run::Editing)),
             "every row but the completion's, which is inert for the reason the \
              export form's rows are"
         );
