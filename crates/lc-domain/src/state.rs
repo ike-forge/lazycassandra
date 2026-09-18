@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::clock::Stamp;
 use crate::commands::CommandsPanel;
-use crate::config::{Config, Diagnostic};
+use crate::config::{Config, ConnectionName, Diagnostic};
 use crate::contents::{ContentsPanel, Filter, SelectionMode};
 use crate::ddl::DdlPanel;
 use crate::drop::{DropPrompt, Target};
@@ -229,8 +229,12 @@ pub enum ConnectionState {
     /// (connection picker design §4).
     Unchosen,
     /// Carries the id so a failure can be matched to the attempt that is
-    /// outstanding.
-    Connecting(ConnId),
+    /// outstanding, and the name so the connection it becomes can say which
+    /// one it is without the config being searched a second time.
+    Connecting {
+        conn: ConnId,
+        name: ConnectionName,
+    },
     Failed(DbError),
     Connected(Connection),
 }
@@ -238,6 +242,10 @@ pub enum ConnectionState {
 #[derive(Debug, Clone)]
 pub struct Connection {
     pub id: ConnId,
+    /// The `[[connections]]` entry this was opened from. Held rather than
+    /// looked up again: the config is a list the user may search, and the
+    /// live connection is not a row of it.
+    pub name: ConnectionName,
     pub posture: Posture,
     pub schema: SchemaState,
 }
@@ -415,7 +423,7 @@ impl ConnectionState {
     #[must_use]
     pub fn is_current(&self, conn: ConnId) -> bool {
         match self {
-            Self::Connecting(id) => *id == conn,
+            Self::Connecting { conn: id, .. } => *id == conn,
             Self::Connected(connection) => connection.id == conn,
             Self::Unchosen | Self::Disconnected | Self::Failed(_) => false,
         }
@@ -1609,7 +1617,7 @@ impl State {
             ConnectionState::Connected(connection) => connection.posture,
             ConnectionState::Unchosen
             | ConnectionState::Disconnected
-            | ConnectionState::Connecting(_)
+            | ConnectionState::Connecting { .. }
             | ConnectionState::Failed(_) => Posture::ReadOnly,
         }
     }
@@ -1621,7 +1629,7 @@ impl State {
             ConnectionState::Connected(connection) => Some(connection.id),
             ConnectionState::Unchosen
             | ConnectionState::Disconnected
-            | ConnectionState::Connecting(_)
+            | ConnectionState::Connecting { .. }
             | ConnectionState::Failed(_) => None,
         }
     }
@@ -1699,7 +1707,7 @@ impl State {
     pub fn is_working_in(&self, panel: Panel) -> bool {
         match panel {
             Panel::Tables => match &self.connection {
-                ConnectionState::Connecting(_) => true,
+                ConnectionState::Connecting { .. } => true,
                 ConnectionState::Connected(connection) => {
                     matches!(connection.schema, SchemaState::Loading)
                 }
@@ -2104,6 +2112,7 @@ mod tests {
         State {
             connection: ConnectionState::Connected(Connection {
                 id: ConnId::next(),
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
                 posture: Posture::Writable,
                 schema,
             }),
@@ -2115,7 +2124,10 @@ mod tests {
     fn a_state_that_is_not_connected_is_read_only() {
         for connection in [
             ConnectionState::Disconnected,
-            ConnectionState::Connecting(ConnId::next()),
+            ConnectionState::Connecting {
+                conn: ConnId::next(),
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
+            },
             ConnectionState::Failed(DbError::Timeout),
         ] {
             let state = State {
@@ -2157,8 +2169,20 @@ mod tests {
         let conn = ConnId::next();
         let other = ConnId::next();
 
-        assert!(ConnectionState::Connecting(conn).is_current(conn));
-        assert!(!ConnectionState::Connecting(conn).is_current(other));
+        assert!(
+            ConnectionState::Connecting {
+                conn,
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name")
+            }
+            .is_current(conn)
+        );
+        assert!(
+            !ConnectionState::Connecting {
+                conn,
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name")
+            }
+            .is_current(other)
+        );
         assert!(!ConnectionState::Disconnected.is_current(conn));
         assert!(!ConnectionState::Failed(DbError::Timeout).is_current(conn));
     }

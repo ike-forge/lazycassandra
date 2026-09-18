@@ -42,16 +42,18 @@ pub(crate) struct TabSpec {
 }
 
 impl PanelTitle {
-    /// A panel with one tab, under `number`.
-    pub(crate) fn single(number: char, text: String) -> Self {
-        Self::styled(number, vec![Segment::plain(text)])
-    }
-
     /// A panel with one tab whose name is drawn in more than one colour.
     pub(crate) fn styled(number: char, segments: Vec<Segment>) -> Self {
+        Self::abbreviated(number, segments.clone(), segments)
+    }
+
+    /// [`PanelTitle::styled`] with a shorter name for a border that cannot
+    /// hold the full one — the same rung [`PanelTitle::tabbed`] gives a strip
+    /// of tabs, spent here on one name that grows rather than on several.
+    pub(crate) fn abbreviated(number: char, text: Vec<Segment>, short: Vec<Segment>) -> Self {
         Self {
             number,
-            tabs: vec![Tab::new(segments.clone(), segments, true)],
+            tabs: vec![Tab::new(text, short, true)],
         }
     }
 
@@ -163,7 +165,7 @@ mod tests {
 
     #[test]
     fn a_title_opens_with_the_key_that_reaches_its_panel() {
-        let title = PanelTitle::single('1', "Tables".to_owned());
+        let title = PanelTitle::styled('1', vec![Segment::plain("Tables")]);
 
         assert_eq!(title.prefix(), "[1]-");
         assert_eq!(title.text(), "[1]-Tables");

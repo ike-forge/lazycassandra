@@ -536,6 +536,7 @@ mod tests {
         }];
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(schema),
         });
@@ -786,6 +787,7 @@ mod tests {
         }];
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(schema),
         });
@@ -928,6 +930,7 @@ mod tests {
         let mut state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(Schema::default()),
         });
@@ -959,6 +962,7 @@ mod tests {
         }];
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(schema),
         });
@@ -998,6 +1002,7 @@ mod tests {
         let mut state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(Schema::default()),
         });
