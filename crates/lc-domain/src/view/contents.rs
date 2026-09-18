@@ -419,6 +419,7 @@ pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
         title: inspector.title(),
         size: inspector.size(),
         body,
+        cursor: inspector.cursor(),
         offset: inspector.offset(),
     }
 }

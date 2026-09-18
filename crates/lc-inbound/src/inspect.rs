@@ -4,16 +4,17 @@
 //! Wrapped here, because wrapping needs a width; the line count goes back to
 //! the domain through `Geometry`, the way the Logs tab's does.
 
+use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{InspectBody, InspectValue, InspectView};
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span as TextSpan};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr as _;
 
-use crate::body::Extent;
+use crate::body::{Extent, patched};
 use crate::theme::Theme;
 
 /// A wide block reads worse than a tall one: past this a line of prose is
@@ -60,13 +61,14 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
     rect(area).map_or(0, |block| usize::from(body(block).height))
 }
 
-/// Draws the block and answers with the lines its value wrapped to.
-pub(crate) fn render(frame: &mut Frame, view: &InspectView, theme: Theme) -> usize {
+/// Draws the block and answers with the lines its value wrapped to, and the
+/// span the cursor's line landed at.
+pub(crate) fn render(frame: &mut Frame, view: &InspectView, theme: Theme) -> (usize, Span) {
     let Some(area) = rect(frame.area()) else {
-        return 0;
+        return (0, Span::default());
     };
     let inner = body(area);
-    let lines = lay_out(&view.body, usize::from(inner.width), theme);
+    let (lines, selection) = lay_out(&view.body, view.cursor, usize::from(inner.width), theme);
     let total = lines.len();
 
     let mut block = Block::bordered()
@@ -75,8 +77,11 @@ pub(crate) fn render(frame: &mut Frame, view: &InspectView, theme: Theme) -> usi
         .title(crate::drop::title(&view.title, theme));
     if let Some(size) = &view.size {
         block = block.title_bottom(
-            Line::from(Span::styled(format!(" {size} "), theme.style(Token::Muted)))
-                .right_aligned(),
+            Line::from(TextSpan::styled(
+                format!(" {size} "),
+                theme.style(Token::Muted),
+            ))
+            .right_aligned(),
         );
     }
 
@@ -96,43 +101,94 @@ pub(crate) fn render(frame: &mut Frame, view: &InspectView, theme: Theme) -> usi
         crate::render::scrollbar(frame, area, &extent, theme.focus_border(), theme);
     }
 
-    total
+    (total, selection)
 }
 
-fn lay_out(body: &InspectBody, width: usize, theme: Theme) -> Vec<Line<'static>> {
+fn lay_out(
+    body: &InspectBody,
+    cursor: usize,
+    width: usize,
+    theme: Theme,
+) -> (Vec<Line<'static>>, Span) {
+    let mut laid = Laid::default();
+
     match body {
-        InspectBody::Cell(value) => value_lines(value, width, 0)
-            .into_iter()
-            .map(|line| Line::from(Span::styled(line, value_style(value, theme))))
-            .collect(),
+        InspectBody::Cell(value) => {
+            let style = value_style(value, theme);
+
+            for (at, rows) in wrapped(value, width, 0).into_iter().enumerate() {
+                let rows = rows
+                    .into_iter()
+                    .map(|row| Line::from(TextSpan::styled(row, style)))
+                    .collect();
+
+                laid.push(rows, at == cursor, theme);
+            }
+        }
         InspectBody::Row { names, fields } => {
             let names = usize::from(*names);
             let hang = names + GAP;
+            let mut at = 0;
 
-            fields
-                .iter()
-                .flat_map(|field| {
-                    let style = value_style(&field.value, theme);
-                    let name = field
-                        .token
-                        .map_or_else(|| theme.style(Token::Muted), |token| theme.style(token));
+            for field in fields {
+                let style = value_style(&field.value, theme);
+                let name = field
+                    .token
+                    .map_or_else(|| theme.style(Token::Muted), |token| theme.style(token));
 
-                    value_lines(&field.value, width, hang)
+                for (line, rows) in wrapped(&field.value, width, hang).into_iter().enumerate() {
+                    let rows = rows
                         .into_iter()
                         .enumerate()
-                        .map(move |(at, line)| {
-                            let rest: String = line.chars().skip(hang).collect();
-                            let label = if at == 0 {
+                        .map(|(row, text)| {
+                            let rest: String = text.chars().skip(hang).collect();
+                            let label = if (line, row) == (0, 0) {
                                 let pad = names.saturating_sub(field.name.width());
                                 format!("{}{}", field.name, " ".repeat(pad + GAP))
                             } else {
                                 " ".repeat(hang)
                             };
 
-                            Line::from(vec![Span::styled(label, name), Span::styled(rest, style)])
+                            Line::from(vec![
+                                TextSpan::styled(label, name),
+                                TextSpan::styled(rest, style),
+                            ])
                         })
-                })
-                .collect()
+                        .collect();
+
+                    laid.push(rows, at + line == cursor, theme);
+                }
+
+                at += field.value.lines.len();
+            }
+        }
+    }
+
+    (laid.lines, laid.selection)
+}
+
+/// The block's body as it accumulates, one laid-out line at a time.
+#[derive(Default)]
+struct Laid {
+    lines: Vec<Line<'static>>,
+    selection: Span,
+}
+
+impl Laid {
+    /// One laid-out line's wrapped rows, banded across the body where the
+    /// cursor is on it — every row of it, the way a wrapped Logs entry is
+    /// banded whole.
+    fn push(&mut self, rows: Vec<Line<'static>>, selected: bool, theme: Theme) {
+        if selected {
+            self.selection = Span {
+                first: self.lines.len(),
+                lines: rows.len(),
+            };
+            let band = theme.style(Token::Selected);
+            self.lines
+                .extend(rows.into_iter().map(|row| patched(row, band)));
+        } else {
+            self.lines.extend(rows);
         }
     }
 }
@@ -143,24 +199,25 @@ fn value_style(value: &InspectValue, theme: Theme) -> Style {
         .map_or_else(Style::default, |token| theme.style(token))
 }
 
-/// Every line of `value` wrapped to `width`, each opening with `hang` blanks
-/// and then its own indent, which a continuation keeps.
+/// Every line of `value` wrapped to `width`, grouped by the line it came
+/// from — what the cursor counts in — each opening with `hang` blanks and
+/// then its own indent, which a continuation keeps.
 ///
 /// A blank line still takes a row: an empty text value is a field, and a
 /// field with no row would lose its name.
-fn value_lines(value: &InspectValue, width: usize, hang: usize) -> Vec<String> {
+fn wrapped(value: &InspectValue, width: usize, hang: usize) -> Vec<Vec<String>> {
     value
         .lines
         .iter()
-        .flat_map(|line| {
+        .map(|line| {
             let text = line.trim_start_matches(' ');
             let indent = (hang + line.len() - text.len()).min(width.saturating_sub(1));
-            let wrapped = crate::wrap::plain(text, width, indent);
+            let rows = crate::wrap::plain(text, width, indent);
 
-            if wrapped.is_empty() {
+            if rows.is_empty() {
                 vec![" ".repeat(hang.min(width))]
             } else {
-                wrapped
+                rows
             }
         })
         .collect()
@@ -180,22 +237,49 @@ mod tests {
     use super::*;
 
     fn drawn(width: u16, height: u16, inspected: Inspected) -> (Buffer, usize) {
+        let (buffer, lines, _) = drawn_at(width, height, inspected, 0);
+
+        (buffer, lines)
+    }
+
+    /// The block as it draws with the cursor `cursor` lines down.
+    fn drawn_at(
+        width: u16,
+        height: u16,
+        inspected: Inspected,
+        cursor: usize,
+    ) -> (Buffer, usize, Span) {
         let mut state = State::default();
-        state.overlay = Some(Overlay::Inspect(Inspector::opened(
-            Subject::Table(TableRef::new("shop", "orders")),
-            inspected,
-        )));
+        let mut inspector =
+            Inspector::opened(Subject::Table(TableRef::new("shop", "orders")), inspected);
+        for _ in 0..cursor {
+            inspector.down();
+        }
+        state.overlay = Some(Overlay::Inspect(inspector));
         let Some(OverlayView::Inspect(view)) = view_model(&state).overlay else {
             panic!("the inspector projects");
         };
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a backend");
-        let mut lines = 0;
+        let mut drawn = (0, Span::default());
 
         terminal
-            .draw(|frame| lines = render(frame, &view, Theme::default()))
+            .draw(|frame| drawn = render(frame, &view, Theme::default()))
             .expect("TestBackend always draws");
 
-        (terminal.backend().buffer().clone(), lines)
+        (terminal.backend().buffer().clone(), drawn.0, drawn.1)
+    }
+
+    /// The rows of `buffer` the selection band was patched onto.
+    fn banded(buffer: &Buffer) -> Vec<u16> {
+        let band = Theme::default().style(Token::Selected);
+
+        (0..buffer.area.height)
+            .filter(|&y| {
+                buffer
+                    .cell((buffer.area.width / 2, y))
+                    .is_some_and(|cell| cell.style().bg == band.bg)
+            })
+            .collect()
     }
 
     fn rows(buffer: &Buffer) -> Vec<String> {
@@ -334,6 +418,25 @@ mod tests {
         let geometry = geometry.expect("drawn");
         assert_eq!(geometry.inspector_rows(), 18);
         assert_eq!(geometry.inspector_lines(), 4);
+    }
+
+    #[test]
+    fn the_cursor_line_is_banded_across_every_row_it_wrapped_to() {
+        let (buffer, _, selection) = drawn_at(
+            30,
+            12,
+            Inspected::Row {
+                number: 1,
+                columns: vec!["note".to_owned()],
+                values: vec![CqlValue::List(vec![CqlValue::Text(
+                    "one two three four five six".to_owned(),
+                )])],
+            },
+            1,
+        );
+
+        assert_eq!(banded(&buffer), [4, 5], "the element, both of its rows");
+        assert_eq!(selection, Span { first: 1, lines: 2 });
     }
 
     #[test]

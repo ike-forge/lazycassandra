@@ -1285,6 +1285,9 @@ pub struct Geometry {
     /// depends on the offset they bound (cell inspector design §5).
     inspector_rows: usize,
     inspector_lines: usize,
+    /// Where the frame wrapped the inspector's cursor line to, which is what
+    /// its offset follows (cell inspector design §5).
+    inspector_selection: Span,
 }
 
 impl Geometry {
@@ -1307,6 +1310,7 @@ impl Geometry {
             connection_rows: 0,
             inspector_rows: 0,
             inspector_lines: 0,
+            inspector_selection: Span { first: 0, lines: 0 },
         }
     }
 
@@ -1461,13 +1465,20 @@ impl Geometry {
         self.inspector_lines
     }
 
+    /// Where the frame drew the inspector's cursor line.
+    #[must_use]
+    pub const fn inspector_selection(self) -> Span {
+        self.inspector_selection
+    }
+
     /// Split from [`Self::new`] for [`Self::with_ddl_selection`]'s reason: a
     /// test that opens no inspector has nothing to say here.
     #[must_use]
-    pub const fn with_inspector(self, rows: usize, lines: usize) -> Self {
+    pub const fn with_inspector(self, rows: usize, lines: usize, selection: Span) -> Self {
         Self {
             inspector_rows: rows,
             inspector_lines: lines,
+            inspector_selection: selection,
             ..self
         }
     }

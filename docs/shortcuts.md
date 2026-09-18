@@ -754,16 +754,19 @@ Like the palette it dims the panels, claims every key and leaves `q` quitting.
 
 | Key | Effect |
 |---|---|
-| `j` / `k`, `Down` / `Up` | Scroll a line. |
-| `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | Scroll a page. |
-| `Home` / `End`, `g` / `G` | The top, the bottom. |
+| `j` / `k`, `Down` / `Up` | Move the cursor a line. |
+| `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | Move it a body height. |
+| `Home` / `End`, `g` / `G` | The first line, the last. |
 | `y` | Yank what the grid's `y` would in the mode it was opened from: the bare value, or the row as one CSV line. The inspector stays open. |
+| `Y` | Yank the line the cursor is on, its indent dropped and, in row mode, without the column name beside it. Nothing over a null field. |
 | `Enter` / `Esc` | Close it. |
 | `q` | Quits, as everywhere else. |
 | anything else | Inert, every other ctrl chord included. |
 
-The wheel scrolls it wherever the pointer is, and a click closes it. A frame
-that shrinks past the block closes it too. See
+The cursor is one laid-out line — a JSON member, a collection element, a line
+of a field — banded across every row it wrapped to, the way a wrapped Logs
+entry is. The wheel moves it wherever the pointer is, and a click closes the
+inspector. A frame that shrinks past the block closes it too. See
 [cell inspector design](superpowers/specs/2026-09-17-cell-inspector-design.md).
 
 ### Queries panel
@@ -1062,8 +1065,8 @@ them has none left for what is particular to the panel — which is the only
 thing a *contextual* bar is for. `Shift-Tab` is `Tab`'s inverse and is off it
 for the same reason. The two exceptions are the theme picker's `j/k preview`,
 where what the hint teaches is the side effect rather than the motion (§1's
-picker subsection), and the inspector's `j/k scroll`, where nothing else on
-screen says the block scrolls.
+picker subsection), and the inspector's `j/k move`, where nothing else on
+screen says the block has a cursor.
 The palette lists every one of them regardless — that is the division of
 labour the next paragraph states.
 
@@ -1218,11 +1221,11 @@ alone — a panel's claim on a letter stops at that panel's border, and this
 one stops at a mode's (§1's Table contents subsection).
 Taken, digits: `1` `2` `3` `4`.
 Taken, punctuation: `[` and `]`.
-Taken, uppercase: `N`, `G` and `P` — the only shifted letters bound (§2).
-`p` and `P` answer in Table contents alone.
+Taken, uppercase: `N`, `G`, `P` and `Y` — the only shifted letters bound (§2).
+`p` and `P` answer in Table contents alone, and `Y` in the inspector alone.
 
 Free, lowercase: `a` `b` `e` `i` `o` `r` `t` `u` `w` `x` `z`, the
-digits `5`–`9` and `0`, and every uppercase letter but `N`, `G` and `P`.
+digits `5`–`9` and `0`, and every uppercase letter but `N`, `G`, `P` and `Y`.
 
 `Space` is claimed for the first time, inside the export form only: it
 activates the focused stop there (§1's export-form subsection) and is free
@@ -1577,15 +1580,16 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The block counts the rows, and counts one in the singular | `a_delete_block_counts_the_rows_in_its_border_and_in_its_warning`, `one_row_is_counted_in_the_singular_everywhere_it_is_counted`, `a_long_batch_is_elided_in_the_middle_and_says_how_much` (`inbound/drop.rs`) |
 | `Enter` over the grid inspects the row or the cell, as drawn | `enter_in_row_mode_inspects_the_whole_row`, `enter_in_cell_mode_inspects_the_cell_under_the_cursor`, `enter_in_column_mode_is_inert`, `enter_inspects_the_row_as_the_grid_draws_it` |
 | `Enter` over the grid is refused where it names nothing, or several things | `enter_is_inert_with_nothing_loaded`, `enter_is_inert_on_an_empty_grid`, `enter_is_inert_while_a_range_is_held`, `enter_is_inert_on_a_frame_with_no_room_for_the_block` |
-| The inspector scrolls, closes, quits and swallows the rest | `j_k_and_the_arrows_scroll_a_line`, `the_paging_keys_scroll_a_body_height`, `g_home_g_and_end_reach_the_top_and_the_bottom`, `scrolling_stops_at_the_last_line`, `enter_and_escape_close_it`, `q_quits_from_the_inspector`, `every_other_key_is_inert` |
-| `y` in the inspector yanks per mode and leaves it open | `y_yanks_the_bare_value_and_leaves_the_inspector_open`, `y_yanks_the_row_as_one_csv_line`, `y_over_a_null_yanks_nothing` |
-| The wheel scrolls the inspector; a click and a shrink close it | `the_wheel_scrolls_the_inspector_and_a_click_closes_it`, `a_frame_too_small_for_the_block_closes_it`, `a_value_that_rewraps_shorter_pulls_the_offset_back` |
+| The inspector moves, closes, quits and swallows the rest | `j_k_and_the_arrows_move_a_line`, `the_paging_keys_move_a_body_height`, `g_home_g_and_end_reach_the_top_and_the_bottom`, `the_cursor_stops_at_the_last_line`, `a_value_of_one_line_has_nowhere_to_move`, `the_cursor_stops_at_the_last_line_of_what_is_open` (`inspect.rs`), `a_rows_lines_run_on_from_one_field_to_the_next` (`inspect.rs`), `enter_and_escape_close_it`, `q_quits_from_the_inspector`, `every_other_key_is_inert` |
+| The cursor's line is banded whole, and the offset follows the span drawn for it | `the_cursor_line_is_banded_across_every_row_it_wrapped_to` (`inbound/inspect.rs`), `the_offset_follows_the_span_the_frame_drew_the_cursor_at` |
+| `y` in the inspector yanks per mode and leaves it open; `Y` yanks the cursor's line | `y_yanks_the_bare_value_and_leaves_the_inspector_open`, `y_yanks_the_row_as_one_csv_line`, `shift_y_yanks_the_line_the_cursor_is_on`, `shift_y_yanks_a_row_field_without_its_column_name`, `y_over_a_null_yanks_nothing` |
+| The wheel moves the inspector's cursor; a click and a shrink close it | `the_wheel_moves_the_inspector_and_a_click_closes_it`, `a_frame_too_small_for_the_block_closes_it`, `a_value_that_rewraps_shorter_pulls_the_offset_back` |
 | `p` appends the next page and `P` pages to the end, both from where the last page left off | `p_fetches_the_next_page_from_where_the_last_one_left_off`, `shift_p_fetches_pages_until_the_result_ends`, `a_page_asked_for_is_sized_by_grid_page_rows`, `the_next_page_is_appended_and_the_last_ends_the_result`, `every_page_runs_to_the_end` (`contents.rs`) |
 | `p` and `P` are inert without more, outside the grid and while a page is in flight | `paging_is_inert_without_more_elsewhere_and_while_a_page_is_in_flight`, `nothing_is_fetched_twice_at_once` (`contents.rs`) |
 | `P` stops at each stop and continues past it; `p` ignores them | `every_page_stops_at_the_next_hundred_megabytes_and_continues_past_it`, `every_page_stops_at_the_next_million_rows_and_continues_past_it`, `the_next_page_ignores_a_stop`, `a_stop_is_the_next_multiple_above_where_every_page_was_pressed` (`contents.rs`) |
 | `Esc` stops `P` below an overlay and above a range, and the page in flight lands | `escape_stops_shift_p_and_the_page_in_flight_still_lands`, `escape_ranks_below_an_overlay_and_above_a_range`, `stopping_every_page_still_appends_the_one_in_flight` (`contents.rs`) |
 | The bar names `p`/`P` only while there is more, and `esc stop` while `P` runs; the palette greys both once the result ended | `the_bar_names_paging_only_while_there_is_more`, `the_palette_greys_paging_once_the_result_has_ended` |
-| The bar names the inspector's keys, and `⏎ inspect` only where it opens | `the_bar_names_scroll_copy_and_close_over_the_inspector`, `the_contents_bar_names_inspect_only_where_enter_opens_it` |
+| The bar names the inspector's keys, and `⏎ inspect` only where it opens | `the_bar_names_move_copy_and_close_over_the_inspector`, `the_contents_bar_names_inspect_only_where_enter_opens_it` |
 | `y` yanks the focused row, per panel that has one | `y_yanks_a_grid_row`, `y_yanks_a_column_row`, `y_yanks_a_ddl_row`, `y_yanks_a_tree_node` |
 | `y` follows the selection mode | `y_yanks_the_cell_in_cell_mode`, `y_yanks_the_row_in_row_mode`, `y_yanks_the_column_in_column_mode` |
 | A cell yanks its value, unescaped and untruncated | `a_cell_yanks_without_quoting`, `a_cell_yank_is_not_ellipsised` (`yank.rs`) |

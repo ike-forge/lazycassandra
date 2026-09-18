@@ -248,6 +248,9 @@ pub struct InspectView {
     /// The cell's size, for the bottom border. `None` over a row or a null.
     pub size: Option<String>,
     pub body: InspectBody,
+    /// The laid-out line the cursor is on, counted across every field: what
+    /// the block bands, and what the renderer reports the wrapped span of.
+    pub cursor: usize,
     /// The first wrapped line drawn.
     pub offset: usize,
 }
