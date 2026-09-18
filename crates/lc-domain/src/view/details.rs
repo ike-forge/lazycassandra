@@ -1253,6 +1253,7 @@ mod tests {
         let mut state = tabled(&[("shop", &["orders"])]);
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: crate::posture::Posture::ReadOnly,
             schema: SchemaState::Loaded(Schema {
                 keyspaces: BTreeMap::from([(
@@ -1524,10 +1525,14 @@ mod tests {
     fn a_panel_with_nothing_selected_stays_blank_rather_than_repeating_the_tables_panel() {
         for state in [
             State::default(),
-            state_with(ConnectionState::Connecting(ConnId::next())),
+            state_with(ConnectionState::Connecting {
+                conn: ConnId::next(),
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
+            }),
             state_with(ConnectionState::Failed(DbError::Timeout)),
             state_with(ConnectionState::Connected(Connection {
                 id: ConnId::next(),
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
                 posture: crate::posture::Posture::ReadOnly,
                 schema: SchemaState::Loading,
             })),

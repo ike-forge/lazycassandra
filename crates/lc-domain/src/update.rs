@@ -437,11 +437,24 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 }
 
 fn connected(state: &mut State, conn: ConnId, posture: Posture, took: Duration) -> Vec<Effect> {
-    if !state.connection.is_current(conn) {
+    // Matched rather than asked through `is_current`: the name the connection
+    // arrives under is the one the outstanding attempt was begun with, and
+    // only `Connecting` holds it.
+    let ConnectionState::Connecting {
+        conn: outstanding,
+        name,
+    } = &state.connection
+    else {
+        return Vec::new();
+    };
+    if *outstanding != conn {
         return Vec::new();
     }
+    let name = name.clone();
+
     state.connection = ConnectionState::Connected(crate::state::Connection {
         id: conn,
+        name,
         posture,
         schema: SchemaState::Loading,
     });
@@ -2605,7 +2618,10 @@ fn connect(state: &mut State, target: ConnectionConfig) -> Vec<Effect> {
         effects.push(Effect::Cancel(query));
     }
 
-    state.connection = ConnectionState::Connecting(conn);
+    state.connection = ConnectionState::Connecting {
+        conn,
+        name: target.name.clone(),
+    };
     state.log.push(Entry::new(
         state.now,
         sentence(format!("Connecting to {}", target.name.as_str())),
@@ -4429,6 +4445,7 @@ mod tests {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture,
             schema: SchemaState::Loading,
         });

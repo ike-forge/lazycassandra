@@ -682,10 +682,9 @@ pub fn ddl_tabs(state: &State) -> &'static [DdlTab] {
 /// A panel's top border: one name, or the strip of tabs it can show.
 fn title(state: &State, panel: Panel) -> PanelTitle {
     let number = panel.number();
-    let single = |text: String| PanelTitle::single(number, text);
 
     match panel {
-        Panel::Tables => single("Tables".to_owned()),
+        Panel::Tables => tables::title(state, number),
         Panel::Ddl => {
             let tab = details::shown_tab(state);
             let specs: Vec<TabSpec> = details::tabs_for(state)
@@ -759,6 +758,7 @@ pub(crate) mod tests_support {
     pub(crate) fn connected(schema: Schema) -> State {
         state_with(ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(schema),
         }))

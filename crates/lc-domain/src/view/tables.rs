@@ -2,10 +2,10 @@
 
 use crate::model::{KeyspaceKind, Schema};
 use crate::state::{ConnectionState, Flash, Panel, SchemaState, State};
-use crate::style::Token;
+use crate::style::{Segment, Token};
 use crate::tree::{Node, TablesPanel};
 
-use super::{PanelBody, waiting};
+use super::{PanelBody, PanelTitle, waiting};
 
 /// One row of the Tables tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +39,38 @@ impl RowKind {
     }
 }
 
+/// The panel's name, and which connection its keyspaces came from.
+///
+/// The connection is named in the picker's spelling and drawn in the picker's
+/// colours, because a posture that read one way in the list it was chosen
+/// from and another on the border would be two facts rather than one
+/// (posture design §1). Until this, nothing on screen said which cluster a
+/// `d` or a typed `INSERT` would reach (posture design, opening) — the border
+/// says it for as long as the connection is open.
+///
+/// `Tables` alone is the short form, so a sidebar too narrow for the badge
+/// drops it whole rather than clipping a posture down to a word that reads
+/// like a different one.
+pub(super) fn title(state: &State, number: char) -> PanelTitle {
+    const BASE: &str = "Tables";
+    let short = vec![Segment::plain(BASE)];
+
+    let ConnectionState::Connected(connection) = &state.connection else {
+        return PanelTitle::abbreviated(number, short.clone(), short);
+    };
+    let posture = connection.posture;
+
+    PanelTitle::abbreviated(
+        number,
+        vec![
+            Segment::plain(format!("{BASE} ({}, ", connection.name.as_str())),
+            Segment::styled(posture.label(), Token::Posture(posture)),
+            Segment::plain(")"),
+        ],
+        short,
+    )
+}
+
 pub(super) fn body(state: &State) -> PanelBody {
     match &state.connection {
         // `Failed` joins `Disconnected` here: the modal owns the failure and
@@ -50,7 +82,7 @@ pub(super) fn body(state: &State) -> PanelBody {
         // a disconnection the user has not attempted yet
         // (connection picker design §3).
         ConnectionState::Unchosen => waiting("No connection chosen"),
-        ConnectionState::Connecting(_) => waiting("Connecting…"),
+        ConnectionState::Connecting { .. } => waiting("Connecting…"),
         ConnectionState::Connected(connection) => match &connection.schema {
             SchemaState::Loading => waiting("Loading schema…"),
             // The read is over and it failed — "Loading schema…" would claim
@@ -144,6 +176,83 @@ mod tests {
         panel_body(state, 0)
     }
 
+    fn tables_title(state: &State) -> PanelTitle {
+        super::super::view_model(state).panels[0].title.clone()
+    }
+
+    fn open(name: &str, posture: Posture) -> State {
+        state_with(ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new(name).expect("a valid name"),
+            posture,
+            schema: SchemaState::Loading,
+        }))
+    }
+
+    /// Which cluster the panel is showing, and what it permits, is the one
+    /// thing the posture design left unsaid outside a refusal (posture
+    /// design, opening).
+    #[test]
+    fn the_border_names_the_connection_and_its_posture() {
+        let title = tables_title(&open("local", Posture::ReadOnly));
+
+        assert_eq!(title.text(), "[1]-Tables (local, read-only)");
+    }
+
+    #[test]
+    fn the_posture_is_spelled_the_way_the_picker_and_the_config_spell_it() {
+        for posture in [Posture::ReadOnly, Posture::Writable, Posture::Protected] {
+            let title = tables_title(&open("prod", posture));
+
+            assert_eq!(
+                title.text(),
+                format!("[1]-Tables (prod, {})", posture.label()),
+                "a border that renamed a posture would be teaching a key that does not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn the_posture_carries_its_own_colour_and_the_rest_of_the_name_does_not() {
+        let title = tables_title(&open("prod", Posture::Writable));
+
+        assert_eq!(
+            title.tabs()[0]
+                .segments()
+                .iter()
+                .map(|segment| segment.token)
+                .collect::<Vec<_>>(),
+            [None, Some(Token::Posture(Posture::Writable)), None]
+        );
+    }
+
+    /// A sidebar on its floor cannot hold the badge, and half a posture reads
+    /// as a different one — so the name goes whole or not at all.
+    #[test]
+    fn a_narrow_border_falls_back_to_the_panels_name_alone() {
+        let title = tables_title(&open("local", Posture::ReadOnly));
+
+        assert_eq!(title.tabs()[0].short(), "Tables");
+    }
+
+    #[test]
+    fn a_panel_with_no_connection_names_no_connection() {
+        for state in [
+            State::default(),
+            state_with(ConnectionState::Unchosen),
+            state_with(ConnectionState::Failed(DbError::Timeout)),
+            state_with(ConnectionState::Connecting {
+                conn: ConnId::next(),
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
+            }),
+        ] {
+            // Including `Connecting`, which holds a name: the posture is the
+            // cluster's answer, not the config's claim, and it has not
+            // arrived yet.
+            assert_eq!(tables_title(&state).text(), "[1]-Tables");
+        }
+    }
+
     #[test]
     fn the_tables_panel_says_what_it_is_waiting_for() {
         assert_eq!(
@@ -154,7 +263,10 @@ mod tests {
             }
         );
         assert_eq!(
-            tables_body(&state_with(ConnectionState::Connecting(ConnId::next()))),
+            tables_body(&state_with(ConnectionState::Connecting {
+                conn: ConnId::next(),
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name")
+            })),
             PanelBody::Notice {
                 text: "Connecting…".to_owned(),
                 token: Some(Token::Muted),
@@ -163,6 +275,7 @@ mod tests {
         assert_eq!(
             tables_body(&state_with(ConnectionState::Connected(Connection {
                 id: ConnId::next(),
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
                 posture: Posture::ReadOnly,
                 schema: SchemaState::Loading,
             }))),
@@ -328,6 +441,7 @@ mod tests {
     fn a_failed_schema_read_does_not_spend_the_panel_on_its_error() {
         let state = state_with(ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Failed(DbError::Invalid("unauthorized".to_owned())),
         }));

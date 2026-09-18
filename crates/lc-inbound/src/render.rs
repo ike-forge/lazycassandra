@@ -352,8 +352,6 @@ fn panel_block(
         theme.border_style()
     };
     let prefix = panel.title.prefix();
-    let (tabs, form) = drawn_tabs(&panel.title, area.width);
-    let strip = strip(&prefix, &tabs, form);
     // Right-aligned on the top border, and dropped whole when the border
     // cannot hold both: a truncated term is a lie about what is applied
     // (design §5.1). Drawn on every panel that has one, focused or not — the
@@ -362,8 +360,11 @@ fn panel_block(
     let marker = panel
         .search
         .as_ref()
-        .map(|search| format!("/{}", search.as_str()))
-        .filter(|marker| marker_fits(area.width, &strip, marker));
+        .map(|search| format!("/{}", search.as_str()));
+    let (tabs, drawn) = drawn_tabs(&panel.title, area.width, marker.as_deref());
+    let form = drawn.strip;
+    let strip = strip(&prefix, &tabs, form);
+    let marker = marker.filter(|_| drawn.marker);
     let (lead, trail) = insets(area.width, &strip, marker.as_deref());
 
     let mut block = Block::bordered()
@@ -478,11 +479,7 @@ const BORDER_LINE: char = '─';
 /// marker still sat on its own would read as two different alignments on one
 /// border.
 fn insets(width: u16, title: &str, marker: Option<&str>) -> (usize, usize) {
-    let marker_width = marker.map_or(0, |marker| {
-        marker.chars().count() + 2 * TITLE_PAD.chars().count()
-    });
-    let spent = title.chars().count() + 2 * TITLE_PAD.chars().count() + marker_width + 2;
-    let spare = usize::from(width).saturating_sub(spent);
+    let spare = usize::from(width).saturating_sub(spent(title, marker));
     let lead = TITLE_INSET.min(spare);
 
     (lead, TITLE_INSET.min(spare - lead))
@@ -556,6 +553,14 @@ fn schema_run(style: Style) -> Style {
     style.remove_modifier(Modifier::BOLD)
 }
 
+/// What a `width`-column border turned out to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Drawn {
+    strip: Strip,
+    /// Whether the search marker survived beside the strip.
+    marker: bool,
+}
+
 /// How much of a panel's title strip its border turned out to hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Strip {
@@ -575,21 +580,40 @@ enum Strip {
 /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4). Every tab stays
 /// visible for as long as it can, because a tab nobody can see is one nobody
 /// presses `2` for.
-fn drawn_tabs(title: &PanelTitle, width: u16) -> (Vec<&Tab>, Strip) {
+///
+/// The whole ladder is walked with the marker before it is walked without
+/// one, so a short name buys a border that still says it is filtered: a tree
+/// drawn as if it were the cluster's is a claim about the cluster, where a
+/// panel drawn under its short name has only given up standing context
+/// (design §5.1).
+fn drawn_tabs<'a>(
+    title: &'a PanelTitle,
+    width: u16,
+    marker: Option<&str>,
+) -> (Vec<&'a Tab>, Drawn) {
     let all: Vec<&Tab> = title.tabs().iter().collect();
     let prefix = title.prefix();
-    let holds =
-        |text: &str| text.chars().count() + 2 * TITLE_PAD.chars().count() + 2 <= usize::from(width);
 
-    for form in [Strip::Full, Strip::Short] {
-        if holds(&strip(&prefix, &all, form)) {
-            return (all, form);
+    for beside in [marker, None] {
+        for form in [Strip::Full, Strip::Short] {
+            if spent(&strip(&prefix, &all, form), beside) <= usize::from(width) {
+                return (
+                    all,
+                    Drawn {
+                        strip: form,
+                        marker: beside.is_some(),
+                    },
+                );
+            }
         }
     }
 
     (
         all.into_iter().filter(|tab| tab.active).collect(),
-        Strip::Active,
+        Drawn {
+            strip: Strip::Active,
+            marker: false,
+        },
     )
 }
 
@@ -608,13 +632,15 @@ fn strip(prefix: &str, tabs: &[&Tab], form: Strip) -> String {
     format!("{prefix}{joined}")
 }
 
-/// Both titles, the two corners, and the padding either side of each. The
-/// inset is not counted: it is decoration, and a marker names what the panel
-/// is actually showing.
-fn marker_fits(width: u16, title: &str, marker: &str) -> bool {
-    let padding = 4 * TITLE_PAD.chars().count();
-    let needed = title.chars().count() + marker.chars().count() + 2 + padding;
-    usize::from(width) >= needed
+/// What `title`, a `marker` if one is drawn, the padding either side of each
+/// and the two corners cost. The inset is not counted: it is decoration, and
+/// both names say what the panel is actually showing.
+fn spent(title: &str, marker: Option<&str>) -> usize {
+    let marker = marker.map_or(0, |marker| {
+        marker.chars().count() + 2 * TITLE_PAD.chars().count()
+    });
+
+    title.chars().count() + 2 * TITLE_PAD.chars().count() + marker + 2
 }
 
 /// The query at the left of the bar row, `⏎ apply` / `esc cancel` at the
@@ -996,7 +1022,10 @@ mod tests {
         // `State::default` is disconnected with nothing in flight.
         let resting = draw(80, 24);
         let mut state = State::default();
-        state.connection = ConnectionState::Connecting(ConnId::next());
+        state.connection = ConnectionState::Connecting {
+            conn: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
+        };
         state.loader.advance(true);
 
         let working = draw_state(80, 24, &state);
@@ -1022,7 +1051,10 @@ mod tests {
     #[test]
     fn the_loader_marks_the_panel_the_wait_is_for() {
         let mut state = State::default();
-        state.connection = ConnectionState::Connecting(ConnId::next());
+        state.connection = ConnectionState::Connecting {
+            conn: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
+        };
         state.loader.advance(true);
 
         let buffer = draw_state(80, 24, &state);
@@ -1396,6 +1428,7 @@ mod tests {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(schema_of(names)),
         });
@@ -1446,6 +1479,7 @@ mod tests {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
         });
@@ -1515,6 +1549,7 @@ mod tests {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(tabled_schema(&[
                 ("shop", &["orders", "users"]),
@@ -1549,6 +1584,7 @@ mod tests {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders", "users"])])),
         });
@@ -1585,6 +1621,7 @@ mod tests {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders", "users"])])),
         });
@@ -1754,7 +1791,10 @@ mod tests {
     #[test]
     fn a_panel_with_nothing_to_list_says_what_it_is_waiting_for() {
         let mut state = State::default();
-        state.connection = ConnectionState::Connecting(ConnId::next());
+        state.connection = ConnectionState::Connecting {
+            conn: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
+        };
 
         let buffer = draw_state(40, 12, &state);
 
@@ -1798,6 +1838,7 @@ mod tests {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
         });
@@ -3428,6 +3469,7 @@ mod tests {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
             schema: SchemaState::Loaded(schema.clone()),
         });
@@ -3584,6 +3626,101 @@ mod tests {
             border.starts_with(&format!("╭{lead} [1]-Tables ")),
             "the gap reads as the frame running on, got {border:?}"
         );
+    }
+
+    /// The badge is the only thing on screen naming the cluster a `d` or a
+    /// typed `INSERT` would reach, so it is on the border for the whole
+    /// session rather than only in the refusal (posture design, opening).
+    #[test]
+    fn a_sidebar_wide_enough_names_the_connection_on_the_border() {
+        let buffer = draw_state(140, 12, &browsing(&["shop"], 0));
+        let border = row(&buffer, 0);
+
+        assert!(
+            border.starts_with("╭── [1]-Tables (local, read-only) "),
+            "got {border:?}"
+        );
+    }
+
+    #[test]
+    fn a_writable_posture_wears_its_own_colour_on_the_border() {
+        let mut state = browsing(&["shop"], 0);
+        state.connection = ConnectionState::Connected(Connection {
+            id: ConnId::next(),
+            name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
+            posture: Posture::Writable,
+            schema: SchemaState::Loaded(schema_of(&["shop"])),
+        });
+
+        let buffer = draw_state(140, 12, &state);
+        let border = row(&buffer, 0);
+        let at = border
+            .find("writable")
+            .expect("the border names the posture");
+        let fg = |x: usize| {
+            buffer
+                .cell((u16::try_from(x).expect("inside the border"), 0))
+                .expect("inside the border")
+                .fg
+        };
+
+        assert_eq!(fg(at), Theme::default().palette().success);
+        assert_ne!(
+            fg(at),
+            fg(at - "local, ".len() - 1),
+            "the posture is coloured and the name it qualifies is not"
+        );
+    }
+
+    /// The badge grows the title past what a 16-column sidebar can hold, and
+    /// half a posture reads as a different posture — so a narrow border drops
+    /// it whole, the way the marker is dropped whole (design §5.1).
+    #[test]
+    fn a_sidebar_too_narrow_for_the_badge_keeps_the_panels_name_alone() {
+        let buffer = draw_state(80, 12, &browsing(&["shop"], 0));
+        let border = row(&buffer, 0);
+
+        assert!(border.starts_with("╭── [1]-Tables ──"), "got {border:?}");
+        assert!(!border.contains("read-only"), "got {border:?}");
+    }
+
+    #[test]
+    fn a_border_holding_both_puts_the_badge_at_the_name_and_the_marker_at_the_corner() {
+        let mut state = browsing(&["shop"], 0);
+        state.apply_search(Searched::Tables, Search::new("or"));
+
+        // 160 columns leaves the sidebar 40: the badge, the marker, their
+        // padding and the corners need 38.
+        let buffer = draw_state(160, 12, &state);
+        let border = row(&buffer, 0);
+        let (tables, _) = border.split_once('╮').expect("the sidebar's corner");
+
+        assert!(
+            tables.starts_with("╭── [1]-Tables (local, read-only) "),
+            "got {tables:?}"
+        );
+        assert!(tables.ends_with(" /or "), "got {tables:?}");
+    }
+
+    /// A tree drawn as if it were the whole cluster is a claim about the
+    /// cluster; a border under the panel's short name has only given up
+    /// standing context the picker can be reopened for (design §5.1).
+    #[test]
+    fn a_border_that_cannot_hold_both_keeps_the_marker_and_drops_the_badge() {
+        let mut state = browsing(&["shop"], 0);
+        state.apply_search(Searched::Tables, Search::new("or"));
+
+        // 140 columns leaves the sidebar 35, two short of the 38 both need.
+        let buffer = draw_state(140, 12, &state);
+        let border = row(&buffer, 0);
+        let (tables, _) = border.split_once('\u{256e}').expect("the sidebar's corner");
+
+        assert!(
+            tables.starts_with("\u{256d}\u{2500}\u{2500} [1]-Tables "),
+            "got {tables:?}"
+        );
+        assert!(!tables.contains("read-only"), "got {tables:?}");
+        assert!(tables.ends_with(" /or \u{2500}\u{2500}"), "got {tables:?}");
     }
 
     #[test]
