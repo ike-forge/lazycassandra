@@ -2536,6 +2536,47 @@ mod tests {
         assert!(reversed(&flashed, 2), "the second group inverts too");
     }
 
+    /// Cell mode's cursor cell is inverted at rest, so an afterglow adding the
+    /// same inversion left the cell a `y` had just taken looking untouched.
+    /// The flash un-inverts it instead (visual mode design §6.1).
+    #[test]
+    fn a_cell_mode_yanks_afterglow_reads_on_the_cursors_own_cell() {
+        let at = |flash: Option<Flash>| {
+            let mut state = showing(sized_page(2, 4));
+            state.contents.mode = SelectionMode::Cell;
+            state.contents.cursor.go_to(1, 4);
+            state.contents.column.go_to(1, 2);
+            state.flash = flash;
+
+            let buffer = draw_state(60, 12, &state);
+            let area = block_area(&buffer, "Table contents");
+            buffer
+                .cell((drawn_column(area, 1), grid_row_y(area, 1)))
+                .expect("inside the panel")
+                .clone()
+        };
+
+        let resting = at(None);
+        let flashed = at(Some(Flash::lit(
+            Panel::Contents,
+            Ranges::of(Range::new(1, 1)),
+            Ranges::of(Range::new(1, 1)),
+        )));
+
+        assert!(
+            resting.modifier.contains(Modifier::REVERSED),
+            "the cursor cell is inverted at rest"
+        );
+        assert!(
+            !flashed.modifier.contains(Modifier::REVERSED),
+            "and the afterglow swaps it back, so the yank reads"
+        );
+        assert!(
+            flashed.modifier.contains(Modifier::UNDERLINED),
+            "while the cursor is still findable under the flash"
+        );
+    }
+
     /// The flash reaches the panel whose `y` lit it and no other.
     #[test]
     fn a_yank_in_the_tree_lights_the_tree_alone() {

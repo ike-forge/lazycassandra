@@ -512,7 +512,7 @@ fn grid(
     let drawn_row = row.map(|row| row - offset);
     let (table, mut state) = match mode {
         SelectionMode::Cell => (
-            table.cell_highlight_style(theme.style(Token::SelectedCell)),
+            table.cell_highlight_style(cursor_cell(view, theme)),
             empty.with_selected_cell(drawn_row.map(|row| (row, drawn_column))),
         ),
         SelectionMode::Row => (
@@ -552,6 +552,30 @@ fn grid(
         columns_at,
         marks,
     )
+}
+
+/// What the cursor's own cell is drawn with.
+///
+/// `Token::SelectedCell` and `Token::Flash` both swap ground for text, and a
+/// swap made twice is no swap at all: cell mode's rectangle always holds the
+/// cursor, so its `y` left the cell it took looking untouched. The one cell
+/// already inverted is the one the flash un-inverts, keeping the underline
+/// that says where the cursor is (visual mode design §6.1).
+fn cursor_cell(view: &GridView, theme: Theme) -> Style {
+    let style = theme.style(Token::SelectedCell);
+
+    if matches!(view.band, Token::Flash)
+        && ranged(
+            view.selected,
+            view.column,
+            view.rows_ranges,
+            view.columns_ranges,
+        )
+    {
+        style.remove_modifier(Modifier::REVERSED)
+    } else {
+        style
+    }
 }
 
 /// The cell mode's two bands, washed onto the buffer *under* the table rather
