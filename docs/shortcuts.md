@@ -187,7 +187,7 @@ for its own reason. `ctrl-d`/`ctrl-u` page nothing because `PageDown`/`PageUp`
 page nothing here, and the two spellings reach one implementation. `ctrl-t` is
 refused outright: it is the one opener a prompt cannot swallow, and a picker
 opened over a live query would strand the panel searched with nothing left
-holding what it was searched from. `ctrl-r` runs the buffer only from Queries,
+holding what it was searched from. `ctrl-r` runs a statement only from Queries,
 and no prompt can be open while Queries has focus. That takes two halves:
 Queries holds no search, so no prompt can be opened *over* it; and focus cannot
 move *to* it under a live prompt, since the prompt swallows `Tab`/`Shift-Tab`,
@@ -469,19 +469,21 @@ See [drop design](specs/2026-08-31-drop-design.md).
 ### Motion
 
 Applies to the focused panel and nothing else. What moves depends on the panel:
-Tables, Contents and DDL move a selection and let the viewport follow;
-Queries moves the cursor through its buffer.
+Tables, Contents and DDL move a selection and let the viewport follow; an open
+Cql buffer moves the cursor through its text, and a closed one moves the band
+from statement to statement — the Cql tab's rows are the statements in it
+([cql statement selection design](superpowers/specs/2026-09-18-cql-statement-selection-design.md) §2).
 
 | Key | Action |
 |---|---|
-| `j` / `↓` | Down one row (in Queries, `↓` only — `j` is text; with a completion popup up, the next candidate). |
-| `k` / `↑` | Up one (in Queries, `↑` only — `k` is text; with a popup up, the previous candidate). |
+| `j` / `↓` | Down one row (in an open Cql buffer, `↓` only — `j` is text; with a completion popup up, the next candidate). On a closed Cql tab, the next statement. |
+| `k` / `↑` | Up one (in an open Cql buffer, `↑` only — `k` is text; with a popup up, the previous candidate). On a closed Cql tab, the previous statement. |
 | `l` / `→` | Right one column in Contents — the cell cursor in cell and column mode, the window itself in row mode; in Tables, unfold the selected keyspace, step into an unfolded one, or read the selected table into Contents — as `Enter` does. |
 | `h` / `←` | Left one column in Contents, the same way; fold it in Tables, stepping out from a table row first. |
 | `PageDown` / `ctrl-d` | Down one panel height. |
 | `PageUp` / `ctrl-u` | Up one panel height. |
-| `Home`, `g` | To the start (to the **line**'s start in Queries — §2). |
-| `End`, `G` | To the end (to the **line**'s end in Queries — §2). |
+| `Home`, `g` | To the start (to the **line**'s start in an open Cql buffer — §2; to the first statement on a closed one). |
+| `End`, `G` | To the end (to the **line**'s end in an open Cql buffer — §2; to the last statement on a closed one). |
 
 `g` and `G` are the vim-style spelling of `Home` and `End`, and reach the same
 `Motion::Start`/`Motion::End` rather than a copy of them — the relation
@@ -491,9 +493,9 @@ of it when that overlay takes motion — the command palette, the diagnostics
 list, the theme picker and the inspector all answer them.
 
 `g` is one press rather than vim's `gg`: no other binding starts with `g`, so
-a prefix would only cost a keystroke and a pending state. In Queries and under
-a search prompt both keys are text, the panel-that-takes-text rule as
-everywhere else.
+a prefix would only cost a keystroke and a pending state. In an open Cql buffer
+and under a search prompt both keys are text, the panel-that-takes-text rule as
+everywhere else; on a closed Cql tab they reach the first and last statement.
 
 `ctrl-d`/`ctrl-u` are the vim spelling of the two paging keys and reach the
 same code rather than a copy of it, overlays included: whatever `PageDown`
@@ -512,8 +514,12 @@ counting in either unit. The fix needs a line-to-row map from the renderer,
 and the design accepted the imprecision rather than build one for a panel
 that usually fits on one screen
 ([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4).
-Queries never reaches `Motion::End` at all: the editor claims `Home`/`End`
-itself, before the match that would call it (queries editor design §3).
+An open Cql buffer never reaches `Motion::End` at all: the editor claims
+`Home`/`End` itself, before the match that would call it (queries editor design
+§3). A closed one resolves every motion but the two paging ones against its
+statements, and leaves paging inert — the buffer's viewport follows its cursor
+rather than being stored, so a statement step already brings its statement on
+screen (cql statement selection design §7).
 
 The Contents grid has two axes, and only `h`/`l`/`←`/`→` reach the second one.
 `Home`, `End`, `PageUp` and `PageDown` move the **row** cursor there, as they do
@@ -766,7 +772,11 @@ directly below.
 
 The Cql tab is closed when focus arrives — by `4`, `Tab`, `Shift-Tab` or a
 tab click — and takes no text: every global key keeps its meaning, which is
-what lets `4` `4` reach Logs. `⏎` or `i` opens it, and from then on every
+what lets `4` `4` reach Logs. Closed, its rows are the statements the buffer
+holds: `j`/`k` band one after another and `ctrl-r` runs the banded one
+([cql statement selection design](superpowers/specs/2026-09-18-cql-statement-selection-design.md)).
+The band is drawn in both modes — it says what `ctrl-r` would send, and
+`ctrl-r` answers in both. `⏎` or `i` opens it, and from then on every
 printable key is a character; `Esc` closes it again without leaving the
 panel. The caret is drawn only while it is open, and the bar reads `⏎ edit`
 before and `esc done` after. Leaving the panel or the tab closes it, and
@@ -777,7 +787,9 @@ is edited with the keys below, and `ctrl-e` is the way to any other editor
 | Key | Action |
 |---|---|
 | `Enter` / `i` | With the buffer closed: open it. Types nothing. |
-| `ctrl-r` | Run the whole buffer. Its page replaces whatever Contents was showing. A buffer that is empty or all whitespace runs nothing, and the bar greys the hint out while that is so — §2. |
+| `j` / `k` / `↓` / `↑` | With the buffer closed: band the next / previous statement. A step off either end stays where it is. |
+| `g` / `G` / `Home` / `End` | With the buffer closed: band the first / last statement. |
+| `ctrl-r` | Run the banded statement — the one the cursor is in, in either mode. Its page replaces whatever Contents was showing. A buffer holding no statement runs nothing, and the bar greys the hint out while that is so — §2. |
 | `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
 | `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
 | `ctrl-n` / `ctrl-p` | The next / previous completion. With no popup up, raise one against the word under the cursor. |
@@ -942,7 +954,7 @@ layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
 for whatever is focused. The layer has nine members now. `ctrl-r` runs the Queries
-buffer, `ctrl-e` opens that buffer in an external editor, `ctrl-f` lays it
+panel's banded statement, `ctrl-e` opens the buffer in an external editor, `ctrl-f` lays it
 out, and `ctrl-n`/`ctrl-p` walk the completion popup: the panel takes
 text, so every printable key there is a character and none of those actions has
 an unmodified key available
@@ -1054,7 +1066,7 @@ The palette lists every one of them regardless — that is the division of
 labour the next paragraph states.
 
 A hint the bar shows must be true *in the frame it is shown in*, and one
-binding is not: `ctrl-r` on an empty or whitespace-only buffer runs nothing
+binding is not: `ctrl-r` on a buffer holding no statement runs nothing
 (query execution design §3), and an empty buffer is what the Queries panel
 starts as. Hiding the hint until the buffer fills would hide the thing the
 panel exists for from the user who has not typed yet, so it is **greyed
@@ -1479,6 +1491,10 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
 | It runs only from Queries | `ctrl_r_outside_queries_runs_nothing` |
 | An empty buffer is inert | `an_empty_buffer_runs_nothing` |
+| `j`/`k` band statement by statement, and `ctrl-r` runs the banded one | `j_and_k_walk_the_bands_over_the_buffers_statements`, `ctrl_r_runs_the_banded_statement_and_not_the_rest_of_the_buffer`, `stepping_the_band_changes_what_ctrl_r_runs` |
+| An open buffer claims `j` as text | `j_is_a_character_again_once_the_buffer_is_open` |
+| A batch is one statement | `a_batch_is_one_statement_to_step_over_and_to_run` (`domain/queries.rs`), `a_batch_is_one_statement_however_many_semicolons_it_holds` (`domain/cql/statements.rs`) |
+| The band stops where its statement does | `a_band_stops_where_its_statement_does`, `the_banded_statement_is_the_one_the_cursor_is_in` (`inbound/render.rs`) |
 | Either path cancels the other | `running_a_query_cancels_a_pending_table_read`, `reading_a_table_cancels_a_pending_query` |
 | Destructive is refused, unexecuted | `a_destructive_statement_is_refused_until_confirmation_exists` |
 | The posture gate still applies, over every mutating verb, and raises a modal | `a_typed_write_is_refused_on_a_read_only_connection`, `every_mutating_statement_typed_by_hand_is_refused_and_says_why`, `a_read_typed_by_hand_raises_no_refusal` |

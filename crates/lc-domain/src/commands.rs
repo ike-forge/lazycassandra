@@ -353,9 +353,22 @@ const QUERIES: &[Command] = &[
         Run::In(Panel::Queries),
     ),
     Command::new(&[Stroke::key(Key::Escape)], "stop editing", Run::Editing),
+    // A row of its own beside `Navigate`'s "down one row": on the closed Cql
+    // tab the rows are the buffer's statements, and which one the band is on
+    // is what `ctrl-r` acts on (cql statement selection design §4).
+    Command::new(
+        &[Stroke::key(Key::Char('j'))],
+        "next statement",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[Stroke::key(Key::Char('k'))],
+        "prev statement",
+        Run::In(Panel::Queries),
+    ),
     Command::new(
         &[Stroke::ctrl(Key::Char('r'))],
-        "run the buffer",
+        "run the statement",
         Run::In(Panel::Queries),
     ),
     Command::new(
@@ -976,7 +989,7 @@ mod tests {
         assert!(
             rows(None).contains(&CommandRow::Command {
                 keys: "ctrl-r".to_owned(),
-                action: "run the buffer",
+                action: "run the statement",
                 liveness: Liveness::Live,
                 refused: None,
             }),

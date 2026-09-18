@@ -1,8 +1,10 @@
-//! CQL as the editor needs it: coloured, formatted, and completed.
+//! CQL as the editor needs it: coloured, formatted, completed, and split into
+//! the statements a run acts on.
 //!
-//! All three read the same scan of the buffer ([`lex`]), so the word the
-//! highlighter paints as grammar is the word the formatter uppercases and the
-//! word completion offers — three answers that could otherwise drift apart
+//! All four read the same scan of the buffer ([`lex`]), so the word the
+//! highlighter paints as grammar is the word the formatter uppercases, the
+//! word completion offers, and the word that opens a statement — answers that
+//! could otherwise drift apart
 //! (docs/superpowers/specs/2026-08-16-query-editor-design.md §2).
 
 mod complete;
@@ -10,11 +12,13 @@ mod format;
 mod keywords;
 mod lex;
 mod resolve;
+mod statements;
 mod templates;
 
 pub use complete::{Candidate, CandidateKind, Completion, suggest};
 pub use format::format;
 pub use resolve::{Analysis, Context, Expect, Name, Role, Statement};
+pub use statements::{Span, statements};
 
 use crate::style::{Segment, Token};
 use lex::Kind;

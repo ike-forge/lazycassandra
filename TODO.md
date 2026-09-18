@@ -52,10 +52,10 @@ From the mouse input slice (docs/superpowers/specs/2026-08-09-mouse-input-design
 From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-design.md §9):
 
 - Undo and redo, selection, clipboard, and word motions. The buffer has none.
-- A CQL parser, and what waits on it: running the statement under the cursor
-  and splitting a buffer on statement boundaries. `ctrl-f` lays the whole
-  buffer out for the same reason `ctrl-r` runs all of it. Classification
-  already lexes each `;`-separated statement, but still by its first verb.
+- `ctrl-f` lays the whole buffer out rather than the statement under the
+  cursor, which `ctrl-r` now runs
+  (docs/superpowers/specs/2026-09-18-cql-statement-selection-design.md).
+  Classification still reads each statement by its first verb.
 - Completion inside a quoted identifier. `"My` offers nothing — the word
   scanner stops at the quote.
 - Stepping between a statement shape's holes. The caret lands in the first and
@@ -88,9 +88,9 @@ From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-
 
 From the query execution slice (docs/superpowers/specs/2026-08-10-query-execution-design.md):
 
-- Running the buffer sends all of it as one statement. Splitting on statement
-  boundaries, and running only the one under the cursor, needs a CQL parser
-  (design §3, §10).
+- `v`, `y` and `/` do not reach the Cql tab's statements: the band walks them,
+  but nothing selects, yanks or searches over them
+  (cql statement selection design §7).
 - A destructive statement typed into the editor is refused rather than
   confirmed. `d` has a typed confirmation now; the buffer's statement names
   its target in text nothing parses, so there is nothing to ask the user to

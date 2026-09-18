@@ -657,12 +657,13 @@ fn selected(state: &State) -> bool {
     }
 }
 
-/// `ctrl-r` on an empty or whitespace-only buffer submits nothing, silently
+/// `ctrl-r` on a buffer holding no statement submits nothing, silently
 /// (query execution design §3), and an empty buffer is the panel's starting
 /// state — so the hint the panel leads with would otherwise be a lie in the
 /// first frame the user sees. It is greyed against the connection's posture
-/// too, on the buffer as typed. Matched by press rather than by action, for
-/// the same reason `?` is above.
+/// too, on the statement the band is over rather than on the whole buffer:
+/// that is the one `ctrl-r` would send (cql statement selection design §5).
+/// Matched by press rather than by action, for the same reason `?` is above.
 ///
 /// `ctrl-f` is greyed on the same rule, against a buffer the formatter would
 /// leave alone — which an empty one is (query editor design §4.3).
@@ -673,19 +674,20 @@ fn selected(state: &State) -> bool {
 fn liveness(state: &State, binding: &Binding) -> Liveness {
     let runs = binding.keys == [Stroke::ctrl(Key::Char('r'))];
     if runs {
-        let cql = state.queries.text();
-        let cql = cql.trim();
+        let Some(cql) = state.queries.statement() else {
+            return Liveness::Inert;
+        };
 
         // Greyed against the posture as well as against an empty buffer: a
-        // buffer holding a write on a read-only connection would be refused,
+        // statement that writes on a read-only connection would be refused,
         // and the bar may not promise what `submit` will not do. Unlike `d`
         // this is not a property of the key — the same key runs a `SELECT`
         // in the same frame — so the hint follows the buffer as it is typed
         // (posture design §3).
         let refused =
-            !state.posture().permits_mutation() && crate::model::Statement::typed(cql).mutates();
+            !state.posture().permits_mutation() && crate::model::Statement::typed(&cql).mutates();
 
-        if cql.is_empty() || refused {
+        if refused {
             return Liveness::Inert;
         }
     }

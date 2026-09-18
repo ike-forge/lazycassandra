@@ -130,6 +130,15 @@ impl Editor {
             + self.cursor.column
     }
 
+    /// Puts the cursor at `offset`, clamped to the end of the buffer.
+    ///
+    /// [`Self::offset`]'s inverse, for a caller that found a position by
+    /// scanning [`Self::text`] rather than by moving through the buffer.
+    pub fn go_to_offset(&mut self, offset: usize) {
+        self.cursor = self.position_of(offset);
+        self.settle();
+    }
+
     /// Replaces the whole buffer, cursor at the end of it.
     ///
     /// Both invariants survive by construction: `split` on a `&str` always
@@ -259,7 +268,8 @@ impl Editor {
 
     /// [`Self::offset`] read backwards, clamped to the end of the buffer so
     /// an offset past it lands somewhere the cursor invariant allows.
-    fn position_of(&self, offset: usize) -> Position {
+    #[must_use]
+    pub fn position_of(&self, offset: usize) -> Position {
         let mut left = offset;
 
         for (line, text) in self.lines.iter().enumerate() {

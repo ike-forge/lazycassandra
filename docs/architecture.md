@@ -40,8 +40,13 @@ half-connected app on screen
 has a third tab: `Indexes` reads `system_schema.indexes` — metadata the driver
 does not carry — and draws the ways into a table, its primary key first and
 then a block per secondary index
-(docs/superpowers/specs/2026-09-03-ddl-indexes-design.md).
-**Last updated:** 2026-09-03
+(docs/superpowers/specs/2026-09-03-ddl-indexes-design.md). `cql/statements.rs`
+splits the buffer into the statements a run acts on — a `;` outside a batch
+ends one, and `BEGIN … APPLY BATCH` is one whole — so a closed Cql tab bands
+the statement its cursor is in, `j`/`k` step that band, and `ctrl-r` sends one
+statement rather than the buffer
+(docs/superpowers/specs/2026-09-18-cql-statement-selection-design.md).
+**Last updated:** 2026-09-18
 
 ---
 
