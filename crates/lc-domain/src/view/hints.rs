@@ -137,15 +137,19 @@ const DIAGNOSTICS_GLOBAL: &[Binding] = &[Binding {
 
 /// What the bar names while the inspector is up. `j/k` is named for the
 /// reason the theme picker names it: nothing else on screen says the block
-/// scrolls (cell inspector design §6).
+/// moves (cell inspector design §6).
 pub(crate) const INSPECT: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('j')), Stroke::key(Key::Char('k'))],
-        action: "scroll",
+        action: "move",
     },
     Binding {
         keys: &[Stroke::key(Key::Char('y'))],
         action: "copy",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('Y'))],
+        action: "copy line",
     },
 ];
 
@@ -571,16 +575,20 @@ fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar
     }
 }
 
-/// The inspector's own bar. `y` is greyed over a null, which it copies
-/// nothing from.
+/// The inspector's own bar. Each copy key is greyed where it copies nothing:
+/// `y` over a null value, `Y` over a null field's line.
 fn inspect_bar(inspector: &crate::inspect::Inspector, export: Option<String>) -> HintBar {
-    let copies = inspector.yank().is_some();
+    let copies = |action: &str| match action {
+        "copy" => inspector.yank().is_some(),
+        "copy line" => inspector.line().is_some(),
+        _ => true,
+    };
 
     HintBar {
         panel: INSPECT
             .iter()
             .map(|binding| Hint {
-                liveness: if copies || binding.action != "copy" {
+                liveness: if copies(binding.action) {
                     Liveness::Live
                 } else {
                     Liveness::Inert

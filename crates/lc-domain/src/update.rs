@@ -663,6 +663,16 @@ fn says_something(line: &str) -> bool {
     line.chars().any(|c| c != ',' && c != '\n')
 }
 
+/// A yank of what the inspector offers, or nothing where it offers nothing:
+/// a null, and a line that says nothing.
+fn copied(payload: Option<String>) -> Vec<Effect> {
+    payload
+        .filter(|line| says_something(line))
+        .map(Effect::Yank)
+        .into_iter()
+        .collect()
+}
+
 /// What `y` just took, ready to be lit once the selection that named it is
 /// gone (visual mode design §6.1).
 fn lit(state: &State) -> Flash {
@@ -1048,7 +1058,6 @@ fn takes_text(state: &State) -> bool {
 fn goto(state: &mut State, edge: Edge) {
     let last = BuiltIn::ALL.len() + state.config.themes.len();
     let connections = state.config.connections.len();
-    let (lines, height) = inspector_extent(state);
 
     match &mut state.overlay {
         Some(Overlay::Commands(panel)) => match edge {
@@ -1057,7 +1066,7 @@ fn goto(state: &mut State, edge: Edge) {
         },
         Some(Overlay::Inspect(inspector)) => match edge {
             Edge::Start => inspector.to_start(),
-            Edge::End => inspector.to_end(lines, height),
+            Edge::End => inspector.to_end(),
         },
         Some(Overlay::Diagnostics(panel)) => match edge {
             Edge::Start => panel.to_start(),
@@ -2128,26 +2137,20 @@ fn open_inspector(state: &mut State) {
 /// is inert, so no key means "close" in one frame and something else in the
 /// next.
 fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
-    let (lines, height) = inspector_extent(state);
+    let (_, height) = inspector_extent(state);
     let Some(Overlay::Inspect(inspector)) = &mut state.overlay else {
         return Vec::new();
     };
 
     match key {
-        Key::Char('j') | Key::Down => inspector.down(lines, height),
+        Key::Char('j') | Key::Down => inspector.down(),
         Key::Char('k') | Key::Up => inspector.up(),
-        Key::PageDown => inspector.page_down(lines, height),
+        Key::PageDown => inspector.page_down(height),
         Key::PageUp => inspector.page_up(height),
         Key::Home => inspector.to_start(),
-        Key::End => inspector.to_end(lines, height),
-        Key::Char('y') => {
-            return inspector
-                .yank()
-                .filter(|line| says_something(line))
-                .map(Effect::Yank)
-                .into_iter()
-                .collect();
-        }
+        Key::End => inspector.to_end(),
+        Key::Char('y') => return copied(inspector.yank()),
+        Key::Char('Y') => return copied(inspector.line()),
         Key::Enter | Key::Escape => escape(state),
         Key::Char('q') => return quit(state),
         _ => {}
@@ -3734,6 +3737,7 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     let (lines, height) = inspector_extent(state);
     if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
         let before = inspector.offset();
+        inspector.follow(geometry.inspector_selection(), height);
         inspector.clamp_to(lines, height);
 
         if inspector.offset() != before {
@@ -6961,6 +6965,7 @@ mod tests {
         state.queries.show(QueriesTab::Cql);
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
+        assert!(press(&mut state, Key::Char('Y')).is_empty());
     }
 
     /// The panel's own number is not carved out of what an open buffer takes
@@ -9661,6 +9666,7 @@ mod tests {
         state.focus_on(Panel::Contents);
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
+        assert!(press(&mut state, Key::Char('Y')).is_empty());
     }
 
     #[test]
@@ -12173,7 +12179,7 @@ mod tests {
             Msg::Measured(
                 Geometry::new([8, 8, 8, 1], 0, 0)
                     .with_grid_width(80)
-                    .with_inspector(10, 40),
+                    .with_inspector(10, 40, Span::default()),
             ),
         );
         state
@@ -12184,6 +12190,25 @@ mod tests {
             Some(Overlay::Inspect(inspector)) => Some(inspector),
             _ => None,
         }
+    }
+
+    /// `opened` over a value forty laid-out lines long — the length the frame
+    /// `inspectable` measured wraps to, so the cursor and the offset count in
+    /// the same unit here.
+    fn opened_long() -> State {
+        let mut state = opened(SelectionMode::Cell);
+        let Some(Overlay::Inspect(inspector)) = &state.overlay else {
+            panic!("the inspector is up");
+        };
+
+        state.overlay = Some(Overlay::Inspect(Inspector::opened(
+            inspector.subject().clone(),
+            Inspected::Cell {
+                column: "c1".to_owned(),
+                value: CqlValue::List((0..38).map(CqlValue::Int).collect()),
+            },
+        )));
+        state
     }
 
     fn opened(mode: SelectionMode) -> State {
@@ -12249,7 +12274,7 @@ mod tests {
     fn enter_is_inert_with_nothing_loaded() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
         state.focus_on(Panel::Contents);
-        state.geometry = state.geometry.with_inspector(10, 0);
+        state.geometry = state.geometry.with_inspector(10, 0, Span::default());
 
         press(&mut state, Key::Enter);
 
@@ -12295,60 +12320,98 @@ mod tests {
     }
 
     #[test]
-    fn j_k_and_the_arrows_scroll_a_line() {
-        let mut state = opened(SelectionMode::Cell);
+    fn j_k_and_the_arrows_move_a_line() {
+        let mut state = opened_long();
 
         press(&mut state, Key::Char('j'));
         press(&mut state, Key::Down);
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(2));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(2));
 
         press(&mut state, Key::Char('k'));
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(1));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(1));
         press(&mut state, Key::Up);
         press(&mut state, Key::Up);
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(0));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(0));
     }
 
     #[test]
-    fn the_paging_keys_scroll_a_body_height() {
-        let mut state = opened(SelectionMode::Cell);
+    fn the_paging_keys_move_a_body_height() {
+        let mut state = opened_long();
 
         press(&mut state, Key::PageDown);
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(10));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(10));
         press_binding(&mut state, KeyPress::ctrl(Key::Char('d')));
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(20));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(20));
         press_binding(&mut state, KeyPress::ctrl(Key::Char('u')));
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(10));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(10));
         press(&mut state, Key::PageUp);
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(0));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(0));
     }
 
     #[test]
     fn g_home_g_and_end_reach_the_top_and_the_bottom() {
         for (bottom, top) in [(Key::Char('G'), Key::Char('g')), (Key::End, Key::Home)] {
-            let mut state = opened(SelectionMode::Cell);
+            let mut state = opened_long();
 
             press(&mut state, bottom);
             assert_eq!(
-                inspecting(&state).map(Inspector::offset),
-                Some(30),
-                "the last line at the bottom of the body"
+                inspecting(&state).map(Inspector::cursor),
+                Some(39),
+                "the last laid-out line"
             );
 
             press(&mut state, top);
-            assert_eq!(inspecting(&state).map(Inspector::offset), Some(0));
+            assert_eq!(inspecting(&state).map(Inspector::cursor), Some(0));
         }
     }
 
     #[test]
-    fn scrolling_stops_at_the_last_line() {
-        let mut state = opened(SelectionMode::Cell);
+    fn the_cursor_stops_at_the_last_line() {
+        let mut state = opened_long();
 
         for _ in 0..50 {
             press(&mut state, Key::Char('j'));
         }
 
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(30));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(39));
+    }
+
+    #[test]
+    fn a_value_of_one_line_has_nowhere_to_move() {
+        let mut state = opened(SelectionMode::Cell);
+
+        press(&mut state, Key::Char('j'));
+        press(&mut state, Key::End);
+
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(0));
+    }
+
+    #[test]
+    fn the_offset_follows_the_span_the_frame_drew_the_cursor_at() {
+        let mut state = opened_long();
+        press(&mut state, Key::End);
+
+        update(
+            &mut state,
+            Msg::Measured(
+                Geometry::new([8, 8, 8, 1], 0, 0)
+                    .with_grid_width(80)
+                    .with_inspector(
+                        10,
+                        40,
+                        Span {
+                            first: 39,
+                            lines: 1,
+                        },
+                    ),
+            ),
+        );
+
+        assert_eq!(
+            inspecting(&state).map(Inspector::offset),
+            Some(30),
+            "the cursor's line at the bottom of the body"
+        );
     }
 
     #[test]
@@ -12423,19 +12486,45 @@ mod tests {
     }
 
     #[test]
+    fn shift_y_yanks_the_line_the_cursor_is_on() {
+        let mut state = opened_long();
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('Y'));
+
+        assert_eq!(
+            effects,
+            vec![Effect::Yank("0,".to_owned())],
+            "the first element, its indent dropped"
+        );
+        assert!(inspecting(&state).is_some());
+    }
+
+    #[test]
+    fn shift_y_yanks_a_row_field_without_its_column_name() {
+        let mut state = opened(SelectionMode::Row);
+        press(&mut state, Key::Char('j'));
+
+        let effects = press(&mut state, Key::Char('Y'));
+
+        assert_eq!(effects, vec![Effect::Yank("r2c1".to_owned())]);
+    }
+
+    #[test]
     fn y_over_a_null_yanks_nothing() {
         let mut state = populated(Panel::Contents);
         state.contents.mode = SelectionMode::Cell;
-        state.geometry = state.geometry.with_inspector(10, 1);
+        state.geometry = state.geometry.with_inspector(10, 1, Span::default());
         press(&mut state, Key::Enter);
         assert!(inspecting(&state).is_some());
 
         assert!(press(&mut state, Key::Char('y')).is_empty());
+        assert!(press(&mut state, Key::Char('Y')).is_empty());
     }
 
     #[test]
-    fn the_wheel_scrolls_the_inspector_and_a_click_closes_it() {
-        let mut state = opened(SelectionMode::Cell);
+    fn the_wheel_moves_the_inspector_and_a_click_closes_it() {
+        let mut state = opened_long();
 
         update(
             &mut state,
@@ -12444,7 +12533,7 @@ mod tests {
                 direction: Wheel::Down,
             }),
         );
-        assert_eq!(inspecting(&state).map(Inspector::offset), Some(WHEEL_ROWS));
+        assert_eq!(inspecting(&state).map(Inspector::cursor), Some(WHEEL_ROWS));
 
         update(
             &mut state,
@@ -12468,24 +12557,29 @@ mod tests {
 
     #[test]
     fn a_value_that_rewraps_shorter_pulls_the_offset_back() {
-        let mut state = opened(SelectionMode::Cell);
+        let mut state = opened_long();
         press(&mut state, Key::End);
-
-        update(
-            &mut state,
+        let span = Span {
+            first: 39,
+            lines: 1,
+        };
+        let measured = |lines| {
             Msg::Measured(
                 Geometry::new([8, 8, 8, 1], 0, 0)
                     .with_grid_width(80)
-                    .with_inspector(10, 15),
-            ),
-        );
+                    .with_inspector(10, lines, span),
+            )
+        };
+        update(&mut state, measured(40));
+
+        update(&mut state, measured(15));
 
         assert_eq!(inspecting(&state).map(Inspector::offset), Some(5));
         assert!(state.dirty);
     }
 
     #[test]
-    fn the_bar_names_scroll_copy_and_close_over_the_inspector() {
+    fn the_bar_names_move_copy_and_close_over_the_inspector() {
         let state = opened(SelectionMode::Cell);
 
         let bar = crate::view::hints::bar(&state);
@@ -12496,7 +12590,7 @@ mod tests {
                 .chain(&bar.global)
                 .map(|hint| format!("{} {}", hint.keys, hint.action))
                 .collect::<Vec<_>>(),
-            ["j/k scroll", "y copy", "esc close"]
+            ["j/k move", "y copy", "Y copy line", "esc close"]
         );
     }
 

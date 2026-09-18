@@ -1,7 +1,7 @@
 //! Drawing a frame.
 
 use lc_domain::ViewModel;
-use lc_domain::state::{Geometry, Panel, Span as DdlSpan};
+use lc_domain::state::{Geometry, Panel, Span as Selection};
 use lc_domain::style::Token;
 use lc_domain::view::{OverlayView, PanelBody, PanelTitle, Tab};
 use ratatui::Frame;
@@ -66,9 +66,9 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let beneath = if dimmed { theme.dimmed() } else { theme };
     let mut heights = [0; 4];
     let mut ddl_lines = 0;
-    let mut ddl_selection = DdlSpan::default();
+    let mut ddl_selection = Selection::default();
     let mut log_lines = 0;
-    let mut log_selection = DdlSpan::default();
+    let mut log_selection = Selection::default();
     let mut grid_width = 0;
     let mut hits: [PanelHit; 4] = std::array::from_fn(|_| PanelHit::default());
 
@@ -157,7 +157,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         hint_bar,
     );
 
-    let inspector_lines = render_overlay(frame, view, hint_bar, theme);
+    let (inspector_lines, inspector_selection) = render_overlay(frame, view, hint_bar, theme);
 
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, command_rows)
@@ -168,7 +168,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_grid_width(grid_width)
             .with_theme_rows(theme_rows)
             .with_connection_rows(connection_rows)
-            .with_inspector(inspector_rows, inspector_lines),
+            .with_inspector(inspector_rows, inspector_lines, inspector_selection),
         map: FrameMap::new(hits),
     }
 }
@@ -176,8 +176,14 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
 /// The one overlay this frame is showing, if any — the modal over the
 /// panels, and, for the two that carry a live search, the prompt on the hint
 /// bar row after it (overlay search design §7). Answers with the lines the
-/// inspector wrapped to, and zero for every other overlay.
-fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) -> usize {
+/// inspector wrapped to and the span it drew its cursor line at, both empty
+/// for every other overlay.
+fn render_overlay(
+    frame: &mut Frame,
+    view: &ViewModel,
+    hint_bar: Rect,
+    theme: Theme,
+) -> (usize, Selection) {
     match &view.overlay {
         Some(OverlayView::Message(message) | OverlayView::Fatal(message)) => {
             crate::overlay::render(frame, message, theme);
@@ -254,7 +260,7 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
         None => {}
     }
 
-    0
+    (0, Selection::default())
 }
 
 /// `rect` split at `taken` columns from its left edge, clamped to what `rect`

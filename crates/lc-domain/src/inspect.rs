@@ -3,8 +3,9 @@
 //!
 //! The grid caps a column and ellipsises what does not fit; this is where a
 //! value is laid out for reading instead. Wrapping is the renderer's, because
-//! it needs a width, so the domain holds only the offset and bounds it by the
-//! line count the frame reports back (design §5).
+//! it needs a width, so the domain holds a cursor over the laid-out lines it
+//! can count itself, and an offset it bounds by what the frame reports back
+//! (design §5).
 
 use std::collections::BTreeMap;
 
@@ -12,7 +13,7 @@ use crate::bytes::Bytes;
 use crate::cell;
 use crate::contents::Subject;
 use crate::model::CqlValue;
-use crate::state::Scroll;
+use crate::state::{Scroll, Span};
 use crate::style::Segment;
 
 /// What `Enter` opened over, copied out of the page: the grid beneath can be
@@ -31,14 +32,28 @@ pub enum Inspected {
     },
 }
 
-/// An open inspector: what it shows and how far down it is scrolled.
+impl Inspected {
+    /// Every value the block lays out, in the order it draws them.
+    fn values(&self) -> &[CqlValue] {
+        match self {
+            Self::Cell { value, .. } => std::slice::from_ref(value),
+            Self::Row { values, .. } => values,
+        }
+    }
+}
+
+/// An open inspector: what it shows, which line the cursor is on, and how
+/// far down it is scrolled.
 ///
-/// The offset is private for [`Scroll`]'s reason: every motion goes through a
-/// method that bounds it by the lines and height the last frame measured.
+/// The cursor counts laid-out lines, which the domain can count for itself:
+/// the layout is width-independent, and only the wrapping under it is not.
+/// The offset counts wrapped lines, so it follows the cursor by the span the
+/// last frame drew it at, the way the Logs tab's does (design §5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Inspector {
     subject: Subject,
     inspected: Inspected,
+    cursor: usize,
     scroll: Scroll,
 }
 
@@ -48,6 +63,7 @@ impl Inspector {
         Self {
             subject,
             inspected,
+            cursor: 0,
             scroll: Scroll::default(),
         }
     }
@@ -68,28 +84,54 @@ impl Inspector {
         self.scroll.offset()
     }
 
-    pub const fn down(&mut self, lines: usize, height: usize) {
-        self.scroll.down(lines, height);
+    /// The laid-out line the cursor is on.
+    #[must_use]
+    pub const fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Laid-out lines the block holds: one value's, or every field's.
+    #[must_use]
+    pub fn line_count(&self) -> usize {
+        self.inspected
+            .values()
+            .iter()
+            .map(|value| lines(value).len())
+            .sum()
+    }
+
+    pub fn down(&mut self) {
+        self.go_to(self.cursor.saturating_add(1));
     }
 
     pub const fn up(&mut self) {
-        self.scroll.up();
+        self.cursor = self.cursor.saturating_sub(1);
     }
 
-    pub const fn page_down(&mut self, lines: usize, height: usize) {
-        self.scroll.page_down(lines, height);
+    pub fn page_down(&mut self, height: usize) {
+        self.go_to(self.cursor.saturating_add(height));
     }
 
     pub const fn page_up(&mut self, height: usize) {
-        self.scroll.page_up(height);
+        self.cursor = self.cursor.saturating_sub(height);
     }
 
     pub const fn to_start(&mut self) {
-        self.scroll.to_start();
+        self.cursor = 0;
     }
 
-    pub const fn to_end(&mut self, lines: usize, height: usize) {
-        self.scroll.to_end(lines, height);
+    pub fn to_end(&mut self) {
+        self.go_to(usize::MAX);
+    }
+
+    fn go_to(&mut self, cursor: usize) {
+        self.cursor = cursor.min(self.line_count().saturating_sub(1));
+    }
+
+    /// Pulls the viewport the shortest distance that puts the cursor's line
+    /// inside it, `span` being where the last frame wrapped that line to.
+    pub const fn follow(&mut self, span: Span, height: usize) {
+        self.scroll.follow_span(span, height);
     }
 
     /// Pulls the offset back over a body that rewrapped shorter.
@@ -107,6 +149,35 @@ impl Inspector {
                 values: values.clone(),
             })),
         }
+    }
+
+    /// The laid-out line under the cursor, its indent dropped — and, in row
+    /// mode, without the column name beside it, which is a heading rather
+    /// than a value. `None` over a null, as [`Self::yank`] is.
+    #[must_use]
+    pub fn line(&self) -> Option<String> {
+        let (value, line) = self.at_cursor()?;
+
+        match value {
+            CqlValue::Null => None,
+            _ => Some(line.trim_start().to_owned()),
+        }
+    }
+
+    /// The value the cursor's line belongs to, and the line.
+    fn at_cursor(&self) -> Option<(&CqlValue, String)> {
+        let mut at = self.cursor;
+
+        for value in self.inspected.values() {
+            let laid = lines(value);
+
+            if at < laid.len() {
+                return laid.into_iter().nth(at).map(|line| (value, line));
+            }
+            at -= laid.len();
+        }
+
+        None
     }
 
     /// `<subject> · <column>`, or `<subject> · row <n>`.
@@ -442,6 +513,41 @@ mod tests {
             Some("2.0 KB")
         );
         assert_eq!(cell(CqlValue::Null).size(), None);
+    }
+
+    #[test]
+    fn a_rows_lines_run_on_from_one_field_to_the_next() {
+        let mut row = Inspector::opened(
+            Subject::Table(TableRef::new("shop", "orders")),
+            Inspected::Row {
+                number: 1,
+                columns: vec!["id".to_owned(), "tags".to_owned(), "note".to_owned()],
+                values: vec![
+                    CqlValue::Int(7),
+                    CqlValue::List(vec![text("a"), text("b")]),
+                    CqlValue::Null,
+                ],
+            },
+        );
+
+        assert_eq!(row.line_count(), 6, "one, four bracketed, one");
+        assert_eq!(row.line().as_deref(), Some("7"));
+
+        row.down();
+        row.down();
+        assert_eq!(row.line().as_deref(), Some("a,"), "inside the second field");
+
+        row.to_end();
+        assert_eq!(row.line(), None, "the null field");
+    }
+
+    #[test]
+    fn the_cursor_stops_at_the_last_line_of_what_is_open() {
+        let mut cell = cell(text("plain prose"));
+
+        cell.page_down(40);
+
+        assert_eq!(cell.cursor(), 0);
     }
 
     #[test]
