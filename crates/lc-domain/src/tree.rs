@@ -69,9 +69,10 @@ impl TablesPanel {
     /// of their tables' — and drops the rest, whole
     /// (docs/superpowers/specs/2026-08-31-tables-filter-design.md §1). A
     /// keyspace it keeps is drawn open, because a match one keypress below a
-    /// folded keyspace is a match the panel is hiding, and keeps every table
-    /// it has: the tree names where a table lives, and a keyspace shown with
-    /// some of its tables missing misstates that. The unfold set is not
+    /// folded keyspace is a match the panel is hiding, and holds only the
+    /// tables the term reaches
+    /// (docs/superpowers/specs/2026-09-18-tables-filter-rows-design.md §1).
+    /// The unfold set is not
     /// written, so clearing the search restores the fold state exactly and a
     /// live prompt cannot accumulate an unfold per prefix as the term is
     /// typed.
@@ -92,6 +93,7 @@ impl TablesPanel {
                     keyspace
                         .tables
                         .values()
+                        .filter(|table| self.reaches(keyspace, table))
                         .map(|table| Node::Table { keyspace, table }),
                 );
             }
@@ -112,6 +114,20 @@ impl TablesPanel {
                 .tables
                 .values()
                 .any(|table| search.matches(&table.name))
+    }
+
+    /// Whether the search reaches this table, and so whether it is a row
+    /// under a kept keyspace. A term matching the keyspace keeps everything
+    /// inside it: it reaches the table by its qualified name, and dropping
+    /// them would draw the keyspace the term named with nothing under it and
+    /// no key that opens it — `l` and `⏎` are swallowed while a search is
+    /// applied (design §1).
+    fn reaches(&self, keyspace: &Keyspace, table: &Table) -> bool {
+        let Some(search) = &self.search else {
+            return true;
+        };
+
+        search.matches(&table.name) || search.matches(&keyspace.name)
     }
 
     /// Whether a search forces this keyspace open. A keyspace with no tables
@@ -596,15 +612,28 @@ mod tests {
     }
 
     #[test]
-    fn a_keyspace_kept_by_one_matching_table_still_shows_the_rest() {
+    fn a_keyspace_kept_by_one_matching_table_shows_only_that_table() {
         let schema = shop_and_logs();
         let mut panel = TablesPanel::default();
         panel.set_search(Search::new("users"));
 
         assert_eq!(
             search_labels(&panel, &schema),
+            ["shop", "  users"],
+            "a table the term does not reach is not a row"
+        );
+    }
+
+    #[test]
+    fn a_keyspace_the_term_names_keeps_every_table_it_has() {
+        let schema = shop_and_logs();
+        let mut panel = TablesPanel::default();
+        panel.set_search(Search::new("shop"));
+
+        assert_eq!(
+            search_labels(&panel, &schema),
             ["shop", "  orders", "  users"],
-            "the tree names where a table lives; a keyspace missing its siblings misstates that"
+            "the term reaches every table by its qualified name"
         );
     }
 

@@ -1551,7 +1551,7 @@ mod tests {
         let buffer = draw_state(40, 12, &state);
         assert_eq!(
             row(&buffer, 2),
-            "│ ├─ \u{f0ce} orders  ││                      │"
+            "│ └─ \u{f0ce} orders  ││                      │"
         );
 
         let table = Theme::default()
@@ -1575,7 +1575,7 @@ mod tests {
     }
 
     #[test]
-    fn a_search_drops_no_row_from_the_panel() {
+    fn a_search_drops_the_tables_it_does_not_reach() {
         let mut state = State::default();
         state.connection = ConnectionState::Connected(Connection {
             id: ConnId::next(),
@@ -1593,13 +1593,13 @@ mod tests {
         );
         assert_eq!(
             row(&buffer, 2),
-            "│ ├─ \u{f0ce} orders  ││                      │",
-            "the matching row is still drawn"
+            "│ └─ \u{f0ce} orders  ││                      │",
+            "the matching row is drawn, and is now the last of its keyspace"
         );
         assert_eq!(
             row(&buffer, 3),
-            "│ └─ \u{f0ce} users   ││                      │",
-            "`users`, which does not match, is still drawn — the search hides nothing"
+            "│              ││                      │",
+            "`users`, which the term does not reach, is not a row"
         );
     }
 

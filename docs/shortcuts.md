@@ -202,7 +202,8 @@ is the preview — Table DDL and Table contents highlight where a match sits
 rather than narrowing to it, and neither drops a row for a term that fails to
 match it. Tables narrows: a keyspace the term reaches neither by its own name
 nor by one of its tables' is not a row, and one it does reach is drawn open
-with all of its tables. A term that reaches no keyspace leaves the panel
+holding the tables the term reaches — all of them where it reaches the
+keyspace by name. A term that reaches no keyspace leaves the panel
 saying `No match`. `Enter` on an empty query therefore
 clears the search — there is no separate binding for that, only the empty
 query the invariant already turns into "no search". The jump is measured
@@ -216,7 +217,8 @@ search it restores, so an abandoned prompt leaves the panel exactly as it
 was found.
 See [panel search design](specs/2026-08-10-panel-search-design.md) §3,
 [search that highlights rather than hides](specs/2026-08-15-search-highlight-design.md) §5.2
-and [Tables drops the keyspaces a search never reaches](specs/2026-08-31-tables-filter-design.md) §1.
+[Tables drops the keyspaces a search never reaches](specs/2026-08-31-tables-filter-design.md) §1
+and [Tables drops the tables a search never reaches](specs/2026-09-18-tables-filter-rows-design.md) §1.
 
 ### The theme picker
 
@@ -1431,8 +1433,9 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Matching folds case, and is a substring, literally | `matching_ignores_case_in_both_directions`, `matching_is_a_substring_anywhere_and_not_a_prefix`, `a_metacharacter_is_matched_literally`, `folding_reaches_past_ascii` (`search.rs`) |
 | The term is kept as typed, for the marker | `the_term_is_kept_as_typed_for_the_marker` (`search.rs`) |
 | `Searched` refuses Queries and accepts the rest | `every_panel_but_queries_can_hold_a_search`, `a_target_names_the_panel_it_came_from` (`search.rs`) |
-| A search forces the keyspace holding a match open, and leaves its sibling's fold state alone | `a_matching_keyspace_is_forced_open_and_its_sibling_keeps_its_fold_state`, `a_keyspace_holding_a_match_stays_open_whatever_its_fold_state`, `a_keyspace_matching_by_name_is_open_only_when_it_has_tables` (`tree.rs`) |
-| A search drops no row, in either panel | `a_search_drops_no_row` (`tree.rs`), `a_search_drops_no_detail_row` (`view/details.rs`) |
+| A search forces the keyspace holding a match open, and leaves its sibling's fold state alone | `a_matching_keyspace_is_forced_open_and_a_sibling_it_misses_is_dropped`, `a_keyspace_holding_a_match_stays_open_whatever_its_fold_state`, `a_keyspace_matching_by_name_is_kept_but_open_only_when_it_has_tables`, `a_keyspace_holding_no_match_keeps_its_fold_state` (`tree.rs`) |
+| Tables keeps the keyspaces and the tables the term reaches, and drops the rest | `a_keyspace_kept_by_one_matching_table_shows_only_that_table`, `a_keyspace_the_term_names_keeps_every_table_it_has`, `a_search_nothing_reaches_leaves_no_rows`, `clearing_a_search_brings_back_the_keyspaces_it_dropped` (`tree.rs`) |
+| A search drops no row from Table DDL | `a_search_drops_no_detail_row` (`view/details.rs`) |
 | Clearing a search restores the fold state exactly | `clearing_the_search_restores_the_fold_state_exactly` (`tree.rs`) |
 | `l`/`h`, `Enter`, and a click on a keyspace row are all swallowed while a search is applied | `l_and_h_are_swallowed_while_a_search_is_applied`, `folding_under_a_search_does_not_disturb_the_fold_state_it_will_return_to`, `l_and_h_still_fold_once_the_search_is_gone`, `no_tables_entry_point_writes_the_fold_state_under_a_search`, `enter_still_reads_a_table_under_a_search` |
 | A property matches on its name and on its value | `a_property_matches_on_its_name`, `a_property_matches_on_its_value` (`view/details.rs`) |
@@ -1473,7 +1476,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The marker is dropped rather than truncated | `the_marker_is_dropped_rather_than_truncated`, `the_marker_fits_flush_against_the_corner_it_is_tuned_for` (`inbound/render.rs`) |
 | An unfocused panel still wears its marker | `an_unfocused_panel_still_wears_its_marker` (`inbound/render.rs`) |
 | The prompt owns the bar row, and its cursor | `an_open_prompt_owns_the_bar_row`, `an_open_prompts_own_cursor_replaces_the_editors`, `the_prompts_cursor_sits_after_the_query` (`inbound/render.rs`) |
-| A match is painted where it sits, in Tables, and the search drops no row from the panel | `a_match_is_painted_where_it_sits`, `a_search_drops_no_row_from_the_panel` (`inbound/render.rs`) |
+| A match is painted where it sits, in Tables, and the search drops the rows it does not reach | `a_match_is_painted_where_it_sits`, `a_search_drops_the_tables_it_does_not_reach` (`inbound/render.rs`) |
 | A matched cell reads apart from an unmatched one, on and off the selected row | `a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row` (`inbound/render.rs`) |
 | `Token::Match` is legible over `Token::Selected` | `a_match_is_legible_over_a_selected_row` (`inbound/theme/mod.rs`) |
 | `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
