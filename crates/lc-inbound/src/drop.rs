@@ -254,8 +254,8 @@ fn keys(pairs: &[(&str, &str, bool)], theme: Theme) -> TextLine<'static> {
         } else {
             (Token::Faint, Token::Faint)
         };
-        spans.push(Span::styled(format!("{key} "), theme.style(key_token)));
-        spans.push(Span::styled((*label).to_owned(), theme.style(label_token)));
+        spans.push(Span::styled((*key).to_owned(), theme.style(key_token)));
+        spans.push(Span::styled(format!(" {label}"), theme.style(label_token)));
     }
 
     TextLine::from(spans).right_aligned()
