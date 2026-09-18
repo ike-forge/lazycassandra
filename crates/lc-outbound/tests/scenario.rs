@@ -237,7 +237,7 @@ async fn pressing_enter_on_a_table_fills_the_contents_panel() {
 }
 
 #[tokio::test]
-async fn a_table_that_cannot_be_read_says_so_in_the_panel_alone() {
+async fn a_table_that_cannot_be_read_quotes_the_error_in_the_panel() {
     let cluster = FakeCluster::new(
         tabled_schema_of(&[("shop", &["orders"])]),
         Posture::ReadOnly,
@@ -251,8 +251,8 @@ async fn a_table_that_cannot_be_read_says_so_in_the_panel_alone() {
     let view = view_model(&state);
     assert!(
         matches!(&view.panels[2].body, PanelBody::Notice { text, .. }
-            if !text.contains("unauthorized") && text.contains("[4]")),
-        "the panel points at the trail rather than quoting the error"
+            if text.contains("unauthorized")),
+        "the panel says why, without a trip to the trail"
     );
     assert!(
         view.overlay.is_none(),

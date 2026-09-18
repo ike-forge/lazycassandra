@@ -206,10 +206,10 @@ pub(super) fn body(state: &State) -> PanelBody {
         // the absence of one (vision.md §4, principle 1).
         ContentsState::Empty => waiting("Press Enter on a table"),
         ContentsState::Loading { .. } => waiting("Loading rows…"),
-        // The panel says its subject failed; the trail says why
-        // (query log design §8).
-        ContentsState::Failed { .. } => PanelBody::Notice {
-            text: "query failed — see [4]-Logs".to_owned(),
+        // Quoted, not deferred to [4]-Logs: the trail keeps the history,
+        // the panel owns the reason (supersedes query log design §8).
+        ContentsState::Failed { error, .. } => PanelBody::Notice {
+            text: error.clone(),
             token: Some(Token::Severity(Severity::Danger)),
         },
         ContentsState::Loaded { subject, page, .. } => grid(state, subject, page),
@@ -685,19 +685,23 @@ mod tests {
             Subject::Table(TableRef::new("shop", "orders")),
             crate::model::Statement::typed("SELECT * FROM shop.orders"),
         );
-        state.contents.failed(query);
+        state.contents.failed(
+            query,
+            &crate::model::DbError::Invalid("undefined column name total".to_owned()),
+        );
         state
     }
 
-    // The panel reports that its subject failed; the trail reports why
-    // (query log design §8). `ContentsState::Failed` no longer carries the
-    // error at all, so there is nothing left for this notice to quote.
     #[test]
-    fn a_failed_read_points_at_the_trail_rather_than_quoting_the_error() {
-        let PanelBody::Notice { text, .. } = contents_body(&failed_state()) else {
+    fn a_failed_read_quotes_the_error_rather_than_pointing_at_the_trail() {
+        let PanelBody::Notice { text, token } = contents_body(&failed_state()) else {
             panic!("a notice");
         };
-        assert_eq!(text, "query failed — see [4]-Logs");
+        assert_eq!(
+            text,
+            "cluster rejected the statement: undefined column name total"
+        );
+        assert_eq!(token, Some(Token::Severity(Severity::Danger)));
     }
 
     #[test]

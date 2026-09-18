@@ -405,7 +405,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             };
             // A later page has no entry of its own to complete, and the rows
             // already loaded stay, so the trail is the one place it can fail.
-            if state.contents.failed(query) == Some(Failure::Page) {
+            if state.contents.failed(query, &error) == Some(Failure::Page) {
                 let label = match state.contents.state() {
                     ContentsState::Loaded { subject, .. } => subject.label(),
                     _ => String::new(),
@@ -4066,7 +4066,7 @@ fn submit_into_contents(state: &mut State, subject: Subject, stmt: Statement) ->
                     reason: error.to_string(),
                 },
             );
-            state.contents.refused(subject);
+            state.contents.refused(subject, &error);
 
             // Logged before the modal, not instead of it: the modal is gone
             // the moment it is dismissed, and the trail is where the reason
@@ -4344,7 +4344,9 @@ fn follow(state: &mut State, next: Option<Continue>) -> Vec<Effect> {
         return Vec::new();
     };
     let Some(conn) = state.conn_id() else {
-        state.contents.failed(query);
+        state
+            .contents
+            .failed(query, &DbError::Unreachable("not connected".to_owned()));
         return Vec::new();
     };
 
@@ -14127,9 +14129,8 @@ mod tests {
 
     // I3: before `Msg::Connected` lands, a read-only statement is not caught
     // by the mutation guard, so it fell through to `conn_id()` returning
-    // `None` — a refusal `submit_into_contents` noticed (`refused` puts
-    // "query failed — see [4]-Logs" in Table contents) but never logged. The
-    // panel sent the user to a record that did not exist.
+    // `None` — a refusal `submit_into_contents` noticed (`refused` shows it
+    // in Table contents) but never logged, so nothing outlived the panel.
     #[test]
     fn a_statement_refused_for_want_of_a_connection_says_so_in_the_trail() {
         let mut state = State::default();
