@@ -8131,7 +8131,11 @@ mod tests {
     fn enter_still_reads_a_table_under_a_search() {
         let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
         state.apply_search(Searched::Tables, Search::new("orders"));
-        assert_eq!(row_count(&state), 3, "a search drops no row");
+        assert_eq!(
+            row_count(&state),
+            2,
+            "the keyspace and the one table the term reaches"
+        );
 
         state.tables.cursor.go_to(1, row_count(&state));
         let effects = press(&mut state, Key::Enter);
