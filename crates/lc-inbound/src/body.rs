@@ -16,9 +16,11 @@
 //! several wrapped lines, which only the renderer that wrapped them can
 //! measure (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4).
 
+use std::ops::Range;
+
 use lc_domain::contents::{Order, SelectionMode};
 use lc_domain::grid::{BAR, COLUMN_SPACING, MARKS, available, fitting};
-use lc_domain::queries::CqlMode;
+use lc_domain::queries::{CqlMode, Highlight};
 use lc_domain::search::Search;
 use lc_domain::state::{Ranges, Span};
 use lc_domain::style::Token;
@@ -233,29 +235,7 @@ pub(crate) fn render(
             };
             Some(details_body(frame, area, &view, theme))
         }
-        PanelBody::Editor {
-            lines,
-            cursor,
-            mode,
-            completion,
-        } => Some(Body {
-            extent: editor(
-                frame,
-                area,
-                &EditorView {
-                    lines,
-                    cursor: *cursor,
-                    completion: completion.as_ref(),
-                },
-                focused && *mode == CqlMode::Editing,
-                theme,
-            ),
-            columns: None,
-            bands: Vec::new(),
-            marks: Vec::new(),
-            unit: Unit::Lines { rows: Vec::new() },
-            selection: Span::default(),
-        }),
+        PanelBody::Editor { .. } => Some(editor_body(frame, area, body, focused, theme)),
         PanelBody::Grid { .. } => {
             let (extent, horizontal, bands, marks) = grid(frame, chrome, &grid_view(body)?, theme);
 
@@ -1071,11 +1051,55 @@ fn item(
     }
 }
 
+/// The editor's [`Body`]. It has no rows, so the hit map it returns is the
+/// empty one every non-list panel returns.
+fn editor_body(
+    frame: &mut Frame,
+    area: Rect,
+    body: &PanelBody,
+    focused: bool,
+    theme: Theme,
+) -> Body {
+    let PanelBody::Editor {
+        lines,
+        cursor,
+        mode,
+        band,
+        completion,
+    } = body
+    else {
+        unreachable!("the caller matched on this arm");
+    };
+
+    Body {
+        extent: editor(
+            frame,
+            area,
+            &EditorView {
+                lines,
+                cursor: *cursor,
+                band: *band,
+                completion: completion.as_ref(),
+            },
+            focused && *mode == CqlMode::Editing,
+            theme,
+        ),
+        columns: None,
+        bands: Vec::new(),
+        marks: Vec::new(),
+        unit: Unit::Lines { rows: Vec::new() },
+        selection: Span::default(),
+    }
+}
+
 /// What the editor draws: its styled lines, its cursor, and whatever is being
 /// offered into it.
 pub(crate) struct EditorView<'a> {
     pub(crate) lines: &'a [Vec<Segment>],
     pub(crate) cursor: Position,
+    /// The statement the cursor is in, banded the way a list bands its cursor
+    /// row (cql statement selection design §6).
+    pub(crate) band: Option<Highlight>,
     pub(crate) completion: Option<&'a CompletionView>,
 }
 
@@ -1096,9 +1120,13 @@ fn editor(frame: &mut Frame, area: Rect, view: &EditorView, focused: bool, theme
     let drawn = Text::from(
         view.lines
             .iter()
+            .enumerate()
             .skip(top)
             .take(height)
-            .map(|line| Line::from(shifted(line, left, theme)))
+            .map(|(at, line)| {
+                let band = banded(view.band, at, line);
+                Line::from(shifted(line, left, band.as_ref(), theme))
+            })
             .collect::<Vec<_>>(),
     );
 
@@ -1237,35 +1265,81 @@ fn width_of(line: &str, chars: usize) -> usize {
         .sum()
 }
 
+/// The characters of buffer line `at` the band covers, in `char`s from the
+/// line's start. `None` on a line the band does not reach.
+///
+/// The band's own positions count `char`s, so nothing is measured here — a
+/// display width would name a different character on a line holding one that
+/// is two columns wide.
+fn banded(band: Option<Highlight>, at: usize, line: &[Segment]) -> Option<Range<usize>> {
+    let band = band?;
+    if at < band.start.line || at > band.end.line {
+        return None;
+    }
+
+    let from = if at == band.start.line {
+        band.start.column
+    } else {
+        0
+    };
+    let to = if at == band.end.line {
+        band.end.column
+    } else {
+        line.iter()
+            .map(|segment| segment.text.chars().count())
+            .sum()
+    };
+
+    (from < to).then_some(from..to)
+}
+
 /// `line` with its first `columns` terminal columns scrolled off to the left,
-/// as the spans the meanings in it are drawn with.
+/// as the spans the meanings in it are drawn with, `band`'s characters wearing
+/// the cursor row's ground.
 ///
 /// The offset is applied to the whole line rather than per segment, so a
 /// segment scrolled off entirely contributes nothing and the one straddling
-/// the offset contributes its tail.
-fn shifted(line: &[Segment], columns: usize, theme: Theme) -> Vec<TextSpan<'static>> {
+/// the offset contributes its tail. The band cuts across segments for the same
+/// reason, so runs are rebuilt a character at a time and coalesced on the
+/// style they end up with — a segment half inside a statement is two spans.
+fn shifted(
+    line: &[Segment],
+    columns: usize,
+    band: Option<&Range<usize>>,
+    theme: Theme,
+) -> Vec<TextSpan<'static>> {
+    // Background-only, so it composes with whatever role the character already
+    // wears (`theme::selected`).
+    let ground = theme.style(Token::Selected);
     let mut used = 0;
-    let mut spans = Vec::with_capacity(line.len());
+    let mut at = 0;
+    let mut spans: Vec<TextSpan<'static>> = Vec::with_capacity(line.len());
 
     for segment in line {
-        let mut out = String::new();
-
-        for character in segment.text.chars() {
-            if used >= columns {
-                out.push(character);
-            } else {
-                used += character.width().unwrap_or(0);
-            }
-        }
-
-        if out.is_empty() {
-            continue;
-        }
-
-        let style = segment
+        let base = segment
             .token
             .map_or_else(Style::default, |token| theme.style(token));
-        spans.push(TextSpan::styled(out, style));
+
+        for character in segment.text.chars() {
+            let index = at;
+            at += 1;
+
+            if used < columns {
+                used += character.width().unwrap_or(0);
+                continue;
+            }
+
+            let style = if band.is_some_and(|band| band.contains(&index)) {
+                base.patch(ground)
+            } else {
+                base
+            };
+
+            match spans.last_mut() {
+                Some(last) if last.style == style => last.content.to_mut().push(character),
+                _ => spans.push(TextSpan::styled(character.to_string(), style)),
+            }
+        }
     }
 
     spans

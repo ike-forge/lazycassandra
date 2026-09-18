@@ -4666,6 +4666,60 @@ mod tests {
         assert_eq!(cursor.y, CONTENT_ROW);
     }
 
+    #[test]
+    fn the_banded_statement_is_the_one_the_cursor_is_in() {
+        let mut state = with_query("SELECT 1;\nSELECT 2", Panel::Queries);
+        state.queries.edge_statement(false);
+
+        let (buffer, _) = drawn_with_cursor(80, 24, &state);
+
+        let ground = Theme::default().style(Token::Selected).bg;
+        assert_eq!(
+            buffer[(INNER_LEFT, CONTENT_ROW)].bg,
+            ground.expect("the band is a ground colour"),
+            "the statement the cursor is in wears the cursor row's ground"
+        );
+        assert_ne!(
+            buffer[(INNER_LEFT, CONTENT_ROW + 1)].bg,
+            ground.expect("the band is a ground colour"),
+            "the statement below it does not"
+        );
+    }
+
+    /// The band is the run's extent, not the line's: two statements on one
+    /// line are two bands, and `ctrl-r` sends the one under the cursor.
+    #[test]
+    fn a_band_stops_where_its_statement_does() {
+        let mut state = with_query("SELECT 1; SELECT 2", Panel::Queries);
+        state.queries.edge_statement(false);
+
+        let (buffer, _) = drawn_with_cursor(80, 24, &state);
+
+        let ground = Theme::default()
+            .style(Token::Selected)
+            .bg
+            .expect("the band is a ground colour");
+        assert_eq!(buffer[(INNER_LEFT + 8, CONTENT_ROW)].bg, ground, "the `;`");
+        assert_ne!(
+            buffer[(INNER_LEFT + 10, CONTENT_ROW)].bg,
+            ground,
+            "the statement after it"
+        );
+    }
+
+    #[test]
+    fn an_empty_buffer_draws_no_band() {
+        let (buffer, _) = drawn_with_cursor(80, 24, &with_query("", Panel::Queries));
+
+        assert_ne!(
+            buffer[(INNER_LEFT, CONTENT_ROW)].bg,
+            Theme::default()
+                .style(Token::Selected)
+                .bg
+                .expect("the band is a ground colour"),
+        );
+    }
+
     /// `text` typed into a focused Queries panel, with the offers standing
     /// against whatever word it ends on.
     fn completing(text: &str) -> State {

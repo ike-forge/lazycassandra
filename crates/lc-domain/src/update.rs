@@ -24,7 +24,7 @@ use crate::model::{
 use crate::pointer::{Click, Mark, Pointer, Wheel};
 use crate::ports::ExportError;
 use crate::posture::Posture;
-use crate::queries::{QueriesTab, Refresh};
+use crate::queries::{CqlMode, QueriesTab, Refresh};
 use crate::search::{Direction, Origin, Prompt, Search, Searched, Sift};
 use crate::state::{
     ConnectionState, Cursor, DiagnosticsPanel, Dropping, ExportJob, Flash, Geometry, Message,
@@ -2636,6 +2636,16 @@ enum Transition {
 /// exact regardless (design §4).
 fn scroll(state: &mut State, motion: Motion) {
     let panel = state.focus();
+
+    // The Cql tab's rows are its statements. Reachable while the buffer is
+    // closed alone — an open one claims these keys as motions before
+    // `panel_key` is consulted — which is the mode the band is drawn in
+    // (cql statement selection design §4).
+    if panel == Panel::Queries && state.queries.mode() == Some(CqlMode::Browsing) {
+        step_statement(state, motion);
+        return;
+    }
+
     let height = state.geometry.height(panel);
     let len = row_count(state, panel);
 
@@ -2650,6 +2660,24 @@ fn scroll(state: &mut State, motion: Motion) {
         Motion::PageUp => cursor.page_up(height),
         Motion::Start => cursor.to_start(),
         Motion::End => cursor.to_end(len),
+    }
+}
+
+/// The Cql tab's motions, which walk statements rather than rows: the band
+/// names what `ctrl-r` would run, and stepping it is what makes a buffer of
+/// several statements navigable (cql statement selection design §4).
+///
+/// Paging is left inert. The buffer's viewport is derived from the cursor
+/// rather than stored (queries editor design §5), so a statement step already
+/// brings its own statement on screen and there is no second thing for a page
+/// to move.
+fn step_statement(state: &mut State, motion: Motion) {
+    match motion {
+        Motion::Down => state.queries.step_statement(true),
+        Motion::Up => state.queries.step_statement(false),
+        Motion::Start => state.queries.edge_statement(false),
+        Motion::End => state.queries.edge_statement(true),
+        Motion::PageDown | Motion::PageUp => {}
     }
 }
 
@@ -3945,11 +3973,14 @@ fn run(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     }
 
-    let text = state.queries.text();
-    let cql = text.trim();
-    if cql.is_empty() {
+    // The statement the cursor is in rather than the whole buffer: the
+    // protocol carries one statement per request, so a buffer holding several
+    // was never runnable whole, and the band on screen says which one this is
+    // (cql statement selection design §5).
+    let Some(cql) = state.queries.statement() else {
         return Vec::new();
-    }
+    };
+    let cql = cql.as_str();
 
     let stmt = Statement::typed(cql);
 
@@ -6031,7 +6062,7 @@ mod tests {
         state.focus_on(Panel::Tables);
 
         press(&mut state, Key::Char('?'));
-        seat_on(&mut state, "run the buffer");
+        seat_on(&mut state, "run the statement");
         let effects = press(&mut state, Key::Enter);
 
         assert_eq!(
@@ -6055,7 +6086,7 @@ mod tests {
         state.focus_on(Panel::Tables);
 
         press(&mut state, Key::Char('?'));
-        seat_on(&mut state, "run the buffer");
+        seat_on(&mut state, "run the statement");
         let effects = press(&mut state, Key::Enter);
 
         assert_eq!(state.focus(), Panel::Queries);
@@ -14178,6 +14209,76 @@ mod tests {
             "SELECT * FROM shop.orders",
             "the panel says which query it is showing"
         );
+    }
+
+    /// `editing` leaves the buffer open; the band is browsed with it closed.
+    fn browsing_cql(text: &str) -> State {
+        let mut state = editing(text);
+        press(&mut state, Key::Escape);
+        state
+    }
+
+    fn banded(state: &State) -> Option<String> {
+        state.queries.statement()
+    }
+
+    #[test]
+    fn j_and_k_walk_the_bands_over_the_buffers_statements() {
+        let mut state = browsing_cql("SELECT 1;\nSELECT 2;\nSELECT 3");
+        press(&mut state, Key::Char('g'));
+        assert_eq!(banded(&state).as_deref(), Some("SELECT 1;"));
+
+        press(&mut state, Key::Char('j'));
+        assert_eq!(banded(&state).as_deref(), Some("SELECT 2;"));
+
+        press(&mut state, Key::Char('k'));
+        assert_eq!(banded(&state).as_deref(), Some("SELECT 1;"));
+
+        press(&mut state, Key::Char('G'));
+        assert_eq!(banded(&state).as_deref(), Some("SELECT 3"));
+    }
+
+    #[test]
+    fn j_is_a_character_again_once_the_buffer_is_open() {
+        let mut state = browsing_cql("SELECT 1;\nSELECT 2");
+        press(&mut state, Key::Char('g'));
+
+        press(&mut state, Key::Enter);
+        press(&mut state, Key::Char('j'));
+
+        assert_eq!(
+            state.queries.text(),
+            "jSELECT 1;\nSELECT 2",
+            "an open buffer claims the key before the band is stepped, and the \
+             caret is where the band started"
+        );
+    }
+
+    #[test]
+    fn ctrl_r_runs_the_banded_statement_and_not_the_rest_of_the_buffer() {
+        let mut state = browsing_cql("SELECT * FROM shop.orders;\nSELECT * FROM shop.users");
+        press(&mut state, Key::Char('g'));
+
+        run_query(&mut state);
+
+        let ContentsState::Loading { subject, .. } = state.contents.state() else {
+            panic!("the run is outstanding");
+        };
+        assert_eq!(subject.label(), "SELECT * FROM shop.orders;");
+    }
+
+    #[test]
+    fn stepping_the_band_changes_what_ctrl_r_runs() {
+        let mut state = browsing_cql("SELECT * FROM shop.orders;\nSELECT * FROM shop.users");
+        press(&mut state, Key::Char('g'));
+        press(&mut state, Key::Char('j'));
+
+        run_query(&mut state);
+
+        let ContentsState::Loading { subject, .. } = state.contents.state() else {
+            panic!("the run is outstanding");
+        };
+        assert_eq!(subject.label(), "SELECT * FROM shop.users");
     }
 
     #[test]

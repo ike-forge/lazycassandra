@@ -7,7 +7,7 @@
 //! nothing of a schema — and the two have to move together, which is what this
 //! type is for (design §5.4).
 
-use crate::cql::Completion;
+use crate::cql::{Completion, Span, statements};
 use crate::editor::{Editor, Position};
 use crate::model::Key;
 
@@ -23,6 +23,17 @@ pub enum Refresh {
     /// The press moved the popup and nothing else. The offers stand, and they
     /// still describe the word they were made against.
     Hold,
+}
+
+/// Where the statement the cursor is in sits, for the band drawn over it.
+///
+/// `end` is one past the statement's last character, so a band is empty
+/// exactly when the two positions are equal — which they never are here,
+/// since a span always holds at least one piece.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Highlight {
+    pub start: Position,
+    pub end: Position,
 }
 
 /// Which of the panel's two tabs is drawn.
@@ -189,6 +200,67 @@ impl QueriesPanel {
         self.completion.as_ref()
     }
 
+    /// Where the statement the cursor is in sits. `None` on a buffer holding
+    /// no statement at all, which an empty one is.
+    #[must_use]
+    pub fn band(&self) -> Option<Highlight> {
+        let text = self.buffer.text();
+        let span = self.span(&text)?;
+
+        Some(Highlight {
+            start: self.buffer.position_of(span.start),
+            end: self.buffer.position_of(span.end),
+        })
+    }
+
+    /// The statement `ctrl-r` runs: the one the cursor is in, which is the one
+    /// [`Self::band`] is drawn over.
+    #[must_use]
+    pub fn statement(&self) -> Option<String> {
+        let text = self.buffer.text();
+
+        Some(self.span(&text)?.of(&text))
+    }
+
+    /// Moves to the start of the next or previous statement. A step off either
+    /// end stays where it is: the band is a cursor over a list, and a list's
+    /// cursor stops at its ends (docs/shortcuts.md §2).
+    pub fn step_statement(&mut self, forwards: bool) {
+        let text = self.buffer.text();
+        let spans = statements(&text);
+        let Some(at) = holding(&spans, self.buffer.offset()) else {
+            return;
+        };
+
+        let target = if forwards { at + 1 } else { at.wrapping_sub(1) };
+        self.go_to(&spans, target);
+    }
+
+    /// Moves to the first or the last statement — `g`/`G` and `Home`/`End`,
+    /// which reach the ends of whatever list the frame is driving.
+    pub fn edge_statement(&mut self, last: bool) {
+        let text = self.buffer.text();
+        let spans = statements(&text);
+        let target = if last { spans.len().wrapping_sub(1) } else { 0 };
+
+        self.go_to(&spans, target);
+    }
+
+    fn span(&self, text: &str) -> Option<Span> {
+        let spans = statements(text);
+
+        spans.get(holding(&spans, self.buffer.offset())?).copied()
+    }
+
+    fn go_to(&mut self, spans: &[Span], index: usize) {
+        let Some(span) = spans.get(index) else {
+            return;
+        };
+
+        self.buffer.go_to_offset(span.start);
+        self.completion = None;
+    }
+
     /// Replaces the whole buffer, cursor at the end of it. Whatever was being
     /// offered described text that is gone.
     pub fn replace(&mut self, text: &str) {
@@ -304,6 +376,23 @@ impl QueriesPanel {
 
         Refresh::Close
     }
+}
+
+/// Which statement `offset` names: the one holding it, or — for an offset in
+/// the whitespace or the comment between two — the last one beginning before
+/// it, so a cursor left past a `;` still names the statement it just closed.
+/// An offset before the first statement names that one.
+fn holding(spans: &[Span], offset: usize) -> Option<usize> {
+    if spans.is_empty() {
+        return None;
+    }
+
+    Some(
+        spans
+            .iter()
+            .rposition(|span| span.start <= offset)
+            .unwrap_or(0),
+    )
 }
 
 #[cfg(test)]
@@ -519,6 +608,148 @@ mod tests {
         let mut panel = QueriesPanel::default();
 
         assert!(!panel.step(true));
+    }
+
+    /// The buffer's statements, as the band would name each of them in turn.
+    fn stepped(text: &str) -> Vec<String> {
+        let mut panel = QueriesPanel::default();
+        panel.replace(text);
+        panel.edge_statement(false);
+
+        let mut named = Vec::new();
+        loop {
+            let statement = panel.statement().expect("the buffer holds statements");
+            if named.last() == Some(&statement) {
+                return named;
+            }
+            named.push(statement);
+            panel.step_statement(true);
+        }
+    }
+
+    #[test]
+    fn an_empty_buffer_bands_and_runs_nothing() {
+        let panel = QueriesPanel::default();
+
+        assert_eq!(panel.band(), None);
+        assert_eq!(panel.statement(), None);
+    }
+
+    #[test]
+    fn a_buffer_of_whitespace_bands_and_runs_nothing() {
+        let mut panel = QueriesPanel::default();
+        panel.replace("\n  \n");
+
+        assert_eq!(panel.band(), None);
+        assert_eq!(panel.statement(), None);
+    }
+
+    #[test]
+    fn the_band_covers_the_statement_and_not_the_whitespace_around_it() {
+        let mut panel = QueriesPanel::default();
+        panel.replace("  SELECT 1;  ");
+        panel.edge_statement(false);
+
+        assert_eq!(
+            panel.band(),
+            Some(Highlight {
+                start: Position { line: 0, column: 2 },
+                end: Position {
+                    line: 0,
+                    column: 11
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn the_band_spans_the_lines_a_statement_is_laid_out_over() {
+        let mut panel = QueriesPanel::default();
+        panel.replace("SELECT *\nFROM shop.orders;\nSELECT 2");
+        panel.edge_statement(false);
+
+        assert_eq!(
+            panel.band(),
+            Some(Highlight {
+                start: Position { line: 0, column: 0 },
+                end: Position {
+                    line: 1,
+                    column: 17
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn stepping_walks_the_statements_in_the_order_they_are_written() {
+        assert_eq!(
+            stepped("SELECT 1;\nSELECT 2;\nSELECT 3"),
+            ["SELECT 1;", "SELECT 2;", "SELECT 3"]
+        );
+    }
+
+    #[test]
+    fn a_step_off_either_end_stays_on_the_statement_it_was_on() {
+        let mut panel = QueriesPanel::default();
+        panel.replace("SELECT 1;\nSELECT 2");
+
+        panel.edge_statement(false);
+        panel.step_statement(false);
+        assert_eq!(panel.statement().as_deref(), Some("SELECT 1;"));
+
+        panel.edge_statement(true);
+        panel.step_statement(true);
+        assert_eq!(panel.statement().as_deref(), Some("SELECT 2"));
+    }
+
+    #[test]
+    fn a_batch_is_one_statement_to_step_over_and_to_run() {
+        assert_eq!(
+            stepped("BEGIN BATCH\nINSERT INTO a (id) VALUES (1);\nAPPLY BATCH;\nSELECT * FROM a"),
+            [
+                "BEGIN BATCH\nINSERT INTO a (id) VALUES (1);\nAPPLY BATCH;",
+                "SELECT * FROM a"
+            ]
+        );
+    }
+
+    /// `replace` lands the cursor at the end of the buffer, which is past the
+    /// last `;` — the position a cursor left in after typing one.
+    #[test]
+    fn a_cursor_past_the_last_semicolon_still_names_the_statement_it_closed() {
+        let mut panel = QueriesPanel::default();
+        panel.replace("SELECT 1;\nSELECT 2;\n");
+
+        assert_eq!(panel.statement().as_deref(), Some("SELECT 2;"));
+    }
+
+    /// A motion that lands somewhere takes the popup with it, the rule every
+    /// other motion follows: the offers described a word the cursor has left.
+    #[test]
+    fn a_step_that_moves_takes_the_popup_down() {
+        let mut panel = typed("SELECT 1;se");
+        assert!(panel.completion().is_some());
+
+        panel.step_statement(false);
+
+        assert!(panel.completion().is_none());
+    }
+
+    #[test]
+    fn the_band_follows_the_caret_while_the_buffer_is_typed_into() {
+        let mut panel = opened();
+        panel.replace("SELECT 1;\nSELECT 2");
+        panel.edge_statement(false);
+        assert_eq!(panel.statement().as_deref(), Some("SELECT 1;"));
+
+        panel.edit(Key::Down, 1);
+        panel.edit(Key::End, 1);
+
+        assert_eq!(
+            panel.statement().as_deref(),
+            Some("SELECT 2"),
+            "an edit moves the band, so `ctrl-r` follows the caret"
+        );
     }
 
     #[test]

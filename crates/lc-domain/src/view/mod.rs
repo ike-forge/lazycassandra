@@ -33,7 +33,7 @@ use crate::ddl::DdlTab;
 use crate::drop::Answer;
 use crate::export::{Confirm, Format, Scope, Stop};
 use crate::posture::Posture;
-use crate::queries::{CqlMode, QueriesTab};
+use crate::queries::{CqlMode, Highlight, QueriesTab};
 use crate::search::{Direction, Search, Sift};
 use crate::state::{Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
@@ -542,6 +542,11 @@ pub enum PanelBody {
         /// on-screen difference between a buffer that takes text and one
         /// that does not (cql edit mode design §3).
         mode: CqlMode,
+        /// Where the statement the cursor is in sits, banded so the buffer
+        /// says what `ctrl-r` would run. Drawn in both modes: the band is a
+        /// fact about the buffer rather than about the caret
+        /// (cql statement selection design §6).
+        band: Option<Highlight>,
         /// The completion popup, drawn beside the cursor. `None` is no popup,
         /// which is most frames.
         completion: Option<CompletionView>,
@@ -718,6 +723,7 @@ fn body(state: &State, panel: Panel) -> PanelBody {
                 lines: crate::cql::highlight(&state.queries.text()),
                 cursor: state.queries.cursor(),
                 mode: state.queries.mode().unwrap_or_default(),
+                band: state.queries.band(),
                 completion: state.queries.completion().map(completion),
             },
             QueriesTab::Logs => logs::log_body(state),
@@ -832,6 +838,7 @@ mod tests {
                 lines: vec![Vec::new()],
                 cursor: Position::default(),
                 mode: CqlMode::Browsing,
+                band: None,
                 completion: None,
             },
             "an untouched buffer is one empty line with the cursor on it"
