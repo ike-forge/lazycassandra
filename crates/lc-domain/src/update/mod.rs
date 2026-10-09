@@ -394,75 +394,12 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         // A result whose id is no longer in flight belongs to a cancelled
         // query, and applying it would resurrect a view the user left. The
         // panel applies the second gate: whether the result is *its* result.
-        Msg::PageReady { query, page, took } => {
-            if state.in_flight.remove(&query).is_none() {
-                return Vec::new();
-            }
-            let rows = page.rows.len();
-            // Answers whichever asked for it. A drop's result reaches the
-            // panel too and is dropped there, because the panel is not
-            // waiting on that id (drop design §3).
-            let landed = state.contents.page_ready(
-                query,
-                *page,
-                state.config.grid.max_column_width,
-                QueryId::next,
-            );
-            state.mark_dirty();
-
-            match landed {
-                Landed::Elsewhere | Landed::Read => {
-                    state.log.complete(
-                        Trace::Query(query),
-                        Outcome::Succeeded {
-                            detail: format!("{rows} rows"),
-                            took,
-                        },
-                    );
-                    let mut effects = finish_drop(state, query, None);
-                    effects.extend(finish_commit(state, query, None));
-                    effects
-                }
-                Landed::Skipped(next) => {
-                    state
-                        .log
-                        .retrace(Trace::Query(query), Trace::Query(next.query));
-                    follow(state, Some(next))
-                }
-                Landed::Appended(next) => follow(state, next),
-            }
-        }
+        Msg::PageReady { query, page, took } => page_ready(state, query, *page, took),
 
         // No overlay, unlike `SchemaFailed`: a schema failure disables the
         // application, a failed browse disables one panel, and an overlay per
         // mistyped table is the warning noise vision.md §8 flags.
-        Msg::Failed { query, error, .. } => {
-            if state.in_flight.remove(&query).is_none() {
-                return Vec::new();
-            }
-            let outcome = Outcome::Failed {
-                detail: error.to_string(),
-            };
-            // A later page has no entry of its own to complete, and the rows
-            // already loaded stay, so the trail is the one place it can fail.
-            if state.contents.failed(query, &error) == Some(Failure::Page) {
-                let label = match state.contents.state() {
-                    ContentsState::Loaded { subject, .. } => subject.label(),
-                    _ => String::new(),
-                };
-                logged(
-                    state,
-                    sentence(format!("Reading the next page of {label}")),
-                    outcome,
-                );
-            } else {
-                state.log.complete(Trace::Query(query), outcome);
-            }
-            state.mark_dirty();
-            let mut effects = finish_drop(state, query, Some(&error));
-            effects.extend(finish_commit(state, query, Some(&error)));
-            effects
-        }
+        Msg::Failed { query, error, .. } => query_failed(state, query, &error),
 
         Msg::EditorClosed { buffer } => editor_closed(state, &buffer),
 
@@ -476,6 +413,73 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::Quit => quit(state),
     }
+}
+
+fn page_ready(state: &mut State, query: QueryId, page: Page, took: Duration) -> Vec<Effect> {
+    if state.in_flight.remove(&query).is_none() {
+        return Vec::new();
+    }
+    let rows = page.rows.len();
+    // Answers whichever asked for it. A drop's result reaches the
+    // panel too and is dropped there, because the panel is not
+    // waiting on that id (drop design §3).
+    let landed = state.contents.page_ready(
+        query,
+        page,
+        state.config.grid.max_column_width,
+        QueryId::next,
+    );
+    state.mark_dirty();
+
+    match landed {
+        Landed::Elsewhere | Landed::Read => {
+            state.log.complete(
+                Trace::Query(query),
+                Outcome::Succeeded {
+                    detail: format!("{rows} rows"),
+                    took,
+                },
+            );
+            let mut effects = finish_drop(state, query, None);
+            effects.extend(finish_commit(state, query, None));
+            effects
+        }
+        Landed::Skipped(next) => {
+            state
+                .log
+                .retrace(Trace::Query(query), Trace::Query(next.query));
+            follow(state, Some(next))
+        }
+        Landed::Appended(next) => follow(state, next),
+    }
+}
+
+fn query_failed(state: &mut State, query: QueryId, error: &DbError) -> Vec<Effect> {
+    if state.in_flight.remove(&query).is_none() {
+        return Vec::new();
+    }
+    let outcome = Outcome::Failed {
+        detail: error.to_string(),
+    };
+    // A later page has no entry of its own to complete, and the rows
+    // already loaded stay, so the trail is the one place it can fail.
+    if state.contents.failed(query, error) == Some(Failure::Page) {
+        let label = match state.contents.state() {
+            ContentsState::Loaded { subject, .. } => subject.label(),
+            _ => String::new(),
+        };
+        logged(
+            state,
+            sentence(format!("Reading the next page of {label}")),
+            outcome,
+        );
+    } else {
+        state.log.complete(Trace::Query(query), outcome);
+    }
+    state.mark_dirty();
+    let mut effects = finish_drop(state, query, Some(error));
+    effects.extend(finish_commit(state, query, Some(error)));
+    effects
 }
 
 fn connected(state: &mut State, conn: ConnId, posture: Posture, took: Duration) -> Vec<Effect> {
@@ -786,75 +790,8 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
         }
     }
 
-    // An open palette takes motion until a search is up, and text while one is
-    // (docs/superpowers/specs/2026-08-16-overlay-search-design.md §5).
-    if matches!(state.overlay, Some(Overlay::Commands(_))) {
-        return palette_key(state, press.key);
-    }
-
-    // The diagnostics overlay takes motion, not text — the same as the
-    // palette only when no sift is up, and diagnostics has none to raise
-    // (design §11).
-    if matches!(state.overlay, Some(Overlay::Diagnostics(_))) {
-        return diagnostics_key(state, press.key);
-    }
-
-    // Motion, `y`, and the two ways out; `q` still quits (cell inspector
-    // design §4).
-    if matches!(state.overlay, Some(Overlay::Inspect(_))) {
-        return inspect_key(state, press.key);
-    }
-
-    // The theme picker takes motion until a search is up, and text while one
-    // is, the same as the palette
-    // (docs/superpowers/specs/2026-08-16-overlay-search-design.md §5).
-    if matches!(state.overlay, Some(Overlay::Themes { .. })) {
-        return themes_key(state, press.key);
-    }
-
-    // The connection picker, on the same terms as the theme picker above.
-    if matches!(state.overlay, Some(Overlay::Connections { .. })) {
-        return connections_key(state, press.key);
-    }
-
-    // A prompt takes text, so it claims every printable key — the
-    // panel-that-takes-text rule, applied to an overlay (design §1.1).
-    if matches!(state.overlay, Some(Overlay::Search(_))) {
-        return search_key(state, press.key);
-    }
-
-    // The form takes text on one of its four stops, so it claims every
-    // printable key the way a prompt does — and hands most of them nowhere on
-    // the other three (export design §2).
-    if matches!(state.overlay, Some(Overlay::Export(_))) {
-        return export_key(state, press.key);
-    }
-
-    // A modal that is one text field claims every printable key, the same
-    // rule the prompt and the form follow
-    // (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
-    if matches!(state.overlay, Some(Overlay::Filter(_))) {
-        filter_key(state, press.key);
-        return Vec::new();
-    }
-
-    // The confirmation claims every key it is answered with, and — on its
-    // typed spelling — every printable key besides, the same rule the form
-    // and the prompt follow above (drop design §2.1).
-    if matches!(state.overlay, Some(Overlay::Drop(_))) {
-        return drop_key(state, press.key);
-    }
-
-    // The commit confirmation, on the same terms — a body to read and one
-    // question to answer (cell editing design §5).
-    if matches!(state.overlay, Some(Overlay::Commit(_))) {
-        return commit_key(state, press.key);
-    }
-
-    // The quit warning claims every key, `q` included: the question has to be
-    // answered rather than pressed past (cell editing design §6).
-    if matches!(state.overlay, Some(Overlay::Discard(_))) {
-        return discard_key(state, press.key);
+    if let Some(effects) = overlay_key(state, press.key) {
+        return effects;
     }
 
     // An open buffer claims every printable key and the editing keys; what it
@@ -866,6 +803,46 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     }
 
     panel_key(state, press.key)
+}
+
+/// The overlay's answer to `key`, or `None` when no overlay claims it.
+///
+/// An overlay that takes text claims every printable key, the
+/// panel-that-takes-text rule applied to an overlay (panel search design
+/// §1.1). A picker or the palette takes motion until a sift is up, and text
+/// while one is (docs/superpowers/specs/2026-08-16-overlay-search-design.md
+/// §5).
+fn overlay_key(state: &mut State, key: Key) -> Option<Vec<Effect>> {
+    let effects = match state.overlay {
+        Some(Overlay::Commands(_)) => palette_key(state, key),
+        // Motion, not text: diagnostics has no sift to raise (design §11).
+        Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
+        // Motion, `y`, and the two ways out; `q` still quits (cell inspector
+        // design §4).
+        Some(Overlay::Inspect(_)) => inspect_key(state, key),
+        Some(Overlay::Themes { .. }) => themes_key(state, key),
+        Some(Overlay::Connections { .. }) => connections_key(state, key),
+        Some(Overlay::Search(_)) => search_key(state, key),
+        // Text on one of its stops, and most printable keys go nowhere on the
+        // others (export design §2).
+        Some(Overlay::Export(_)) => export_key(state, key),
+        // One text field (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
+        Some(Overlay::Filter(_)) => {
+            filter_key(state, key);
+            Vec::new()
+        }
+        // Every key it is answered with and, on its typed spelling, every
+        // printable key besides (drop design §2.1).
+        Some(Overlay::Drop(_)) => drop_key(state, key),
+        Some(Overlay::Commit(_)) => commit_key(state, key),
+        // `q` included: the question has to be answered rather than pressed
+        // past (cell editing design §6).
+        Some(Overlay::Discard(_)) => discard_key(state, key),
+        // `Fatal` is claimed at the top of `handle_key`, before modifiers.
+        Some(Overlay::Message(_) | Overlay::Fatal(_)) | None => return None,
+    };
+
+    Some(effects)
 }
 
 /// What the focused panel answers, once no overlay and no open buffer has
@@ -1350,106 +1327,20 @@ fn unwind_overlay(state: &mut State) {
 }
 
 /// `Esc` resolves in one order, first hit wins: a live sift inside an
-/// overlay; then the overlay itself; then freezing an extending range; then
-/// clearing a frozen range; then the focused panel's search; then the panel
-/// itself, which hands focus back to Tables. One press does one of the six,
-/// never two — the thing most recently put on screen comes off first (panel
-/// search design §6, overlay search design §1).
+/// overlay; then the overlay itself; then a running `P`; then an open buffer;
+/// then freezing an extending range; then clearing a frozen range; then the
+/// focused panel's search; then the panel itself, which hands focus back to
+/// Tables. One press does one of them, never two — the thing most recently put
+/// on screen comes off first (panel search design §6, overlay search design
+/// §1).
 ///
 /// The last rung is every panel, not just the one that takes text: a key that
 /// backs out of Queries but sits inert in DDL beside it is the same key
 /// meaning two things (docs/shortcuts.md §2). On Tables it is already the
 /// last rung's destination, so it does nothing there.
 fn escape(state: &mut State) {
-    // Read before the `take()` below empties it: a click is the one path
-    // that reaches `Overlay::Export`'s arm here rather than `export_key`,
-    // which claims keyboard `Esc` itself (final review, I4 follow-up).
-    cancel_pending_export(state);
-
-    match state.overlay.take() {
-        Some(Overlay::Search(prompt)) => {
-            state.apply_search(prompt.target(), prompt.previous().cloned());
-            restore_origin(state, prompt.target(), prompt.origin());
-            return;
-        }
-        Some(Overlay::Themes {
-            cursor,
-            restored,
-            sift: Some(sift),
-        }) => {
-            let mut cursor = cursor;
-            cursor.go_to(
-                sift.origin(),
-                BuiltIn::ALL.len() + state.config.themes.len(),
-            );
-            state.overlay = Some(Overlay::Themes {
-                cursor,
-                restored,
-                sift: None,
-            });
-            preview_theme(state);
-            return;
-        }
-        Some(Overlay::Themes { restored, .. }) => {
-            state.theme = restored;
-            return;
-        }
-        Some(Overlay::Connections {
-            cursor,
-            sift: Some(sift),
-        }) => {
-            let mut cursor = cursor;
-            cursor.go_to(sift.origin(), state.config.connections.len());
-            state.overlay = Some(Overlay::Connections { cursor, sift: None });
-            return;
-        }
-        // A dismissed picker leaves `Disconnected` rather than `Unchosen`, so
-        // `offer_connections` does not put it straight back up: waving the
-        // picker away is a choice, and the panels are allowed to stay empty
-        // (connection picker design §4).
-        Some(Overlay::Connections { .. }) => {
-            if matches!(state.connection, ConnectionState::Unchosen) {
-                state.connection = ConnectionState::Disconnected;
-            }
-            return;
-        }
-        Some(Overlay::Commands(mut panel)) if panel.sift().is_some() => {
-            panel.restore_origin();
-            state.overlay = Some(Overlay::Commands(panel));
-            return;
-        }
-        // The filter prompt applies nothing on the way out: `esc` leaves the
-        // column filtered exactly as it was, and `⏎` is the one key that
-        // writes (grid sort and filter design §3).
-        Some(
-            Overlay::Message(_)
-            | Overlay::Commands(_)
-            | Overlay::Diagnostics(_)
-            | Overlay::Inspect(_)
-            | Overlay::Export(_)
-            | Overlay::Filter(_)
-            | Overlay::Drop(_)
-            // Both confirmations abandon on `Esc`, leaving the edits standing:
-            // dismissing a question is not answering it
-            // (cell editing design §5).
-            | Overlay::Commit(_)
-            | Overlay::Discard(_),
-        ) => {
-            // The diagnostics modal is what claims startup's first frame when
-            // the config had anything wrong with it; closing it is where the
-            // picker underneath finally gets its turn.
-            offer_connections(state);
-            return;
-        }
-        // Not dismissable: `handle_key` claims `Esc` for `Fatal` before this
-        // function is reached, so the only caller left is a click routed
-        // through here by `handle_pointer`, which must not spend itself on
-        // ending the modal (query log design §7).
-        Some(fatal @ Overlay::Fatal(_)) => {
-            state.overlay = Some(fatal);
-            return;
-        }
-        None => {}
+    if dismiss_overlay(state) {
+        return;
     }
 
     // Directly under the overlays: a running `P` is still putting rows on
@@ -1480,6 +1371,101 @@ fn escape(state: &mut State) {
     }
 
     state.focus_on(Panel::default());
+}
+
+/// `Esc`'s first two rungs: a live sift inside an overlay, then the overlay
+/// itself. Whether there was an overlay to answer.
+fn dismiss_overlay(state: &mut State) -> bool {
+    // Read before the `take()` below empties it: a click is the one path
+    // that reaches `Overlay::Export`'s arm here rather than `export_key`,
+    // which claims keyboard `Esc` itself (final review, I4 follow-up).
+    cancel_pending_export(state);
+
+    match state.overlay.take() {
+        Some(Overlay::Search(prompt)) => {
+            state.apply_search(prompt.target(), prompt.previous().cloned());
+            restore_origin(state, prompt.target(), prompt.origin());
+            true
+        }
+        Some(Overlay::Themes {
+            cursor,
+            restored,
+            sift: Some(sift),
+        }) => {
+            let mut cursor = cursor;
+            cursor.go_to(
+                sift.origin(),
+                BuiltIn::ALL.len() + state.config.themes.len(),
+            );
+            state.overlay = Some(Overlay::Themes {
+                cursor,
+                restored,
+                sift: None,
+            });
+            preview_theme(state);
+            true
+        }
+        Some(Overlay::Themes { restored, .. }) => {
+            state.theme = restored;
+            true
+        }
+        Some(Overlay::Connections {
+            cursor,
+            sift: Some(sift),
+        }) => {
+            let mut cursor = cursor;
+            cursor.go_to(sift.origin(), state.config.connections.len());
+            state.overlay = Some(Overlay::Connections { cursor, sift: None });
+            true
+        }
+        // A dismissed picker leaves `Disconnected` rather than `Unchosen`, so
+        // `offer_connections` does not put it straight back up: waving the
+        // picker away is a choice, and the panels are allowed to stay empty
+        // (connection picker design §4).
+        Some(Overlay::Connections { .. }) => {
+            if matches!(state.connection, ConnectionState::Unchosen) {
+                state.connection = ConnectionState::Disconnected;
+            }
+            true
+        }
+        Some(Overlay::Commands(mut panel)) if panel.sift().is_some() => {
+            panel.restore_origin();
+            state.overlay = Some(Overlay::Commands(panel));
+            true
+        }
+        // The filter prompt applies nothing on the way out: `esc` leaves the
+        // column filtered exactly as it was, and `⏎` is the one key that
+        // writes (grid sort and filter design §3).
+        Some(
+            Overlay::Message(_)
+            | Overlay::Commands(_)
+            | Overlay::Diagnostics(_)
+            | Overlay::Inspect(_)
+            | Overlay::Export(_)
+            | Overlay::Filter(_)
+            | Overlay::Drop(_)
+            // Both confirmations abandon on `Esc`, leaving the edits standing:
+            // dismissing a question is not answering it
+            // (cell editing design §5).
+            | Overlay::Commit(_)
+            | Overlay::Discard(_),
+        ) => {
+            // The diagnostics modal is what claims startup's first frame when
+            // the config had anything wrong with it; closing it is where the
+            // picker underneath finally gets its turn.
+            offer_connections(state);
+            true
+        }
+        // Not dismissable: `handle_key` claims `Esc` for `Fatal` before this
+        // function is reached, so the only caller left is a click routed
+        // through here by `handle_pointer`, which must not spend itself on
+        // ending the modal (query log design §7).
+        Some(fatal @ Overlay::Fatal(_)) => {
+            state.overlay = Some(fatal);
+            true
+        }
+        None => false,
+    }
 }
 
 /// What an open diagnostics overlay responds to.
@@ -1983,9 +1969,36 @@ fn collapse_selection(state: &mut State) {
 /// produced it, so redrawing on every one of them would re-measure and redraw
 /// forever (panel scrolling design §3).
 fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
-    let previous = state.geometry;
-    state.geometry = geometry;
+    let previous = std::mem::replace(&mut state.geometry, geometry);
 
+    follow_viewports(state, previous, geometry);
+
+    // The grid projects only as many rows as its panel is tall.
+    if geometry.height(Panel::Contents) != previous.height(Panel::Contents) {
+        state.mark_dirty();
+    }
+
+    // The bar's `? commands` hint is a function of `command_rows`
+    // (view/hints.rs): a resize that flips it between zero and non-zero
+    // changes the view model as surely as a viewport clamp does.
+    if geometry.command_rows() != previous.command_rows() {
+        state.mark_dirty();
+    }
+
+    close_unfitting_overlay(state, geometry);
+    refit_overlay(state, geometry);
+
+    // Last, so a picker is offered only into a frame the guards above have
+    // already emptied. `init` had no frame to size one against, so this
+    // measurement is where an unchosen connection gets its offer
+    // (connection picker design §4).
+    offer_connections(state);
+
+    Vec::new()
+}
+
+/// Keeps every panel's viewport on its selection across a change of frame.
+fn follow_viewports(state: &mut State, previous: Geometry, geometry: Geometry) {
     // A panel that changed height must draw its selection again: the renderer
     // stopped arranging that, and `update`'s epilogue follows only a cursor
     // that *moved* — a resize moves none
@@ -2041,39 +2054,61 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
     if state.log.scroll != log_before {
         state.mark_dirty();
     }
+}
 
-    // The grid projects only as many rows as its panel is tall.
-    if geometry.height(Panel::Contents) != previous.height(Panel::Contents) {
-        state.mark_dirty();
+/// Closes an overlay the frame shrank past: nothing would draw it, and it
+/// would still be capturing every key (design §5.1). Leaves the way `Esc`
+/// would, so the theme picker restores the theme it opened on rather than
+/// stranding the preview, and an export confirmation completes its pending
+/// trail entry.
+fn close_unfitting_overlay(state: &mut State, geometry: Geometry) {
+    let Some(overlay) = &state.overlay else {
+        return;
+    };
+
+    if fits(overlay, geometry, &state.config) {
+        return;
     }
 
-    // The bar's `? commands` hint is a function of `command_rows`
-    // (view/hints.rs): a resize that flips it between zero and
-    // non-zero changes the view model just as surely as the ddl
-    // clamp above does, and owes it the same repaint.
-    if geometry.command_rows() != previous.command_rows() {
-        state.mark_dirty();
-    }
+    restore_theme(state);
+    cancel_pending_export(state);
+    state.overlay = None;
+    state.mark_dirty();
+}
 
-    // A palette or a diagnostics list the frame shrank past cannot stay
-    // open: nothing would draw it, and it would still be capturing every key
-    // (design §5.1).
-    if geometry.command_rows() == 0
-        && matches!(
-            state.overlay,
-            Some(Overlay::Commands(_) | Overlay::Diagnostics(_))
-        )
-    {
-        state.overlay = None;
-        state.mark_dirty();
+/// Whether `geometry` leaves room to draw `overlay`. Each block answers on its
+/// own gate: they are different sizes, and one that fits where another does
+/// not must not borrow the other's threshold.
+fn fits(overlay: &Overlay, geometry: Geometry, config: &Config) -> bool {
+    match overlay {
+        Overlay::Commands(_) | Overlay::Diagnostics(_) => geometry.command_rows() > 0,
+        // Config themes can make the picker's list not fit where a palette
+        // would (design §9).
+        Overlay::Themes { .. } => geometry.theme_rows() > 0,
+        // An empty list is guidance, not a list: there are no rows for a frame
+        // to be too short for.
+        Overlay::Connections { .. } => {
+            config.connections.is_empty() || geometry.connection_rows() > 0
+        }
+        Overlay::Inspect(_) => geometry.inspector_rows() > 0,
+        Overlay::Commit(_) => geometry.commit_rows() > 0,
+        Overlay::Export(_) => geometry.export_fits(),
+        // A different block from the export form, and fits where it does not
+        // (drop design §1).
+        Overlay::Drop(_) => geometry.drop_fits(),
+        Overlay::Message(_)
+        | Overlay::Search(_)
+        | Overlay::Filter(_)
+        | Overlay::Discard(_)
+        | Overlay::Fatal(_) => true,
     }
+}
 
-    // The inspector answers for its own shrink, and a narrower frame can
-    // rewrap its value shorter than the offset it was left at.
-    if matches!(state.overlay, Some(Overlay::Inspect(_))) && geometry.inspector_rows() == 0 {
-        state.overlay = None;
-        state.mark_dirty();
-    }
+/// Pulls a scrolling overlay's offset back inside its body: a narrower frame
+/// can rewrap the body shorter than the offset it was left at. The commit
+/// confirmation has no cursor, so only the inspector has a line to follow
+/// (cell editing design §5).
+fn refit_overlay(state: &mut State, geometry: Geometry) {
     let (lines, height) = inspector_extent(state);
     if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
         let before = inspector.offset();
@@ -2085,13 +2120,6 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
         }
     }
 
-    // The commit confirmation shrinks out on its own gate, the inspector's
-    // arrangement without its cursor: an offset to pull back, and no line to
-    // follow (cell editing design §5).
-    if matches!(state.overlay, Some(Overlay::Commit(_))) && geometry.commit_rows() == 0 {
-        state.overlay = None;
-        state.mark_dirty();
-    }
     let (lines, height) = commit_extent(state);
     if let Some(Overlay::Commit(prompt)) = &mut state.overlay {
         let before = prompt.offset();
@@ -2101,52 +2129,6 @@ fn measured(state: &mut State, geometry: Geometry) -> Vec<Effect> {
             state.dirty = true;
         }
     }
-
-    // The picker closes on its own gate, not the palette's, since config
-    // themes can make its list not fit where a palette would (design §9) —
-    // and restores the theme it opened on, the same as `Esc`, rather than
-    // stranding the preview.
-    if geometry.theme_rows() == 0 && matches!(state.overlay, Some(Overlay::Themes { .. })) {
-        restore_theme(state);
-        state.overlay = None;
-        state.mark_dirty();
-    }
-
-    // The form is a larger block than the palette, so it has a shrink of its
-    // own to answer for — between the two thresholds the panels draw, the form
-    // does not, and it would still be capturing every key.
-    if !geometry.export_fits() && matches!(state.overlay, Some(Overlay::Export(_))) {
-        cancel_pending_export(state);
-        state.overlay = None;
-        state.mark_dirty();
-    }
-
-    // The confirmation answers for its own shrink, on its own threshold, for
-    // the reason the picker does not borrow the palette's: it is a different
-    // block and fits where the form does not (drop design §1).
-    if !geometry.drop_fits() && matches!(state.overlay, Some(Overlay::Drop(_))) {
-        state.overlay = None;
-        state.mark_dirty();
-    }
-
-    // The connection picker shrinks out the same way, on its own gate — with
-    // the exception `open_connections` makes: an empty list is guidance, not
-    // a list, and there are no rows for a frame to be too short for.
-    if geometry.connection_rows() == 0
-        && !state.config.connections.is_empty()
-        && matches!(state.overlay, Some(Overlay::Connections { .. }))
-    {
-        state.overlay = None;
-        state.mark_dirty();
-    }
-
-    // Last, so a picker is offered only into a frame the guards above have
-    // already emptied. `init` had no frame to size one against, so this
-    // measurement is where an unchosen connection gets its offer
-    // (connection picker design §4).
-    offer_connections(state);
-
-    Vec::new()
 }
 
 /// The panels whose viewport `update` follows by index. Ddl keeps its own: its
