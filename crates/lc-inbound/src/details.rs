@@ -39,8 +39,7 @@ use crate::theme::Theme;
 const ASCENDING: &str = " ↑";
 const DESCENDING: &str = " ↓";
 const INDENT: usize = 2;
-/// A column's type falls to its own line under the name, one step further in
-/// than a property's value so the two shapes stay distinguishable.
+/// A wrapped value or type falls to its own line, one step in from the name.
 const TYPE_INDENT: usize = 4;
 const ELLIPSIS: char = '…';
 /// What separates one setting of a class-valued property from the next.
@@ -282,7 +281,11 @@ fn identity_lines(
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let icon = crate::icons::identity(kind.token());
-    let label = prefixed(icon, kind.label(), width);
+    let label = format!(
+        "{}{}",
+        " ".repeat(INDENT),
+        prefixed(icon, kind.label(), width.saturating_sub(INDENT))
+    );
     let taken = count(&label);
 
     laid_out(&label, name, width)
@@ -399,33 +402,23 @@ fn property_lines(
     let label = theme.style(Token::PropertyName);
 
     if value.is_empty() {
-        return vec![Line::from(crate::highlight::spans(
-            &truncate(name, width),
-            search,
-            label,
-            theme,
-        ))];
+        return vec![name_line(name, width, search, label, theme)];
     }
 
-    if let Some(gap) = gap(name, value, width) {
-        let mut spans = crate::highlight::spans(name, search, label, theme);
+    if let Some(gap) = gap_after_name(name, value, width) {
+        let mut spans = name_spans(name, search, label, theme);
         spans.push(TextSpan::styled(" ".repeat(gap), style));
         spans.extend(crate::highlight::spans(value, search, style, theme));
         return vec![Line::from(spans)];
     }
 
-    std::iter::once(Line::from(crate::highlight::spans(
-        &truncate(name, width),
-        search,
-        label,
-        theme,
-    )))
-    .chain(
-        crate::wrap::plain(value, width, INDENT)
-            .into_iter()
-            .map(|text| Line::from(crate::highlight::spans(&text, search, style, theme))),
-    )
-    .collect()
+    std::iter::once(name_line(name, width, search, label, theme))
+        .chain(
+            crate::wrap::plain(value, width, TYPE_INDENT)
+                .into_iter()
+                .map(|text| Line::from(crate::highlight::spans(&text, search, style, theme))),
+        )
+        .collect()
 }
 
 /// A class-valued property: the class where a plain property puts its value,
@@ -450,8 +443,8 @@ fn class_property_lines(
 
     let value = format!("{class}{}", tail_at(&tail));
 
-    if let Some(gap) = gap(name, &value, width) {
-        let mut spans = crate::highlight::spans(name, search, label, theme);
+    if let Some(gap) = gap_after_name(name, &value, width) {
+        let mut spans = name_spans(name, search, label, theme);
         spans.push(TextSpan::styled(" ".repeat(gap), style));
         spans.extend(crate::highlight::spans(class, search, style, theme));
         spans.extend(crate::highlight::spans(
@@ -467,25 +460,54 @@ fn class_property_lines(
     // text: a wrapped line carries one style, and splitting the class across
     // lines is already the worst this panel does to a name it promises not to
     // abbreviate — colouring half of it faint on top of that would be worse.
-    std::iter::once(Line::from(crate::highlight::spans(
-        &truncate(name, width),
+    std::iter::once(name_line(name, width, search, label, theme))
+        .chain(highlighted(
+            crate::wrap::plain(class, width, TYPE_INDENT),
+            search,
+            style,
+            theme,
+        ))
+        .chain(highlighted(
+            crate::wrap::plain(&tail, width, TYPE_INDENT),
+            search,
+            faint,
+            theme,
+        ))
+        .collect()
+}
+
+/// A property name sits one step in from the heading, where a key column's
+/// name does.
+fn name_spans(
+    name: &str,
+    search: Option<&Search>,
+    label: Style,
+    theme: Theme,
+) -> Vec<TextSpan<'static>> {
+    let mut spans = vec![TextSpan::styled(" ".repeat(INDENT), label)];
+    spans.extend(crate::highlight::spans(name, search, label, theme));
+    spans
+}
+
+fn name_line(
+    name: &str,
+    width: usize,
+    search: Option<&Search>,
+    label: Style,
+    theme: Theme,
+) -> Line<'static> {
+    let mut spans = vec![TextSpan::styled(" ".repeat(INDENT), label)];
+    spans.extend(crate::highlight::spans(
+        &truncate(name, width.saturating_sub(INDENT)),
         search,
         label,
         theme,
-    )))
-    .chain(highlighted(
-        crate::wrap::plain(class, width, INDENT),
-        search,
-        style,
-        theme,
-    ))
-    .chain(highlighted(
-        crate::wrap::plain(&tail, width, INDENT),
-        search,
-        faint,
-        theme,
-    ))
-    .collect()
+    ));
+    Line::from(spans)
+}
+
+fn gap_after_name(name: &str, value: &str, width: usize) -> Option<usize> {
+    gap(&format!("{}{name}", " ".repeat(INDENT)), value, width)
 }
 
 fn highlighted(
@@ -589,7 +611,7 @@ mod tests {
     fn a_class_property_puts_its_class_and_settings_at_the_right_margin() {
         assert_eq!(
             class_property("compression", "LZ4Compressor", &[("chunk", "16kb")], 40),
-            ["compression   LZ4Compressor · chunk 16kb"],
+            ["  compression LZ4Compressor · chunk 16kb"],
             "the whole value is pushed right, the way a plain property's is"
         );
     }
@@ -604,10 +626,10 @@ mod tests {
                 28,
             ),
             [
-                "compaction",
-                "  SizeTieredCompactionStrate",
-                "  gy",
-                "  · max 32 · min 4",
+                "  compaction",
+                "    SizeTieredCompactionStra",
+                "    tegy",
+                "    · max 32 · min 4",
             ],
         );
     }
@@ -616,7 +638,7 @@ mod tests {
     fn a_class_with_no_settings_draws_the_class_alone() {
         assert_eq!(
             class_property("compression", "SnappyCompressor", &[], 30),
-            ["compression   SnappyCompressor"],
+            ["  compression SnappyCompressor"],
         );
     }
 
@@ -722,11 +744,11 @@ mod tests {
     fn an_identity_row_puts_the_name_at_the_margin_behind_a_labelled_icon() {
         assert_eq!(
             named(IdentityKind::Keyspace, "shop", 23),
-            [format!("{}Keyspace         shop", crate::icons::KEYSPACE)]
+            [format!("  {}Keyspace       shop", crate::icons::KEYSPACE)]
         );
         assert_eq!(
             named(IdentityKind::Table, "orders", 23),
-            [format!("{}Table          orders", crate::icons::TABLE)]
+            [format!("  {}Table        orders", crate::icons::TABLE)]
         );
     }
 
@@ -735,7 +757,7 @@ mod tests {
         assert_eq!(
             named(IdentityKind::Table, "orders_by_customer", 23),
             [
-                format!("{}Table", crate::icons::TABLE),
+                format!("  {}Table", crate::icons::TABLE),
                 "    orders_by_customer".to_owned()
             ]
         );
@@ -752,7 +774,7 @@ mod tests {
         assert!(keyspace.is_some(), "the token has to spend a colour");
         assert_eq!(
             lines[0].spans[0].content,
-            format!("{}Keyspace", crate::icons::KEYSPACE)
+            format!("  {}Keyspace", crate::icons::KEYSPACE)
         );
 
         for span in &lines[0].spans {
@@ -784,7 +806,7 @@ mod tests {
     fn a_panel_too_narrow_for_the_icon_keeps_the_whole_label() {
         assert_eq!(
             named(IdentityKind::Keyspace, "shop", 9),
-            ["Keyspace", "    shop"],
+            ["  Keyspa…", "    shop"],
             "the icon goes before a label this panel promises to draw whole"
         );
     }
@@ -792,10 +814,10 @@ mod tests {
     #[test]
     fn a_property_short_enough_for_one_line_puts_its_value_at_the_margin() {
         assert_eq!(
-            property("gc_grace_seconds", "864000", 23),
-            ["gc_grace_seconds 864000"]
+            property("gc_grace_seconds", "864000", 25),
+            ["  gc_grace_seconds 864000"]
         );
-        assert_eq!(property("cdc", "false", 23), ["cdc               false"]);
+        assert_eq!(property("cdc", "false", 25), ["  cdc               false"]);
     }
 
     #[test]
@@ -816,7 +838,7 @@ mod tests {
     fn a_property_too_long_for_one_line_puts_its_value_indented_beneath_it() {
         assert_eq!(
             property("gc_grace_seconds", "864000", 20),
-            ["gc_grace_seconds", "  864000"]
+            ["  gc_grace_seconds", "    864000"]
         );
     }
 
@@ -825,7 +847,7 @@ mod tests {
         let one_line = property_lines(
             "gc_grace_seconds",
             "864000",
-            23,
+            25,
             Style::new(),
             None,
             Theme::default(),
@@ -833,9 +855,9 @@ mod tests {
         let accent = Theme::default().style(Token::PropertyName).fg;
 
         assert!(accent.is_some(), "the token has to spend a colour");
-        assert_eq!(one_line[0].spans[0].style.fg, accent);
+        assert_eq!(one_line[0].spans[1].style.fg, accent);
         assert_eq!(
-            one_line[0].spans[1].style.fg, None,
+            one_line[0].spans[3].style.fg, None,
             "the value is left alone: two treatments on one narrow line is one too many"
         );
 
@@ -848,7 +870,7 @@ mod tests {
             None,
             Theme::default(),
         );
-        assert_eq!(wrapped[0].spans[0].style.fg, accent);
+        assert_eq!(wrapped[0].spans[1].style.fg, accent);
         assert_eq!(wrapped[1].spans[0].style.fg, None);
     }
 
@@ -856,17 +878,17 @@ mod tests {
     fn a_long_value_wraps_rather_than_losing_its_tail() {
         assert_eq!(
             property("comment", "Order history for one customer.", 23),
-            ["comment", "  Order history for one", "  customer."]
+            ["  comment", "    Order history for", "    one customer."]
         );
     }
 
     #[test]
     fn a_match_a_wrap_split_is_painted_on_neither_half() {
-        // "one customer" straddles the wrap boundary: fragment one ends in
-        // "one" and fragment two opens with "customer.", so neither drawn
+        // "for one" straddles the wrap boundary: fragment one ends in
+        // "for" and fragment two opens with "one", so neither drawn
         // fragment holds the whole term (search highlight design §3.1).
         let theme = Theme::default();
-        let search = Search::new("one customer").expect("non-empty");
+        let search = Search::new("for one").expect("non-empty");
         let style = theme.style(Token::Faint);
 
         let lines = property_lines(
@@ -880,7 +902,7 @@ mod tests {
 
         assert_eq!(
             texts(&lines),
-            ["comment", "  Order history for one", "  customer."],
+            ["  comment", "    Order history for", "    one customer."],
             "the wrap itself does not move for a search"
         );
 
@@ -897,18 +919,18 @@ mod tests {
     fn a_name_wider_than_the_panel_is_the_one_thing_that_gets_an_ellipsis() {
         assert_eq!(
             property("memtable_flush_period_in_ms", "0", 20),
-            ["memtable_flush_peri…", "  0"]
+            ["  memtable_flush_pe…", "    0"]
         );
     }
 
     #[test]
     fn a_panel_with_no_room_for_a_value_still_names_the_property() {
-        assert_eq!(property("cdc", "false", 2), ["c…"]);
+        assert_eq!(property("cdc", "false", 4), ["  c…"]);
     }
 
     #[test]
     fn a_property_with_an_empty_value_is_just_its_name() {
-        assert_eq!(property("comment", "", 23), ["comment"]);
+        assert_eq!(property("comment", "", 23), ["  comment"]);
     }
 
     #[test]

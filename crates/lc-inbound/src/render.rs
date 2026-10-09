@@ -1558,12 +1558,12 @@ mod tests {
         let rows = ddl_rows(&buffer);
 
         assert!(
-            rows[0].starts_with(&format!("▌{}Keyspace", crate::icons::KEYSPACE)),
+            rows[0].starts_with(&format!("▌  {}Keyspace", crate::icons::KEYSPACE)),
             "the panel names its keyspace as the tree does, got {:?}",
             rows[0]
         );
         assert!(
-            rows[1].starts_with(&format!(" {}Table", crate::icons::TABLE)),
+            rows[1].starts_with(&format!("   {}Table", crate::icons::TABLE)),
             "and its table likewise, got {:?}",
             rows[1]
         );
@@ -1589,8 +1589,8 @@ mod tests {
             ddl_rows(&buffer)[..3],
             [
                 // The cursor opens on the first row, which is where the bar is.
-                format!("▌{}Keyspace         shop", crate::icons::KEYSPACE),
-                format!(" {}Table", crate::icons::TABLE),
+                format!("▌  {}Keyspace       shop", crate::icons::KEYSPACE),
+                format!("   {}Table", crate::icons::TABLE),
                 "     orders_by_customer".to_owned(),
             ]
         );
@@ -3536,7 +3536,7 @@ mod tests {
             indexes: Vec::new(),
             options: TableOptions::new(
                 [
-                    ("comment", "Order history."),
+                    ("comment", "Order list."),
                     ("gc_grace_seconds", "864000"),
                     ("bloom_filter_fp_chance", "0.01"),
                 ]
@@ -3617,8 +3617,8 @@ mod tests {
             ddl_rows(&buffer)[..9],
             [
                 // The cursor opens on this row, which is where the bar is.
-                "▌\u{f084} Keyspace         shop",
-                " \u{f0ce} Table",
+                "▌  \u{f084} Keyspace       shop",
+                "   \u{f0ce} Table",
                 "     orders_by_customer",
                 "",
                 "4 columns",
@@ -3673,8 +3673,8 @@ mod tests {
         assert_eq!(
             ddl_rows(&buffer)[..19],
             [
-                "▌\u{f084} Keyspace         shop",
-                " \u{f0ce} Table",
+                "▌  \u{f084} Keyspace       shop",
+                "   \u{f0ce} Table",
                 "     orders_by_customer",
                 "",
                 "\u{f030b} Partition Key",
@@ -3696,8 +3696,8 @@ mod tests {
                 "   status           text",
                 // A custom index names the class implementing it, which is
                 // the one thing its target cannot say.
-                " class",
-                "   org.apache.cassandra.",
+                "   class",
+                "     org.apache.cassandr",
             ]
         );
     }
@@ -3706,7 +3706,10 @@ mod tests {
     fn a_table_with_no_index_says_so_rather_than_showing_an_empty_block() {
         let buffer = draw_state(104, 41, &indexing(orders()));
 
-        assert_eq!(ddl_rows(&buffer)[9..12], ["", "\u{f002} Indexes", " none"]);
+        assert_eq!(
+            ddl_rows(&buffer)[9..12],
+            ["", "\u{f002} Indexes", "   none"]
+        );
     }
 
     #[test]
@@ -3893,11 +3896,11 @@ mod tests {
         let buffer = draw_state(104, 41, &describing(orders()));
 
         assert_eq!(
-            ddl_rows(&buffer)[..15],
+            ddl_rows(&buffer)[..16],
             [
                 // The cursor opens on this row, which is where the bar is.
-                "▌\u{f084} Keyspace         shop",
-                " \u{f0ce} Table",
+                "▌  \u{f084} Keyspace       shop",
+                "   \u{f0ce} Table",
                 "     orders_by_customer",
                 // The blank row between what the panel is about and the shape
                 // of what it is about.
@@ -3913,16 +3916,17 @@ mod tests {
                 // configured to do.
                 "",
                 "\u{f013} Options",
-                " gc_grace_seconds 864000",
-                // `bloom_filter_fp_chance` and its value need 26 of the
-                // body's 23, so it keeps the wrapped shape.
-                " bloom_filter_fp_chance",
-                "   0.01",
-                " comment  Order history.",
+                // Two columns in from the heading, `gc_grace_seconds` and its
+                // value need 24 of the body's 23, so it wraps too.
+                "   gc_grace_seconds",
+                "     864000",
+                "   bloom_filter_fp_chan…",
+                "     0.01",
+                "   comment   Order list.",
             ]
         );
         assert!(
-            ddl_rows(&buffer)[15..].iter().all(String::is_empty),
+            ddl_rows(&buffer)[16..].iter().all(String::is_empty),
             "`comment` sorts last, and the panel has room to spare beneath it"
         );
     }
@@ -3965,7 +3969,7 @@ mod tests {
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [29, 30],
+            [30, 31],
             "a wrapped value is one cursor stop, so exactly its own two lines \
              are the selection — not fewer, and not bleeding into comment below"
         );
@@ -3975,14 +3979,14 @@ mod tests {
     fn a_one_line_property_has_exactly_its_own_line_reversed() {
         let mut state = describing(orders());
         state.focus_on(Panel::Ddl);
-        state.ddl.cursor.go_to(5, lc_domain::view::ddl_rows(&state));
+        state.ddl.cursor.go_to(7, lc_domain::view::ddl_rows(&state));
 
         let buffer = draw_state(104, 41, &state);
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [28],
-            "gc_grace_seconds fits one line, so exactly it is the selection"
+            [32],
+            "comment fits one line, so exactly it is the selection"
         );
     }
 
@@ -4002,16 +4006,16 @@ mod tests {
 
         assert_eq!(
             highlighted_rows(&buffer),
-            [29, 30],
+            [30, 31],
             "the fixture's two lines"
         );
-        assert_eq!(bar(29), "▌");
         assert_eq!(bar(30), "▌");
+        assert_eq!(bar(31), "▌");
         // The rows of the shape and the one option above the cursor's: each
         // pays the column and marks nothing. 20 and 26 are the blanks between
         // the groups, and 21, 23 and 27 are headings — no cursor stop among
         // them, so none of them pays it.
-        for y in [17, 18, 19, 22, 24, 25, 28] {
+        for y in [17, 18, 19, 22, 24, 25, 28, 29] {
             assert_eq!(bar(y), " ", "row {y} is a row the cursor is not on");
         }
         assert_eq!(
@@ -4212,10 +4216,10 @@ mod tests {
         assert_eq!(
             rows,
             [
-                "▌\u{f084} Keyspace         shop",
+                "▌  \u{f084} Keyspace       shop",
                 "",
                 "\u{f013} Replication",
-                "class    SimpleStrategy"
+                "class  SimpleStrategy"
             ],
             "no table is selected, so the panel names only the keyspace"
         );
@@ -4789,8 +4793,8 @@ mod tests {
             ddl_rows(&buffer)[..6],
             [
                 // The cursor opens on this row, which is where the bar is.
-                "▌\u{f084} Keyspace         shop",
-                " \u{f0ce} Table",
+                "▌  \u{f084} Keyspace       shop",
+                "   \u{f0ce} Table",
                 "     orders_by_customer",
                 "",
                 "3 columns",
