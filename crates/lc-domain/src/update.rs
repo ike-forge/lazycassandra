@@ -4980,6 +4980,7 @@ mod tests {
                 discovery: Discovery::default(),
                 datacenter: None,
                 credentials: None,
+                tls: crate::config::Tls::Off,
             }],
             default_connection: Some(name),
             ..Config::default()
@@ -5524,6 +5525,7 @@ mod tests {
                     discovery: Discovery::default(),
                     datacenter: None,
                     credentials: None,
+                    tls: crate::config::Tls::Off,
                 })
                 .collect(),
             ..Config::default()

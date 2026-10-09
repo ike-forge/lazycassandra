@@ -32,6 +32,7 @@ fn fixture() -> ConnectionConfig {
         discovery: lc_domain::config::Discovery::default(),
         datacenter: None,
         credentials: None,
+        tls: lc_domain::config::Tls::Off,
     }
 }
 

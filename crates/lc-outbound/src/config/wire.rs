@@ -173,6 +173,27 @@ pub(crate) struct ConnectionLayer {
     pub(crate) username: Option<String>,
     pub(crate) password: Option<CredentialLayer>,
     pub(crate) cqlshrc: Option<String>,
+    pub(crate) tls: Option<TlsLayer>,
+    #[serde(flatten)]
+    pub(crate) unknown: Unknown,
+}
+
+/// `tls = true` and `tls = { ca = "..." }` are one key. Plain `String`s rather
+/// than `Located`: a span cannot survive serde's buffering of an untagged enum.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum TlsLayer {
+    Switch(bool),
+    Table(TlsTable),
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TlsTable {
+    pub(crate) ca: Option<String>,
+    pub(crate) cert: Option<String>,
+    pub(crate) key: Option<String>,
+    pub(crate) verify: Option<String>,
+    pub(crate) server_name: Option<String>,
     #[serde(flatten)]
     pub(crate) unknown: Unknown,
 }

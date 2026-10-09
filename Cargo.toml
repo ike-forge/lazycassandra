@@ -32,8 +32,14 @@ ratatui = "0.30.2"
 # `bigdecimal-04` and `num-bigint-04` buy `From<CqlDecimal>` and
 # `From<CqlVarint>` for types that already render themselves. The alternative
 # is hand-writing two's-complement bignum-to-decimal conversion in the adapter.
-scylla = { version = "1.7.0", features = ["bigdecimal-04", "num-bigint-04"] }
+scylla = { version = "1.7.0", features = ["bigdecimal-04", "num-bigint-04", "rustls-023"] }
 bigdecimal = "0.4.9"
+# Already in the tree through scylla's `rustls-023`; direct because the adapter
+# builds the `ClientConfig` itself (custom CA, client certificate, verifier
+# override). scylla's default features pull `aws_lc_rs`, so that is the provider.
+rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-native-certs = "0.8.4"
+rustls-pki-types = { version = "1.15.1", features = ["std"] }
 num-bigint = "0.4.6"
 # Already in the tree as a non-optional dependency of scylla; direct here
 # because the adapter formats timestamps and dates (design §5).

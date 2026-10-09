@@ -8,9 +8,10 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use lc_domain::config::{
-    Background, Compression, Config, ConnectionConfig, ConnectionName, Consistency, Credential,
-    Credentials, CustomTheme, Diagnostic, Discovery, DriverConfig, ExportConfig, GridConfig, Icons,
-    MaxColumnWidth, Millis, Mouse, Origin, OutOfRange, PageRows, PageSize, PanelRatios, Rgb, Span,
+    Background, ClientIdentity, Compression, Config, ConnectionConfig, ConnectionName, Consistency,
+    Credential, Credentials, CustomTheme, Diagnostic, Discovery, DriverConfig, ExportConfig,
+    GridConfig, Icons, MaxColumnWidth, Millis, Mouse, Origin, OutOfRange, PageRows, PageSize,
+    PanelRatios, Rgb, Span, Tls, TlsSettings, Trust, Verification,
 };
 use lc_domain::posture::Posture;
 use lc_domain::style::Severity;
@@ -18,7 +19,7 @@ use lc_domain::theme::{BuiltIn, Ours, Role, ThemeChoice, ThemeName};
 
 use super::wire::{
     ConnectionLayer, CredentialLayer, CredentialSource, DriverLayer, ExportLayer, GridLayer, Layer,
-    LayoutLayer, Located, ThemeLayer,
+    LayoutLayer, Located, ThemeLayer, TlsLayer, TlsTable,
 };
 
 /// Collects diagnostics so a caller never has to thread a `Vec` by hand.
@@ -474,6 +475,17 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
             }
         };
 
+        let tls = match layer.tls.map_or(Ok(Tls::Off), tls) {
+            Ok(tls) => tls,
+            Err(reason) => {
+                report.error(
+                    &layer.name,
+                    format!("connection `{}`: tls: {reason}", name.as_str()),
+                );
+                continue;
+            }
+        };
+
         connections.push(ConnectionConfig {
             name,
             hosts,
@@ -481,10 +493,55 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
             discovery,
             datacenter: layer.datacenter,
             credentials,
+            tls,
         });
     }
 
     connections
+}
+
+fn tls(layer: TlsLayer) -> Result<Tls, String> {
+    let table = match layer {
+        TlsLayer::Switch(false) => return Ok(Tls::Off),
+        TlsLayer::Switch(true) => return Ok(Tls::On(TlsSettings::default())),
+        TlsLayer::Table(table) => table,
+    };
+    let TlsTable {
+        ca,
+        cert,
+        key,
+        verify,
+        server_name,
+        unknown: _,
+    } = table;
+
+    let identity = match (cert, key) {
+        (None, None) => None,
+        (Some(cert), Some(key)) => Some(ClientIdentity {
+            cert: PathBuf::from(cert),
+            key: PathBuf::from(key),
+        }),
+        _ => return Err("`cert` and `key` are stated together or not at all".to_owned()),
+    };
+
+    let verification = match (verify.as_deref(), server_name) {
+        (None | Some("full"), None) => Verification::Full,
+        (None | Some("full"), Some(name)) => Verification::Named(name),
+        (Some("chain"), None) => Verification::ChainOnly,
+        (Some("none"), None) => Verification::Off,
+        (Some("chain" | "none"), Some(_)) => {
+            return Err("`server_name` names what `verify = \"full\"` checks".to_owned());
+        }
+        (Some(other), _) => {
+            return Err(format!("verify `{other}` unknown — full | chain | none"));
+        }
+    };
+
+    Ok(Tls::On(TlsSettings {
+        trust: ca.map_or(Trust::System, |path| Trust::CaFile(PathBuf::from(path))),
+        identity,
+        verification,
+    }))
 }
 
 /// The pair a connection authenticates with, or why it has none the cluster
@@ -941,6 +998,88 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("half") && d.message.contains("password"))
         );
+    }
+
+    fn tls_of(body: &str) -> (Tls, Vec<Diagnostic>) {
+        let (config, diagnostics) = config_of(&[&format!(
+            "[[connections]]\nname = \"prod\"\nhosts = [\"h:9042\"]\n{body}\n"
+        )]);
+
+        (
+            config
+                .connections
+                .into_iter()
+                .next()
+                .map_or(Tls::Off, |connection| connection.tls),
+            diagnostics,
+        )
+    }
+
+    #[test]
+    fn a_connection_that_states_no_tls_is_plaintext() {
+        assert_eq!(tls_of("").0, Tls::Off);
+        assert_eq!(tls_of("tls = false").0, Tls::Off);
+    }
+
+    #[test]
+    fn tls_true_verifies_against_the_system_roots() {
+        let (tls, diagnostics) = tls_of("tls = true");
+
+        assert!(diagnostics.is_empty());
+        assert_eq!(tls, Tls::On(TlsSettings::default()));
+    }
+
+    #[test]
+    fn a_tls_table_states_the_ca_the_identity_and_the_verification() {
+        let (tls, diagnostics) = tls_of(
+            "tls = { ca = \"ca.pem\", cert = \"c.pem\", key = \"k.pem\", verify = \"chain\" }",
+        );
+
+        assert!(diagnostics.is_empty());
+        assert_eq!(
+            tls,
+            Tls::On(TlsSettings {
+                trust: Trust::CaFile(PathBuf::from("ca.pem")),
+                identity: Some(ClientIdentity {
+                    cert: PathBuf::from("c.pem"),
+                    key: PathBuf::from("k.pem"),
+                }),
+                verification: Verification::ChainOnly,
+            })
+        );
+    }
+
+    #[test]
+    fn a_server_name_overrides_the_name_that_full_verification_checks() {
+        let (tls, _) = tls_of("tls = { server_name = \"cass.internal\" }");
+
+        assert_eq!(
+            tls,
+            Tls::On(TlsSettings {
+                verification: Verification::Named("cass.internal".to_owned()),
+                ..TlsSettings::default()
+            })
+        );
+    }
+
+    #[test]
+    fn a_tls_entry_that_contradicts_itself_drops_the_connection() {
+        for body in [
+            "tls = { cert = \"c.pem\" }",
+            "tls = { key = \"k.pem\" }",
+            "tls = { verify = \"chain\", server_name = \"x\" }",
+            "tls = { verify = \"sometimes\" }",
+        ] {
+            let (config, diagnostics) = config_of(&[&format!(
+                "[[connections]]\nname = \"prod\"\nhosts = [\"h:9042\"]\n{body}\n"
+            )]);
+
+            assert!(config.connections.is_empty(), "{body}");
+            assert!(
+                diagnostics.iter().any(|d| d.message.contains("tls")),
+                "{body}: {diagnostics:?}"
+            );
+        }
     }
 
     #[test]

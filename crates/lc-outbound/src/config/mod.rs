@@ -102,6 +102,9 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
     }
     for connection in &layer.connections {
         report("connections.", &connection.unknown);
+        if let Some(wire::TlsLayer::Table(tls)) = &connection.tls {
+            report("connections.tls.", &tls.unknown);
+        }
     }
     for theme in &layer.themes {
         report("themes.", &theme.unknown);

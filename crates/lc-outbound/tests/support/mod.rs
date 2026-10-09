@@ -96,6 +96,7 @@ pub(crate) fn connected_config() -> lc_domain::Config {
             discovery: lc_domain::config::Discovery::default(),
             datacenter: None,
             credentials: None,
+            tls: lc_domain::config::Tls::Off,
         }],
         default_connection: Some(name),
         ..lc_domain::Config::default()

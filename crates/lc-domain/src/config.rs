@@ -324,6 +324,56 @@ pub enum Credentials {
     Cqlshrc(PathBuf),
 }
 
+/// How the server's certificate is judged.
+///
+/// `ChainOnly` exists because self-hosted clusters routinely issue node
+/// certificates with no SAN for the address a client dials; the chain is still
+/// checked, the name is not.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Verification {
+    /// Chain and the name against the address dialled.
+    #[default]
+    Full,
+    /// Chain and the name against this one, not the address dialled.
+    Named(String),
+    ChainOnly,
+    /// Nothing checked. Traffic is encrypted but the peer is unauthenticated.
+    Off,
+}
+
+/// Which certificate authorities the server's chain may end at.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Trust {
+    #[default]
+    System,
+    /// A PEM bundle, held as written; `~` is expanded where it is read.
+    CaFile(PathBuf),
+}
+
+/// A certificate and key the client presents, for a cluster with
+/// `require_client_auth`. Both paths or neither: a certificate without its key
+/// proves nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientIdentity {
+    pub cert: PathBuf,
+    pub key: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TlsSettings {
+    pub trust: Trust,
+    pub identity: Option<ClientIdentity>,
+    pub verification: Verification,
+}
+
+/// Whether the transport is encrypted.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Tls {
+    #[default]
+    Off,
+    On(TlsSettings),
+}
+
 /// One cluster to connect to, as a config file names it under `[[connections]]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionConfig {
@@ -333,6 +383,7 @@ pub struct ConnectionConfig {
     pub discovery: Discovery,
     pub datacenter: Option<String>,
     pub credentials: Option<Credentials>,
+    pub tls: Tls,
 }
 
 /// How the Contents grid renders and pages what it reads.

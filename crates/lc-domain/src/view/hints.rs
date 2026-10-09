@@ -1236,6 +1236,7 @@ mod tests {
             discovery: crate::config::Discovery::default(),
             datacenter: None,
             credentials: None,
+            tls: crate::config::Tls::Off,
         }
     }
 
