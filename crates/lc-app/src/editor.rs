@@ -142,13 +142,14 @@ fn program(visual: Option<&str>, editor: Option<&str>) -> Vec<String> {
     chosen.split_whitespace().map(str::to_owned).collect()
 }
 
-/// `.cql` because the extension is what makes the user's editor highlight the
-/// buffer, which is half the reason to leave the TUI (design §4.1).
+/// `.sql`, not `.cql`: the extension is what makes the user's editor highlight
+/// the buffer (design §4.1), and Neovim maps `.cql` to Clinical Quality
+/// Language, which has no highlighting for Cassandra's dialect.
 fn temp_path() -> PathBuf {
     let opening = OPENINGS.fetch_add(1, Ordering::Relaxed);
 
     std::env::temp_dir().join(format!(
-        "lazycassandra-{}-{opening}.cql",
+        "lazycassandra-{}-{opening}.sql",
         std::process::id()
     ))
 }
