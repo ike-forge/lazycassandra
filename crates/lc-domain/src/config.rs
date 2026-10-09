@@ -61,6 +61,7 @@ macro_rules! bounded {
 bounded!(MaxColumnWidth, u16, "max_column_width", 1, 512, 30);
 bounded!(PageRows, u32, "page_rows", 1, 100_000, 200);
 bounded!(PageSize, u32, "page_size", 1, 100_000, 5_000);
+bounded!(HistoryLimit, u32, "limit", 1, 10_000, 100);
 bounded!(Millis, u32, "milliseconds", 1, 600_000, 5_000);
 
 /// Infallible: the two share one range, so every grid page size is one the
@@ -344,6 +345,12 @@ pub struct GridConfig {
     pub page_rows: PageRows,
 }
 
+/// How many statements each connection remembers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HistoryConfig {
+    pub limit: HistoryLimit,
+}
+
 /// Driver-level settings applied to every connection.
 ///
 /// Global rather than per-connection: nothing in the design so far calls for
@@ -391,6 +398,7 @@ pub struct Config {
     pub mouse: Mouse,
     pub layout: PanelRatios,
     pub grid: GridConfig,
+    pub history: HistoryConfig,
     pub driver: DriverConfig,
     pub export: ExportConfig,
     pub themes: Vec<CustomTheme>,

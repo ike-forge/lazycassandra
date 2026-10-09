@@ -18,6 +18,7 @@ mod filter;
 mod footer;
 mod highlight;
 mod hints;
+mod history;
 pub mod hit;
 mod icons;
 pub mod input;

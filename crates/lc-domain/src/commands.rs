@@ -409,6 +409,11 @@ const QUERIES: &[Command] = &[
         Run::In(Panel::Queries),
     ),
     Command::new(
+        &[Stroke::ctrl(Key::Char('g'))],
+        "open the history",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
         &[Stroke::ctrl(Key::Char('e'))],
         "open in $EDITOR",
         Run::In(Panel::Queries),

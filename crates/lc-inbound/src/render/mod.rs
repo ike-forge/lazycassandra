@@ -166,6 +166,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_grid_width(grid_width)
             .with_theme_rows(room.theme_rows)
             .with_connection_rows(room.connection_rows)
+            .with_history_rows(room.history_rows)
             .with_inspector(room.inspector_rows, inspector_lines, inspector_selection)
             .with_commit(room.commit_rows, commit_lines),
         map: FrameMap::new(hits),
@@ -182,6 +183,7 @@ struct Room {
     command_rows: usize,
     theme_rows: usize,
     connection_rows: usize,
+    history_rows: usize,
     export_fits: bool,
     drop_fits: bool,
     inspector_rows: usize,
@@ -194,6 +196,7 @@ impl Room {
             command_rows: crate::palette::visible_rows(area, lc_domain::commands::row_count(None)),
             theme_rows: crate::themes::visible_rows(area),
             connection_rows: crate::connections::visible_rows(area),
+            history_rows: crate::history::visible_rows(area),
             export_fits: crate::export::fits(area),
             drop_fits: crate::drop::fits(area),
             inspector_rows: crate::inspect::visible_rows(area),
@@ -232,9 +235,7 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
                 sift.as_ref().and_then(|sift| sift.search.as_ref()),
                 theme,
             );
-            if let Some(sift) = sift {
-                render_prompt(frame, hint_bar, &sift.query, view, theme);
-            }
+            render_sift(frame, hint_bar, sift.as_ref(), view, theme);
         }
         // Drawn on the hint bar row, not here: a prompt is a text field, not
         // a modal over the panels (design §5.2).
@@ -255,9 +256,7 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
                 sift.as_ref().and_then(|sift| sift.search.as_ref()),
                 theme,
             );
-            if let Some(sift) = sift {
-                render_prompt(frame, hint_bar, &sift.query, view, theme);
-            }
+            render_sift(frame, hint_bar, sift.as_ref(), view, theme);
         }
         Some(OverlayView::Connections {
             rows,
@@ -275,9 +274,21 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
                 config_home.as_deref(),
                 theme,
             );
-            if let Some(sift) = sift {
-                render_prompt(frame, hint_bar, &sift.query, view, theme);
-            }
+            render_sift(frame, hint_bar, sift.as_ref(), view, theme);
+        }
+        Some(OverlayView::History {
+            labels,
+            selected,
+            sift,
+        }) => {
+            crate::history::render(
+                frame,
+                labels,
+                *selected,
+                sift.as_ref().and_then(|sift| sift.search.as_ref()),
+                theme,
+            );
+            render_sift(frame, hint_bar, sift.as_ref(), view, theme);
         }
         Some(OverlayView::Diagnostics { rows, selected }) => {
             crate::diagnostics::render(frame, rows, *selected, theme);
@@ -370,6 +381,7 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             | OverlayView::Commands { .. }
             | OverlayView::Themes { .. }
             | OverlayView::Connections { .. }
+            | OverlayView::History { .. }
             | OverlayView::Diagnostics { .. }
             // A modal that owns the frame. Unlike the export form, which is
             // asking about the grid beneath it, a drop is asking about one
@@ -693,6 +705,19 @@ fn spent(title: &str, marker: Option<&str>) -> usize {
     });
 
     title.chars().count() + 2 * TITLE_PAD.chars().count() + marker + 2
+}
+
+/// The prompt of a live sift over an overlay's list, if one is up.
+fn render_sift(
+    frame: &mut Frame,
+    hint_bar: Rect,
+    sift: Option<&lc_domain::view::SiftView>,
+    view: &ViewModel,
+    theme: Theme,
+) {
+    if let Some(sift) = sift {
+        render_prompt(frame, hint_bar, &sift.query, view, theme);
+    }
 }
 
 /// The query at the left of the bar row, `⏎ apply` / `esc cancel` at the

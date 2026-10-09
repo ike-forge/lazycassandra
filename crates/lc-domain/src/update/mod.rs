@@ -41,6 +41,7 @@ mod connections;
 mod drop;
 mod edit;
 mod export;
+mod history;
 mod inspect;
 mod palette;
 mod pointer;
@@ -55,6 +56,7 @@ use connections::{
 use drop::{drop_key, finish_drop, open_drop};
 use edit::{field_key, start_edit};
 use export::{cancel_pending_export, export_key, export_progress, finish_export, open_export};
+use history::{history_key, open_history};
 use inspect::{inspect_key, inspector_extent, open_inspector};
 use palette::{open_palette, palette_key};
 use pointer::handle_pointer;
@@ -65,6 +67,7 @@ use yank::{copied, yank};
 pub(crate) use connections::connection_names;
 pub(crate) use drop::drop_target;
 pub(crate) use edit::{editable_here, has_uncommitted};
+pub(crate) use history::history_labels;
 pub(crate) use inspect::inspection;
 pub(crate) use themes::theme_labels;
 
@@ -822,6 +825,7 @@ fn overlay_key(state: &mut State, key: Key) -> Option<Vec<Effect>> {
         Some(Overlay::Inspect(_)) => inspect_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Connections { .. }) => connections_key(state, key),
+        Some(Overlay::History { .. }) => history_key(state, key),
         Some(Overlay::Search(_)) => search_key(state, key),
         // Text on one of its stops, and most printable keys go nowhere on the
         // others (export design §2).
@@ -927,7 +931,11 @@ fn takes_text(state: &State) -> bool {
         // design §5): the letters that would otherwise move the cursor or
         // close the overlay type themselves instead.
         Some(Overlay::Commands(panel)) => panel.sift().is_some(),
-        Some(Overlay::Themes { sift, .. } | Overlay::Connections { sift, .. }) => sift.is_some(),
+        Some(
+            Overlay::Themes { sift, .. }
+            | Overlay::Connections { sift, .. }
+            | Overlay::History { sift, .. },
+        ) => sift.is_some(),
         // `Fatal` is unreachable here — `handle_key` claims every press for
         // it before this is consulted — but written down anyway, rather than
         // grouped with `Message`/`None`, because neither it nor `Diagnostics`
@@ -953,6 +961,7 @@ fn takes_text(state: &State) -> bool {
 fn goto(state: &mut State, edge: Edge) {
     let last = BuiltIn::ALL.len() + state.config.themes.len();
     let connections = state.config.connections.len();
+    let history = state.history().len();
     let (commit_lines, commit_rows) = commit_extent(state);
 
     match &mut state.overlay {
@@ -982,6 +991,10 @@ fn goto(state: &mut State, edge: Edge) {
         Some(Overlay::Connections { cursor, .. }) => match edge {
             Edge::Start => cursor.to_start(),
             Edge::End => cursor.to_end(connections),
+        },
+        Some(Overlay::History { cursor, .. }) => match edge {
+            Edge::Start => cursor.to_start(),
+            Edge::End => cursor.to_end(history),
         },
         Some(Overlay::Message(_)) | None => scroll(state, edge.motion()),
         // The drop confirmation drives no list either, and `Fatal` never
@@ -1418,6 +1431,15 @@ fn dismiss_overlay(state: &mut State) -> bool {
             state.overlay = Some(Overlay::Connections { cursor, sift: None });
             true
         }
+        Some(Overlay::History {
+            cursor,
+            sift: Some(sift),
+        }) => {
+            let mut cursor = cursor;
+            cursor.go_to(sift.origin(), state.history().len());
+            state.overlay = Some(Overlay::History { cursor, sift: None });
+            true
+        }
         // A dismissed picker leaves `Disconnected` rather than `Unchosen`, so
         // `offer_connections` does not put it straight back up: waving the
         // picker away is a choice, and the panels are allowed to stay empty
@@ -1439,6 +1461,7 @@ fn dismiss_overlay(state: &mut State) -> bool {
         Some(
             Overlay::Message(_)
             | Overlay::Commands(_)
+            | Overlay::History { .. }
             | Overlay::Diagnostics(_)
             | Overlay::Inspect(_)
             | Overlay::Export(_)
@@ -1602,6 +1625,7 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
             Overlay::Commands(_)
                 | Overlay::Themes { .. }
                 | Overlay::Connections { .. }
+                | Overlay::History { .. }
                 | Overlay::Diagnostics(_)
                 | Overlay::Inspect(_)
                 | Overlay::Export(_)
@@ -1629,6 +1653,10 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
             Vec::new()
         }
         Key::Char('e') => ctrl_e(state),
+        Key::Char('g') => {
+            open_history(state);
+            Vec::new()
+        }
         Key::Char('s') => open_commit(state),
         Key::Char('f') => {
             format_buffer(state);
@@ -1759,6 +1787,7 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         Some(Overlay::Commands(_)) => palette_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Connections { .. }) => connections_key(state, key),
+        Some(Overlay::History { .. }) => history_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
         Some(Overlay::Inspect(_)) => inspect_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does;
@@ -2090,6 +2119,7 @@ fn fits(overlay: &Overlay, geometry: Geometry, config: &Config) -> bool {
         Overlay::Connections { .. } => {
             config.connections.is_empty() || geometry.connection_rows() > 0
         }
+        Overlay::History { .. } => geometry.history_rows() > 0,
         Overlay::Inspect(_) => geometry.inspector_rows() > 0,
         Overlay::Commit(_) => geometry.commit_rows() > 0,
         Overlay::Export(_) => geometry.export_fits(),
@@ -2343,8 +2373,22 @@ fn run(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     }
 
+    record_history(state, cql);
     state.focus_on(Panel::Contents);
     submit_into_contents(state, Subject::Typed(cql.to_owned()), stmt)
+}
+
+/// Remembers a statement sent from the buffer against the connection in use.
+/// Only the buffer: reading a table from the tree is not something the user
+/// typed (query history design §2).
+fn record_history(state: &mut State, cql: &str) {
+    let ConnectionState::Connected(connection) = &state.connection else {
+        return;
+    };
+
+    state
+        .histories
+        .record(&connection.name, cql, state.config.history.limit);
 }
 
 /// Puts `stmt`'s result in the Contents panel, cancelling whatever it was
