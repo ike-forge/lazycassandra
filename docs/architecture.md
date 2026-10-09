@@ -240,7 +240,7 @@ lc-domain/src/
   log.rs        # the Logs tab: a bounded trail of what ran
   clock.rs      # the wall-clock, as a value handed in
   cell.rs       # one CqlValue as the text a grid draws
-  update.rs     # update() and its per-panel handlers
+  update/       # update() and its dispatch; one module per overlay or flow
   view.rs       # ViewModel projection (see §3)
   ports.rs      # trait definitions (see §5)
   posture.rs    # read-only / writable / protected rules

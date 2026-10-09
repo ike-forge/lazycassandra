@@ -925,7 +925,7 @@ mod tests {
 
     /// An unqualified table name in a typed statement is read against the
     /// keyspace the tree cursor sits on, the way completion already does
-    /// (`update.rs::complete`).
+    /// (`update::complete`).
     #[test]
     fn an_unqualified_typed_select_takes_the_keyspace_on_screen() {
         let state = showing_typed_in(

@@ -8,7 +8,7 @@
 From the table-list review (docs/superpowers/specs/2026-08-08-table-list-design.md):
 
 - Give `TablesPanel` its own `down`/`up` taking `&Schema`, so cursor motion
-  cannot be handed the wrong row count. Today `update.rs` reaches through the
+  cannot be handed the wrong row count. Today `update/mod.rs` reaches through the
   public `cursor` field with a caller-supplied `len`; `render.rs` already
   passes a keyspace count where a tree-row count is meant, correct only
   because those fixtures have no tables.
@@ -46,7 +46,7 @@ From the panel scrolling slice (docs/superpowers/specs/2026-08-09-panel-scrollin
 
 From the mouse input slice (docs/superpowers/specs/2026-08-09-mouse-input-design.md):
 
-- A wheel notch is three rows, which is a guess. `WHEEL_ROWS` in `update.rs`
+- A wheel notch is three rows, which is a guess. `WHEEL_ROWS` in `update/pointer.rs`
   is the one place to change it after a few weeks of use.
 
 From the queries editor slice (docs/superpowers/specs/2026-08-09-queries-editor-design.md §9):
