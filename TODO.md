@@ -9,7 +9,7 @@ From the table-list review (docs/superpowers/specs/2026-08-08-table-list-design.
 
 - Give `TablesPanel` its own `down`/`up` taking `&Schema`, so cursor motion
   cannot be handed the wrong row count. Today `update/mod.rs` reaches through the
-  public `cursor` field with a caller-supplied `len`; `render.rs` already
+  public `cursor` field with a caller-supplied `len`; `render/mod.rs` already
   passes a keyspace count where a tree-row count is meant, correct only
   because those fixtures have no tables.
 - A refresh binding. `describe` refuses the whole schema when a DDL change
