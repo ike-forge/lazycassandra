@@ -214,14 +214,16 @@ fn row(diagnostic: &Diagnostic) -> DiagnosticRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportView {
     pub title: Vec<Segment>,
-    /// Whole first, fetched second — the order they are drawn in.
-    pub scope_labels: [String; 2],
+    /// Visible, whole, first-N — the order they are drawn in.
+    pub scope_labels: [String; 3],
     pub scope: Scope,
     pub fetched_enabled: bool,
     pub format: Format,
     pub path: String,
     /// A character offset into `path`, for the drawn caret.
     pub cursor: usize,
+    pub rows: String,
+    pub rows_cursor: usize,
     pub stop: Stop,
     pub confirm: Option<Confirm>,
 }
@@ -435,6 +437,8 @@ fn overlay(state: &State) -> Option<OverlayView> {
             format: form.format(),
             path: form.path().text().to_owned(),
             cursor: form.path().cursor(),
+            rows: form.rows().text().to_owned(),
+            rows_cursor: form.rows().cursor(),
             stop: form.stop(),
             confirm: form.confirm(),
         }))),

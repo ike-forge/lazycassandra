@@ -17,9 +17,9 @@ const WIDTH: u16 = 84;
 /// What [`fits`] demands: the form narrows to the frame down to here rather
 /// than vanish on a terminal a little under [`WIDTH`].
 const MIN_WIDTH: u16 = 56;
-/// Nine content rows, none spare, so `Export` sits on the last one: path,
-/// formats, scopes, the gaps between, the button.
-const HEIGHT: u16 = 11;
+/// Ten content rows, none spare, so `Export` sits on the last one: path,
+/// two formats, three scopes, the gaps between, the button.
+const HEIGHT: u16 = 12;
 /// A floor, not a cap: [`confirm_width`] widens the dialog to fit the whole
 /// path on its own line rather than clip it. Unlike the form's path field,
 /// this line has no cursor to scroll around, so cutting it would just hide
@@ -31,6 +31,10 @@ const CONFIRM_HEIGHT: u16 = 7;
 const PATH_ROW: u16 = 0;
 /// The field's caption, and the column the field starts at.
 const PATH_LABEL: &str = "Path ";
+/// The first-N scope's row: path, gap, two formats, gap, two scopes.
+const ROWS_ROW: u16 = 7;
+/// Columns the count's field is drawn across.
+const ROWS_WIDTH: usize = 8;
 
 /// Whether `area` can hold the form at all.
 ///
@@ -115,18 +119,20 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     lines.extend(formats(view, theme));
     lines.push(TextLine::default());
     if view.fetched_enabled {
+        let focused = view.stop == Stop::Scope;
         lines.push(radio(
             &view.scope_labels[0],
-            view.scope == Scope::Whole,
-            view.stop == Stop::Scope,
+            view.scope == Scope::Fetched,
+            focused,
             theme,
         ));
         lines.push(radio(
             &view.scope_labels[1],
-            view.scope == Scope::Fetched,
-            view.stop == Stop::Scope,
+            view.scope == Scope::Whole,
+            focused,
             theme,
         ));
+        lines.push(first_rows(view, focused, theme));
     } else {
         lines.push(TextLine::from(Span::styled(
             view.scope_labels[0].as_str(),
@@ -144,13 +150,50 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
         ),
     );
     frame.render_widget(
-        Paragraph::new(button("Export", view.stop == Stop::Export, theme)),
+        Paragraph::new(button("Export", view.stop == Stop::Export, theme)).centered(),
         Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
     );
 
     if view.stop == Stop::Path {
-        set_caret(frame, inner, label_width, &visible, caret);
+        set_caret(frame, inner, PATH_ROW, label_width, &visible, caret);
     }
+    if view.stop == Stop::Rows {
+        let before =
+            u16::try_from(TextLine::raw(format!("{MARK_ON}{} ", view.scope_labels[2])).width())
+                .unwrap_or(0);
+        let (shown, caret) = window(&view.rows, view.rows_cursor, ROWS_WIDTH);
+        set_caret(frame, inner, ROWS_ROW, before, &shown, caret);
+    }
+}
+
+/// The third scope, with its count typed in place: `◉ Export the first
+/// [ 1000 ] rows`.
+fn first_rows(view: &ExportView, focused: bool, theme: Theme) -> TextLine<'static> {
+    let style = theme.style(if focused {
+        Token::Selected
+    } else {
+        Token::HintAction
+    });
+    let (shown, _) = window(&view.rows, view.rows_cursor, ROWS_WIDTH);
+
+    TextLine::from(vec![
+        Span::styled(mark(view.scope == Scope::First), style),
+        Span::styled(format!("{} ", view.scope_labels[2]), style),
+        Span::styled(
+            format!("{shown:<ROWS_WIDTH$}"),
+            backdrop(view.stop == Stop::Rows, theme),
+        ),
+        Span::styled(" rows", style),
+    ])
+}
+
+/// A field's ground: the quieter band at rest, the selection's under `Tab`.
+fn backdrop(focused: bool, theme: Theme) -> ratatui::style::Style {
+    theme.style(if focused {
+        Token::Selected
+    } else {
+        Token::Ranged
+    })
 }
 
 /// The radio glyphs. A filled and a hollow circle rather than a parenthesised
@@ -199,11 +242,7 @@ fn formats(view: &ExportView, theme: Theme) -> Vec<TextLine<'static>> {
 /// On a backdrop always: the wash at rest, the selection ground under `Tab`.
 /// Padded to `width` so the backdrop is the whole field, not the text.
 fn path(visible: &str, width: usize, focused: bool, theme: Theme) -> TextLine<'static> {
-    let style = theme.style(if focused {
-        Token::Selected
-    } else {
-        Token::Crosshair
-    });
+    let style = backdrop(focused, theme);
     let padding = width.saturating_sub(TextLine::raw(visible).width());
 
     TextLine::from(vec![
@@ -285,12 +324,12 @@ fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
 /// than added straight to `x`, so a multi-byte or double-width character
 /// before it is not counted as one column. Clamped to the inner rect, which a
 /// window of double-width characters can still reach the end of.
-fn set_caret(frame: &mut Frame, inner: Rect, offset: u16, visible: &str, caret: usize) {
+fn set_caret(frame: &mut Frame, inner: Rect, row: u16, offset: u16, visible: &str, caret: usize) {
     let prefix: String = visible.chars().take(caret).collect();
     let taken = u16::try_from(TextLine::raw(prefix).width()).unwrap_or(inner.width);
     let cursor_x = (inner.x + offset + taken).min(inner.right().saturating_sub(1));
 
-    frame.set_cursor_position((cursor_x, inner.y + PATH_ROW));
+    frame.set_cursor_position((cursor_x, inner.y + row));
 }
 
 /// Wide enough for `path` plus the block's border and padding, never wider
@@ -418,7 +457,8 @@ mod tests {
 
         assert!(drawn.contains("Export table shop.orders"));
         assert!(drawn.contains("Export the whole table"));
-        assert!(drawn.contains("Export the 200 fetched rows"));
+        assert!(drawn.contains("Export the first"));
+        assert!(drawn.contains("Export the 200 visible rows"));
         assert!(drawn.contains("CSV"));
         assert!(drawn.contains("JSON"));
         assert!(drawn.contains("shop.orders.csv"));
@@ -430,17 +470,18 @@ mod tests {
         let drawn = text(&drawn(80, 24, form(Fetched::Some(200))));
 
         assert!(drawn.contains("◉ Export the whole table"));
-        assert!(drawn.contains("○ Export the 200 fetched rows"));
+        assert!(drawn.contains("○ Export the 200 visible rows"));
+        assert!(drawn.contains("○ Export the first"));
     }
 
     #[test]
     fn a_result_both_scopes_write_whole_is_a_sentence_not_a_radio() {
         let drawn = text(&drawn(100, 24, form(Fetched::Everything(137))));
 
-        assert!(drawn.contains("Export the whole table (137)"));
-        assert!(!drawn.contains("○ Export the whole table"));
-        assert!(!drawn.contains("◉ Export the whole table"));
-        assert!(!drawn.contains("fetched rows"));
+        assert!(drawn.contains("Export all 137 rows"));
+        assert!(!drawn.contains("○ Export all"));
+        assert!(!drawn.contains("◉ Export all"));
+        assert!(!drawn.contains("Export the first"));
     }
 
     #[test]
@@ -459,7 +500,7 @@ mod tests {
         );
         assert_eq!(
             bg(false),
-            theme.style(lc_domain::style::Token::Crosshair).bg.unwrap()
+            theme.style(lc_domain::style::Token::Ranged).bg.unwrap()
         );
         assert_eq!(
             super::path("a", 10, false, theme).spans[1].content,
@@ -506,6 +547,19 @@ mod tests {
         let last_inner_row = area.y + super::HEIGHT - 2;
 
         assert!(row(&buffer, last_inner_row).contains("  Export  "));
+    }
+
+    #[test]
+    fn the_export_button_is_centred_in_the_form() {
+        let buffer = drawn(100, 24, form(Fetched::Some(200)));
+        let area = super::form_area(ratatui::layout::Rect::new(0, 0, 100, 24)).expect("fits");
+        let line = row(&buffer, area.y + super::HEIGHT - 2);
+        let inner = &line
+            [line.find('│').expect("border") + '│'.len_utf8()..line.rfind('│').expect("border")];
+        let left = inner.len() - inner.trim_start().len();
+        let right = inner.len() - inner.trim_end().len();
+
+        assert!(left.abs_diff(right) <= 1, "{left} left, {right} right");
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! becomes (docs/superpowers/specs/2026-08-14-export-design.md).
 
 use std::fmt::Write as _;
+use std::num::NonZeroUsize;
 use std::path::Path;
 
 use crate::cell;
@@ -196,9 +197,30 @@ pub enum Scope {
     /// Re-run the statement with no limit of ours and page to the end.
     #[default]
     Whole,
-    /// The rows the panel already holds.
+    /// The rows the panel is showing.
     Fetched,
+    /// The first N rows of the statement, N typed into the form.
+    First,
 }
+
+impl Scope {
+    /// In the order the form draws them.
+    const ALL: [Self; 3] = [Self::Fetched, Self::Whole, Self::First];
+
+    fn step(self, forwards: bool) -> Self {
+        let at = Self::ALL
+            .iter()
+            .position(|scope| *scope == self)
+            .unwrap_or(0);
+        let len = Self::ALL.len();
+        let to = if forwards { at + 1 } else { at + len - 1 };
+
+        Self::ALL[to % len]
+    }
+}
+
+/// What the rows field holds before anything is typed.
+const DEFAULT_ROWS: &str = "1000";
 
 /// The rows in memory, and whether the statement has more behind them.
 ///
@@ -253,6 +275,9 @@ pub enum Stop {
     Format,
     /// Skipped while both scopes would write the same file.
     Scope,
+    /// The first-N scope's count. Skipped unless that scope is chosen; text,
+    /// digits only.
+    Rows,
     Export,
 }
 
@@ -262,7 +287,8 @@ impl Stop {
         match self {
             Self::Path => Self::Format,
             Self::Format => Self::Scope,
-            Self::Scope => Self::Export,
+            Self::Scope => Self::Rows,
+            Self::Rows => Self::Export,
             Self::Export => Self::Path,
         }
     }
@@ -273,14 +299,15 @@ impl Stop {
             Self::Path => Self::Export,
             Self::Format => Self::Path,
             Self::Scope => Self::Format,
-            Self::Export => Self::Scope,
+            Self::Rows => Self::Scope,
+            Self::Export => Self::Rows,
         }
     }
 
     /// Whether this stop claims printable keys as text.
     #[must_use]
     pub const fn takes_text(self) -> bool {
-        matches!(self, Self::Path)
+        matches!(self, Self::Path | Self::Rows)
     }
 }
 
@@ -346,6 +373,7 @@ pub struct ExportForm {
     scope: Scope,
     format: Format,
     path: Line,
+    rows: Line,
     pending: Option<Pending>,
 }
 
@@ -367,6 +395,7 @@ impl ExportForm {
             scope: Scope::default(),
             format,
             path: Line::new(path),
+            rows: Line::new(DEFAULT_ROWS.to_owned()),
             pending: None,
         }
     }
@@ -393,6 +422,21 @@ impl ExportForm {
 
     pub const fn path_mut(&mut self) -> &mut Line {
         &mut self.path
+    }
+
+    #[must_use]
+    pub const fn rows(&self) -> &Line {
+        &self.rows
+    }
+
+    pub const fn rows_mut(&mut self) -> &mut Line {
+        &mut self.rows
+    }
+
+    /// What the rows field says, if it says a positive number.
+    #[must_use]
+    pub fn row_limit(&self) -> Option<NonZeroUsize> {
+        self.rows.text().parse().ok()
     }
 
     #[must_use]
@@ -435,17 +479,29 @@ impl ExportForm {
         !self.fetched.complete()
     }
 
-    pub const fn tab(&mut self) {
-        self.stop = self.stop.next();
-        if matches!(self.stop, Stop::Scope) && !self.fetched_enabled() {
+    pub fn tab(&mut self) {
+        loop {
             self.stop = self.stop.next();
+            if self.reachable(self.stop) {
+                return;
+            }
         }
     }
 
-    pub const fn back_tab(&mut self) {
-        self.stop = self.stop.previous();
-        if matches!(self.stop, Stop::Scope) && !self.fetched_enabled() {
+    pub fn back_tab(&mut self) {
+        loop {
             self.stop = self.stop.previous();
+            if self.reachable(self.stop) {
+                return;
+            }
+        }
+    }
+
+    fn reachable(&self, stop: Stop) -> bool {
+        match stop {
+            Stop::Scope => self.fetched_enabled(),
+            Stop::Rows => self.fetched_enabled() && self.scope == Scope::First,
+            Stop::Path | Stop::Format | Stop::Export => true,
         }
     }
 
@@ -454,14 +510,14 @@ impl ExportForm {
     pub fn activate(&mut self) -> bool {
         match self.stop {
             Stop::Scope => {
-                self.toggle_scope();
+                self.step_scope(true);
                 false
             }
             Stop::Format => {
                 self.toggle_format();
                 false
             }
-            Stop::Path => false,
+            Stop::Path | Stop::Rows => false,
             Stop::Export => true,
         }
     }
@@ -469,28 +525,32 @@ impl ExportForm {
     /// `j`/`↓` inside a radio group. The groups have two options each, so a
     /// move in either direction reaches the same place a toggle does.
     pub fn down(&mut self) {
-        self.move_within_group();
+        self.move_within_group(true);
     }
 
     pub fn up(&mut self) {
-        self.move_within_group();
+        self.move_within_group(false);
     }
 
-    /// The two scope options, in order, as the form draws them.
+    /// The scope options as the form words them: visible, whole, and the
+    /// text before the first-N field. Where the result ended in what was
+    /// fetched the first is the only one drawn, as a sentence.
     #[must_use]
-    pub fn scope_labels(&self) -> [String; 2] {
-        let whole = match (self.subject.table(), self.fetched) {
-            (None, Fetched::Everything(rows)) => {
-                format!("Export the whole query result ({rows})")
-            }
-            (None, Fetched::Some(_)) => "Export the whole query result".to_owned(),
-            (Some(_), Fetched::Everything(rows)) => format!("Export the whole table ({rows})"),
-            (Some(_), Fetched::Some(_)) => "Export the whole table".to_owned(),
+    pub fn scope_labels(&self) -> [String; 3] {
+        let what = if self.subject.table().is_some() {
+            "table"
+        } else {
+            "query result"
+        };
+        let all = match self.fetched {
+            Fetched::Everything(rows) => format!("Export all {rows} rows"),
+            Fetched::Some(rows) => format!("Export the {rows} visible rows"),
         };
 
         [
-            whole,
-            format!("Export the {} fetched rows", self.fetched.count()),
+            all,
+            format!("Export the whole {what}"),
+            "Export the first".to_owned(),
         ]
     }
 
@@ -513,23 +573,18 @@ impl ExportForm {
         }
     }
 
-    fn move_within_group(&mut self) {
+    fn move_within_group(&mut self, forwards: bool) {
         match self.stop {
-            Stop::Scope => self.toggle_scope(),
+            Stop::Scope => self.step_scope(forwards),
             Stop::Format => self.toggle_format(),
-            Stop::Path | Stop::Export => {}
+            Stop::Path | Stop::Rows | Stop::Export => {}
         }
     }
 
-    fn toggle_scope(&mut self) {
-        if !self.fetched_enabled() {
-            return;
+    fn step_scope(&mut self, forwards: bool) {
+        if self.fetched_enabled() {
+            self.scope = self.scope.step(forwards);
         }
-
-        self.scope = match self.scope {
-            Scope::Whole => Scope::Fetched,
-            Scope::Fetched => Scope::Whole,
-        };
     }
 
     fn toggle_format(&mut self) {
@@ -889,18 +944,6 @@ mod tests {
     }
 
     #[test]
-    fn space_on_the_scope_stop_moves_to_the_other_option_and_back() {
-        let mut form = form(Fetched::Some(200));
-        form.tab();
-        form.tab();
-
-        assert!(!form.activate(), "a radio does not run the export");
-        assert_eq!(form.scope(), Scope::Fetched);
-        form.activate();
-        assert_eq!(form.scope(), Scope::Whole);
-    }
-
-    #[test]
     fn space_on_the_export_stop_reports_that_it_ran() {
         let mut form = form(Fetched::Some(200));
         form.back_tab();
@@ -924,9 +967,9 @@ mod tests {
         let mut form = form(Fetched::Some(200));
         form.tab();
         form.tab();
-        form.down();
-        assert_eq!(form.scope(), Scope::Fetched);
         form.up();
+        assert_eq!(form.scope(), Scope::Fetched);
+        form.down();
         assert_eq!(form.scope(), Scope::Whole);
     }
 
@@ -962,27 +1005,22 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_fetched_scope_moves_its_count_onto_the_other_label() {
+    fn a_complete_result_is_one_sentence_naming_its_count() {
         let form = form(Fetched::Everything(137));
 
-        assert_eq!(
-            form.scope_labels(),
-            [
-                "Export the whole table (137)".to_owned(),
-                "Export the 137 fetched rows".to_owned()
-            ]
-        );
+        assert_eq!(form.scope_labels()[0], "Export all 137 rows");
     }
 
     #[test]
-    fn an_incomplete_result_names_both_scopes_plainly() {
+    fn an_incomplete_result_names_its_three_scopes() {
         let form = form(Fetched::Some(200));
 
         assert_eq!(
             form.scope_labels(),
             [
+                "Export the 200 visible rows".to_owned(),
                 "Export the whole table".to_owned(),
-                "Export the 200 fetched rows".to_owned()
+                "Export the first".to_owned(),
             ]
         );
     }
@@ -997,26 +1035,51 @@ mod tests {
             Path::new(""),
         );
 
-        assert_eq!(form.scope_labels()[0], "Export the whole query result");
+        assert_eq!(form.scope_labels()[1], "Export the whole query result");
     }
 
-    /// The count belongs on whichever label survives, and a typed subject's
-    /// label survives the same way a table's does (design §3).
     #[test]
-    fn a_complete_typed_result_carries_its_count_too() {
-        let form = ExportForm::opened(
-            Subject::Typed("SELECT * FROM shop.orders".to_owned()),
-            Fetched::Everything(137),
-            Path::new(""),
-        );
+    fn space_walks_the_three_scopes_and_wraps() {
+        let mut form = form(Fetched::Some(200));
+        form.tab();
+        form.tab();
 
-        assert_eq!(
-            form.scope_labels(),
-            [
-                "Export the whole query result (137)".to_owned(),
-                "Export the 137 fetched rows".to_owned()
-            ]
-        );
+        for expected in [Scope::First, Scope::Fetched, Scope::Whole] {
+            form.activate();
+            assert_eq!(form.scope(), expected);
+        }
+    }
+
+    #[test]
+    fn the_rows_stop_is_reachable_only_under_the_first_scope() {
+        let mut form = form(Fetched::Some(200));
+        form.tab();
+        form.tab();
+        form.tab();
+        assert_eq!(form.stop(), Stop::Export, "Whole has no count to type");
+
+        form.back_tab();
+        form.activate();
+        assert_eq!(form.scope(), Scope::First);
+        form.tab();
+        assert_eq!(form.stop(), Stop::Rows);
+        form.tab();
+        assert_eq!(form.stop(), Stop::Export);
+    }
+
+    #[test]
+    fn the_row_limit_is_a_positive_number_or_nothing() {
+        let mut form = form(Fetched::Some(200));
+        assert_eq!(form.row_limit().map(NonZeroUsize::get), Some(1000));
+
+        form.rows_mut().delete_back();
+        form.rows_mut().delete_back();
+        form.rows_mut().delete_back();
+        form.rows_mut().delete_back();
+        assert_eq!(form.row_limit(), None, "empty is no number");
+
+        form.rows_mut().insert('0');
+        assert_eq!(form.row_limit(), None, "zero rows is not an export");
     }
 
     #[test]

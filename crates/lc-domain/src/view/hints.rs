@@ -727,7 +727,7 @@ fn export_bar(form: &crate::export::ExportForm, export: Option<String>) -> HintB
 
     let stop = match form.stop() {
         Stop::Scope | Stop::Format => Some(rendered(&TOGGLE)),
-        Stop::Path => None,
+        Stop::Path | Stop::Rows => None,
         Stop::Export => Some(rendered(&EXPORT)),
     };
 

@@ -14,6 +14,7 @@
 )]
 
 use std::collections::{BTreeMap, VecDeque};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -277,7 +278,9 @@ async fn write(
             });
             written
         }
-        Source::Whole(statement) => pages(cluster, sink, encoder, job, statement, messages).await?,
+        Source::Whole { statement, limit } => {
+            pages(cluster, sink, encoder, job, statement, *limit, messages).await?
+        }
     };
 
     sink.write(&encoder.finish()).await?;
@@ -291,6 +294,7 @@ async fn pages(
     encoder: &mut Encoder,
     job: &Job,
     statement: &Statement,
+    limit: Option<NonZeroUsize>,
     messages: &mut Vec<Msg>,
 ) -> Result<usize, ExportError> {
     let mut cursor = None;
@@ -308,17 +312,24 @@ async fn pages(
             started = true;
         }
 
-        sink.write(&encoder.chunk(&page.columns, &page.rows))
+        let room = limit.map_or(usize::MAX, |limit| limit.get() - written);
+        let taken = page.rows.len().min(room);
+
+        sink.write(&encoder.chunk(&page.columns, &page.rows[..taken]))
             .await?;
-        written += page.rows.len();
+        written += taken;
         messages.push(Msg::ExportProgress {
             job: job.id,
             rows: written,
         });
 
         match page.next {
-            Some(next) => cursor = Some(next),
-            None => return Ok(written),
+            Some(next)
+                if taken == page.rows.len() && Some(written) != limit.map(NonZeroUsize::get) =>
+            {
+                cursor = Some(next);
+            }
+            _ => return Ok(written),
         }
     }
 }

@@ -38,6 +38,7 @@ use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
 use crate::tree::Node;
 use std::borrow::Cow;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -195,7 +196,14 @@ pub enum Effect {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Source {
     /// Run this and page to the end. The columns arrive with the first page.
-    Whole(Box<Statement>),
+    ///
+    /// `limit` stops it after that many rows, mid-page if need be: a typed
+    /// statement's own `LIMIT` is the user's, so ours is counted here rather
+    /// than spliced into the CQL.
+    Whole {
+        statement: Box<Statement>,
+        limit: Option<NonZeroUsize>,
+    },
     Fetched {
         columns: Vec<String>,
         rows: Vec<Row>,
@@ -3442,6 +3450,14 @@ fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
                 form.up();
                 Decision::Nothing
             }
+            // The count is a number: anything else typed there is dropped.
+            Key::Char(character) if form.stop() == Stop::Rows && !character.is_ascii_digit() => {
+                Decision::Nothing
+            }
+            _ if form.stop() == Stop::Rows => {
+                edit_line(form.rows_mut(), key);
+                Decision::Nothing
+            }
             _ if form.stop().takes_text() => {
                 edit_line(form.path_mut(), key);
                 Decision::Nothing
@@ -3526,7 +3542,7 @@ fn start_export(state: &mut State) -> Vec<Effect> {
         // rows already in memory and issues no statement (export design §3), so
         // its subject records the act rather than quoting a query that never ran.
         let subject = match &source {
-            Source::Whole(stmt) => statement_subject(stmt),
+            Source::Whole { statement, .. } => statement_subject(statement),
             Source::Fetched { .. } => sentence("Exporting the fetched rows"),
         };
         logged(
@@ -3572,10 +3588,18 @@ fn source(state: &State, form: &ExportForm) -> Option<Source> {
     match form.scope() {
         // Ours is the limit that is dropped; a typed statement's own is the
         // user's and is honoured verbatim (design §3).
-        Scope::Whole => Some(Source::Whole(Box::new(match subject {
-            Subject::Table(table) => Statement::select_all(&table.keyspace, &table.table),
-            Subject::Typed(cql) => Statement::typed(cql),
-        }))),
+        Scope::Whole | Scope::First => {
+            let statement = Box::new(match subject {
+                Subject::Table(table) => Statement::select_all(&table.keyspace, &table.table),
+                Subject::Typed(cql) => Statement::typed(cql),
+            });
+            let limit = match form.scope() {
+                Scope::First => Some(form.row_limit()?),
+                _ => None,
+            };
+
+            Some(Source::Whole { statement, limit })
+        }
         // What the grid is showing, arrangement and all: a form opened over
         // a filtered grid offering to write the rows behind the filter would
         // be exporting something the user cannot see
@@ -10556,7 +10580,7 @@ mod tests {
         for _ in 0..2 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
-        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
+        handle_key(&mut state, KeyPress::new(Key::Char('k'))); // Scope: Whole -> Fetched.
         for _ in 0..1 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
@@ -15613,7 +15637,7 @@ mod tests {
 
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
 
-        assert_eq!(form_of(&state).scope(), crate::export::Scope::Fetched);
+        assert_eq!(form_of(&state).scope(), crate::export::Scope::First);
     }
 
     #[test]
@@ -15762,7 +15786,7 @@ mod tests {
         for _ in 0..2 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
-        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
+        handle_key(&mut state, KeyPress::new(Key::Char('k'))); // Scope: Whole -> Fetched.
         // Export.
         for _ in 0..1 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
@@ -15791,9 +15815,10 @@ mod tests {
         };
         assert_eq!(
             *source,
-            Source::Whole(Box::new(Statement::typed(
-                "SELECT * FROM \"shop\".\"orders\""
-            )))
+            Source::Whole {
+                statement: Box::new(Statement::typed("SELECT * FROM \"shop\".\"orders\"")),
+                limit: None,
+            }
         );
         assert_eq!(*format, crate::export::Format::Csv);
         assert!(destination.ends_with("shop.orders.csv"));
@@ -15812,10 +15837,59 @@ mod tests {
         };
         assert_eq!(
             *source,
-            Source::Whole(Box::new(Statement::typed(
-                "SELECT * FROM shop.orders LIMIT 10"
-            )))
+            Source::Whole {
+                statement: Box::new(Statement::typed("SELECT * FROM shop.orders LIMIT 10")),
+                limit: None,
+            }
         );
+    }
+
+    #[test]
+    fn the_first_scope_carries_the_typed_count_and_takes_only_digits() {
+        let mut state = contents_showing_more(PAGE);
+        open_form(&mut state);
+        for _ in 0..2 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> First.
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        for _ in 0..4 {
+            handle_key(&mut state, KeyPress::new(Key::Backspace));
+        }
+        for key in ['x', '7', ' ', '5'] {
+            handle_key(&mut state, KeyPress::new(Key::Char(key)));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        let [Effect::Export { source, .. }] = effects.as_slice() else {
+            panic!("one export effect");
+        };
+        let Source::Whole { limit, .. } = source else {
+            panic!("the first scope re-runs the statement");
+        };
+        assert_eq!(limit.map(NonZeroUsize::get), Some(75));
+    }
+
+    #[test]
+    fn a_first_scope_with_no_count_does_not_start() {
+        let mut state = contents_showing_more(PAGE);
+        open_form(&mut state);
+        for _ in 0..2 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        for _ in 0..4 {
+            handle_key(&mut state, KeyPress::new(Key::Backspace));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+
+        let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+
+        assert!(effects.is_empty());
+        assert!(matches!(state.overlay, Some(Overlay::Export(_))));
     }
 
     #[test]
@@ -15825,7 +15899,7 @@ mod tests {
         for _ in 0..2 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
-        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        handle_key(&mut state, KeyPress::new(Key::Char('k')));
         for _ in 0..1 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }

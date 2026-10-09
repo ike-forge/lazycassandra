@@ -355,11 +355,11 @@ does nothing here.
 
 | Key | Effect |
 |---|---|
-| `Tab` / `Shift-Tab` | Move to the next / previous of the form's stops — path, format, scope, Export — wrapping. The form opens on the path, and the scope stop is skipped where both scopes would write the same file (the form says so in a sentence instead of offering a radio). |
-| `Space` | Activates the focused stop: on a radio group, advances to the next enabled option, wrapping; on the Export stop, runs the export. |
+| `Tab` / `Shift-Tab` | Move to the next / previous of the form's stops — path, format, scope, the first-N count, Export — wrapping; the count is reachable only under the first-N scope. The form opens on the path, and the scope stop is skipped where both scopes would write the same file (the form says so in a sentence instead of offering a radio). |
+| `Space` | Activates the focused stop: on a radio group, advances to the next option, wrapping (scope: visible rows, whole table, first N rows); on the Export stop, runs the export. |
 | `Enter` | Runs the export, and only from the Export stop. On the Scope or Format radio it does nothing — a radio group is not a button, and a keystroke landing there must not write a file. |
 | `j` / `k`, `Down` / `Up` | Move within a radio group — the second way to reach what `Space` also reaches there. |
-| any printable key, `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Text, and only on the path stop — the panel-that-takes-text rule, applied inside an overlay (§2). `Space` types a space there rather than activating anything, and `Enter` does nothing there either. |
+| any printable key (digits only on the count), `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Text, and only on the path stop — the panel-that-takes-text rule, applied inside an overlay (§2). `Space` types a space there rather than activating anything, and `Enter` does nothing there either. |
 | `Esc` | Closes the form and writes nothing. |
 
 The bar names what the stop under `tab` answers to: `tab next option` always,
@@ -446,7 +446,7 @@ not reach it:
 | `y` | Runs the drop. | Text. |
 | `n` | Closes it, and runs nothing. | Text. |
 | `Enter` | Inert. | Runs the drop, and only once the field equals the name asked for. The bar greys `⏎ drop it` until it does. |
-| any printable key, `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Inert. | Text and editing, the panel-that-takes-text rule applied inside an overlay (§2). |
+| any printable key (digits only on the count), `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Inert. | Text and editing, the panel-that-takes-text rule applied inside an overlay (§2). |
 | `Esc` | Closes it, and runs nothing. | The same. |
 | anything else | Inert. Nothing means "close" in one frame and something else in the next. |
 

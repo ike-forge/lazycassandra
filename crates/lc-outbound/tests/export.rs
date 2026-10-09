@@ -151,7 +151,7 @@ async fn a_whole_table_export_writes_a_header_and_every_page() {
     assert!(matches!(
         export,
         Effect::Export {
-            source: Source::Whole(_),
+            source: Source::Whole { .. },
             overwrite: false,
             ..
         }
@@ -191,7 +191,7 @@ async fn a_fetched_export_asks_the_cluster_nothing() {
     ctrl_e(&mut state);
     press(&mut state, Key::Tab); // Path -> Format
     press(&mut state, Key::Tab); // Format -> Scope
-    press(&mut state, Key::Char(' ')); // toggle Scope: Whole -> Fetched
+    press(&mut state, Key::Char('k')); // Scope: Whole -> Fetched
     press(&mut state, Key::Tab); // Scope -> Export
     let effects = press(&mut state, Key::Char(' '));
 
@@ -224,6 +224,36 @@ async fn a_fetched_export_asks_the_cluster_nothing() {
     assert_eq!(
         lines.last(),
         Some(format!("id-{last},user{last}@example.com", last = PAGE - 1)).as_deref()
+    );
+}
+
+#[tokio::test]
+async fn a_first_n_export_stops_mid_page_at_n() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .paging(vec![full_page(3), full_page(3)]);
+    let writer = FakeWriter::default();
+    let mut state = on_a_read_table(&cluster).await;
+
+    ctrl_e(&mut state);
+    press(&mut state, Key::Tab); // Path -> Format
+    press(&mut state, Key::Tab); // Format -> Scope
+    press(&mut state, Key::Char(' ')); // Scope: Whole -> First
+    press(&mut state, Key::Tab); // Scope -> Rows
+    for _ in 0..4 {
+        press(&mut state, Key::Backspace);
+    }
+    press(&mut state, Key::Char('4'));
+    press(&mut state, Key::Tab); // Rows -> Export
+    let effects = press(&mut state, Key::Char(' '));
+
+    run_with_writer(&cluster, Some(&writer), &mut state, effects).await;
+
+    assert_eq!(
+        writer.written(),
+        "id,email\nid-0,user0@example.com\nid-1,user1@example.com\nid-2,user2@example.com\nid-0,user0@example.com\n"
     );
 }
 

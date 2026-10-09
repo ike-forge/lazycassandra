@@ -10,6 +10,7 @@
 //! over there too, or the scenario tests stop proving anything about this
 //! code.
 
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -97,7 +98,9 @@ async fn write(
             report(tx, job.id, written);
             written
         }
-        Source::Whole(statement) => pages(tx, cluster, sink, encoder, job, statement).await?,
+        Source::Whole { statement, limit } => {
+            pages(tx, cluster, sink, encoder, job, statement, *limit).await?
+        }
     };
 
     sink.write(&encoder.finish()).await?;
@@ -114,6 +117,7 @@ async fn pages(
     encoder: &mut Encoder,
     job: &Job,
     statement: &Statement,
+    limit: Option<NonZeroUsize>,
 ) -> Result<usize, ExportError> {
     let mut cursor = None;
     let mut written = 0;
@@ -130,14 +134,17 @@ async fn pages(
             started = true;
         }
 
-        sink.write(&encoder.chunk(&page.columns, &page.rows))
+        let room = limit.map_or(usize::MAX, |limit| limit.get() - written);
+        let taken = page.rows.len().min(room);
+
+        sink.write(&encoder.chunk(&page.columns, &page.rows[..taken]))
             .await?;
-        written += page.rows.len();
+        written += taken;
         report(tx, job.id, written);
 
         match page.next {
-            Some(next) => cursor = Some(next),
-            None => return Ok(written),
+            Some(next) if Some(written) != limit.map(NonZeroUsize::get) => cursor = Some(next),
+            _ => return Ok(written),
         }
     }
 }
