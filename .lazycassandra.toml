@@ -33,3 +33,22 @@ posture = "writable"
 # without comment when it is not told which one is local. The fixture
 # publishes `datacenter1` (docker/compose.yaml).
 datacenter = "datacenter1"
+
+# The TLS + password fixture (`mise run db:tls:up`, port 9142). Run from the
+# repository root: the paths are relative to it.
+[[connections]]
+name = "local-tls"
+hosts = ["127.0.0.1:9142"]
+posture = "writable"
+datacenter = "datacenter1"
+username = "cassandra"
+password = "cassandra"
+tls = { ca = "docker/tls/certs/ca.pem" }
+
+# The same node, login and TLS both taken from a cqlshrc `gen.sh` writes.
+[[connections]]
+name = "local-tls-cqlshrc"
+hosts = ["127.0.0.1:9142"]
+posture = "writable"
+datacenter = "datacenter1"
+cqlshrc = "docker/tls/certs/cqlshrc"

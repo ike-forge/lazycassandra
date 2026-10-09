@@ -103,7 +103,16 @@ mise run db:cqlsh  # poke at it
 
 `mise run db:tls:up` starts a second node on 9142 (`LC_CASSANDRA_TLS_PORT`)
 with TLS and `PasswordAuthenticator` (`cassandra`/`cassandra`), using a CA
-generated into `docker/tls/certs`. `tests/tls.rs` runs against it.
+generated into `docker/tls/certs`. `db:tls:cqlsh` opens cqlsh against it and
+`db:tls:down` stops it. `.lazycassandra.toml` carries two connections for it,
+`local-tls` (stated `tls` and login) and `local-tls-cqlshrc` (both from a
+generated cqlshrc); from the repository root:
+
+```
+lazycassandra --connection local-tls
+```
+
+`tests/tls.rs` runs against the same node.
 
 Destroy both nodes, volumes included, with
 `docker compose -f docker/compose.yaml --profile tls down -v`.

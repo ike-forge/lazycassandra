@@ -69,6 +69,14 @@ run = [
     "docker compose -f docker/compose.yaml --profile tls up -d --wait cassandra-tls",
 ]
 
+[tasks."db:tls:down"]
+description = "Stop and remove the TLS fixture Cassandra"
+run = "docker compose -f docker/compose.yaml --profile tls down cassandra-tls"
+
+[tasks."db:tls:cqlsh"]
+description = "Open cqlsh against the TLS fixture cluster"
+run = "docker compose -f docker/compose.yaml exec cassandra-tls cqlsh --ssl -u cassandra -p cassandra"
+
 [tasks."db:cqlsh"]
 description = "Open cqlsh against the fixture cluster"
 run = "docker compose -f docker/compose.yaml exec cassandra cqlsh"

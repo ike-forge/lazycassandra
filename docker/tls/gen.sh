@@ -9,9 +9,21 @@
 set -euo pipefail
 
 OUT="$(cd "$(dirname "$0")" && pwd)/certs"
-[ -f "$OUT/ca.pem" ] && exit 0
 mkdir -p "$OUT"
 cd "$OUT"
+
+# For the `local-tls-cqlshrc` connection: login and TLS from one cqlsh file.
+# Absolute paths, since cqlsh and lazycassandra resolve relative ones differently.
+write_cqlshrc() {
+    printf '[PlainTextAuthProvider]\nusername = cassandra\npassword = cassandra\n' > credentials
+    chmod 600 credentials
+    printf '[auth_provider]\nmodule = cassandra.auth\nclassname = PlainTextAuthProvider\nusername = cassandra\n\n[authentication]\ncredentials = %s/credentials\n\n[connection]\nssl = true\n\n[ssl]\ncertfile = %s/ca.pem\nvalidate = true\n' "$OUT" "$OUT" > cqlshrc
+}
+
+if [ -f ca.pem ]; then
+    write_cqlshrc
+    exit 0
+fi
 
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out ca.key
 openssl req -x509 -new -key ca.key -sha256 -days 3650 -subj "/CN=lc-fixture-ca" \
@@ -36,3 +48,5 @@ cat node.key node.pem > node-bundle.pem
 
 rm -f node.csr ca.srl
 chmod 644 ./*.pem ./*.key
+
+write_cqlshrc
