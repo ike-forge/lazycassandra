@@ -355,7 +355,7 @@ does nothing here.
 
 | Key | Effect |
 |---|---|
-| `Tab` / `Shift-Tab` | Move to the next / previous of the form's four stops, wrapping. |
+| `Tab` / `Shift-Tab` | Move to the next / previous of the form's four stops — path, scope, format, Export — wrapping. The form opens on the path. |
 | `Space` | Activates the focused stop: on a radio group, advances to the next enabled option, wrapping; on the Export stop, runs the export. |
 | `Enter` | Runs the export, and only from the Export stop. On the Scope or Format radio it does nothing — a radio group is not a button, and a keystroke landing there must not write a file. |
 | `j` / `k`, `Down` / `Up` | Move within a radio group — the second way to reach what `Space` also reaches there. |
@@ -365,7 +365,7 @@ does nothing here.
 The bar names what the stop under `tab` answers to: `tab next option` always,
 `space toggle` on a radio group (greyed on a scope group with one enabled
 option), nothing more on the path stop, where `space` is text, and
-`space/⏎ export` on the Export stop, which is drawn as a bracketed button on the
+`space/⏎ export` on the Export stop, which is drawn as a filled button, on the
 selection ground while `tab` is on it. `esc close` follows. The overwrite
 confirmation's bar is `space/⏎ overwrite` and `esc back`.
 

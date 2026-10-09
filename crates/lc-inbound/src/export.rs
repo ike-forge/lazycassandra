@@ -13,7 +13,10 @@ use unicode_width::UnicodeWidthChar as _;
 
 use crate::theme::Theme;
 
-const WIDTH: u16 = 56;
+const WIDTH: u16 = 84;
+/// What [`fits`] demands: the form narrows to the frame down to here rather
+/// than vanish on a terminal a little under [`WIDTH`].
+const MIN_WIDTH: u16 = 56;
 /// Eight content rows, none spare: the form used to reserve a ninth that
 /// nothing drew into, leaving `Export` sitting one line above the border
 /// instead of on it.
@@ -25,9 +28,10 @@ const HEIGHT: u16 = 10;
 const CONFIRM_WIDTH: u16 = 44;
 const CONFIRM_HEIGHT: u16 = 7;
 
-/// The path field's row inside the block, counted from the top of `inner`:
-/// two radios, a blank line, the format row, a blank line.
-const PATH_ROW: u16 = 5;
+/// The path field's row inside the block: first.
+const PATH_ROW: u16 = 0;
+/// The field's caption, and the column the field starts at.
+const PATH_LABEL: &str = "Path ";
 
 /// Whether `area` can hold the form at all.
 ///
@@ -36,7 +40,17 @@ const PATH_ROW: u16 = 5;
 /// named once, here, beside the block they measure, so the check and the draw
 /// cannot disagree about what fits (export design §2).
 pub(crate) fn fits(area: Rect) -> bool {
-    centred(area, WIDTH, HEIGHT).is_some()
+    form_area(area).is_some()
+}
+
+/// [`WIDTH`] where the frame has it, narrowing to [`MIN_WIDTH`] before the
+/// form gives up.
+fn form_area(area: Rect) -> Option<Rect> {
+    if area.width < MIN_WIDTH {
+        return None;
+    }
+
+    centred(area, WIDTH.min(area.width), HEIGHT)
 }
 
 fn centred(area: Rect, width: u16, height: u16) -> Option<Rect> {
@@ -77,7 +91,7 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
         return;
     }
 
-    let Some(area) = centred(frame.area(), WIDTH, HEIGHT) else {
+    let Some(area) = form_area(frame.area()) else {
         return;
     };
 
@@ -91,9 +105,16 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
-    let (visible, caret) = window(&view.path, view.cursor, usize::from(inner.width));
+    let label_width = u16::try_from(PATH_LABEL.len()).unwrap_or(0);
+    let (visible, caret) = window(
+        &view.path,
+        view.cursor,
+        usize::from(inner.width.saturating_sub(label_width)),
+    );
 
     let lines = vec![
+        path(&visible, view.stop == Stop::Path, theme),
+        TextLine::default(),
         radio(
             &view.scope_labels[0],
             view.scope == Scope::Whole,
@@ -111,15 +132,13 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
         TextLine::default(),
         formats(view, theme),
         TextLine::default(),
-        path(&visible, view.stop == Stop::Path, theme),
-        TextLine::default(),
         button("Export", view.stop == Stop::Export, theme),
     ];
 
     frame.render_widget(Paragraph::new(lines), inner);
 
     if view.stop == Stop::Path {
-        set_caret(frame, inner, &visible, caret);
+        set_caret(frame, inner, label_width, &visible, caret);
     }
 }
 
@@ -176,7 +195,10 @@ fn path(visible: &str, focused: bool, theme: Theme) -> TextLine<'static> {
         Token::HintAction
     });
 
-    TextLine::from(Span::styled(visible.to_owned(), style))
+    TextLine::from(vec![
+        Span::styled(PATH_LABEL, theme.style(Token::Muted)),
+        Span::styled(visible.to_owned(), style),
+    ])
 }
 
 /// The slice of `path` a field `width` columns wide shows, and the caret's
@@ -229,18 +251,21 @@ fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
     (visible, cursor - first)
 }
 
-/// Bracketed, and on the selection ground while `tab` is on it. The key that
-/// presses it is the bar's to name, not the button's.
+/// A filled block, as lazysql draws its buttons: reversed while at rest, on
+/// the selection ground while `tab` is on it. The key that presses it is the
+/// bar's to name, not the button's.
 fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
     let style = if focused {
         theme
             .style(Token::Selected)
             .patch(theme.style(Token::Focused))
     } else {
-        theme.style(Token::HintAction)
+        theme
+            .style(Token::HintAction)
+            .add_modifier(Modifier::REVERSED)
     };
 
-    TextLine::from(Span::styled(format!("[ {label} ]"), style)).right_aligned()
+    TextLine::from(Span::styled(format!("  {label}  "), style))
 }
 
 /// Positions the caret over the path field, measuring the way
@@ -249,10 +274,10 @@ fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
 /// than added straight to `x`, so a multi-byte or double-width character
 /// before it is not counted as one column. Clamped to the inner rect, which a
 /// window of double-width characters can still reach the end of.
-fn set_caret(frame: &mut Frame, inner: Rect, visible: &str, caret: usize) {
+fn set_caret(frame: &mut Frame, inner: Rect, offset: u16, visible: &str, caret: usize) {
     let prefix: String = visible.chars().take(caret).collect();
     let taken = u16::try_from(TextLine::raw(prefix).width()).unwrap_or(inner.width);
-    let cursor_x = (inner.x + taken).min(inner.right().saturating_sub(1));
+    let cursor_x = (inner.x + offset + taken).min(inner.right().saturating_sub(1));
 
     frame.set_cursor_position((cursor_x, inner.y + PATH_ROW));
 }
@@ -328,8 +353,6 @@ mod tests {
     /// from the end, and `Tab` on the field so the caret is drawn.
     fn on_path(path: &str, left: usize) -> ExportForm {
         let mut form = form(Fetched::Some(200));
-        form.tab();
-        form.tab();
 
         let line = form.path_mut();
         while line.cursor() > 0 {
@@ -360,6 +383,11 @@ mod tests {
 
         text
     }
+
+    /// A frame wider than the form, so it is centred with room either side:
+    /// [`super::WIDTH`] wide, its border one column, its caption another five.
+    const FRAME_WIDTH: u16 = 100;
+    const FIELD_X: u16 = (FRAME_WIDTH - super::WIDTH) / 2 + 1 + 5;
 
     fn text(buffer: &Buffer) -> String {
         buffer.content().iter().map(Cell::symbol).collect()
@@ -419,11 +447,11 @@ mod tests {
     }
 
     #[test]
-    fn the_export_button_is_bracketed_and_names_no_key() {
+    fn the_export_button_is_a_filled_block_and_names_no_key() {
         let line = super::button("Export", true, Theme::default());
 
         assert_eq!(line.spans.len(), 1);
-        assert_eq!(line.spans[0].content.as_ref(), "[ Export ]");
+        assert_eq!(line.spans[0].content.as_ref(), "  Export  ");
     }
 
     #[test]
@@ -440,7 +468,9 @@ mod tests {
         );
         assert_eq!(
             super::button("Export", false, theme).spans[0].style,
-            theme.style(lc_domain::style::Token::HintAction)
+            theme
+                .style(lc_domain::style::Token::HintAction)
+                .add_modifier(ratatui::style::Modifier::REVERSED)
         );
     }
 
@@ -450,15 +480,11 @@ mod tests {
     #[test]
     fn the_export_button_sits_on_the_form_s_last_row() {
         let buffer = drawn(80, 24, form(Fetched::Some(200)));
-        let area = super::centred(
-            ratatui::layout::Rect::new(0, 0, 80, 24),
-            super::WIDTH,
-            super::HEIGHT,
-        )
-        .expect("the form fits an 80x24 frame");
+        let area = super::form_area(ratatui::layout::Rect::new(0, 0, 80, 24))
+            .expect("the form fits an 80x24 frame");
         let last_inner_row = area.y + super::HEIGHT - 2;
 
-        assert!(row(&buffer, last_inner_row).contains("[ Export ]"));
+        assert!(row(&buffer, last_inner_row).contains("  Export  "));
     }
 
     #[test]
@@ -540,48 +566,38 @@ mod tests {
     /// caret snapped to the right edge (re-review of final review I5).
     #[test]
     fn a_double_width_path_is_drawn_from_its_tail_with_the_caret_on_the_cursor() {
-        let path = format!("{}終", "東".repeat(39));
-        let (buffer, caret) = with_caret(80, 24, on_path(&path, 0));
+        let path = format!("{}終", "東".repeat(60));
+        let (buffer, caret) = with_caret(FRAME_WIDTH, 24, on_path(&path, 0));
         let y = (0..buffer.area.height)
             .find(|y| row(&buffer, *y).contains('終'))
             .expect("the path field is drawn");
         let field = row(&buffer, y);
-        let left = (0..buffer.area.width)
-            .find(|x| {
-                buffer
-                    .cell((*x, y))
-                    .is_some_and(|cell| cell.symbol() == "東")
-            })
-            .expect("the window is double-width text");
 
-        assert!(field.contains(&format!("{}終", "東".repeat(25))));
+        assert!(field.contains(&format!("{}終", "東".repeat(37))));
         assert!(
-            !field.contains(&"東".repeat(26)),
-            "26 double-width characters is the most 54 columns hold"
+            !field.contains(&"東".repeat(38)),
+            "38 double-width characters and the caret are the most 77 columns hold"
         );
-        assert_eq!(caret, (left + 52, y), "the true column, not the right edge");
+        assert_eq!(
+            caret,
+            (FIELD_X + 76, y),
+            "the true column, not the right edge"
+        );
     }
 
     #[test]
     fn a_mixed_width_path_windows_by_column_around_a_cursor_in_the_middle() {
-        let path = format!("/home/ike/{}東京/report.csv", "deep/".repeat(10));
-        let (buffer, caret) = with_caret(80, 24, on_path(&path, 12));
+        let path = format!("/home/ike/{}東京/report.csv", "deep/".repeat(20));
+        let (buffer, caret) = with_caret(FRAME_WIDTH, 24, on_path(&path, 12));
         let y = (0..buffer.area.height)
             .find(|y| row(&buffer, *y).contains("東京"))
             .expect("the path field is drawn");
         let field = row(&buffer, y);
-        let left = (0..buffer.area.width)
-            .find(|x| {
-                buffer
-                    .cell((*x, y))
-                    .is_some_and(|cell| cell.symbol() == "d")
-            })
-            .expect("the window opens on the repeated segment");
 
-        assert!(field.contains(&format!("{}東京", "deep/".repeat(10))));
+        assert!(field.contains("p/deep/東京"));
         assert!(!field.contains("/home/ike/"), "the head is scrolled off");
         assert!(!field.contains("report.csv"), "so is the tail");
-        assert_eq!(caret, (left + 52, y));
+        assert_eq!(caret, (FIELD_X + 75, y));
     }
 
     #[test]

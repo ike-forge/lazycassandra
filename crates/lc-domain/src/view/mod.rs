@@ -1249,7 +1249,7 @@ mod tests {
         assert_eq!(view.format, Format::Csv);
         assert_eq!(view.path, "/home/ike/shop.orders.csv");
         assert_eq!(view.cursor, 25);
-        assert_eq!(view.stop, Stop::Scope);
+        assert_eq!(view.stop, Stop::Path);
         assert_eq!(view.confirm, None);
     }
 
