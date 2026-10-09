@@ -1375,7 +1375,7 @@ which is a spec-level change.
 
 ## 5. Where it is enforced
 
-Tests in `crates/lc-domain/src/update/tests.rs` unless noted.
+Tests in `crates/lc-domain/src/update/tests/` unless noted.
 
 | Guarantee | Test |
 |---|---|
@@ -1450,7 +1450,7 @@ Tests in `crates/lc-domain/src/update/tests.rs` unless noted.
 | A message over an open picker restores the theme | `a_message_arriving_over_an_open_picker_restores_the_theme` |
 | A click dismisses the picker and restores the theme | `a_click_dismisses_the_picker_and_restores_the_theme` |
 | The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
-| `/` narrows the picker to the themes that match, previewing the row it seats on | `typing_in_the_picker_narrows_the_list_to_the_matches`, `a_term_matching_only_above_the_origin_seats_on_the_last_match`, `a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview`, `enter_closes_the_pickers_sift_and_keeps_the_row`, `a_searched_row_previews_its_theme` (`update/tests.rs`), `a_matched_span_is_marked_in_a_label`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/themes.rs`) |
+| `/` narrows the picker to the themes that match, previewing the row it seats on | `typing_in_the_picker_narrows_the_list_to_the_matches`, `a_term_matching_only_above_the_origin_seats_on_the_last_match`, `a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview`, `enter_closes_the_pickers_sift_and_keeps_the_row`, `a_searched_row_previews_its_theme` (`update/tests/`), `a_matched_span_is_marked_in_a_label`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/themes.rs`) |
 | The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
 | A config naming a default connection opens it, and one naming none opens nothing | `a_config_naming_a_default_connection_opens_it_at_startup`, `a_config_naming_no_default_connects_to_nothing` |
 | Connections with no default open the picker, seated on the first | `connections_with_no_default_open_the_picker` |
@@ -1497,7 +1497,7 @@ Tests in `crates/lc-domain/src/update/tests.rs` unless noted.
 | An open palette outranks a panel that takes text | `an_open_palette_outranks_a_panel_that_takes_text` |
 | Quitting is not reachable from the editor | `q_does_not_quit_while_the_editor_has_focus` |
 | `Esc` prefers the overlay, then closes the buffer, then leaves | `escape_dismisses_the_overlay_before_it_leaves_the_editor`, `escape_closes_the_buffer_and_a_second_leaves_for_tables`, `escape_takes_the_popup_down_before_it_leaves_the_editor`, `escape_leaves_every_panel_for_tables` |
-| The Cql buffer opens on `⏎`/`i` alone, types nothing doing so, and closes on leaving | `enter_and_i_open_the_buffer_and_type_nothing`, `enter_and_i_open_nothing_on_the_logs_tab`, `leaving_the_panel_closes_the_buffer`, `a_closed_buffer_leaves_the_global_keys_their_meaning` (`update/tests.rs`), `a_panel_opens_browsing_and_claims_no_key_until_opened`, `the_logs_tab_cannot_be_opened_for_typing`, `leaving_the_cql_tab_closes_the_buffer_and_coming_back_does_not_reopen_it` (`queries.rs`) |
+| The Cql buffer opens on `⏎`/`i` alone, types nothing doing so, and closes on leaving | `enter_and_i_open_the_buffer_and_type_nothing`, `enter_and_i_open_nothing_on_the_logs_tab`, `leaving_the_panel_closes_the_buffer`, `a_closed_buffer_leaves_the_global_keys_their_meaning` (`update/tests/`), `a_panel_opens_browsing_and_claims_no_key_until_opened`, `the_logs_tab_cannot_be_opened_for_typing`, `leaving_the_cql_tab_closes_the_buffer_and_coming_back_does_not_reopen_it` (`queries.rs`) |
 | `4` opens the buffer, `5` reaches Logs, the brackets walk Queries' tabs | `four_focuses_queries_with_the_buffer_open`, `five_focuses_the_logs_tab_from_anywhere`, `four_from_the_logs_tab_opens_the_buffer`, `brackets_walk_queries_tabs_while_the_buffer_is_closed` |
 | The caret and the bar say whether the buffer is open | `a_closed_buffer_draws_no_cursor_though_its_panel_is_focused` (`inbound/render.rs`), `a_closed_buffer_names_the_way_in_first_and_still_offers_quit`, `an_open_buffer_names_esc_as_done_rather_than_leave` (`view/hints.rs`), `a_closed_buffer_names_the_way_in_and_keeps_quit` (`inbound/hints.rs`) |
 | A click on the buffer opens it | `a_click_on_the_buffer_opens_it` |
@@ -1519,7 +1519,7 @@ Tests in `crates/lc-domain/src/update/tests.rs` unless noted.
 | No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` (`commands.rs`) |
 | `/` narrows the palette to the rows that match, keeping the cursor on a command and the block on its borders | `a_search_narrows_the_palette_to_the_rows_that_match`, `a_search_seats_the_palette_on_a_command`, `a_search_seats_from_the_row_it_opened_on`, `the_palettes_search_reads_the_action_and_not_the_keys`, `closing_a_sift_keeps_the_command_the_filter_found`, `popping_an_empty_palette_sift_closes_it` (`commands.rs`), `a_filtered_palette_keeps_the_block_the_catalogue_gives_it`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/palette.rs`) |
 | The bar names `?`, and the palette's own keys | `the_bar_names_the_palette_between_panel_and_quit`, `the_bar_names_what_the_palette_responds_to` (`view/hints.rs`) |
-| The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update/tests.rs`) |
+| The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update/tests/`) |
 | `?` earns its place in the width-fitting bar, and goes before `q quit` but after `tab panel` | `a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel` (`inbound/hints.rs`) |
 | The palette is drawn, centred, capped and scrollable | `the_palette_lists_the_catalogue`, `the_palette_is_centred`, `a_wide_frame_does_not_get_a_wide_palette`, `a_tall_frame_does_not_get_a_palette_full_of_blank_rows`, `a_frame_too_small_for_a_palette_does_not_get_one` (`inbound/render.rs`) |
 | An empty query is no search | `an_empty_query_is_not_a_search` (`search.rs`) |
