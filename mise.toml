@@ -62,6 +62,13 @@ run = [
     "docker compose -f docker/compose.yaml run --rm seed",
 ]
 
+[tasks."db:tls:up"]
+description = "Start the TLS + password fixture Cassandra (port 9142)"
+run = [
+    "docker/tls/gen.sh",
+    "docker compose -f docker/compose.yaml --profile tls up -d --wait cassandra-tls",
+]
+
 [tasks."db:cqlsh"]
 description = "Open cqlsh against the fixture cluster"
 run = "docker compose -f docker/compose.yaml exec cassandra cqlsh"

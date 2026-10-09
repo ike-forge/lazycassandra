@@ -111,7 +111,7 @@ struct Open {
 /// The driver gives no typed route to the cause: the server's rejection sits in
 /// a variant with no `source`, and a handshake failure reaches us as an
 /// `io::Error` whose rustls cause `Error::source` skips.
-fn connect_error(message: &str) -> DbError {
+fn connect_error(message: &str, plaintext: bool) -> DbError {
     const AUTH: [&str; 2] = ["Authentication failed", "Authentication is required"];
     const TLS: [&str; 5] = [
         "invalid peer certificate",
@@ -125,6 +125,9 @@ fn connect_error(message: &str) -> DbError {
         DbError::Authentication(message.to_owned())
     } else if TLS.iter().any(|marker| message.contains(marker)) {
         DbError::Tls(message.to_owned())
+    } else if plaintext && message.contains("early eof") {
+        // A TLS-only node closes a plaintext handshake without a reply.
+        DbError::Unreachable(format!("{message} — does the cluster require tls?"))
     } else {
         DbError::Unreachable(message.to_owned())
     }
@@ -231,7 +234,7 @@ impl Cluster for CassandraCluster {
         // future is large enough to be worth moving off this async fn's stack.
         let session = Box::pin(builder.build())
             .await
-            .map_err(|error| connect_error(&error.to_string()))?;
+            .map_err(|error| connect_error(&error.to_string(), target.tls == Tls::Off))?;
 
         *self.open.write().await = Some(Open {
             conn,
@@ -766,9 +769,15 @@ mod tests {
         let message = "Database returned an error: Authentication failed - bad credentials, \
                        Error message: Provided username x and/or password are incorrect";
 
-        assert!(matches!(connect_error(message), DbError::Authentication(_)));
         assert!(matches!(
-            connect_error("Authentication is required. You can use SessionBuilder::user"),
+            connect_error(message, false),
+            DbError::Authentication(_)
+        ));
+        assert!(matches!(
+            connect_error(
+                "Authentication is required. You can use SessionBuilder::user",
+                false
+            ),
             DbError::Authentication(_)
         ));
     }
@@ -781,7 +790,7 @@ mod tests {
             "received corrupt message of type InvalidContentType",
         ] {
             assert!(
-                matches!(connect_error(message), DbError::Tls(_)),
+                matches!(connect_error(message, false), DbError::Tls(_)),
                 "{message}"
             );
         }
@@ -790,9 +799,18 @@ mod tests {
     #[test]
     fn anything_else_is_unreachable() {
         assert!(matches!(
-            connect_error("Connection refused (os error 111)"),
+            connect_error("Connection refused (os error 111)", true),
             DbError::Unreachable(_)
         ));
+    }
+
+    #[test]
+    fn a_plaintext_dial_that_ends_in_eof_suggests_tls() {
+        let hint =
+            |plaintext| connect_error("Failed to read the frame header: early eof", plaintext);
+
+        assert!(matches!(hint(true), DbError::Unreachable(m) if m.contains("require tls")));
+        assert!(matches!(hint(false), DbError::Unreachable(m) if !m.contains("require tls")));
     }
 
     #[test]

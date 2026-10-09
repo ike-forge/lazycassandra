@@ -57,7 +57,12 @@ hosts    = ["127.0.0.1:9042"]
 posture  = "read-only"
 username = "cassandra"
 password = { env = "DEV_CASSANDRA_PW" }
+tls      = { ca = "~/ca.pem" }   # or `true` for the system roots; unset = plaintext
 ```
+
+`tls` takes `ca`, `cert` and `key` (a client certificate), `verify`
+(`full` | `chain` | `none`) and `server_name`. `chain` skips only the name
+check, which self-hosted node certificates often fail.
 
 A file that gets something wrong does not stop the tool — the smallest
 addressable unit is dropped and every drop is reported in a diagnostics
@@ -93,6 +98,10 @@ mise run db:up     # start and seed (about a minute on a cold volume)
 mise run db:cqlsh  # poke at it
 mise run db:reset  # destroy it, volume included
 ```
+
+`mise run db:tls:up` starts a second node on 9142 (`LC_CASSANDRA_TLS_PORT`)
+with TLS and `PasswordAuthenticator` (`cassandra`/`cassandra`), using a CA
+generated into `docker/tls/certs`. `tests/tls.rs` runs against it.
 
 Set `LC_CASSANDRA_PORT` if something already holds 9042. It moves the port the
 fixture publishes and the integration tier connects to; the application itself

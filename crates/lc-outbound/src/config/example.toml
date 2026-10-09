@@ -67,6 +67,19 @@
 #                                            # sent the pair
 # password   = "hunter2"                     # or { env = "CASSANDRA_PW" }
 #                                            # or { file = "~/.cassandra/pw" }
+# tls        = true                          # or a table, below; unset = plaintext
+
+# `tls = true` verifies the server against the system's root certificates.
+# The table form states what differs:
+#   `tls = { ca = "~/ca.pem" }`                trust this PEM bundle instead
+#   `tls = { cert = "c.pem", key = "k.pem" }`  present a client certificate
+#                                              (`require_client_auth`); both
+#   `tls = { verify = "chain" }`               full | chain | none
+#   `tls = { server_name = "cass.internal" }`  check this name, not the address
+# Cassandra node certificates often carry no SAN for the address you dial:
+# `chain` still checks the chain and expiry, only the name is skipped. `none`
+# checks nothing, so the traffic is encrypted but the peer unauthenticated.
+# `server_name` is for `verify = "full"` and is refused beside the others.
 
 # `discovery = "contact-points"` is for a cluster reached through a tunnel —
 # a `kubectl port-forward`, an SSH forward, a bastion. Left at "cluster" the

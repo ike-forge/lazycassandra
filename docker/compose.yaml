@@ -56,5 +56,42 @@ services:
       CQLSH_PORT: "9042"
     restart: "no"
 
+  # Native transport over TLS with PasswordAuthenticator (cassandra/cassandra).
+  # Certificates come from `docker/tls/gen.sh`, which `mise run db:tls:up` runs.
+  cassandra-tls:
+    image: cassandra:5.0.8
+    container_name: lc-cassandra-tls
+    profiles: ["tls"]
+    command:
+      - bash
+      - -c
+      - |
+        sed -i \
+          -e 's/^authenticator: AllowAllAuthenticator/authenticator: PasswordAuthenticator/' \
+          -e '/^client_encryption_options:/,/^  require_client_auth: false/c\
+        client_encryption_options:\n  enabled: true\n  optional: false\n  require_client_auth: false\n  keystore: /certs/node-bundle.pem\n  ssl_context_factory:\n    class_name: org.apache.cassandra.security.PEMBasedSslContextFactory' \
+          /etc/cassandra/cassandra.yaml
+        exec docker-entrypoint.sh cassandra -f
+    environment:
+      CASSANDRA_CLUSTER_NAME: lazycassandra-tls
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_BROADCAST_RPC_ADDRESS: 127.0.0.1
+      MAX_HEAP_SIZE: 1G
+      HEAP_NEWSIZE: 256M
+      SSL_CERTFILE: /certs/ca.pem
+      SSL_VALIDATE: "false"
+    ports:
+      - "${LC_CASSANDRA_TLS_PORT:-9142}:9042"
+    volumes:
+      - ./tls/certs:/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh --ssl -u cassandra -p cassandra -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 40
+      start_period: 30s
+
 volumes:
   cassandra-data:
