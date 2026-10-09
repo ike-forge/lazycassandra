@@ -372,6 +372,10 @@ pub enum Tls {
     #[default]
     Off,
     On(TlsSettings),
+    /// Whatever the `cqlshrc` at this path says (`[connection] ssl` and
+    /// `[ssl]`), read at connect time like its credentials. Plaintext when it
+    /// says nothing.
+    Cqlshrc(PathBuf),
 }
 
 /// One cluster to connect to, as a config file names it under `[[connections]]`.

@@ -98,6 +98,12 @@
 # replaces `username` and `password` rather than defaulting them: stating it
 # beside either is reported, not silently resolved one way.
 #
+# TLS comes from the same file, as cqlsh reads it: `[connection] ssl = true`
+# turns it on, and `[ssl]` gives `certfile` (the CA), `usercert` and `userkey`
+# (a client certificate) and `validate`. Like cqlsh, the chain is checked and
+# the hostname is not; `validate = false` checks nothing. A `tls` key stated
+# beside `cqlshrc` replaces all of it.
+#
 # The credentials path is cqlsh's own rule and nothing more: the one the file
 # states, or `~/.cassandra/credentials` when it states none. A cqlshrc written
 # for cqlsh running in a container names a path this host does not have, and

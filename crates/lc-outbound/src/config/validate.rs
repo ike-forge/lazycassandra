@@ -475,7 +475,7 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
             }
         };
 
-        let tls = match layer.tls.map_or(Ok(Tls::Off), tls) {
+        let tls = match connection_tls(layer.tls, credentials.as_ref()) {
             Ok(tls) => tls,
             Err(reason) => {
                 report.error(
@@ -498,6 +498,23 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
     }
 
     connections
+}
+
+/// A `cqlshrc` already owns the TLS half of the setup; `tls` stated beside it
+/// overrides.
+fn connection_tls(
+    layer: Option<TlsLayer>,
+    credentials: Option<&Credentials>,
+) -> Result<Tls, String> {
+    layer.map_or_else(
+        || {
+            Ok(match credentials {
+                Some(Credentials::Cqlshrc(path)) => Tls::Cqlshrc(path.clone()),
+                _ => Tls::Off,
+            })
+        },
+        tls,
+    )
 }
 
 fn tls(layer: TlsLayer) -> Result<Tls, String> {
@@ -1095,6 +1112,18 @@ mod tests {
             ))),
             "the path is kept as written; `~` is expanded where the file is read"
         );
+    }
+
+    #[test]
+    fn a_cqlshrc_carries_its_tls_unless_tls_is_stated() {
+        let (config, _) = config_of(&["[[connections]]\nname = \"prod\"\n\
+             hosts = [\"h:9042\"]\ncqlshrc = \"rc\"\n"]);
+        assert_eq!(config.connections[0].tls, Tls::Cqlshrc(PathBuf::from("rc")));
+
+        let (config, diagnostics) = config_of(&["[[connections]]\nname = \"prod\"\n\
+             hosts = [\"h:9042\"]\ncqlshrc = \"rc\"\ntls = false\n"]);
+        assert!(diagnostics.is_empty());
+        assert_eq!(config.connections[0].tls, Tls::Off);
     }
 
     #[test]

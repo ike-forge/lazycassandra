@@ -140,3 +140,47 @@ async fn plaintext_against_a_tls_cluster_does_not_connect() {
         "{error:?}"
     );
 }
+
+#[allow(
+    clippy::expect_used,
+    reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
+)]
+fn cqlshrc(validate: bool) -> Credentials {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("cqlsh-tls");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+
+    let credentials = dir.join("credentials");
+    std::fs::write(
+        &credentials,
+        "[PlainTextAuthProvider]\npassword = cassandra\n",
+    )
+    .expect("the credentials are written");
+
+    let rc = dir.join("cqlshrc");
+    std::fs::write(
+        &rc,
+        format!(
+            "[auth_provider]\nusername = cassandra\n\n[authentication]\ncredentials = {}\n\n\
+             [connection]\nssl = true\n\n[ssl]\ncertfile = {}\nvalidate = {validate}\n",
+            credentials.display(),
+            certs("ca.pem").display(),
+        ),
+    )
+    .expect("the cqlshrc is written");
+
+    Credentials::Cqlshrc(rc)
+}
+
+#[tokio::test]
+async fn a_cqlshrc_supplies_both_the_login_and_the_tls_settings() {
+    let Credentials::Cqlshrc(rc) = cqlshrc(true) else {
+        unreachable!("cqlshrc builds a Cqlshrc");
+    };
+
+    connect(&target(
+        Tls::Cqlshrc(rc.clone()),
+        Some(Credentials::Cqlshrc(rc)),
+    ))
+    .await
+    .expect("the cqlshrc alone is enough");
+}

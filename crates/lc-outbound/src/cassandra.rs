@@ -211,7 +211,15 @@ impl Cluster for CassandraCluster {
             .compression(compression(driver.compression))
             .default_execution_profile_handle(execution_profile(target, driver).into_handle());
 
-        if let Tls::On(settings) = &target.tls {
+        let tls = match &target.tls {
+            Tls::Cqlshrc(path) => Secrets
+                .cqlshrc_tls(path)
+                .await
+                .map_err(|error| DbError::Unreachable(error.to_string()))?,
+            other => other.clone(),
+        };
+
+        if let Tls::On(settings) = &tls {
             builder = builder.tls_context(Some(tls::client_config(settings).await?));
         }
 
@@ -234,7 +242,7 @@ impl Cluster for CassandraCluster {
         // future is large enough to be worth moving off this async fn's stack.
         let session = Box::pin(builder.build())
             .await
-            .map_err(|error| connect_error(&error.to_string(), target.tls == Tls::Off))?;
+            .map_err(|error| connect_error(&error.to_string(), tls == Tls::Off))?;
 
         *self.open.write().await = Some(Open {
             conn,

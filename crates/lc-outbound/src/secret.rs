@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use lc_domain::config::{Credential, Credentials};
+use lc_domain::config::{Credential, Credentials, Tls, TlsSettings, Trust, Verification};
 use lc_domain::ports::{ConfigError, SecretResolver};
 
 /// Reads a credential from the environment or the filesystem.
@@ -36,6 +36,50 @@ impl Secrets {
             Credentials::Cqlshrc(path) => cqlshrc(&expand_home(path)).await,
         }
     }
+}
+
+impl Secrets {
+    /// The TLS settings a `cqlshrc` states.
+    ///
+    /// # Errors
+    /// When the file cannot be read.
+    pub async fn cqlshrc_tls(&self, path: &Path) -> Result<Tls, ConfigError> {
+        Ok(tls_from(&read(&expand_home(path)).await?))
+    }
+}
+
+/// cqlsh turns SSL on with `[connection] ssl = true`; `[ssl]` only configures it.
+///
+/// `validate = true` (cqlsh's default) maps to `ChainOnly`: cqlsh checks the
+/// chain and not the hostname, so a setup that works there keeps working here.
+fn tls_from(text: &str) -> Tls {
+    let flag = |section, key| value(text, section, key).map(|v| v.eq_ignore_ascii_case("true"));
+
+    if flag("connection", "ssl") != Some(true) {
+        return Tls::Off;
+    }
+
+    let identity = match (
+        value(text, "ssl", "usercert"),
+        value(text, "ssl", "userkey"),
+    ) {
+        (Some(cert), Some(key)) => Some(lc_domain::config::ClientIdentity {
+            cert: PathBuf::from(cert),
+            key: PathBuf::from(key),
+        }),
+        _ => None,
+    };
+
+    Tls::On(TlsSettings {
+        trust: value(text, "ssl", "certfile")
+            .map_or(Trust::System, |path| Trust::CaFile(PathBuf::from(path))),
+        identity,
+        verification: if flag("ssl", "validate") == Some(false) {
+            Verification::Off
+        } else {
+            Verification::ChainOnly
+        },
+    })
 }
 
 /// `~` against `$HOME`, and nothing else.
@@ -192,6 +236,45 @@ username = cassandra-superuser
 [authentication]
 credentials = /cassandra-conf/credentials
 ";
+
+    #[test]
+    fn a_cqlshrc_without_ssl_enabled_is_plaintext_whatever_its_ssl_section_says() {
+        assert_eq!(tls_from(CQLSHRC), Tls::Off);
+        assert_eq!(tls_from("[ssl]\ncertfile = /ca.pem\n"), Tls::Off);
+        assert_eq!(
+            tls_from("[connection]\nssl = false\n[ssl]\ncertfile = /ca.pem\n"),
+            Tls::Off
+        );
+    }
+
+    #[test]
+    fn an_enabled_cqlshrc_takes_its_ca_identity_and_validation() {
+        let text = "[connection]\nssl = true\n[ssl]\ncertfile = /ca.pem\n\
+                    usercert = /c.pem\nuserkey = /k.pem\nvalidate = false\n";
+
+        assert_eq!(
+            tls_from(text),
+            Tls::On(TlsSettings {
+                trust: Trust::CaFile(PathBuf::from("/ca.pem")),
+                identity: Some(lc_domain::config::ClientIdentity {
+                    cert: PathBuf::from("/c.pem"),
+                    key: PathBuf::from("/k.pem"),
+                }),
+                verification: Verification::Off,
+            })
+        );
+    }
+
+    #[test]
+    fn an_enabled_cqlshrc_with_no_ssl_section_trusts_the_system_and_checks_the_chain() {
+        assert_eq!(
+            tls_from("[connection]\nssl = True\n"),
+            Tls::On(TlsSettings {
+                verification: Verification::ChainOnly,
+                ..TlsSettings::default()
+            })
+        );
+    }
 
     #[test]
     fn a_key_is_read_from_its_own_section() {

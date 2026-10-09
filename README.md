@@ -64,6 +64,9 @@ tls      = { ca = "~/ca.pem" }   # or `true` for the system roots; unset = plain
 (`full` | `chain` | `none`) and `server_name`. `chain` skips only the name
 check, which self-hosted node certificates often fail.
 
+A connection that states `cqlshrc` takes its login and its TLS settings
+(`[connection] ssl`, `[ssl]`) from that file; a `tls` key beside it wins.
+
 A file that gets something wrong does not stop the tool — the smallest
 addressable unit is dropped and every drop is reported in a diagnostics
 overlay at startup. See
