@@ -11,7 +11,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use crate::config::{Config, ConnectionConfig, Credential, Diagnostic, PageSize};
+use crate::config::{Config, ConnectionConfig, Credential, Diagnostic, DriverConfig, PageSize};
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
 use crate::theme::ThemeChoice;
@@ -29,7 +29,12 @@ pub trait Cluster: Send + Sync {
     /// contact point to build the adapter around. The posture that comes back
     /// is the connection's own — nothing else knows it
     /// (connection picker design §6).
-    async fn connect(&self, conn: ConnId, target: &ConnectionConfig) -> Result<Posture, DbError>;
+    async fn connect(
+        &self,
+        conn: ConnId,
+        target: &ConnectionConfig,
+        driver: &DriverConfig,
+    ) -> Result<Posture, DbError>;
     async fn describe(&self, conn: ConnId) -> Result<Schema, DbError>;
     async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError>;
 

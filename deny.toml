@@ -7,6 +7,9 @@ allow = [
     # snap 1.1.2, the Snappy codec scylla-cql requires (Snappy is one of the
     # CQL native protocol's two compression algorithms).
     "BSD-3-Clause",
+    # rustls-webpki, untrusted and aws-lc-rs/-sys: the TLS stack scylla's
+    # `rustls-023` feature brings.
+    "ISC",
     "MIT",
     "BSL-1.0",
     "Unicode-3.0",

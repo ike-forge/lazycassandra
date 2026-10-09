@@ -7,7 +7,7 @@
 use crate::clock::Stamp;
 use crate::commands::{CommandsPanel, Run};
 use crate::commit::{CommitPrompt, Discard};
-use crate::config::{Config, ConnectionConfig, Diagnostic, PageSize};
+use crate::config::{Config, ConnectionConfig, Diagnostic, DriverConfig, PageSize};
 use crate::contents::{
     ContentsState, Continue, Failure, Filter, Landed, SelectionMode, Subject, TableRef,
 };
@@ -138,6 +138,7 @@ pub enum Effect {
     Connect {
         conn: ConnId,
         target: Box<ConnectionConfig>,
+        driver: DriverConfig,
     },
     LoadSchema(ConnId),
     /// A mutation or DDL, whose result is not paged.
@@ -3151,6 +3152,7 @@ fn connect(state: &mut State, target: ConnectionConfig) -> Vec<Effect> {
     effects.push(Effect::Connect {
         conn,
         target: Box::new(target),
+        driver: state.config.driver,
     });
     effects
 }
@@ -5505,7 +5507,7 @@ mod tests {
         let (state, conn, effects) = started_on_default(Vec::new(), Stamp::default());
 
         assert!(
-            matches!(effects.as_slice(), [Effect::Connect { conn: id, target }]
+            matches!(effects.as_slice(), [Effect::Connect { conn: id, target, .. }]
                 if *id == conn && target.name.as_str() == "fixture"),
             "the effect carries the connection it opens, not only an id"
         );

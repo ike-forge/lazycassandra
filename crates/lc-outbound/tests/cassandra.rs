@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use lc_domain::config::{ConnectionConfig, ConnectionName, PageSize};
+use lc_domain::config::{ConnectionConfig, ConnectionName, DriverConfig, PageSize};
 use lc_domain::model::{
     ClusteringOrder, ConnId, CqlValue, DbError, IndexKind, Keyspace, KeyspaceKind, Replication,
     Statement,
@@ -42,7 +42,7 @@ async fn the_fixture_cluster_reports_the_keyspaces_the_seed_created() {
     let cluster = CassandraCluster::new();
 
     cluster
-        .connect(conn, &fixture())
+        .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
     let schema = cluster.describe(conn).await.expect("describe succeeds");
@@ -70,7 +70,7 @@ async fn the_clusters_own_keyspaces_sort_after_the_fixtures() {
     let cluster = CassandraCluster::new();
 
     cluster
-        .connect(conn, &fixture())
+        .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
     let schema = cluster.describe(conn).await.expect("describe succeeds");
@@ -101,7 +101,7 @@ async fn fixture_schema() -> lc_domain::model::Schema {
     let cluster = CassandraCluster::new();
 
     cluster
-        .connect(conn, &fixture())
+        .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
     cluster.describe(conn).await.expect("describe succeeds")
@@ -282,7 +282,7 @@ async fn read(keyspace: &str, table: &str) -> lc_domain::model::Page {
     let cluster = CassandraCluster::new();
 
     cluster
-        .connect(conn, &fixture())
+        .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
     cluster
@@ -471,7 +471,7 @@ async fn a_typed_read_is_bounded_by_the_limit_it_carries() {
     let conn = ConnId::next();
     let cluster = CassandraCluster::new();
     cluster
-        .connect(conn, &fixture())
+        .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
 
@@ -493,7 +493,7 @@ async fn a_statement_the_cluster_rejects_comes_back_as_an_error_not_a_panic() {
     let conn = ConnId::next();
     let cluster = CassandraCluster::new();
     cluster
-        .connect(conn, &fixture())
+        .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
 
@@ -563,7 +563,7 @@ async fn paging_walks_a_table_larger_than_one_driver_page() {
     let conn = ConnId::next();
     let cluster = CassandraCluster::new();
     cluster
-        .connect(conn, &fixture())
+        .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
 
@@ -602,7 +602,7 @@ async fn a_page_holds_no_more_rows_than_the_page_size_asked_for() {
     let conn = ConnId::next();
     let cluster = CassandraCluster::new();
     cluster
-        .connect(conn, &fixture())
+        .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
     let stmt = Statement::select_all("shop", "audit_log_by_day");
@@ -686,7 +686,7 @@ async fn a_mutation_answers_with_an_empty_page_rather_than_an_error() {
     writable.posture = Posture::Writable;
 
     cluster
-        .connect(conn, &writable)
+        .connect(conn, &writable, &DriverConfig::default())
         .await
         .expect("the fixture cluster is up");
 

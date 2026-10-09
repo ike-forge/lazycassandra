@@ -6,9 +6,12 @@
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
-use lc_domain::config::{ConnectionConfig, Discovery, PageSize};
+use lc_domain::config::{
+    Compression, ConnectionConfig, Consistency, Discovery, DriverConfig, PageSize, Tls,
+};
 use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Index, IndexKind, IndexTarget,
     Keyspace, Page, PagingState, PrimaryKey, Replication, Row, Schema, Statement, Table,
@@ -16,18 +19,21 @@ use lc_domain::model::{
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::metadata::{Keyspace as DriverKeyspace, Strategy};
 use scylla::errors::TranslationError;
 use scylla::policies::address_translator::{AddressTranslator, UntranslatedPeer};
+use scylla::policies::load_balancing::DefaultPolicy;
 use scylla::value::{CqlValue as DriverValue, Row as DriverRow};
 use tokio::sync::RwLock;
 
 use lc_domain::cell;
 
 use crate::secret::Secrets;
+use crate::tls;
 use crate::value::to_value;
 
 /// One cluster, reached over CQL.
@@ -100,6 +106,74 @@ struct Open {
     session: Arc<Session>,
 }
 
+/// Sorts a failed `build()` by its message.
+///
+/// The driver gives no typed route to the cause: the server's rejection sits in
+/// a variant with no `source`, and a handshake failure reaches us as an
+/// `io::Error` whose rustls cause `Error::source` skips.
+fn connect_error(message: &str) -> DbError {
+    const AUTH: [&str; 2] = ["Authentication failed", "Authentication is required"];
+    const TLS: [&str; 5] = [
+        "invalid peer certificate",
+        "received fatal alert",
+        "received corrupt message",
+        "peer is incompatible",
+        "peer misbehaved",
+    ];
+
+    if AUTH.iter().any(|marker| message.contains(marker)) {
+        DbError::Authentication(message.to_owned())
+    } else if TLS.iter().any(|marker| message.contains(marker)) {
+        DbError::Tls(message.to_owned())
+    } else {
+        DbError::Unreachable(message.to_owned())
+    }
+}
+
+fn compression(compression: Compression) -> Option<scylla::frame::Compression> {
+    match compression {
+        Compression::None => None,
+        Compression::Lz4 => Some(scylla::frame::Compression::Lz4),
+        Compression::Snappy => Some(scylla::frame::Compression::Snappy),
+    }
+}
+
+fn consistency(consistency: Consistency) -> scylla::statement::Consistency {
+    use scylla::statement::Consistency as Driver;
+
+    match consistency {
+        Consistency::Any => Driver::Any,
+        Consistency::One => Driver::One,
+        Consistency::Two => Driver::Two,
+        Consistency::Three => Driver::Three,
+        Consistency::Quorum => Driver::Quorum,
+        Consistency::All => Driver::All,
+        Consistency::LocalQuorum => Driver::LocalQuorum,
+        Consistency::EachQuorum => Driver::EachQuorum,
+        Consistency::LocalOne => Driver::LocalOne,
+    }
+}
+
+/// With a datacenter stated, failover to another is refused: a browsing tool
+/// that silently reads across a region is worse than one that errors.
+fn execution_profile(target: &ConnectionConfig, driver: &DriverConfig) -> ExecutionProfile {
+    let mut policy = DefaultPolicy::builder();
+
+    if let Some(datacenter) = &target.datacenter {
+        policy = policy
+            .prefer_datacenter(datacenter.clone())
+            .permit_dc_failover(false);
+    }
+
+    ExecutionProfile::builder()
+        .consistency(consistency(driver.consistency))
+        .request_timeout(Some(Duration::from_millis(
+            driver.request_timeout.get().into(),
+        )))
+        .load_balancing_policy(policy.build())
+        .build()
+}
+
 impl CassandraCluster {
     #[must_use]
     pub fn new() -> Self {
@@ -122,8 +196,21 @@ impl CassandraCluster {
 
 #[async_trait]
 impl Cluster for CassandraCluster {
-    async fn connect(&self, conn: ConnId, target: &ConnectionConfig) -> Result<Posture, DbError> {
-        let mut builder = SessionBuilder::new().known_nodes(&target.hosts);
+    async fn connect(
+        &self,
+        conn: ConnId,
+        target: &ConnectionConfig,
+        driver: &DriverConfig,
+    ) -> Result<Posture, DbError> {
+        let mut builder = SessionBuilder::new()
+            .known_nodes(&target.hosts)
+            .connection_timeout(Duration::from_millis(driver.connect_timeout.get().into()))
+            .compression(compression(driver.compression))
+            .default_execution_profile_handle(execution_profile(target, driver).into_handle());
+
+        if let Tls::On(settings) = &target.tls {
+            builder = builder.tls_context(Some(tls::client_config(settings).await?));
+        }
 
         if let Some(credentials) = &target.credentials {
             // Resolved here rather than in the effect runtime so the plaintext
@@ -144,7 +231,7 @@ impl Cluster for CassandraCluster {
         // future is large enough to be worth moving off this async fn's stack.
         let session = Box::pin(builder.build())
             .await
-            .map_err(|error| DbError::Unreachable(error.to_string()))?;
+            .map_err(|error| connect_error(&error.to_string()))?;
 
         *self.open.write().await = Some(Open {
             conn,
@@ -673,6 +760,40 @@ mod tests {
     use scylla::cluster::metadata::Strategy;
 
     use super::*;
+
+    #[test]
+    fn a_rejected_login_is_an_authentication_failure() {
+        let message = "Database returned an error: Authentication failed - bad credentials, \
+                       Error message: Provided username x and/or password are incorrect";
+
+        assert!(matches!(connect_error(message), DbError::Authentication(_)));
+        assert!(matches!(
+            connect_error("Authentication is required. You can use SessionBuilder::user"),
+            DbError::Authentication(_)
+        ));
+    }
+
+    #[test]
+    fn a_failed_handshake_is_a_tls_failure() {
+        for message in [
+            "invalid peer certificate: UnknownIssuer",
+            "received fatal alert: HandshakeFailure",
+            "received corrupt message of type InvalidContentType",
+        ] {
+            assert!(
+                matches!(connect_error(message), DbError::Tls(_)),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn anything_else_is_unreachable() {
+        assert!(matches!(
+            connect_error("Connection refused (os error 111)"),
+            DbError::Unreachable(_)
+        ));
+    }
 
     #[test]
     fn a_simple_strategy_reports_its_factor() {

@@ -121,7 +121,11 @@ pub(crate) async fn run_with_writer(
 
     while let Some(effect) = pending.pop_front() {
         let messages: Vec<Msg> = match effect {
-            Effect::Connect { conn, target } => vec![match cluster.connect(conn, &target).await {
+            Effect::Connect {
+                conn,
+                target,
+                driver,
+            } => vec![match cluster.connect(conn, &target, &driver).await {
                 Ok(posture) => Msg::Connected {
                     conn,
                     posture,

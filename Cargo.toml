@@ -37,7 +37,7 @@ bigdecimal = "0.4.9"
 # Already in the tree through scylla's `rustls-023`; direct because the adapter
 # builds the `ClientConfig` itself (custom CA, client certificate, verifier
 # override). scylla's default features pull `aws_lc_rs`, so that is the provider.
-rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-native-certs = "0.8.4"
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
 num-bigint = "0.4.6"

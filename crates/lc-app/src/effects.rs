@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use lc_domain::config::ConnectionConfig;
+use lc_domain::config::{ConnectionConfig, DriverConfig};
 use lc_domain::model::{ConnId, DbError, Page, QueryId};
 use lc_domain::ports::{Cluster, ConfigSink, Writer};
 use lc_domain::{Effect, Msg};
@@ -29,7 +29,11 @@ pub(crate) fn run(
     effect: &Effect,
 ) {
     match effect {
-        Effect::Connect { conn, target } => connect(tx, cluster, *conn, target.as_ref().clone()),
+        Effect::Connect {
+            conn,
+            target,
+            driver,
+        } => connect(tx, cluster, *conn, target.as_ref().clone(), *driver),
 
         Effect::LoadSchema(conn) => {
             let (tx, cluster, conn) = (tx.clone(), Arc::clone(cluster), *conn);
@@ -138,11 +142,12 @@ fn connect(
     cluster: &Arc<dyn Cluster>,
     conn: ConnId,
     target: ConnectionConfig,
+    driver: DriverConfig,
 ) {
     let (tx, cluster) = (tx.clone(), Arc::clone(cluster));
     tokio::spawn(async move {
         let started = std::time::Instant::now();
-        let result = cluster.connect(conn, &target).await;
+        let result = cluster.connect(conn, &target, &driver).await;
         let took = started.elapsed();
         let msg = match result {
             Ok(posture) => Msg::Connected {

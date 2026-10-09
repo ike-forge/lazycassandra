@@ -42,7 +42,7 @@ impl Secrets {
 ///
 /// Not a shell expansion: `~user` is left alone rather than guessed at, and a
 /// path that does not begin with `~` is never rewritten.
-fn expand_home(path: &Path) -> PathBuf {
+pub(crate) fn expand_home(path: &Path) -> PathBuf {
     let Ok(rest) = path.strip_prefix("~") else {
         return path.to_owned();
     };

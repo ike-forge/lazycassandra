@@ -156,6 +156,7 @@ impl Cluster for FakeCluster {
         &self,
         _conn: ConnId,
         _target: &lc_domain::config::ConnectionConfig,
+        _driver: &lc_domain::config::DriverConfig,
     ) -> Result<Posture, DbError> {
         self.connect_error.clone().map_or(Ok(self.posture), Err)
     }

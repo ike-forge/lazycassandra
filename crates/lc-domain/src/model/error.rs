@@ -13,6 +13,9 @@ pub enum DbError {
     #[error("authentication failed: {0}")]
     Authentication(String),
 
+    #[error("TLS failed: {0}")]
+    Tls(String),
+
     #[error("query timed out")]
     Timeout,
 
