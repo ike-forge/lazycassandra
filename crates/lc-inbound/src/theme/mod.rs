@@ -252,11 +252,11 @@ impl Theme {
             Token::StaticColumn => fg(palette.accent),
             Token::Keyspace => fg(palette.keyspace),
             Token::Table => fg(palette.table),
-            Token::RegularColumn | Token::Posture(Posture::ReadOnly) => fg(palette.text),
-            Token::Posture(Posture::Writable) => fg(palette.success),
-            Token::Posture(Posture::Protected) | Token::Severity(Severity::Danger) => {
-                fg(palette.danger).add_modifier(Modifier::BOLD)
-            }
+            Token::RegularColumn => fg(palette.text),
+            // Only a connection that can be written to is lit: the other two
+            // postures recede as `Muted`, so the badge is noticed when it matters.
+            Token::Posture(Posture::Writable) => fg(palette.warning).add_modifier(Modifier::BOLD),
+            Token::Severity(Severity::Danger) => fg(palette.danger).add_modifier(Modifier::BOLD),
             Token::Severity(Severity::Warning) => fg(palette.warning),
             // The warning colour as a ground rather than as text: an
             // uncommitted cell has to be findable in a full grid, and a
@@ -270,7 +270,9 @@ impl Theme {
             Token::Dirty => fg(palette.warning).add_modifier(Modifier::REVERSED),
             Token::Severity(Severity::Info) => fg(palette.info),
             Token::PropertyName => fg(palette.label),
-            Token::Muted | Token::HintAction => fg(palette.dim),
+            Token::Muted
+            | Token::HintAction
+            | Token::Posture(Posture::ReadOnly | Posture::Protected) => fg(palette.dim),
             Token::Faint => fg(palette.faint),
             Token::Section => fg(palette.section).add_modifier(Modifier::BOLD),
             Token::SelectionBar => fg(palette.selection_bar),

@@ -3757,7 +3757,7 @@ mod tests {
                 .fg
         };
 
-        assert_eq!(fg(at), Theme::default().palette().success);
+        assert_eq!(fg(at), Theme::default().palette().warning);
         assert_ne!(
             fg(at),
             fg(at - "local, ".len() - 1),
