@@ -245,11 +245,13 @@ impl Fetched {
 /// Where `Tab` is in the form.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Stop {
+    /// First, and where the form opens: the destination is the one thing
+    /// every export needs, and the one stop where a printable key is text
+    /// (design §2).
     #[default]
+    Path,
     Scope,
     Format,
-    /// The one stop where a printable key is text (design §2).
-    Path,
     Export,
 }
 
@@ -257,20 +259,20 @@ impl Stop {
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
+            Self::Path => Self::Scope,
             Self::Scope => Self::Format,
-            Self::Format => Self::Path,
-            Self::Path => Self::Export,
-            Self::Export => Self::Scope,
+            Self::Format => Self::Export,
+            Self::Export => Self::Path,
         }
     }
 
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
-            Self::Scope => Self::Export,
+            Self::Path => Self::Export,
+            Self::Scope => Self::Path,
             Self::Format => Self::Scope,
-            Self::Path => Self::Format,
-            Self::Export => Self::Path,
+            Self::Export => Self::Format,
         }
     }
 
@@ -828,10 +830,10 @@ mod tests {
     }
 
     #[test]
-    fn a_form_opens_on_the_whole_scope_as_csv_with_the_path_prefilled() {
+    fn a_form_opens_on_the_path_as_csv_over_the_whole_scope_with_the_path_prefilled() {
         let form = form(Fetched::Some(200));
 
-        assert_eq!(form.stop(), Stop::Scope);
+        assert_eq!(form.stop(), Stop::Path);
         assert_eq!(form.scope(), Scope::Whole);
         assert_eq!(form.format(), Format::Csv);
         assert_eq!(form.path().text(), "/home/ike/shop.orders.csv");
@@ -863,7 +865,7 @@ mod tests {
     fn tab_walks_the_four_stops_and_wraps() {
         let mut form = form(Fetched::Some(200));
 
-        for expected in [Stop::Format, Stop::Path, Stop::Export, Stop::Scope] {
+        for expected in [Stop::Scope, Stop::Format, Stop::Export, Stop::Path] {
             form.tab();
             assert_eq!(form.stop(), expected);
         }
@@ -873,7 +875,7 @@ mod tests {
     fn shift_tab_walks_them_backwards() {
         let mut form = form(Fetched::Some(200));
 
-        for expected in [Stop::Export, Stop::Path, Stop::Format, Stop::Scope] {
+        for expected in [Stop::Export, Stop::Format, Stop::Scope, Stop::Path] {
             form.back_tab();
             assert_eq!(form.stop(), expected);
         }
@@ -882,6 +884,7 @@ mod tests {
     #[test]
     fn space_on_the_scope_stop_moves_to_the_other_option_and_back() {
         let mut form = form(Fetched::Some(200));
+        form.tab();
 
         assert!(!form.activate(), "a radio does not run the export");
         assert_eq!(form.scope(), Scope::Fetched);
@@ -892,9 +895,7 @@ mod tests {
     #[test]
     fn space_on_the_export_stop_reports_that_it_ran() {
         let mut form = form(Fetched::Some(200));
-        form.tab();
-        form.tab();
-        form.tab();
+        form.back_tab();
 
         assert_eq!(form.stop(), Stop::Export);
         assert!(form.activate());
@@ -903,6 +904,7 @@ mod tests {
     #[test]
     fn space_on_the_format_stop_rewrites_the_paths_extension() {
         let mut form = form(Fetched::Some(200));
+        form.tab();
         form.tab();
         form.activate();
 
@@ -913,6 +915,7 @@ mod tests {
     #[test]
     fn j_and_k_move_within_a_radio_group_too() {
         let mut form = form(Fetched::Some(200));
+        form.tab();
         form.down();
         assert_eq!(form.scope(), Scope::Fetched);
         form.up();

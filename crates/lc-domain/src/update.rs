@@ -10553,8 +10553,9 @@ mod tests {
         state.contents.set_filter(0, Search::new("keep"));
 
         open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
         handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
-        for _ in 0..3 {
+        for _ in 0..2 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
         let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -12567,7 +12568,8 @@ mod tests {
         );
         columnar.contents.set_filter(0, Search::new("1"));
 
-        // The export form, open on its first stop. Every key `export_key`
+        // The export form, on its scope radios — one `tab` past the path, where
+        // every printable key is text. Every key `export_key`
         // claims there — `esc`, `tab`/`backtab`, `j`/`k`/`↓`/`↑`, `⏎` — is
         // already catalogued elsewhere (`Global`, `Motion`, `Tables`), so
         // this adds no key the negative sweep has to worry about; only
@@ -12576,6 +12578,7 @@ mod tests {
         // toggle to, hence `ROW_LIMIT` rather than a smaller page).
         let mut export_open = contents_showing_more(PAGE);
         ctrl(&mut export_open, Key::Char('e'));
+        press(&mut export_open, Key::Tab);
 
         // The one fixture `n`/`N` do something in: a search applied, with
         // more than one match to walk between (design §5.3).
@@ -15484,18 +15487,18 @@ mod tests {
 
         assert_eq!(
             named(&state),
-            ["tab next option", "space toggle", "esc close"]
-        );
-        press(&mut state, Key::Tab);
-        assert_eq!(
-            named(&state),
-            ["tab next option", "space toggle", "esc close"]
-        );
-        press(&mut state, Key::Tab);
-        assert_eq!(
-            named(&state),
             ["tab next option", "esc close"],
             "space is text on the path"
+        );
+        press(&mut state, Key::Tab);
+        assert_eq!(
+            named(&state),
+            ["tab next option", "space toggle", "esc close"]
+        );
+        press(&mut state, Key::Tab);
+        assert_eq!(
+            named(&state),
+            ["tab next option", "space toggle", "esc close"]
         );
         press(&mut state, Key::Tab);
         assert_eq!(
@@ -15595,7 +15598,7 @@ mod tests {
 
         handle_key(&mut state, KeyPress::new(Key::Tab));
 
-        assert_eq!(form_of(&state).stop(), crate::export::Stop::Format);
+        assert_eq!(form_of(&state).stop(), crate::export::Stop::Scope);
         assert_eq!(state.focus(), Panel::Contents, "focus did not move");
     }
 
@@ -15603,6 +15606,7 @@ mod tests {
     fn space_toggles_the_focused_radio() {
         let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
 
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
 
@@ -15613,15 +15617,16 @@ mod tests {
     fn a_printable_key_types_itself_only_on_the_path_stop() {
         let mut state = contents_showing(5);
         open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
         handle_key(&mut state, KeyPress::new(Key::Char('x')));
         assert_eq!(
             form_of(&state).scope(),
             crate::export::Scope::Whole,
             "an unclaimed key on a radio does nothing"
         );
+        assert!(!form_of(&state).path().text().ends_with('x'));
 
-        handle_key(&mut state, KeyPress::new(Key::Tab));
-        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::BackTab));
         handle_key(&mut state, KeyPress::new(Key::Char('x')));
 
         assert!(form_of(&state).path().text().ends_with('x'));
@@ -15631,8 +15636,6 @@ mod tests {
     fn space_on_the_path_stop_types_a_space() {
         let mut state = contents_showing(5);
         open_form(&mut state);
-        handle_key(&mut state, KeyPress::new(Key::Tab));
-        handle_key(&mut state, KeyPress::new(Key::Tab));
 
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
 
@@ -15714,8 +15717,6 @@ mod tests {
     fn a_second_ctrl_e_leaves_the_open_form_as_it_was() {
         let mut state = contents_showing(5);
         open_form(&mut state);
-        handle_key(&mut state, KeyPress::new(Key::Tab));
-        handle_key(&mut state, KeyPress::new(Key::Tab));
         handle_key(&mut state, KeyPress::new(Key::Char('x')));
         let typed = form_of(&state).path().text().to_owned();
 
@@ -15727,7 +15728,7 @@ mod tests {
 
     fn started(state: &mut State) -> Vec<Effect> {
         open_form(state);
-        // Scope, Format, Path, Export.
+        // Scope, Format, Export.
         for _ in 0..3 {
             handle_key(state, KeyPress::new(Key::Tab));
         }
@@ -15741,7 +15742,7 @@ mod tests {
         if let Some(Overlay::Export(form)) = &mut state.overlay {
             *form.path_mut() = crate::export::Line::new(destination.to_owned());
         }
-        // Scope, Format, Path, Export.
+        // Scope, Format, Export.
         for _ in 0..3 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
@@ -15754,12 +15755,13 @@ mod tests {
     fn export_fetched_in_flight(destination: &str) -> State {
         let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
-        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
         if let Some(Overlay::Export(form)) = &mut state.overlay {
             *form.path_mut() = crate::export::Line::new(destination.to_owned());
         }
-        // Format, Path, Export.
-        for _ in 0..3 {
+        handle_key(&mut state, KeyPress::new(Key::Tab));
+        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
+        // Format, Export.
+        for _ in 0..2 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -15817,8 +15819,9 @@ mod tests {
     fn exporting_the_fetched_rows_asks_the_cluster_nothing() {
         let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
-        for _ in 0..3 {
+        for _ in 0..2 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
 
