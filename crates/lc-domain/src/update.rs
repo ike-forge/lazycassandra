@@ -1001,8 +1001,7 @@ fn handle_key(state: &mut State, press: KeyPress) -> Vec<Effect> {
     // An open buffer claims every printable key and the editing keys; what it
     // does not claim keeps the global meaning it has everywhere else (design
     // §3). No key is carved out, its own number included: `WHERE id = 4` has
-    // to be typeable. Opening the buffer is its own step for that reason, so
-    // `4` keeps its meaning until then (cql edit mode design §2).
+    // to be typeable (cql edit mode design §2).
     if state.takes_text() && edit(state, press.key) {
         return Vec::new();
     }
@@ -1336,8 +1335,16 @@ enum Step {
 /// One key for both: a panel is the place, and its tabs are what that place
 /// can show — so a reader who knows how to arrive already knows how to look at
 /// the rest (docs/shortcuts.md §4). A panel with one tab answers the second
-/// press by staying where it is.
+/// press by staying where it is. Queries is the exception: each of its tabs
+/// has a number, and `4` arrives ready to type.
 fn focus_by_number(state: &mut State, key: char) {
+    if let Some(tab) = QueriesTab::from_number(key) {
+        state.focus_on(Panel::Queries);
+        state.show_queries_tab(tab);
+        state.queries.start_editing();
+        return;
+    }
+
     let Some(panel) = Panel::from_number(key) else {
         return;
     };
@@ -1353,8 +1360,8 @@ fn focus_by_number(state: &mut State, key: char) {
 ///
 /// A tab the strip does not draw is not a place to arrive at: on a keyspace
 /// the DDL panel offers one tab, and walking stays on it. Queries reaches
-/// here only with its buffer closed — an open one has already claimed `4`,
-/// `]` and `[` as text (cql edit mode design §2).
+/// here only with its buffer closed — an open one has already claimed `]`
+/// and `[` as text (cql edit mode design §2).
 fn walk_tab(state: &mut State, step: Step) {
     match state.focus() {
         Panel::Ddl => {}
@@ -8818,9 +8825,10 @@ mod tests {
 
     #[test]
     fn a_repeated_number_keeps_focus_and_walks_the_panels_tabs() {
+        // Queries numbers each tab instead; see `four_focuses_queries_…`.
         for panel in Panel::ALL
             .into_iter()
-            .filter(|panel| does_not_take_text(*panel))
+            .filter(|panel| does_not_take_text(*panel) && *panel != Panel::Queries)
         {
             // A table has to be selected, or the DDL strip draws one tab and
             // there is nothing to walk to.
@@ -8931,22 +8939,39 @@ mod tests {
     }
 
     #[test]
-    fn four_pressed_again_walks_queries_tabs_like_two_walks_ddls() {
+    fn four_focuses_queries_with_the_buffer_open() {
         let mut state = browsing_tables(&[("shop", &["orders"])]);
 
         press(&mut state, Key::Char('4'));
         assert_eq!(state.focus(), Panel::Queries);
-        assert_eq!(
-            state.queries.mode(),
-            Some(crate::queries::CqlMode::Browsing)
-        );
+        assert!(state.takes_text(), "arriving is ready to type");
 
         press(&mut state, Key::Char('4'));
-        assert_eq!(state.queries.tab(), QueriesTab::Logs);
+        assert_eq!(state.queries.text(), "4", "a second `4` is text");
+    }
+
+    #[test]
+    fn five_focuses_the_logs_tab_from_anywhere() {
+        for from in Panel::ALL {
+            let mut state = browsing_tables(&[("shop", &["orders"])]);
+            state.focus_on(from);
+
+            press(&mut state, Key::Char('5'));
+
+            assert_eq!(state.focus(), Panel::Queries, "from {from:?}");
+            assert_eq!(state.queries.tab(), QueriesTab::Logs, "from {from:?}");
+            assert!(!state.takes_text(), "from {from:?}");
+        }
+    }
+
+    #[test]
+    fn four_from_the_logs_tab_opens_the_buffer() {
+        let mut state = on_the_trail();
 
         press(&mut state, Key::Char('4'));
-        assert_eq!(state.queries.tab(), QueriesTab::Cql, "wrapping");
-        assert_eq!(state.queries.text(), "", "no press was typed");
+
+        assert_eq!(state.queries.tab(), QueriesTab::Cql);
+        assert!(state.takes_text());
     }
 
     #[test]

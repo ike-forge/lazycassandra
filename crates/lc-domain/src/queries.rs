@@ -84,12 +84,28 @@ impl QueriesTab {
     pub const fn short_label(self) -> &'static str {
         self.label()
     }
+
+    /// The digit that reaches this tab from anywhere. Logs needs its own: `4`
+    /// opens the buffer, which then takes a second `4` as text.
+    #[must_use]
+    pub const fn number(self) -> char {
+        match self {
+            Self::Cql => '4',
+            Self::Logs => '5',
+        }
+    }
+
+    /// The tab `key` reaches, if either claims it.
+    #[must_use]
+    pub fn from_number(key: char) -> Option<Self> {
+        Self::ALL.into_iter().find(|tab| tab.number() == key)
+    }
 }
 
 /// Whether the Cql tab's buffer is taking text.
 ///
-/// The tab opens on [`CqlMode::Browsing`], where every global key keeps its
-/// meaning — `4` included, which is what lets a second `4` reach Logs.
+/// `4` and a click arrive on [`CqlMode::Editing`]; `Tab` and `Esc` leave the
+/// tab on [`CqlMode::Browsing`], where every global key keeps its meaning.
 /// `Enter` or `i` opens the buffer, `Esc` closes it (cql edit mode design §2).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CqlMode {
