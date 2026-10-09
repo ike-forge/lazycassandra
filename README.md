@@ -1,127 +1,142 @@
 # LazyCassandra
 
-A terminal UI for Apache Cassandra, in the tradition of LazyGit, LazySQL, and k9s.
+**Your Cassandra cluster, a few keystrokes away.**
 
-**Status:** pre-implementation, Phase 0 not started. There is no working tool
-yet — this repo currently holds the design docs and the workspace skeleton.
+LazyCassandra is a terminal UI for developers and DBAs who work with Apache
+Cassandra. Browse tables, inspect their schema, run CQL, and export results
+without leaving your terminal. Vim-inspired navigation and a lazygit-style
+panel layout keep your data and its physical shape side by side.
 
-## Docs
+![Browsing inventory with partition and clustering keys visible, in Default Dark](docs/screenshots/browse.png)
 
-- [docs/vision.md](docs/vision.md) — why this exists, who it's for, scope, roadmap
-- [docs/architecture.md](docs/architecture.md) — crate layout, state model, open decisions
-- [docs/conventions.md](docs/conventions.md) — how the code should read
-- [docs/shortcuts.md](docs/shortcuts.md) — every binding, and the rules a new one must satisfy
-- [docs/superpowers/specs/2026-08-08-cassandra-test-fixture-design.md](docs/superpowers/specs/2026-08-08-cassandra-test-fixture-design.md)
-  — the local Cassandra the TUI is developed against
+- **See the data model.** Partition keys, clustering order, columns, indexes,
+  and table options alongside your rows.
+- **Write CQL with context.** Schema-aware completion, highlighting, formatting,
+  an external editor, and a session log.
+- **Explore and export.** Paging, local sorting and filtering, full-value
+  inspection, clipboard selection, and CSV/JSON exports.
+- **Control writes.** Read-only by default, with CQL previews before committing
+  cell edits or deleting rows.
 
-## Workspace
+## In action
 
-Hexagonal layout: `lc-domain` (pure core) ← `lc-inbound` (TUI) / `lc-outbound`
-(Cassandra) ← `lc-app` (binary).
+<details>
+<summary>Queries, schema, and exports — three more themes</summary>
 
+**Query a partition · Catppuccin Mocha**
+
+![CQL editor and query results in Catppuccin Mocha](docs/screenshots/query.png)
+
+**Inspect keys and table options · Quill Light**
+
+![DDL panel showing a composite partition key, clustering order, and table options in Quill Light](docs/screenshots/schema.png)
+
+**Export CSV or JSON · Beacon Dark**
+
+![Export form with JSON format and a first-1000-rows limit selected in Beacon Dark](docs/screenshots/export.png)
+
+</details>
+
+Screenshots use sample data rendered by the app. Pick from twelve built-in
+themes with `Ctrl-t`, preview them live, or define your own.
+
+## Get started
+
+Homebrew packaging is coming soon. For now, install from a checkout with the
+Rust version pinned in [mise.toml](mise.toml):
+
+```sh
+cargo install --path crates/lc-app --locked
 ```
-mise run build   # cargo build --workspace
-mise run test    # fast test tiers
-mise run check   # fmt, clippy with warnings denied, licences and advisories
-mise run ci      # everything CI gates on
+
+Run `lazycassandra` from your own project directory to create the user config.
+Add a connection to your [config](#configuration), then launch:
+
+```sh
+lazycassandra --connection dev
 ```
+
+`Enter` expands a keyspace or opens a table. `4` opens CQL; `Ctrl-r` runs the
+current statement. `?` opens the searchable command palette.
+
+A terminal with true-color support works best. Icons use a Nerd Font;
+set `icons = false` if you prefer a regular font.
+
+## Shortcuts
+
+The bottom bar shows contextual actions; `?` lists all commands.
+
+| Keys | Action |
+| --- | --- |
+| `1` / `2` / `3` / `4` / `5` | Tables / DDL / contents / CQL editor / session log |
+| `Tab` / `Shift-Tab` | Next / previous panel or tab |
+| `[` / `]` | Previous / next tab; repeat `2` to cycle DDL, Columns, Indexes |
+| `h` `j` `k` `l` / arrows | Navigate the tree or grid |
+| `g` / `G` · `Ctrl-u` / `Ctrl-d` | First / last row · page up / down |
+| `/` · `n` / `N` | Search · next / previous match |
+| `Enter` | Open a table; inspect a row or cell in contents |
+| `m` · `v` · `y` | Cycle row/column/cell mode · select a range · copy |
+| `s` / `f` / `c` | Sort / filter / clear filter in column mode; fetched rows only |
+| `p` / `P` | Fetch the next page / keep fetching until the end or a memory/row stop |
+| `Ctrl-r` / `Ctrl-f` | Run the current CQL statement / format the buffer |
+| `Ctrl-n` / `Ctrl-p` | Next / previous CQL completion; `Tab` or `Enter` accepts |
+| `Ctrl-e` | Export from contents; open `$VISUAL` / `$EDITOR` from Queries |
+| `e` · `Ctrl-s` | Edit a value in the inspector · preview and commit edits from contents |
+| `d` | Confirm a table/keyspace drop or row deletion, when writes are enabled |
+| `Ctrl-o` / `Ctrl-t` | Connection picker / theme picker |
+| `Esc` / `q` | Back out or stop fetching / quit |
+
+In the CQL editor, printable keys type text. `Esc` dismisses completion, then
+leaves editing. See the [full shortcut reference](docs/shortcuts.md).
 
 ## Configuration
 
-Two TOML files, layered lowest to highest: a user-level
-`$XDG_CONFIG_HOME/lazycassandra/config.toml`, and a project
-`.lazycassandra.toml` — the LazySQL model. **The project file is meant to be
-committed to git**, so a teammate clones the repo, runs `lazycassandra`, and
-is connected. Both are optional.
+First launch creates a commented `~/.config/lazycassandra/config.toml`
+(`$XDG_CONFIG_HOME/lazycassandra/config.toml` if set). Put shared settings in
+your project's `.lazycassandra.toml`.
 
-`lazycassandra --config <path>` adds a third layer above both, for a file
-that belongs to neither the machine nor the checkout. It layers rather than
-replaces: keys it leaves unstated still come from the files beneath it. A
-path that is not there ends the launch rather than falling back.
-
-`--connection <name>` opens that connection at startup instead of asking,
-overriding `default_connection`. A name the config does not carry opens the
-picker rather than something else.
-
-A first run writes the user-level file if nothing is there: every setting
-commented out at its default, with a line on what each one does. Delete it for
-a fresh copy. Only the theme picker ever writes to it again, and only the
-`theme` key.
+Later layers override earlier ones: defaults → user config → project config →
+`--config <path>`. `--connection <name>` overrides `default_connection`.
 
 ```toml
-theme = "default-dark"
+theme = "catppuccin-mocha"
+default_connection = "dev"
+
+[grid]
+page_rows = 200
+max_column_width = 30
 
 [[connections]]
-name     = "dev"
-hosts    = ["127.0.0.1:9042"]
-posture  = "read-only"
-username = "cassandra"
-password = { env = "DEV_CASSANDRA_PW" }
-tls      = { ca = "~/ca.pem" }   # or `true` for the system roots; unset = plaintext
+name = "dev"
+hosts = ["127.0.0.1:9042"]
+posture = "read-only"             # read-only | writable | protected
+# datacenter = "datacenter1"      # set this to your cluster's local DC
+# username = "cassandra"          # omit both credentials if auth is disabled
+# password = { env = "CASSANDRA_PASSWORD" }
 ```
 
-`tls` takes `ca`, `cert` and `key` (a client certificate), `verify`
-(`full` | `chain` | `none`) and `server_name`. `chain` skips only the name
-check, which self-hosted node certificates often fail.
+Reference secrets with `password = { env = "CASSANDRA_PASSWORD" }` or
+`password = { file = "~/.cassandra/password" }`. Alternatively, use
+`cqlshrc = "~/.cassandra/cqlshrc"` instead of `username` and `password`.
 
-A connection that states `cqlshrc` takes its login and its TLS settings
-(`[connection] ssl`, `[ssl]`) from that file; a `tls` key beside it wins.
+TLS is off unless stated: `tls = true` verifies against the system roots, and
+`tls = { ca, cert, key, verify, server_name }` states what differs (`verify` is
+`full`, `chain` or `none`). A `cqlshrc` also supplies its TLS settings
+(`[connection] ssl`, `[ssl]`); a `tls` key beside it wins.
 
-A file that gets something wrong does not stop the tool — the smallest
-addressable unit is dropped and every drop is reported in a diagnostics
-overlay at startup. See
-[docs/superpowers/specs/2026-08-14-configuration-design.md](docs/superpowers/specs/2026-08-14-configuration-design.md)
-for the full schema and the reasoning behind it.
+Through a tunnel or `kubectl port-forward`, use `discovery = "contact-points"`
+with one forwarded host. `protected` permits writes but requires typing a
+table's name to drop it; keyspace drops always require the name.
 
-## Clipboard
+See the [config reference](crates/lc-outbound/src/config/example.toml) for
+custom themes, backgrounds, mouse input, driver settings, and export defaults.
+`Ctrl-t` saves your chosen theme for the next launch.
 
-`y` copies the focused row by two routes at once, because neither reaches
-everywhere:
+## Project
 
-- **OSC 52**, which asks the terminal. Needs a terminal that supports it
-  (Windows Terminal, WezTerm, kitty, alacritty) and a multiplexer that
-  forwards it (tmux with `set-clipboard on` — though some builds parse the
-  sequence and forward nothing). This is the route that survives SSH onto a
-  host with no display of its own.
-- **A helper process**, which asks the platform: `clip.exe` under WSL,
-  `wl-copy` under Wayland, `xclip` under X11, `pbcopy` on macOS. Whichever the
-  environment offers, first that will run.
+LazyCassandra is under active development. Cluster monitoring, query analysis,
+and persistent query history are on the [roadmap](docs/vision.md#7-roadmap).
+Found a bug or have an idea? [Open an issue](https://github.com/ike-forge/lazycassandra/issues).
 
-Where both work they are told the same line, so it does not matter which one
-the clipboard listened to. On a host with neither — no display, no interop,
-and a terminal that ignores OSC 52 — `y` still does nothing observable.
-
-## Fixture cluster
-
-A single-node Cassandra with three keyspaces covering the nominal case, every
-CQL type, and a pile of identifier and terminal-rendering edge cases.
-
-```
-mise run db:up     # start and seed (about a minute on a cold volume)
-mise run db:cqlsh  # poke at it
-```
-
-`mise run db:tls:up` starts a second node on 9142 (`LC_CASSANDRA_TLS_PORT`)
-with TLS and `PasswordAuthenticator` (`cassandra`/`cassandra`), using a CA
-generated into `docker/tls/certs`. `db:tls:cqlsh` opens cqlsh against it and
-`db:tls:down` stops it. `.lazycassandra.toml` carries two connections for it,
-`local-tls` (stated `tls` and login) and `local-tls-cqlshrc` (both from a
-generated cqlshrc); from the repository root:
-
-```
-lazycassandra --connection local-tls
-```
-
-`tests/tls.rs` runs against the same node.
-
-Destroy both nodes, volumes included, with
-`docker compose -f docker/compose.yaml --profile tls down -v`.
-
-Set `LC_CASSANDRA_PORT` if something already holds 9042. It moves the port the
-fixture publishes and the integration tier connects to; the application itself
-reads `.lazycassandra.toml`, so a moved port means editing the `hosts` line
-there to match.
-
-`.lazycassandra.toml` at the repository root is what points a checkout at that
-fixture. Without a config naming a connection the tool connects to nothing and
-opens its connection picker instead — `ctrl-o` reopens it.
+For local development and the sample Cassandra cluster, see the
+[development guide](docs/development.md) and [architecture](docs/architecture.md).

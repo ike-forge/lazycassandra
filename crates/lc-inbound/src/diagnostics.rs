@@ -157,7 +157,7 @@ mod tests {
         let without_scrollbar = drawn(&rows(1), 60, 12);
         let with_scrollbar = drawn(&rows(40), 60, 12);
 
-        // `▐` is the scrollbar thumb glyph (render.rs's `THUMB`), not the box
+        // `▐` is the scrollbar thumb glyph (`render::THUMB`), not the box
         // border's `│` — asserting on the border character would pass even
         // with the scrollbar deleted, which is the bug this test exists to
         // catch.
