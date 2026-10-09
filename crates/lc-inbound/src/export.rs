@@ -17,10 +17,9 @@ const WIDTH: u16 = 84;
 /// What [`fits`] demands: the form narrows to the frame down to here rather
 /// than vanish on a terminal a little under [`WIDTH`].
 const MIN_WIDTH: u16 = 56;
-/// Eight content rows, none spare: the form used to reserve a ninth that
-/// nothing drew into, leaving `Export` sitting one line above the border
-/// instead of on it.
-const HEIGHT: u16 = 10;
+/// Nine content rows, none spare, so `Export` sits on the last one: path,
+/// formats, scopes, the gaps between, the button.
+const HEIGHT: u16 = 11;
 /// A floor, not a cap: [`confirm_width`] widens the dialog to fit the whole
 /// path on its own line rather than clip it. Unlike the form's path field,
 /// this line has no cursor to scroll around, so cutting it would just hide
@@ -106,36 +105,48 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     frame.render_widget(block, area);
 
     let label_width = u16::try_from(PATH_LABEL.len()).unwrap_or(0);
-    let (visible, caret) = window(
-        &view.path,
-        view.cursor,
-        usize::from(inner.width.saturating_sub(label_width)),
-    );
+    let field_width = usize::from(inner.width.saturating_sub(label_width));
+    let (visible, caret) = window(&view.path, view.cursor, field_width);
 
-    let lines = vec![
-        path(&visible, view.stop == Stop::Path, theme),
+    let mut lines = vec![
+        path(&visible, field_width, view.stop == Stop::Path, theme),
         TextLine::default(),
-        radio(
+    ];
+    lines.extend(formats(view, theme));
+    lines.push(TextLine::default());
+    if view.fetched_enabled {
+        lines.push(radio(
             &view.scope_labels[0],
             view.scope == Scope::Whole,
-            true,
             view.stop == Stop::Scope,
             theme,
-        ),
-        radio(
+        ));
+        lines.push(radio(
             &view.scope_labels[1],
             view.scope == Scope::Fetched,
-            view.fetched_enabled,
             view.stop == Stop::Scope,
             theme,
-        ),
-        TextLine::default(),
-        formats(view, theme),
-        TextLine::default(),
-        button("Export", view.stop == Stop::Export, theme),
-    ];
+        ));
+    } else {
+        lines.push(TextLine::from(Span::styled(
+            view.scope_labels[0].as_str(),
+            theme.style(Token::Muted),
+        )));
+    }
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(
+        Paragraph::new(lines),
+        Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            inner.height.saturating_sub(1),
+        ),
+    );
+    frame.render_widget(
+        Paragraph::new(button("Export", view.stop == Stop::Export, theme)),
+        Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
+    );
 
     if view.stop == Stop::Path {
         set_caret(frame, inner, label_width, &visible, caret);
@@ -152,43 +163,8 @@ fn mark(selected: bool) -> &'static str {
     if selected { MARK_ON } else { MARK_OFF }
 }
 
-/// [`MARK_ON`] or [`MARK_OFF`], the label, and the styling that says whether
-/// it can be chosen and whether `Tab` is on its group.
-fn radio(label: &str, selected: bool, enabled: bool, focused: bool, theme: Theme) -> TextLine<'_> {
-    let mark = mark(selected);
-    let style = if enabled {
-        theme.style(if focused {
-            Token::Selected
-        } else {
-            Token::HintAction
-        })
-    } else {
-        theme.style(Token::Faint)
-    };
-
-    TextLine::from(vec![Span::styled(mark, style), Span::styled(label, style)])
-}
-
-fn formats(view: &ExportView, theme: Theme) -> TextLine<'static> {
-    let focused = view.stop == Stop::Format;
-    let mut spans = Vec::new();
-
-    for format in [Format::Csv, Format::Json] {
-        let mark = mark(view.format == format);
-        let style = theme.style(if focused {
-            Token::Selected
-        } else {
-            Token::HintAction
-        });
-        spans.push(Span::styled(mark, style));
-        spans.push(Span::styled(format.label(), style));
-        spans.push(Span::raw("    "));
-    }
-
-    TextLine::from(spans)
-}
-
-fn path(visible: &str, focused: bool, theme: Theme) -> TextLine<'static> {
+/// [`MARK_ON`] or [`MARK_OFF`], the label, and whether `Tab` is on its group.
+fn radio(label: &str, selected: bool, focused: bool, theme: Theme) -> TextLine<'_> {
     let style = theme.style(if focused {
         Token::Selected
     } else {
@@ -196,8 +172,43 @@ fn path(visible: &str, focused: bool, theme: Theme) -> TextLine<'static> {
     });
 
     TextLine::from(vec![
+        Span::styled(mark(selected), style),
+        Span::styled(label, style),
+    ])
+}
+
+fn formats(view: &ExportView, theme: Theme) -> Vec<TextLine<'static>> {
+    let focused = view.stop == Stop::Format;
+    let style = theme.style(if focused {
+        Token::Selected
+    } else {
+        Token::HintAction
+    });
+
+    [Format::Csv, Format::Json]
+        .into_iter()
+        .map(|format| {
+            TextLine::from(vec![
+                Span::styled(mark(view.format == format), style),
+                Span::styled(format.label(), style),
+            ])
+        })
+        .collect()
+}
+
+/// On a backdrop always: the wash at rest, the selection ground under `Tab`.
+/// Padded to `width` so the backdrop is the whole field, not the text.
+fn path(visible: &str, width: usize, focused: bool, theme: Theme) -> TextLine<'static> {
+    let style = theme.style(if focused {
+        Token::Selected
+    } else {
+        Token::Crosshair
+    });
+    let padding = width.saturating_sub(TextLine::raw(visible).width());
+
+    TextLine::from(vec![
         Span::styled(PATH_LABEL, theme.style(Token::Muted)),
-        Span::styled(visible.to_owned(), style),
+        Span::styled(format!("{visible}{}", " ".repeat(padding)), style),
     ])
 }
 
@@ -423,26 +434,36 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_scope_is_drawn_faint() {
-        let buffer = drawn(80, 24, form(Fetched::Everything(137)));
-        let faint = Theme::default()
-            .style(lc_domain::style::Token::Faint)
-            .fg
-            .expect("faint spends a colour");
+    fn a_result_both_scopes_write_whole_is_a_sentence_not_a_radio() {
+        let drawn = text(&drawn(100, 24, form(Fetched::Everything(137))));
 
-        let row_text = |y: u16| -> String {
-            (0..buffer.area.width)
-                .filter_map(|x| buffer.cell((x, y)).map(|cell| cell.symbol().to_owned()))
-                .collect()
+        assert!(drawn.contains("Export the whole table (137)"));
+        assert!(!drawn.contains("○ Export the whole table"));
+        assert!(!drawn.contains("◉ Export the whole table"));
+        assert!(!drawn.contains("fetched rows"));
+    }
+
+    #[test]
+    fn the_path_is_on_a_backdrop_at_rest_and_a_heavier_one_under_tab() {
+        let theme = Theme::default();
+        let bg = |focused| {
+            super::path("a", 10, focused, theme).spans[1]
+                .style
+                .bg
+                .expect("the field spends a ground")
         };
-        let row = (0..buffer.area.height)
-            .find(|y| row_text(*y).contains("fetched rows"))
-            .expect("the fetched option is drawn");
 
-        assert!(
-            (0..buffer.area.width)
-                .any(|x| buffer.cell((x, row)).is_some_and(|cell| cell.fg == faint)),
-            "an unreachable option says so (design §3)"
+        assert_eq!(
+            bg(true),
+            theme.style(lc_domain::style::Token::Selected).bg.unwrap()
+        );
+        assert_eq!(
+            bg(false),
+            theme.style(lc_domain::style::Token::Crosshair).bg.unwrap()
+        );
+        assert_eq!(
+            super::path("a", 10, false, theme).spans[1].content,
+            "a         "
         );
     }
 

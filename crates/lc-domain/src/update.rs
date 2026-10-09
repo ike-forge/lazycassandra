@@ -10553,9 +10553,11 @@ mod tests {
         state.contents.set_filter(0, Search::new("keep"));
 
         open_form(&mut state);
-        handle_key(&mut state, KeyPress::new(Key::Tab));
-        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
         for _ in 0..2 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
+        for _ in 0..1 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
         let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -15598,7 +15600,7 @@ mod tests {
 
         handle_key(&mut state, KeyPress::new(Key::Tab));
 
-        assert_eq!(form_of(&state).stop(), crate::export::Stop::Scope);
+        assert_eq!(form_of(&state).stop(), crate::export::Stop::Format);
         assert_eq!(state.focus(), Panel::Contents, "focus did not move");
     }
 
@@ -15606,6 +15608,7 @@ mod tests {
     fn space_toggles_the_focused_radio() {
         let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
+        handle_key(&mut state, KeyPress::new(Key::Tab));
         handle_key(&mut state, KeyPress::new(Key::Tab));
 
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -15728,8 +15731,7 @@ mod tests {
 
     fn started(state: &mut State) -> Vec<Effect> {
         open_form(state);
-        // Scope, Format, Export.
-        for _ in 0..3 {
+        while form_of(state).stop() != crate::export::Stop::Export {
             handle_key(state, KeyPress::new(Key::Tab));
         }
         handle_key(state, KeyPress::new(Key::Char(' ')))
@@ -15742,8 +15744,7 @@ mod tests {
         if let Some(Overlay::Export(form)) = &mut state.overlay {
             *form.path_mut() = crate::export::Line::new(destination.to_owned());
         }
-        // Scope, Format, Export.
-        for _ in 0..3 {
+        while form_of(&state).stop() != crate::export::Stop::Export {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -15758,10 +15759,12 @@ mod tests {
         if let Some(Overlay::Export(form)) = &mut state.overlay {
             *form.path_mut() = crate::export::Line::new(destination.to_owned());
         }
-        handle_key(&mut state, KeyPress::new(Key::Tab));
-        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
-        // Format, Export.
         for _ in 0..2 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Char(' '))); // Scope: Whole -> Fetched.
+        // Export.
+        for _ in 0..1 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
         handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -15819,9 +15822,11 @@ mod tests {
     fn exporting_the_fetched_rows_asks_the_cluster_nothing() {
         let mut state = contents_showing_more(PAGE);
         open_form(&mut state);
-        handle_key(&mut state, KeyPress::new(Key::Tab));
-        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
         for _ in 0..2 {
+            handle_key(&mut state, KeyPress::new(Key::Tab));
+        }
+        handle_key(&mut state, KeyPress::new(Key::Char(' ')));
+        for _ in 0..1 {
             handle_key(&mut state, KeyPress::new(Key::Tab));
         }
 

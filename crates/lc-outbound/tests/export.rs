@@ -97,16 +97,25 @@ fn ctrl_e(state: &mut State) {
     update(state, Msg::Input(KeyPress::ctrl(Key::Char('e'))));
 }
 
+fn form_stop(state: &State) -> Stop {
+    let Some(Overlay::Export(form)) = &state.overlay else {
+        panic!("the form is up");
+    };
+    form.stop()
+}
+
 fn run_export_form(state: &mut State, format: Format) -> Vec<Effect> {
     ctrl_e(state);
-    press(state, Key::Tab); // Path -> Scope
-    press(state, Key::Tab); // Scope -> Format
+    press(state, Key::Tab); // Path -> Format
 
     if format == Format::Json {
         press(state, Key::Char(' ')); // toggle Csv -> Json
     }
 
-    press(state, Key::Tab); // Format -> Export
+    // Scope is skipped when it has nothing to choose.
+    while !matches!(form_stop(state), Stop::Export) {
+        press(state, Key::Tab);
+    }
     press(state, Key::Char(' ')) // run
 }
 
@@ -180,10 +189,10 @@ async fn a_fetched_export_asks_the_cluster_nothing() {
     let read = cluster.executed();
 
     ctrl_e(&mut state);
-    press(&mut state, Key::Tab); // Path -> Scope
+    press(&mut state, Key::Tab); // Path -> Format
+    press(&mut state, Key::Tab); // Format -> Scope
     press(&mut state, Key::Char(' ')); // toggle Scope: Whole -> Fetched
-    press(&mut state, Key::Tab);
-    press(&mut state, Key::Tab);
+    press(&mut state, Key::Tab); // Scope -> Export
     let effects = press(&mut state, Key::Char(' '));
 
     let export = expect_export(&effects).clone();

@@ -726,16 +726,7 @@ fn export_bar(form: &crate::export::ExportForm, export: Option<String>) -> HintB
     }
 
     let stop = match form.stop() {
-        // A scope group with one enabled option has nothing to toggle to.
-        Stop::Scope => Some(Hint {
-            liveness: if form.fetched_enabled() {
-                Liveness::Live
-            } else {
-                Liveness::Inert
-            },
-            ..rendered(&TOGGLE)
-        }),
-        Stop::Format => Some(rendered(&TOGGLE)),
+        Stop::Scope | Stop::Format => Some(rendered(&TOGGLE)),
         Stop::Path => None,
         Stop::Export => Some(rendered(&EXPORT)),
     };

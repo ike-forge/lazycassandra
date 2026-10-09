@@ -250,8 +250,9 @@ pub enum Stop {
     /// (design §2).
     #[default]
     Path,
-    Scope,
     Format,
+    /// Skipped while both scopes would write the same file.
+    Scope,
     Export,
 }
 
@@ -259,9 +260,9 @@ impl Stop {
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
-            Self::Path => Self::Scope,
-            Self::Scope => Self::Format,
-            Self::Format => Self::Export,
+            Self::Path => Self::Format,
+            Self::Format => Self::Scope,
+            Self::Scope => Self::Export,
             Self::Export => Self::Path,
         }
     }
@@ -270,9 +271,9 @@ impl Stop {
     pub const fn previous(self) -> Self {
         match self {
             Self::Path => Self::Export,
-            Self::Scope => Self::Path,
-            Self::Format => Self::Scope,
-            Self::Export => Self::Format,
+            Self::Format => Self::Path,
+            Self::Scope => Self::Format,
+            Self::Export => Self::Scope,
         }
     }
 
@@ -436,10 +437,16 @@ impl ExportForm {
 
     pub const fn tab(&mut self) {
         self.stop = self.stop.next();
+        if matches!(self.stop, Stop::Scope) && !self.fetched_enabled() {
+            self.stop = self.stop.next();
+        }
     }
 
     pub const fn back_tab(&mut self) {
         self.stop = self.stop.previous();
+        if matches!(self.stop, Stop::Scope) && !self.fetched_enabled() {
+            self.stop = self.stop.previous();
+        }
     }
 
     /// `Space`. Reports whether the export should run — true only from
@@ -865,7 +872,7 @@ mod tests {
     fn tab_walks_the_four_stops_and_wraps() {
         let mut form = form(Fetched::Some(200));
 
-        for expected in [Stop::Scope, Stop::Format, Stop::Export, Stop::Path] {
+        for expected in [Stop::Format, Stop::Scope, Stop::Export, Stop::Path] {
             form.tab();
             assert_eq!(form.stop(), expected);
         }
@@ -875,7 +882,7 @@ mod tests {
     fn shift_tab_walks_them_backwards() {
         let mut form = form(Fetched::Some(200));
 
-        for expected in [Stop::Export, Stop::Format, Stop::Scope, Stop::Path] {
+        for expected in [Stop::Export, Stop::Scope, Stop::Format, Stop::Path] {
             form.back_tab();
             assert_eq!(form.stop(), expected);
         }
@@ -884,6 +891,7 @@ mod tests {
     #[test]
     fn space_on_the_scope_stop_moves_to_the_other_option_and_back() {
         let mut form = form(Fetched::Some(200));
+        form.tab();
         form.tab();
 
         assert!(!form.activate(), "a radio does not run the export");
@@ -905,7 +913,6 @@ mod tests {
     fn space_on_the_format_stop_rewrites_the_paths_extension() {
         let mut form = form(Fetched::Some(200));
         form.tab();
-        form.tab();
         form.activate();
 
         assert_eq!(form.format(), Format::Json);
@@ -916,10 +923,25 @@ mod tests {
     fn j_and_k_move_within_a_radio_group_too() {
         let mut form = form(Fetched::Some(200));
         form.tab();
+        form.tab();
         form.down();
         assert_eq!(form.scope(), Scope::Fetched);
         form.up();
         assert_eq!(form.scope(), Scope::Whole);
+    }
+
+    #[test]
+    fn tab_skips_the_scope_when_both_scopes_write_the_same_file() {
+        let mut form = form(Fetched::Everything(6));
+
+        for expected in [Stop::Format, Stop::Export, Stop::Path] {
+            form.tab();
+            assert_eq!(form.stop(), expected);
+        }
+        for expected in [Stop::Export, Stop::Format, Stop::Path] {
+            form.back_tab();
+            assert_eq!(form.stop(), expected);
+        }
     }
 
     /// Everything already fetched means the two scopes would write the same
