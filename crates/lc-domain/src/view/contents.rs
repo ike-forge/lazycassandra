@@ -216,7 +216,7 @@ pub(super) fn body(state: &State) -> PanelBody {
         // the absence of one (vision.md §4, principle 1).
         ContentsState::Empty => waiting("Press Enter on a table"),
         ContentsState::Loading { .. } => waiting("Loading rows…"),
-        // Quoted, not deferred to [4]-Logs: the trail keeps the history,
+        // Quoted, not deferred to [5]-Logs: the trail keeps the history,
         // the panel owns the reason (supersedes query log design §8).
         ContentsState::Failed { error, .. } => PanelBody::Notice {
             text: error.clone(),

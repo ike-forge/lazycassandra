@@ -39,6 +39,9 @@ pub(crate) struct TabSpec {
     pub(crate) label: &'static str,
     pub(crate) short: &'static str,
     pub(crate) active: bool,
+    /// A digit reaching this tab directly, drawn ahead of its name. `None`
+    /// for a tab reached by pressing the panel's number again.
+    pub(crate) number: Option<char>,
 }
 
 impl PanelTitle {
@@ -59,15 +62,21 @@ impl PanelTitle {
 
     /// A strip of tabs under one number.
     ///
-    /// No tab carries a key of its own: the number focuses the panel and,
-    /// pressed again, walks the strip (docs/shortcuts.md §4).
+    /// A tab without a number of its own is reached by pressing the panel's
+    /// again (docs/shortcuts.md §4).
     pub(crate) fn tabbed(number: char, specs: &[TabSpec]) -> Self {
         let tabs = specs
             .iter()
             .map(|spec| {
+                let named = |label: &str| {
+                    Segment::plain(match spec.number {
+                        Some(key) => format!("{}{label}", prefix(key)),
+                        None => label.to_owned(),
+                    })
+                };
                 Tab::new(
-                    vec![Segment::plain(spec.label)],
-                    vec![Segment::plain(spec.short)],
+                    vec![named(spec.label)],
+                    vec![named(spec.short)],
                     spec.active,
                 )
             })
@@ -80,7 +89,7 @@ impl PanelTitle {
     /// the panel is rather than in a manual (vision.md §4, principle 1).
     #[must_use]
     pub fn prefix(&self) -> String {
-        format!("[{}]{NUMBER_SEPARATOR}", self.number)
+        prefix(self.number)
     }
 
     /// The strip as one string, prefix and separators included — what a
@@ -105,6 +114,10 @@ impl PanelTitle {
     pub fn tabs(&self) -> &[Tab] {
         &self.tabs
     }
+}
+
+fn prefix(number: char) -> String {
+    format!("[{number}]{NUMBER_SEPARATOR}")
 }
 
 impl Tab {
@@ -153,11 +166,13 @@ mod tests {
                     label: "Table DDL",
                     short: "Table DDL",
                     active: active == 0,
+                    number: None,
                 },
                 TabSpec {
                     label: "Table columns",
                     short: "Columns",
                     active: active == 1,
+                    number: None,
                 },
             ],
         )
@@ -196,6 +211,30 @@ mod tests {
 
         assert_eq!(title.strip(), "Table DDL - Table columns");
         assert_eq!(title.text(), format!("{}{}", title.prefix(), title.strip()));
+    }
+
+    #[test]
+    fn a_tab_with_a_number_of_its_own_draws_it_ahead_of_its_name() {
+        let title = PanelTitle::tabbed(
+            '4',
+            &[
+                TabSpec {
+                    label: "Queries",
+                    short: "Queries",
+                    active: true,
+                    number: None,
+                },
+                TabSpec {
+                    label: "Logs",
+                    short: "Logs",
+                    active: false,
+                    number: Some('5'),
+                },
+            ],
+        );
+
+        assert_eq!(title.text(), "[4]-Queries - [5]-Logs");
+        assert_eq!(title.tabs()[1].short(), "[5]-Logs");
     }
 
     #[test]

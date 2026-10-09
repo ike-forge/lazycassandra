@@ -177,7 +177,8 @@ const GLOBAL: &[Command] = &[
         "focus Table contents",
         Run::Here,
     ),
-    Command::new(&[Stroke::key(Key::Char('4'))], "focus Queries", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('4'))], "write a query", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('5'))], "focus Logs", Run::Here),
     // The rule itself — a number pressed again steps one tab further in —
     // lives here rather than under all five numbers: only the DDL panel has
     // tabs to reach today, and only those presses are spelled out above.

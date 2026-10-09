@@ -1035,7 +1035,8 @@ mod tests {
         // strip is the one name.
         assert_eq!(row(&buffer, 5), "╭── [2]-DDL ───╮│                      │");
         assert_eq!(row(&buffer, 8), "│              │╰──────────────────────╯");
-        assert_eq!(row(&buffer, 9), "│              │╭── [4]-Queries - Logs ╮");
+        // `[5]-Logs` does not fit beside it, so the strip keeps the active tab.
+        assert_eq!(row(&buffer, 9), "│              │╭── [4]-Queries ───────╮");
         assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
     }
 
@@ -5553,7 +5554,7 @@ mod tests {
     #[test]
     fn a_command_row_names_what_it_does_before_the_key_it_costs() {
         let buffer = with_palette(100, 40);
-        let row = block_row(&buffer, "Commands", 19);
+        let row = block_row(&buffer, "Commands", 20);
 
         assert_eq!(row.trim(), "yank                  y");
     }
@@ -5685,7 +5686,7 @@ mod tests {
         assert!(drawn.contains("Global"));
         assert!(drawn.contains("back out one step"));
         assert!(drawn.contains("focus Table contents"));
-        assert!(drawn.contains("left, or fold"));
+        assert!(drawn.contains("down one row"));
     }
 
     #[test]

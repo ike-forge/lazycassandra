@@ -744,6 +744,7 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
                     label: candidate.label(),
                     short: candidate.short_label(),
                     active: *candidate == tab,
+                    number: None,
                 })
                 .collect();
 
@@ -758,6 +759,8 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
                     label: candidate.label(),
                     short: candidate.short_label(),
                     active: *candidate == tab,
+                    // The panel's own prefix already names the first tab.
+                    number: (candidate.number() != number).then_some(candidate.number()),
                 })
                 .collect();
 
@@ -868,7 +871,7 @@ mod tests {
                 "[1]-Tables",
                 "[2]-DDL",
                 "[3]-Table contents",
-                "[4]-Queries - Logs"
+                "[4]-Queries - [5]-Logs"
             ]
             .map(str::to_owned)
         );
