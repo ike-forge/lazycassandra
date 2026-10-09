@@ -4,7 +4,7 @@
 binding has to satisfy — not a wishlist.
 
 Every keystroke in LazyCassandra passes through one function: `handle_key` in
-[`crates/lc-domain/src/update.rs`](../crates/lc-domain/src/update.rs). There is
+[`crates/lc-domain/src/update/mod.rs`](../crates/lc-domain/src/update/mod.rs). There is
 no second key table, no per-panel handler, and no binding in the renderer. If a
 key does something, it does it there.
 
@@ -1375,7 +1375,7 @@ which is a spec-level change.
 
 ## 5. Where it is enforced
 
-Tests in `crates/lc-domain/src/update.rs` unless noted.
+Tests in `crates/lc-domain/src/update/tests/` unless noted.
 
 | Guarantee | Test |
 |---|---|
@@ -1396,32 +1396,32 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A read returns the cell cursor to the first cell | `a_request_returns_the_cell_cursor_to_the_first_cell`, `a_refusal_returns_the_cell_cursor_to_the_first_cell`, `a_fresh_panel_has_no_columns_to_move_over`, `a_loaded_page_reports_its_columns` (`contents.rs`) |
 | The column viewport follows the cell cursor | `the_column_viewport_follows_the_cell_cursor`, `a_narrower_frame_pulls_the_column_viewport_back_to_the_cursor`; `ColumnScroll` itself by `a_visible_column_moves_the_viewport_nowhere`, `the_viewport_moves_the_shortest_distance_that_shows_a_column_to_the_right`, `the_viewport_follows_a_column_to_the_left`, `a_column_too_wide_for_the_panel_is_shown_from_its_own_start`, `following_a_column_that_is_gone_clamps_the_viewport` (`grid.rs`) |
 | A column is as wide as the widest thing in it, capped | `a_column_is_as_wide_as_the_widest_thing_in_it`, `a_heading_wider_than_every_value_sets_the_width`, `a_column_is_capped`, `a_column_with_no_rows_is_still_as_wide_as_its_heading` (`grid.rs`) |
-| A grid that fits widens its truncated columns into the room left | `a_page_that_fits_gives_its_leftover_to_the_truncated_column`, `columns_the_cap_did_not_truncate_keep_their_widths`, `truncated_columns_share_the_leftover_equally`, `a_column_that_reaches_its_natural_width_passes_the_rest_on`, `columns_too_wide_for_the_panel_are_left_to_scroll` (`grid.rs`), `an_appended_value_past_the_cap_grows_the_width_the_panel_widens_to` (`contents.rs`), `the_column_follow_draws_by_the_widths_the_grid_is_drawn_at`, `a_truncated_column_widens_to_fill_the_panel` (`inbound/render.rs`) |
+| A grid that fits widens its truncated columns into the room left | `a_page_that_fits_gives_its_leftover_to_the_truncated_column`, `columns_the_cap_did_not_truncate_keep_their_widths`, `truncated_columns_share_the_leftover_equally`, `a_column_that_reaches_its_natural_width_passes_the_rest_on`, `columns_too_wide_for_the_panel_are_left_to_scroll` (`grid.rs`), `an_appended_value_past_the_cap_grows_the_width_the_panel_widens_to` (`contents.rs`), `the_column_follow_draws_by_the_widths_the_grid_is_drawn_at`, `a_truncated_column_widens_to_fill_the_panel` (`inbound/render/tests/`) |
 | Only whole columns are drawn | `only_the_columns_that_fit_are_counted`, `fitting_counts_from_the_offset`, `a_panel_too_narrow_for_one_column_still_draws_it`, `fitting_past_the_last_column_is_nothing` (`grid.rs`) |
 | The grid names its cell, its first column and its widths | `a_grid_carries_the_width_of_every_column`, `a_grid_names_the_selected_cell_and_the_first_column_drawn`, `the_gutter_is_as_wide_as_the_last_row_number` (`view/contents.rs`, and the same name in `grid.rs` for the arithmetic under it) |
 | A read lands focus in Contents, by key or by click | `reading_a_table_lands_focus_in_contents`, `a_click_on_a_table_lands_focus_in_contents_too`, `focus_moves_before_the_page_arrives`, `a_refused_read_still_lands_focus_in_contents` |
 | Unfolding does not move focus, and a read leaves the tree alone | `unfolding_a_keyspace_leaves_focus_in_tables`, `reading_a_table_leaves_the_tree_selection_where_it_was`, `reading_a_table_lands_focus_in_contents_and_j_walks_the_grid_rather_than_the_tree` (`lc-outbound/tests/scenario.rs`) |
-| The cell is drawn over its row, and the gutter numbers the page | `the_selected_cell_is_marked_apart_from_the_rest_of_its_row`, `the_gutter_is_muted_and_the_values_beside_it_are_not`, `rows_are_numbered_from_one`, `the_row_number_is_the_pages_own_index_after_a_scroll` (`inbound/render.rs`) |
+| The cell is drawn over its row, and the gutter numbers the page | `the_selected_cell_is_marked_apart_from_the_rest_of_its_row`, `the_gutter_is_muted_and_the_values_beside_it_are_not`, `rows_are_numbered_from_one`, `the_row_number_is_the_pages_own_index_after_a_scroll` (`inbound/render/tests/`) |
 | The cell highlight reads against the row's without a colour | `a_selected_cell_reads_against_the_selected_row_without_spending_a_colour` (`inbound/theme/mod.rs`) |
 | `m` cycles the selection mode, and does so only in Contents | `m_cycles_the_contents_selection_mode`, `m_does_nothing_outside_the_grid`, `m_types_an_m_in_queries` |
 | A fresh panel opens in row mode, cycling wraps, and a new request keeps the mode | `a_fresh_panel_selects_a_row`, `the_mode_cycles_row_column_cell_and_wraps`, `a_new_request_keeps_the_mode_and_clears_the_cursors` (`contents.rs`) |
-| Row mode lights the row and column mode lights the column and its heading | `row_mode_lights_the_whole_row_and_no_column`, `column_mode_lights_the_column_and_its_heading`, `a_heading_is_unwashed_once_the_crosshair_scrolls_out_of_view`, `column_mode_lights_nothing_when_its_cursor_is_off_the_columns_drawn` (`inbound/render.rs`) |
-| The wash leaves a flavour's column colours, and a key column's heading colour, alone | `the_crosshair_leaves_a_flavours_column_colours_alone`, `a_key_columns_heading_keeps_its_colour_under_the_wash` (`inbound/render.rs`) |
+| Row mode lights the row and column mode lights the column and its heading | `row_mode_lights_the_whole_row_and_no_column`, `column_mode_lights_the_column_and_its_heading`, `a_heading_is_unwashed_once_the_crosshair_scrolls_out_of_view`, `column_mode_lights_nothing_when_its_cursor_is_off_the_columns_drawn` (`inbound/render/tests/`) |
+| The wash leaves a flavour's column colours, and a key column's heading colour, alone | `the_crosshair_leaves_a_flavours_column_colours_alone`, `a_key_columns_heading_keeps_its_colour_under_the_wash` (`inbound/render/tests/`) |
 | The crosshair is fainter than the cursor row and flattens no colour the row keeps | `the_crosshair_is_fainter_than_the_cursor_row`, `the_bands_paint_a_background_and_spend_no_foreground` (`inbound/theme/mod.rs`) |
-| The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render.rs`) |
+| The grid is drawn from the column the viewport names | `the_grid_is_drawn_from_the_column_the_viewport_names`, `a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed`, `the_frame_reports_how_wide_the_contents_panel_is` (`inbound/render/tests/`) |
 | `s` sorts the cursor's column, and only in column mode | `s_sorts_the_column_the_cursor_is_on`, `s_is_a_free_letter_outside_column_mode`, `sorting_a_column_walks_descending_then_ascending_then_back_to_the_page`, `sorting_a_second_column_starts_that_columns_own_cycle`, `rows_a_sort_cannot_separate_keep_the_order_they_arrived_in` (`contents.rs`) |
 | `f` filters the cursor's column, applied when the prompt closes | `f_opens_a_prompt_over_the_column_the_cursor_is_on`, `a_filter_is_applied_when_the_prompt_closes_and_not_before`, `escape_leaves_the_column_filtered_exactly_as_it_was`, `the_prompt_claims_every_printable_key_the_panel_would_have`, `a_filter_drops_the_rows_it_does_not_match`, `filters_on_two_columns_narrow_each_other` (`contents.rs`) |
 | Emptying the prompt clears a filter, and so does `c` | `the_prompt_opens_on_the_filter_already_standing_so_deleting_it_clears`, `c_clears_the_filter_on_the_column_the_cursor_is_on`, `emptying_a_filter_prompt_is_what_clears_the_filter` (`contents.rs`) |
 | One order is what every reader counts in | `a_column_yanks_the_rows_the_grid_is_showing`, `exporting_the_fetched_rows_writes_the_ones_the_grid_is_showing`, `a_filter_that_shrinks_the_grid_pulls_the_row_cursor_back`, `a_search_walks_the_rows_the_filter_left_and_not_the_ones_it_dropped`, `arranging_drops_the_range_v_was_holding` (`contents.rs`) |
-| Every heading carries its two marks, and one in force reads apart | `every_heading_carries_its_two_marks`, `a_sorted_column_wears_the_arrow_of_the_way_it_reads`, `a_mark_in_force_reads_apart_from_the_ones_that_are_not`, `a_filter_that_hides_rows_draws_only_the_ones_it_left`, `the_title_says_how_much_of_the_page_a_filter_left` (`inbound/render.rs`) |
-| A press on a mark is the key it stands for | `a_press_on_the_arrow_the_frame_drew_is_the_sort_key` (`inbound/render.rs`), `a_press_on_a_heading_mark_is_the_key_that_mark_stands_for` (`inbound/hit.rs`), `clicking_the_sort_mark_sorts_the_column_it_belongs_to`, `clicking_the_filter_mark_opens_the_prompt_over_that_column`, `a_mark_on_a_column_that_is_gone_is_dropped_rather_than_clamped` |
+| Every heading carries its two marks, and one in force reads apart | `every_heading_carries_its_two_marks`, `a_sorted_column_wears_the_arrow_of_the_way_it_reads`, `a_mark_in_force_reads_apart_from_the_ones_that_are_not`, `a_filter_that_hides_rows_draws_only_the_ones_it_left`, `the_title_says_how_much_of_the_page_a_filter_left` (`inbound/render/tests/`) |
+| A press on a mark is the key it stands for | `a_press_on_the_arrow_the_frame_drew_is_the_sort_key` (`inbound/render/tests/`), `a_press_on_a_heading_mark_is_the_key_that_mark_stands_for` (`inbound/hit.rs`), `clicking_the_sort_mark_sorts_the_column_it_belongs_to`, `clicking_the_filter_mark_opens_the_prompt_over_that_column`, `a_mark_on_a_column_that_is_gone_is_dropped_rather_than_clamped` |
 | The bar names the column keys in column mode alone | `column_mode_is_the_one_bar_that_names_the_column_keys`, `the_clear_filter_hint_is_greyed_until_there_is_one_to_clear`, `the_bar_under_the_filter_prompt_names_the_two_ways_out_and_nothing_else` |
-| A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render.rs`) |
+| A hidden column, and only that, draws the bottom bar | `a_grid_wider_than_its_panel_gets_a_horizontal_scrollbar`, `a_grid_that_fits_gets_no_horizontal_scrollbar`, `the_horizontal_thumb_sits_at_whichever_end_of_the_track_the_viewport_is_on` (`inbound/render/tests/`) |
 | The palette lists every key that does something, and only those | `no_key_does_anything_the_palette_does_not_list`, `every_key_the_palette_lists_does_something`, `the_catalogue_lists_the_selection_mode_key`, `the_catalogue_lists_every_key_a_panel_hints_at` (`commands.rs`) |
-| A repeated number keeps focus and walks the tabs | `a_repeated_number_keeps_focus_and_walks_the_panels_tabs`, `pressing_two_three_times_returns_to_the_first_tab` |
+| A repeated number keeps focus and walks the tabs | `a_repeated_number_keeps_focus_and_walks_the_panels_tabs`, `pressing_two_once_per_tab_returns_to_the_first_one` |
 | A tab change resets the cursor and viewport and keeps the search | `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `a_tab_change_leaves_the_search_where_it_was` (`ddl.rs`) |
-| The columns tab lists every column with its kind | `the_columns_tab_lists_every_column_with_the_part_it_plays`, `the_columns_tab_shows_the_columns_the_ddl_tab_leaves_out` (`view/details.rs`), `the_columns_tab_draws_every_column_with_its_kind_and_type` (`inbound/render.rs`) |
-| A strip too narrow keeps the drawn tab whole | `a_border_wide_enough_names_both_tabs_and_fades_the_one_not_drawn`, `a_border_too_narrow_for_either_strip_keeps_the_tab_it_is_drawing_whole` (`inbound/render.rs`) |
+| The columns tab lists every column with its kind | `the_columns_tab_lists_every_column_with_the_part_it_plays`, `the_columns_tab_shows_the_columns_the_ddl_tab_leaves_out` (`view/details.rs`), `the_columns_tab_draws_every_column_with_its_kind_and_type` (`inbound/render/tests/`) |
+| A strip too narrow keeps the drawn tab whole | `a_border_wide_enough_names_every_tab_and_fades_the_ones_not_drawn`, `a_border_too_narrow_for_either_strip_keeps_the_tab_it_is_drawing_whole` (`inbound/render/tests/`) |
 | `q` quits and cancels | `q_quits`, `quitting_cancels_everything_still_in_flight` |
 | `Esc` clears the overlay | `escape_dismisses_the_overlay` |
 | `Tab`/`Shift-Tab` cycle every `(panel, tab)` stop, in order, and wrap | `tab_walks_every_stop_in_order_and_wraps`, `shift_tab_walks_the_same_stops_the_other_way`, `tab_steps_ddls_two_tabs_as_separate_stops`, `tab_from_queries_cql_lands_on_queries_logs`, `tab_from_queries_logs_lands_on_tables_and_reverts_to_cql`, `shift_tab_from_tables_lands_on_queries_logs`, `a_full_forward_cycle_returns_to_where_it_started`, `shift_tab_undoes_tab_from_every_stop` |
@@ -1450,7 +1450,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A message over an open picker restores the theme | `a_message_arriving_over_an_open_picker_restores_the_theme` |
 | A click dismisses the picker and restores the theme | `a_click_dismisses_the_picker_and_restores_the_theme` |
 | The picker lists every theme, and a narrow frame draws none of it | `the_picker_lists_every_theme`, `a_frame_too_narrow_for_the_list_draws_none_of_it` (`inbound/themes.rs`) |
-| `/` narrows the picker to the themes that match, previewing the row it seats on | `typing_in_the_picker_narrows_the_list_to_the_matches`, `a_term_matching_only_above_the_origin_seats_on_the_last_match`, `a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview`, `enter_closes_the_pickers_sift_and_keeps_the_row`, `a_searched_row_previews_its_theme` (`update.rs`), `a_matched_span_is_marked_in_a_label`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/themes.rs`) |
+| `/` narrows the picker to the themes that match, previewing the row it seats on | `typing_in_the_picker_narrows_the_list_to_the_matches`, `a_term_matching_only_above_the_origin_seats_on_the_last_match`, `a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview`, `enter_closes_the_pickers_sift_and_keeps_the_row`, `a_searched_row_previews_its_theme` (`update/tests/`), `a_matched_span_is_marked_in_a_label`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/themes.rs`) |
 | The cursor row is a bar of the flavour's own surface | `the_cursor_row_is_a_bar_of_the_flavours_own_surface` (`inbound/themes.rs`) |
 | A config naming a default connection opens it, and one naming none opens nothing | `a_config_naming_a_default_connection_opens_it_at_startup`, `a_config_naming_no_default_connects_to_nothing` |
 | Connections with no default open the picker, seated on the first | `connections_with_no_default_open_the_picker` |
@@ -1475,8 +1475,8 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `[`/`]` do nothing from a panel with no tabs | `brackets_do_nothing_from_a_panel_with_no_tabs` |
 | A keyspace is offered no Columns tab, and walking stores none | `a_keyspace_is_offered_no_columns_tab_and_keeps_describing_itself` (`view/details.rs`), `walking_on_a_keyspace_stays_on_the_only_tab_there_is` |
 | A tab change restarts the cursor; arriving at the tab drawn does not | `showing_a_tab_draws_it`, `a_tab_change_puts_the_cursor_and_the_viewport_back_at_the_top`, `showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone`, `a_tab_change_leaves_the_search_where_it_was` (`ddl.rs`) |
-| Every title opens with its own number | `every_panel_title_opens_with_the_key_that_focuses_it` (`view/mod.rs`), `each_panel_opens_its_title_with_the_key_that_focuses_it` (`inbound/render.rs`), plus the `PanelTitle` tests in `view/title.rs` |
-| No title wears the hint bar's key colour | `no_title_wears_the_shortcut_colour` (`inbound/render.rs`), `a_hot_key_is_underlined_and_nothing_else_is` (`inbound/theme/mod.rs`) |
+| Every title opens with its own number | `every_panel_title_opens_with_the_key_that_focuses_it` (`view/mod.rs`), `each_panel_opens_its_title_with_the_key_that_focuses_it` (`inbound/render/tests/`), plus the `PanelTitle` tests in `view/title.rs` |
+| No title wears the hint bar's key colour | `no_title_wears_the_shortcut_colour` (`inbound/render/tests/`), `a_hot_key_is_underlined_and_nothing_else_is` (`inbound/theme/mod.rs`) |
 | A click folds, reads, and selects | `a_click_on_a_keyspace_folds_and_unfolds_it`, `a_click_on_a_table_reads_it`, `a_click_on_a_grid_row_moves_the_cursor_and_asks_for_nothing` |
 | A click focuses what it lands in | `a_click_focuses_the_panel_it_landed_in`, `a_click_on_chrome_focuses_and_does_nothing_else` |
 | A click on a cell moves both cursors, and on a heading only the column | `a_click_on_a_cell_moves_both_cursors`, `a_click_on_a_heading_moves_the_column_cursor_and_no_row` |
@@ -1489,17 +1489,17 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | Only the left button and the vertical wheel are bound | `only_the_left_button_is_bound`, `a_release_a_drag_and_a_move_are_dropped`, `a_horizontal_wheel_is_dropped` (`inbound/input.rs`) |
 | A modified gesture is not a binding | `a_modified_press_is_not_a_gesture` (`inbound/input.rs`) |
 | The reader thread's filter agrees with `to_pointer`'s | `is_bound_accepts_everything_to_pointer_would` (`inbound/input.rs`) |
-| The map resolves to the row that was drawn | `the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it`, `the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn`, `the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn` (`inbound/render.rs`) |
-| The map resolves to the column, tab, and wrapped row that were drawn | `the_map_resolves_every_cell_to_the_column_that_drew_it`, `the_map_resolves_every_drawn_tab_to_the_key_that_reaches_it`, `a_single_tab_panel_resolves_its_title_to_its_own_key`, `the_map_resolves_every_line_of_a_wrapped_ddl_row_to_that_row` (`inbound/render.rs`) |
-| Chrome is not a row | `a_grids_heading_names_a_column_rather_than_its_first_row`, `a_press_on_the_chrome_of_a_panel_names_that_panel`, `the_hint_bar_and_a_frame_below_the_minimum_are_not_clickable` (`inbound/render.rs`) |
+| The map resolves to the row that was drawn | `the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it`, `the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn`, `the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn` (`inbound/render/tests/`) |
+| The map resolves to the column, tab, and wrapped row that were drawn | `the_map_resolves_every_cell_to_the_column_that_drew_it`, `the_map_resolves_every_drawn_tab_to_its_place_in_the_strip`, `a_single_tab_panel_resolves_its_title_to_its_one_tab`, `the_map_resolves_every_line_of_a_wrapped_ddl_row_to_that_row` (`inbound/render/tests/`) |
+| Chrome is not a row | `a_grids_heading_names_a_column_rather_than_its_first_row`, `a_press_on_the_chrome_of_a_panel_names_that_panel`, `the_hint_bar_and_a_frame_below_the_minimum_are_not_clickable` (`inbound/render/tests/`) |
 | Letters are text in the editor | `a_letter_typed_in_queries_is_text_not_a_shortcut` |
 | `?` is a bind marker in the editor, not the palette | `a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette` |
 | An open palette outranks a panel that takes text | `an_open_palette_outranks_a_panel_that_takes_text` |
 | Quitting is not reachable from the editor | `q_does_not_quit_while_the_editor_has_focus` |
 | `Esc` prefers the overlay, then closes the buffer, then leaves | `escape_dismisses_the_overlay_before_it_leaves_the_editor`, `escape_closes_the_buffer_and_a_second_leaves_for_tables`, `escape_takes_the_popup_down_before_it_leaves_the_editor`, `escape_leaves_every_panel_for_tables` |
-| The Cql buffer opens on `⏎`/`i` alone, types nothing doing so, and closes on leaving | `enter_and_i_open_the_buffer_and_type_nothing`, `enter_and_i_open_nothing_on_the_logs_tab`, `leaving_the_panel_closes_the_buffer`, `a_closed_buffer_leaves_the_global_keys_their_meaning` (`update.rs`), `a_panel_opens_browsing_and_claims_no_key_until_opened`, `the_logs_tab_cannot_be_opened_for_typing`, `leaving_the_cql_tab_closes_the_buffer_and_coming_back_does_not_reopen_it` (`queries.rs`) |
+| The Cql buffer opens on `⏎`/`i` alone, types nothing doing so, and closes on leaving | `enter_and_i_open_the_buffer_and_type_nothing`, `enter_and_i_open_nothing_on_the_logs_tab`, `leaving_the_panel_closes_the_buffer`, `a_closed_buffer_leaves_the_global_keys_their_meaning` (`update/tests/`), `a_panel_opens_browsing_and_claims_no_key_until_opened`, `the_logs_tab_cannot_be_opened_for_typing`, `leaving_the_cql_tab_closes_the_buffer_and_coming_back_does_not_reopen_it` (`queries.rs`) |
 | `4` opens the buffer, `5` reaches Logs, the brackets walk Queries' tabs | `four_focuses_queries_with_the_buffer_open`, `five_focuses_the_logs_tab_from_anywhere`, `four_from_the_logs_tab_opens_the_buffer`, `brackets_walk_queries_tabs_while_the_buffer_is_closed` |
-| The caret and the bar say whether the buffer is open | `a_closed_buffer_draws_no_cursor_though_its_panel_is_focused` (`inbound/render.rs`), `a_closed_buffer_names_the_way_in_first_and_still_offers_quit`, `an_open_buffer_names_esc_as_done_rather_than_leave` (`view/hints.rs`), `a_closed_buffer_names_the_way_in_and_keeps_quit` (`inbound/hints.rs`) |
+| The caret and the bar say whether the buffer is open | `a_closed_buffer_draws_no_cursor_though_its_panel_is_focused` (`inbound/render/tests/`), `a_closed_buffer_names_the_way_in_first_and_still_offers_quit`, `an_open_buffer_names_esc_as_done_rather_than_leave` (`view/hints.rs`), `a_closed_buffer_names_the_way_in_and_keeps_quit` (`inbound/hints.rs`) |
 | A click on the buffer opens it | `a_click_on_the_buffer_opens_it` |
 | `Tab` still leaves | `tab_still_leaves_the_editor` |
 | Ctrl is still not text | `a_modified_key_is_still_not_text` |
@@ -1514,18 +1514,18 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | An open palette takes motion and swallows the rest | `an_open_palette_takes_the_motion_the_panel_would_have`, `an_open_palette_swallows_the_keys_it_does_not_use`, `q_quits_from_inside_the_palette` |
 | `⏎` runs the selected row, in its own panel | `enter_closes_the_palette_and_focuses_the_panel_the_row_belongs_to`, `enter_presses_the_rows_own_key`, `enter_on_the_run_row_runs_the_buffer`, `every_row_can_be_run` |
 | A row filed under a panel does something there | `a_row_filed_under_a_panel_stays_in_that_panel` |
-| A form row is documentation, not a command | `enter_on_a_form_row_closes_the_palette_and_stops`, `the_export_form_rows_are_documentation_rather_than_commands` (`commands.rs`) |
+| A form row is documentation, not a command | `enter_on_an_inert_row_closes_the_palette_and_stops`, `the_export_form_rows_are_documentation_rather_than_commands` (`commands.rs`) |
 | The cursor never lands on a heading | `the_palette_cursor_steps_over_a_heading`, `paging_settles_on_a_command_rather_than_a_heading` (`commands.rs`) |
 | No row outgrows the narrowest palette | `no_command_row_is_wider_than_the_narrowest_palette` (`commands.rs`) |
 | `/` narrows the palette to the rows that match, keeping the cursor on a command and the block on its borders | `a_search_narrows_the_palette_to_the_rows_that_match`, `a_search_seats_the_palette_on_a_command`, `a_search_seats_from_the_row_it_opened_on`, `the_palettes_search_reads_the_action_and_not_the_keys`, `closing_a_sift_keeps_the_command_the_filter_found`, `popping_an_empty_palette_sift_closes_it` (`commands.rs`), `a_filtered_palette_keeps_the_block_the_catalogue_gives_it`, `a_term_that_matches_nothing_draws_a_line_saying_so` (`inbound/palette.rs`) |
 | The bar names `?`, and the palette's own keys | `the_bar_names_the_palette_between_panel_and_quit`, `the_bar_names_what_the_palette_responds_to` (`view/hints.rs`) |
-| The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update.rs`) |
+| The bar drops `?` where no palette would fit | `the_bar_drops_the_palette_hint_where_no_palette_would_fit`, `every_global_hint_does_something_in_every_panel` (`view/hints.rs`, `update/tests/`) |
 | `?` earns its place in the width-fitting bar, and goes before `q quit` but after `tab panel` | `a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel` (`inbound/hints.rs`) |
-| The palette is drawn, centred, capped and scrollable | `the_palette_lists_the_catalogue`, `the_palette_is_centred`, `a_wide_frame_does_not_get_a_wide_palette`, `a_tall_frame_does_not_get_a_palette_full_of_blank_rows`, `a_frame_too_small_for_a_palette_does_not_get_one` (`inbound/render.rs`) |
+| The palette is drawn, centred, capped and scrollable | `the_palette_lists_the_catalogue`, `the_palette_is_centred`, `a_wide_frame_does_not_get_a_wide_palette`, `a_tall_frame_does_not_get_a_palette_full_of_blank_rows`, `a_frame_too_small_for_a_palette_does_not_get_one` (`inbound/render/tests/`) |
 | An empty query is no search | `an_empty_query_is_not_a_search` (`search.rs`) |
 | Matching folds case, and is a substring, literally | `matching_ignores_case_in_both_directions`, `matching_is_a_substring_anywhere_and_not_a_prefix`, `a_metacharacter_is_matched_literally`, `folding_reaches_past_ascii` (`search.rs`) |
 | The term is kept as typed, for the marker | `the_term_is_kept_as_typed_for_the_marker` (`search.rs`) |
-| `Searched` refuses Queries and accepts the rest | `every_panel_but_queries_can_hold_a_search`, `a_target_names_the_panel_it_came_from` (`search.rs`) |
+| `Searched` accepts every panel; Queries' search is the trail's | `every_panel_can_hold_a_search`, `a_target_names_the_panel_it_came_from` (`search.rs`) |
 | A search forces the keyspace holding a match open, and leaves its sibling's fold state alone | `a_matching_keyspace_is_forced_open_and_a_sibling_it_misses_is_dropped`, `a_keyspace_holding_a_match_stays_open_whatever_its_fold_state`, `a_keyspace_matching_by_name_is_kept_but_open_only_when_it_has_tables`, `a_keyspace_holding_no_match_keeps_its_fold_state` (`tree.rs`) |
 | Tables keeps the keyspaces and the tables the term reaches, and drops the rest | `a_keyspace_kept_by_one_matching_table_shows_only_that_table`, `a_keyspace_the_term_names_keeps_every_table_it_has`, `a_search_nothing_reaches_leaves_no_rows`, `clearing_a_search_brings_back_the_keyspaces_it_dropped` (`tree.rs`) |
 | A search drops no row from Table DDL | `a_search_drops_no_detail_row` (`view/details.rs`) |
@@ -1535,7 +1535,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A column matches on its name and on its CQL type | `a_column_matches_on_its_name`, `a_column_matches_on_its_cql_type` (`view/details.rs`) |
 | A heading is never in the sequence a search walks, which is what keeps it unmatchable | `the_rows_the_cursor_walks_are_the_described_ones_and_no_headings` (`view/details.rs`) |
 | A section is never emptied by a search | `a_section_is_never_emptied_by_a_search` (`view/details.rs`) |
-| A search that matches nothing still draws the panel, rather than a notice | `a_search_that_matches_nothing_still_draws_the_tree` (`view/tables.rs`) |
+| A search that matches nothing says `No match` rather than naming the cluster empty | `a_search_that_matches_nothing_says_so_rather_than_naming_the_cluster_empty` (`view/tables.rs`) |
 | A search changes nothing unless one is applied | `a_cluster_with_no_keyspaces_says_so_rather_than_listing_nothing` (`view/tables.rs`), `no_search_flags_nothing` (`view/contents.rs`) |
 | Matching cells are flagged and the grid keeps every row | `a_search_flags_the_cells_that_match_and_keeps_every_row` (`view/contents.rs`) |
 | A matched null is still a null | `a_matched_null_is_still_a_null` (`view/contents.rs`) |
@@ -1544,7 +1544,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `q` and `?` type themselves in the prompt | `q_and_the_question_mark_type_themselves_in_the_prompt` |
 | The prompt searches live, per keystroke, and jumps to the first match | `the_prompt_searches_live_per_keystroke`, `backspace_narrows_the_query_and_re_applies_it`, `backspace_on_an_empty_query_is_inert_rather_than_closing` |
 | Every keystroke jumps from where `/` was pressed, not from the last landing | `extending_a_term_does_not_walk_the_cursor_forward` |
-| A term that matches nothing leaves the cursor where it was | `a_term_that_matches_nothing_leaves_the_cursor_where_it_was` |
+| A term that matches nothing leaves the cursor on the empty tree, and `Esc` puts it back | `a_term_that_matches_nothing_leaves_the_cursor_on_the_empty_tree`, `escape_puts_the_cursor_back_on_the_row_a_matchless_term_emptied_out` |
 | `Enter` commits and closes, keeping the cursor where it landed; an empty commit clears the search | `enter_commits_and_closes_leaving_the_search_applied`, `enter_keeps_where_the_cursor_landed`, `an_empty_commit_clears_the_search`, `backspacing_a_query_to_empty_clears_the_search_live` |
 | `Esc` cancels, restoring the search and the cursor together | `escape_cancels_the_prompt_restoring_the_search_that_was_there`, `escape_restores_the_search_and_the_cursor_together` |
 | `Esc`'s full precedence chain | `escape_clears_the_focused_panels_search_when_no_overlay_is_up`, `escape_prefers_the_overlay_to_the_search`, `escape_leaves_queries_when_nothing_else_claims_it` (rung 3 alone — rung 2 before rung 3 is unpinnable until Queries can hold a search, design §8) |
@@ -1565,12 +1565,12 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | The bar names `n next match` only where a search is applied | `the_bar_names_n_only_where_a_search_is_applied` (`view/hints.rs`) |
 | The bar names the prompt's own keys while it is up | `the_bar_names_what_the_prompt_responds_to` (`view/hints.rs`) |
 | The palette lists `/`, under Global | `the_catalogue_lists_search_among_the_global_keys` (`commands.rs`) |
-| The marker is drawn, muted, right-aligned | `a_panel_wears_the_search_applied_to_it`, `the_marker_is_drawn_muted` (`inbound/render.rs`) |
-| The marker is dropped rather than truncated | `the_marker_is_dropped_rather_than_truncated`, `the_marker_fits_flush_against_the_corner_it_is_tuned_for` (`inbound/render.rs`) |
-| An unfocused panel still wears its marker | `an_unfocused_panel_still_wears_its_marker` (`inbound/render.rs`) |
-| The prompt owns the bar row, and its cursor | `an_open_prompt_owns_the_bar_row`, `an_open_prompts_own_cursor_replaces_the_editors`, `the_prompts_cursor_sits_after_the_query` (`inbound/render.rs`) |
-| A match is painted where it sits, in Tables, and the search drops the rows it does not reach | `a_match_is_painted_where_it_sits`, `a_search_drops_the_tables_it_does_not_reach` (`inbound/render.rs`) |
-| A matched cell reads apart from an unmatched one, on and off the selected row | `a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row` (`inbound/render.rs`) |
+| The marker is drawn, muted, right-aligned | `a_panel_wears_the_search_applied_to_it`, `the_marker_is_drawn_muted` (`inbound/render/tests/`) |
+| The marker is dropped rather than truncated | `the_marker_is_dropped_rather_than_truncated`, `the_marker_fits_flush_against_the_corner_it_is_tuned_for` (`inbound/render/tests/`) |
+| An unfocused panel still wears its marker | `an_unfocused_panel_still_wears_its_marker` (`inbound/render/tests/`) |
+| The prompt owns the bar row, and its cursor | `an_open_prompt_owns_the_bar_row`, `an_open_prompts_own_cursor_replaces_the_editors`, `the_prompts_cursor_sits_after_the_query` (`inbound/render/tests/`) |
+| A match is painted where it sits, in Tables, and the search drops the rows it does not reach | `a_match_is_painted_where_it_sits`, `a_search_drops_the_tables_it_does_not_reach` (`inbound/render/tests/`) |
+| A matched cell reads apart from an unmatched one, on and off the selected row | `a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row` (`inbound/render/tests/`) |
 | `Token::Match` is legible over `Token::Selected` | `a_match_is_legible_over_a_selected_row` (`inbound/theme/mod.rs`) |
 | `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
 | It runs only from Queries | `ctrl_r_outside_queries_runs_nothing` |
@@ -1578,16 +1578,16 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `j`/`k` band statement by statement, and `ctrl-r` runs the banded one | `j_and_k_walk_the_bands_over_the_buffers_statements`, `ctrl_r_runs_the_banded_statement_and_not_the_rest_of_the_buffer`, `stepping_the_band_changes_what_ctrl_r_runs` |
 | An open buffer claims `j` as text | `j_is_a_character_again_once_the_buffer_is_open` |
 | A batch is one statement | `a_batch_is_one_statement_to_step_over_and_to_run` (`domain/queries.rs`), `a_batch_is_one_statement_however_many_semicolons_it_holds` (`domain/cql/statements.rs`) |
-| The band stops where its statement does | `a_band_stops_where_its_statement_does`, `the_banded_statement_is_the_one_the_cursor_is_in` (`inbound/render.rs`) |
+| The band stops where its statement does | `a_band_stops_where_its_statement_does`, `the_banded_statement_is_the_one_the_cursor_is_in` (`inbound/render/tests/`) |
 | Either path cancels the other | `running_a_query_cancels_a_pending_table_read`, `reading_a_table_cancels_a_pending_query` |
 | Destructive is refused, unexecuted | `a_destructive_statement_is_refused_until_confirmation_exists` |
 | The posture gate still applies, over every mutating verb, and raises a modal | `a_typed_write_is_refused_on_a_read_only_connection`, `every_mutating_statement_typed_by_hand_is_refused_and_says_why`, `a_read_typed_by_hand_raises_no_refusal` |
 | The posture names itself rather than the confirmation | `a_destructive_statement_on_a_read_only_connection_blames_the_posture` |
 | A posture refusal survives the modal in the trail | `a_statement_the_posture_refuses_says_so_in_the_trail_too` |
-| The Tables border names the open connection and its posture, in the picker's spelling and colours | `the_border_names_the_connection_and_its_posture`, `the_posture_is_spelled_the_way_the_picker_and_the_config_spell_it`, `the_posture_carries_its_own_colour_and_the_rest_of_the_name_does_not`, `a_panel_with_no_connection_names_no_connection` (`view/tables.rs`), `a_sidebar_wide_enough_names_the_connection_on_the_border`, `a_writable_posture_wears_its_own_colour_on_the_border` (`inbound/render.rs`) |
-| A border too narrow for the badge drops it, and one too narrow for badge and `/term` keeps the term | `a_narrow_border_falls_back_to_the_panels_name_alone` (`view/tables.rs`), `a_sidebar_too_narrow_for_the_badge_keeps_the_panels_name_alone`, `a_border_holding_both_puts_the_badge_at_the_name_and_the_marker_at_the_corner`, `a_border_that_cannot_hold_both_keeps_the_marker_and_drops_the_badge` (`inbound/render.rs`) |
+| The Tables border names the open connection and its posture, in the picker's spelling and colours | `the_border_names_the_connection_and_its_posture`, `the_posture_is_spelled_the_way_the_picker_and_the_config_spell_it`, `the_posture_carries_its_own_colour_and_the_rest_of_the_name_does_not`, `a_panel_with_no_connection_names_no_connection` (`view/tables.rs`), `a_sidebar_wide_enough_names_the_connection_on_the_border`, `a_writable_posture_wears_its_own_colour_on_the_border` (`inbound/render/tests/`) |
+| A border too narrow for the badge drops it, and one too narrow for badge and `/term` keeps the term | `a_narrow_border_falls_back_to_the_panels_name_alone` (`view/tables.rs`), `a_sidebar_too_narrow_for_the_badge_keeps_the_panels_name_alone`, `a_border_holding_both_puts_the_badge_at_the_name_and_the_marker_at_the_corner`, `a_border_that_cannot_hold_both_keeps_the_marker_and_drops_the_badge` (`inbound/render/tests/`) |
 | The bar greys `ctrl-r` against a buffer the posture would refuse | `the_run_hint_greys_against_a_buffer_the_posture_would_refuse` (`view/hints.rs`) |
-| The palette names the posture on every mutating row on a read-only connection, and drops none | `a_read_only_connection_refuses_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys`, `a_refused_row_names_the_posture_after_its_keys_in_muted` (`inbound/palette.rs`), `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_or_a_delete` (`commands.rs`) |
+| The palette names the posture on every mutating row on a read-only connection, and drops none | `a_read_only_connection_refuses_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys`, `a_refused_row_names_the_posture_after_its_keys_in_muted` (`inbound/palette.rs`), `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_a_delete_or_an_edit` (`commands.rs`) |
 | A second modifier is not a binding | `ctrl_alt_r_does_not_run_the_buffer` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
 | A statement is classified by the verb opening it, comments and strings scanned past | `a_leading_comment_does_not_hide_the_verb`, `a_semicolon_inside_a_string_does_not_open_a_statement`, `a_trailing_semicolon_adds_no_statement` (`model/statement.rs`) |
@@ -1595,7 +1595,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A buffer takes the most restricted kind in it | `a_buffer_takes_the_most_restricted_kind_in_it` (`model/statement.rs`) |
 | A modifier reaches the label | `a_binding_behind_ctrl_is_named_with_a_ctrl_prefix` (`view/hints.rs`) |
 | The bar and palette name it | `the_queries_bar_names_the_run_binding` (`view/hints.rs`), `the_palette_names_the_run_binding`, `the_palette_has_a_queries_section` (`commands.rs`) |
-| The bar greys `ctrl-r run` while there is nothing to run | `the_run_hint_is_inert_while_there_is_nothing_to_run`, `the_run_hint_is_live_once_there_is_a_statement`, `nothing_but_the_run_hint_is_ever_inert` (`view/hints.rs`) |
+| The bar greys `ctrl-r run` while there is nothing to run | `the_run_hint_is_inert_while_there_is_nothing_to_run`, `the_run_hint_is_live_once_there_is_a_statement` (`view/hints.rs`) |
 | A greyed hint is drawn distinctly and keeps its width | `an_inert_hint_is_greyed_rather_than_dropped` (`inbound/hints.rs`) |
 | The bar's sweep asks only what it claims | `every_hint_the_bar_shows_does_something` |
 | The editing keys stay inside the editor | `the_editing_keys_do_nothing_outside_a_panel_that_takes_text` |
@@ -1612,9 +1612,9 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `ctrl-f` lays the buffer out, and is inert outside Queries | `ctrl_f_lays_the_buffer_out`, `ctrl_f_does_nothing_outside_queries` |
 | Formatting is idempotent, reorders nothing and retypes no literal | the `cql/format.rs` tests |
 | The bar greys `ctrl-f format` on a buffer already laid out | `nothing_but_a_hint_that_would_do_nothing_is_ever_inert` (`view/hints.rs`) |
-| The buffer reaches the renderer painted by what its words mean | `the_buffer_reaches_the_renderer_painted`, the `cql/mod.rs` tests, `the_buffer_is_painted_by_what_its_words_mean` (`inbound/render.rs`) |
+| The buffer reaches the renderer painted by what its words mean | `the_buffer_reaches_the_renderer_painted`, the `cql/mod.rs` tests, `the_buffer_is_painted_by_what_its_words_mean` (`inbound/render/tests/`) |
 | A prefix offers the keyword it starts, and a qualified one that keyspace's tables | `typing_a_prefix_offers_the_keyword_it_starts`, `a_qualified_prefix_offers_that_keyspaces_tables`, `an_unqualified_table_comes_from_the_keyspace_the_tree_is_on` |
-| `Tab` accepts a completion, and still moves focus without one | `tab_accepts_what_is_offered_rather_than_moving_focus`, `tab_still_moves_focus_when_nothing_is_being_offered` |
+| `Tab` accepts a completion, and still walks the cycle without one | `tab_accepts_what_is_offered_rather_than_moving_focus`, `tab_still_walks_the_cycle_when_nothing_is_being_offered` |
 | `⏎` accepts a completion, and still splits the line without one | `enter_accepts_what_is_offered_and_splits_the_line_without_a_popup` (`queries.rs`) |
 | The popup leads with the names the position takes, and follows them with the grammar that position can hold | `a_select_list_leads_with_the_columns_even_where_it_names_no_table`, `a_select_list_over_one_table_offers_that_tables_columns_first` (`cql/complete.rs`) |
 | A column position offers no keyword it could not take; a value position offers every one | `a_column_position_offers_no_keyword_it_could_not_take`, `a_value_position_still_offers_the_whole_grammar`, `a_value_position_offers_grammar_and_no_names` (`cql/complete.rs`) |
@@ -1625,7 +1625,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A motion takes the popup down | `a_motion_takes_the_popup_down` |
 | `ctrl-n` raises a popup and then walks it | `ctrl_n_raises_a_popup_and_then_walks_it` |
 | `↑`/`↓` walk the popup while one is up, and move the cursor without one | `the_arrows_walk_the_popup_while_one_is_up`, `the_arrows_walk_the_popup_rather_than_the_buffer`, `walking_the_popup_leaves_the_cursor_where_it_is`, `an_arrow_with_no_popup_up_is_a_motion_again` (`queries.rs`) |
-| The popup hangs off the cursor, and only for a focused editor | `the_completion_popup_hangs_off_the_cursor`, `an_unfocused_editor_draws_no_popup` (`inbound/render.rs`) |
+| The popup hangs off the cursor, and only for a focused editor | `the_completion_popup_hangs_off_the_cursor`, `an_unfocused_editor_draws_no_popup` (`inbound/render/tests/`) |
 | `ctrl-e` is inert while an export is already running | `ctrl_e_is_inert_while_an_export_is_already_running` |
 | `ctrl-e` is inert where the frame cannot draw the form, and a frame that shrinks past it closes it | `ctrl_e_is_inert_where_the_frame_cannot_draw_the_form`, `a_frame_that_shrank_past_the_form_closes_it`, `fits_agrees_with_what_the_form_actually_draws` |
 | A second `ctrl-e`, and the picker's own opener, leave an open form alone | `a_second_ctrl_e_leaves_the_open_form_as_it_was`, `the_theme_picker_cannot_replace_an_open_export_form` |
@@ -1670,7 +1670,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `⏎` accepts, `esc` abandons, and a restored value leaves no mark | `enter_accepts_the_field_and_the_cell_goes_dirty`, `escape_abandons_the_field_and_changes_nothing`, `an_edit_that_restores_the_value_it_started_from_leaves_no_mark`, `setting_none_clears_what_was_there` (`edit.rs`) |
 | An open field claims every key and names only its own | `an_open_field_names_only_the_two_keys_it_answers`, `the_save_hint_greys_while_the_text_does_not_parse` |
 | An edit belongs to the page it was made on | `an_edit_survives_a_sort_that_moves_its_row`, `a_re_read_discards_the_uncommitted_edits`, `edits_group_by_row_in_page_order_and_by_column_within_a_row` (`edit.rs`) |
-| A dirty cell says so in the grid, the block and the border | `a_dirty_cell_is_drawn_in_the_uncommitted_colour` (`inbound/render.rs`), `a_dirty_field_is_drawn_in_the_uncommitted_colour` (`inbound/inspect.rs`), `the_footer_counts_the_uncommitted_cells_in_the_warning_colour` (`inbound/render.rs`) |
+| A dirty cell says so in the grid, the block and the border | `a_dirty_cell_is_drawn_in_the_uncommitted_colour` (`inbound/render/tests/`), `a_dirty_field_is_drawn_in_the_uncommitted_colour` (`inbound/inspect.rs`), `the_footer_counts_the_uncommitted_cells_in_the_warning_colour` (`inbound/render/tests/`) |
 | `ctrl-s` shows the CQL it would run, one row bare and several as a batch | `ctrl_s_shows_the_update_it_would_run`, `several_edited_rows_become_one_batch`, `ctrl_s_with_nothing_dirty_is_inert`, `updating_a_row_sets_in_the_order_given_and_quotes_every_name` (`model/statement.rs`), `one_updated_row_is_a_statement_and_several_are_a_batch` (`model/statement.rs`), `the_contents_bar_names_commit_only_while_something_is_uncommitted` |
 | The commit block scrolls rather than eliding, and names its counts | `a_batch_longer_than_the_body_scrolls_rather_than_eliding`, `one_row_draws_the_statement_and_the_two_keys`, `a_frame_too_small_for_the_block_draws_none_and_reports_no_room` (`inbound/commit.rs`), `the_title_counts_the_cells_and_the_rows_and_names_the_table` (`commit.rs`) |
 | `y` writes, `n` leaves the edits standing, and the page takes what was sent | `y_runs_the_statement_and_n_leaves_the_edits_standing`, `a_committed_write_lands_in_the_page_and_clears_the_marks`, `a_failed_commit_leaves_the_edits_dirty` |
@@ -1690,7 +1690,7 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | A yank carries the value, not the drawn cell | `a_yanked_value_is_not_ellipsised` (`yank.rs`) |
 | A null yanks as nothing, and the word does not | `a_null_yanks_as_an_empty_field`, `a_text_null_yanks_as_the_word` (`yank.rs`) |
 | A column and a DDL row carry their own fields | `a_column_row_carries_the_part_it_plays`, `a_partition_column_yanks_without_an_order`, `a_property_and_an_identity_row_yank_their_two_fields`, `a_keyspace_yanks_its_name_and_a_table_its_qualified_one` (`yank.rs`) |
-| Nothing under the cursor yanks nothing, and a search that matches nothing still yanks the row under the cursor | `y_on_an_empty_panel_yanks_nothing`, `y_still_yanks_the_row_under_the_cursor_when_the_search_matches_nothing` |
+| Nothing under the cursor yanks nothing, including under a search that kept no row | `y_on_an_empty_panel_yanks_nothing`, `y_yanks_nothing_when_the_search_kept_no_row` |
 | `y` types itself in Queries, and yanks nothing | `y_is_text_in_the_editor` |
 | The encoder quotes exactly what it must | `a_field_is_quoted_only_when_it_has_to_be`, `an_embedded_quote_is_doubled`, `a_line_ends_without_a_newline` (`yank.rs`) |
 | `v` starts a range at the cursor, and motion extends it | `v_starts_a_range_at_the_cursor_and_motion_extends_it` |
@@ -1708,13 +1708,13 @@ Tests in `crates/lc-domain/src/update.rs` unless noted.
 | `y` yanks every row of a range, one per line | `y_yanks_every_row_of_a_range_one_per_line` |
 | `y` in cell mode yanks the block and nothing outside it | `y_in_cell_mode_yanks_the_block_and_nothing_outside_it` |
 | `y` on a single cell still yanks it bare | `y_on_a_single_cell_still_yanks_it_bare` |
-| Every row of a range is banded, and the cursor row reads apart from them | `every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them` (`inbound/render.rs`) |
+| Every row of a range is banded, and the cursor row reads apart from them | `every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them` (`inbound/render/tests/`) |
 | `y` drops the range and sends each cursor back to its anchor | `y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor`, `a_selection_grown_upwards_sends_the_cursor_back_down`, `a_frozen_range_still_knows_where_to_send_the_cursor`, `cell_mode_sends_both_cursors_home`, `the_tree_collapses_its_selection_on_y_too` |
 | A frozen group keeps the end it grew from, pulled back the same way on a clamp | `clamping_pulls_an_extending_anchor_back_into_the_list`, `clamping_a_frozen_group_pulls_its_surviving_anchor_back_too` (`state.rs`) |
 | A `y` that yanks nothing resets nothing and lights nothing | `a_y_that_yanks_nothing_leaves_the_selection_alone`, `a_y_that_yanks_nothing_lights_nothing` |
 | `y` lights what it took, on the axes its mode bounds | `y_lights_up_what_it_yanked`, `row_mode_lights_the_whole_row_and_column_mode_the_whole_column`, `a_bare_y_lights_the_row_it_took` |
 | The flash fades, costs one repaint doing it, and the next key ends it | `the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint`, `the_next_key_ends_the_flash` |
-| The flash inverts the rows it took, and reaches one panel | `a_yanks_afterglow_inverts_the_rows_it_took`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render.rs`) |
+| The flash inverts the rows it took, and reaches one panel | `a_yanks_afterglow_inverts_the_rows_it_took`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render/tests/`) |
 | The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a search | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_search` (`view/hints.rs`) |
 | `v` on an unheld row opens a second group beside what is frozen, and `Esc` takes both at once | `v_builds_two_groups_and_esc_takes_both` |
 | `v` on a held row drops that group and no other | `v_on_a_selected_row_drops_that_group_only`, `v_freezes_then_opens_a_second_group_then_drops_one` (`state.rs`) |
@@ -1841,7 +1841,7 @@ it. Scroll far enough and the selected row is simply not on screen, and the
 next `j`, or a resize, brings the view back to it.
 
 **One dispatch point, again.** `handle_pointer` in
-[`update.rs`](../crates/lc-domain/src/update.rs) is to a gesture what
+[`update/pointer.rs`](../crates/lc-domain/src/update/pointer.rs) is to a gesture what
 `handle_key` is to a key. `lc-inbound` resolves the coordinate against the frame
 it happened in and decides nothing.
 

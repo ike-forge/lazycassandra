@@ -163,16 +163,26 @@ pub(crate) fn spawn_reader(tx: UnboundedSender<Incoming>, suspension: Suspension
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     /// The handshake's whole contract: `suspend` does not return until the
     /// other half has parked. A thread standing in for the reader.
+    ///
+    /// The stand-in parks in a loop, as the real reader does between polls: a
+    /// single `park()` that runs before `suspend` has set the flag returns at
+    /// once, and `suspend` then waits for a park that never comes.
     #[test]
     fn suspend_waits_for_the_reader_to_park() {
         let suspension = Suspension::default();
         let reader = suspension.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
 
         let handle = std::thread::spawn(move || {
-            reader.park();
+            while !stopped.load(Ordering::Acquire) {
+                reader.park();
+                std::thread::yield_now();
+            }
         });
 
         suspension.suspend();
@@ -182,6 +192,7 @@ mod tests {
             "suspend returned before the reader announced it had parked"
         );
 
+        stop.store(true, Ordering::Release);
         suspension.resume();
         handle.join().expect("the reader thread parked and woke");
     }
