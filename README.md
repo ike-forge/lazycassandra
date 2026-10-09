@@ -96,12 +96,14 @@ CQL type, and a pile of identifier and terminal-rendering edge cases.
 ```
 mise run db:up     # start and seed (about a minute on a cold volume)
 mise run db:cqlsh  # poke at it
-mise run db:reset  # destroy it, volume included
 ```
 
 `mise run db:tls:up` starts a second node on 9142 (`LC_CASSANDRA_TLS_PORT`)
 with TLS and `PasswordAuthenticator` (`cassandra`/`cassandra`), using a CA
 generated into `docker/tls/certs`. `tests/tls.rs` runs against it.
+
+Destroy both nodes, volumes included, with
+`docker compose -f docker/compose.yaml --profile tls down -v`.
 
 Set `LC_CASSANDRA_PORT` if something already holds 9042. It moves the port the
 fixture publishes and the integration tier connects to; the application itself
