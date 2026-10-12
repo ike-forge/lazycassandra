@@ -70,6 +70,74 @@ fn the_configured_limit_bounds_what_is_kept() {
     assert_eq!(state.history(), ["SELECT 3;", "SELECT 2;"]);
 }
 
+fn saves(effects: &[Effect]) -> Vec<&Vec<String>> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::SaveHistory { entries, .. } => Some(entries),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_run_saves_the_whole_list_for_its_connection() {
+    let mut state = having_run(&["SELECT 1;"]);
+    state.focus_on(Panel::Queries);
+    state.queries.replace("SELECT 2;");
+
+    let effects = run_query(&mut state);
+
+    assert_eq!(
+        saves(&effects),
+        [&vec!["SELECT 2;".to_owned(), "SELECT 1;".to_owned()]]
+    );
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::SaveHistory { connection, .. } if connection.as_str() == "local"
+    )));
+}
+
+#[test]
+fn running_the_newest_statement_again_saves_nothing() {
+    let mut state = having_run(&["SELECT 1;"]);
+    state.focus_on(Panel::Queries);
+    state.queries.replace("SELECT 1;");
+
+    let effects = run_query(&mut state);
+
+    assert!(saves(&effects).is_empty());
+}
+
+#[test]
+fn a_statement_the_posture_refused_is_neither_remembered_nor_saved() {
+    let mut state = having_run(&[]);
+    state
+        .queries
+        .replace("DELETE FROM shop.orders WHERE id = 7;");
+
+    let effects = run_query(&mut state);
+
+    assert!(saves(&effects).is_empty());
+    assert!(state.history().is_empty());
+}
+
+#[test]
+fn a_failed_save_lands_in_the_trail_and_not_in_a_modal() {
+    let mut state = having_run(&[]);
+    let before = state.log.len();
+
+    update(
+        &mut state,
+        Msg::HistorySaveFailed {
+            reason: "/x/history.toml: permission denied".to_owned(),
+        },
+    );
+
+    assert_eq!(state.log.len(), before + 1);
+    assert!(state.overlay.is_none());
+}
+
 #[test]
 fn ctrl_g_opens_the_history_on_the_newest_entry() {
     let mut state = having_run(&["SELECT 1;", "SELECT 2;"]);

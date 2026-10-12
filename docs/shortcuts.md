@@ -331,8 +331,9 @@ statement as one line, a repeat moving to the front instead of appearing
 twice. At most `history.limit` are kept per connection (default 100). The
 palette carries a row for it.
 
-Kept for the session and keyed by connection name, so reconnecting to the same
-cluster finds it again. It is not written to disk.
+Kept between runs in `$XDG_STATE_HOME/lazycassandra/history.toml` (default
+`~/.local/state`), keyed by connection name. Statements can hold credentials,
+so the file is `0600`.
 
 | Key | Effect |
 |---|---|
@@ -1610,6 +1611,11 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | `Token::Match` is legible over `Token::Selected` | `a_match_is_legible_over_a_selected_row` (`inbound/theme/mod.rs`) |
 | `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
 | A statement run from the buffer is remembered, and a table read is not | `a_statement_run_from_the_buffer_is_remembered`, `a_table_read_from_the_tree_is_not_remembered` (`history.rs`) |
+| A run saves the whole list for its connection, a repeat of the newest saves nothing, a refused statement neither | `a_run_saves_the_whole_list_for_its_connection`, `running_the_newest_statement_again_saves_nothing`, `a_statement_the_posture_refused_is_neither_remembered_nor_saved` (`history.rs`) |
+| A failed save is a trail line, not a modal | `a_failed_save_lands_in_the_trail_and_not_in_a_modal` (`history.rs`), `a_history_that_could_not_be_saved_reports_why` (`app/effects.rs`) |
+| What one run saves the next loads, per connection, trimmed to the limit | `what_one_run_saves_the_next_loads`, `saving_one_connection_leaves_the_others_alone`, `a_lower_limit_trims_on_load` (`outbound/tests/history.rs`, integration tier) |
+| A corrupt file is reported and replaced; the file is `0600` | `a_file_that_is_not_toml_is_reported_and_replaced_by_the_next_save`, `the_file_is_private_to_the_user` (`outbound/tests/history.rs`, integration tier) |
+| The file format round-trips | `what_is_rendered_parses_back`, `a_name_that_needs_quoting_survives` (`outbound/history.rs`) |
 | `history.limit` bounds what is kept | `the_configured_limit_bounds_what_is_kept` (`history.rs`), `the_oldest_entries_fall_off_past_the_limit` (`domain/history.rs`) |
 | A repeat moves to the front, and each connection keeps its own | `a_repeated_statement_moves_to_the_front_instead_of_repeating`, `each_connection_keeps_its_own` (`domain/history.rs`) |
 | `ctrl-g` opens the history on the newest entry, from Queries only, and not on nothing | `ctrl_g_opens_the_history_on_the_newest_entry`, `ctrl_g_belongs_to_queries`, `ctrl_g_opens_nothing_with_no_history`, `ctrl_g_opens_nothing_where_the_frame_cannot_draw_it` (`history.rs`) |

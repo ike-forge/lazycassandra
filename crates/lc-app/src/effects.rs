@@ -7,8 +7,9 @@
 use std::sync::Arc;
 
 use lc_domain::config::ConnectionConfig;
+use lc_domain::config::ConnectionName;
 use lc_domain::model::{ConnId, DbError, Page, QueryId};
-use lc_domain::ports::{Cluster, ConfigSink, Writer};
+use lc_domain::ports::{Cluster, ConfigSink, Store, Writer};
 use lc_domain::{Effect, Msg};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -26,6 +27,7 @@ pub(crate) fn run(
     cluster: &Arc<dyn Cluster>,
     writer: &Arc<dyn Writer>,
     sink: &Arc<dyn ConfigSink>,
+    store: &Arc<dyn Store>,
     effect: &Effect,
 ) {
     match effect {
@@ -128,6 +130,18 @@ pub(crate) fn run(
             tokio::spawn(save(tx.clone(), Arc::clone(sink), theme.clone()));
         }
 
+        Effect::SaveHistory {
+            connection,
+            entries,
+        } => {
+            tokio::spawn(save_history(
+                tx.clone(),
+                Arc::clone(store),
+                connection.clone(),
+                entries.clone(),
+            ));
+        }
+
         Effect::Cancel(_) | Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {
         }
     }
@@ -202,9 +216,31 @@ async fn save(
     }
 }
 
+/// Silent on success: the list on screen is the confirmation. A failure is
+/// one trail line, not a modal, because it repeats on every run for as long as
+/// the directory stays unwritable (query history design §5).
+async fn save_history(
+    tx: UnboundedSender<Incoming>,
+    store: Arc<dyn Store>,
+    connection: ConnectionName,
+    entries: Vec<String>,
+) {
+    if let Err(error) = store.save(&connection, &entries).await {
+        // A closed channel means the main loop has already ended.
+        let _sent = tx.send(
+            Msg::HistorySaveFailed {
+                reason: error.to_string(),
+            }
+            .into(),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use lc_domain::ports::{ConfigSink, ConfigWriteError};
+    use lc_domain::config::{Diagnostic, HistoryLimit};
+    use lc_domain::history::Histories;
+    use lc_domain::ports::{ConfigSink, ConfigWriteError, StoreError};
     use lc_domain::theme::{Ours, ThemeChoice};
 
     use super::*;
@@ -246,5 +282,54 @@ mod tests {
         };
         assert!(reason.contains("permission denied"), "{reason}");
         assert!(reason.contains("/home/x/config.toml"), "{reason}");
+    }
+
+    struct Disk(Result<(), StoreError>);
+
+    #[async_trait::async_trait]
+    impl Store for Disk {
+        async fn load(&self, _limit: HistoryLimit) -> (Histories, Vec<Diagnostic>) {
+            (Histories::default(), Vec::new())
+        }
+
+        async fn save(
+            &self,
+            _connection: &ConnectionName,
+            _entries: &[String],
+        ) -> Result<(), StoreError> {
+            self.0.clone()
+        }
+    }
+
+    fn name() -> ConnectionName {
+        ConnectionName::try_new("dev").expect("a valid name")
+    }
+
+    #[tokio::test]
+    async fn a_saved_history_says_nothing() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        save_history(
+            tx,
+            Arc::new(Disk(Ok(()))),
+            name(),
+            vec!["SELECT 1;".to_owned()],
+        )
+        .await;
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_history_that_could_not_be_saved_reports_why() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let error = StoreError::Unavailable("/home/x/history.toml: permission denied".to_owned());
+
+        save_history(tx, Arc::new(Disk(Err(error))), name(), Vec::new()).await;
+
+        let Some(Incoming::Msg(Msg::HistorySaveFailed { reason })) = rx.recv().await else {
+            panic!("a lost save is worth one line");
+        };
+        assert!(reason.contains("permission denied"), "{reason}");
     }
 }

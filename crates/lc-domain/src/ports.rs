@@ -11,7 +11,10 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use crate::config::{Config, ConnectionConfig, Credential, Diagnostic, PageSize};
+use crate::config::{
+    Config, ConnectionConfig, ConnectionName, Credential, Diagnostic, HistoryLimit, PageSize,
+};
+use crate::history::Histories;
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
 use crate::theme::ThemeChoice;
@@ -74,11 +77,18 @@ pub trait SecretResolver: Send + Sync {
     async fn resolve(&self, credential: &Credential) -> Result<String, ConfigError>;
 }
 
-/// Query history and saved queries.
+/// Query history, kept between runs (query history design §1).
 #[async_trait]
 pub trait Store: Send + Sync {
-    async fn record(&self, stmt: &Statement) -> Result<(), StoreError>;
-    async fn history(&self, limit: usize) -> Result<Vec<Statement>, StoreError>;
+    /// Every connection's history, trimmed to `limit`. Never fails, as
+    /// [`ConfigSource::load`] does not: a file that cannot be read yields
+    /// nothing and a diagnostic.
+    async fn load(&self, limit: HistoryLimit) -> (Histories, Vec<Diagnostic>);
+
+    /// Replaces `connection`'s stored history, newest first, leaving every
+    /// other connection's alone.
+    async fn save(&self, connection: &ConnectionName, entries: &[String])
+    -> Result<(), StoreError>;
 }
 
 /// Opens a destination for an export.
@@ -126,7 +136,7 @@ pub enum ConfigWriteError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
-    #[error("store is unavailable: {0}")]
+    #[error("history could not be saved: {0}")]
     Unavailable(String),
 }
 

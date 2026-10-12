@@ -53,7 +53,8 @@ one bare, several as one logged batch — behind a scrollable confirmation, and
 `q` with anything outstanding warns before it discards
 (docs/superpowers/specs/2026-09-18-cell-editing-design.md). `ctrl-g` in
 Queries opens a per-connection history of what the buffer has run, bounded by
-`history.limit` and held in `State` for the session
+`history.limit`, held in `State` and kept between runs by the `Store` port in
+`$XDG_STATE_HOME/lazycassandra/history.toml`
 (docs/superpowers/specs/2026-10-09-query-history-design.md).
 **Last updated:** 2026-10-09
 

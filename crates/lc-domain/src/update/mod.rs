@@ -6,7 +6,7 @@
 
 use crate::clock::Stamp;
 use crate::commit::Discard;
-use crate::config::{Config, ConnectionConfig, Diagnostic, PageSize};
+use crate::config::{Config, ConnectionConfig, ConnectionName, Diagnostic, PageSize};
 use crate::contents::{
     ContentsState, Continue, Failure, Filter, Landed, SelectionMode, Subject, TableRef,
 };
@@ -139,6 +139,11 @@ pub enum Msg {
     ThemeSaveFailed {
         reason: String,
     },
+    /// A history write failed. The in-memory list is untouched and the next
+    /// run retries with the whole of it (query history design §5).
+    HistorySaveFailed {
+        reason: String,
+    },
     /// Rows written so far by `job`, a running total.
     ExportProgress {
         job: JobId,
@@ -186,6 +191,13 @@ pub enum Effect {
     },
     Cancel(QueryId),
     RecordHistory(Box<Statement>),
+    /// Write `connection`'s history, newest first, to the store. Carries the
+    /// whole list rather than the new entry: a save replaces, so a lost one
+    /// is repaired by the next (query history design §5).
+    SaveHistory {
+        connection: ConnectionName,
+        entries: Vec<String>,
+    },
     /// Hand `buffer` to the user's editor and report what comes back. The one
     /// effect `lc-app` runs on the main loop rather than as a task: the child
     /// needs the terminal, so nothing else may draw while it holds it
@@ -409,6 +421,15 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         Msg::EditorFailed { reason } => editor_failed(state, reason),
 
         Msg::ThemeSaveFailed { reason } => theme_save_failed(state, reason),
+
+        Msg::HistorySaveFailed { reason } => {
+            logged(
+                state,
+                sentence("Saving the history"),
+                Outcome::Failed { detail: reason },
+            );
+            Vec::new()
+        }
 
         Msg::ExportProgress { job, rows } => export_progress(state, job, rows),
 
@@ -2373,22 +2394,35 @@ fn run(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     }
 
-    record_history(state, cql);
     state.focus_on(Panel::Contents);
-    submit_into_contents(state, Subject::Typed(cql.to_owned()), stmt)
+
+    let mut effects = submit_into_contents(state, Subject::Typed(cql.to_owned()), stmt);
+
+    // Only what was sent: a statement the posture refused issues nothing, and
+    // is no more worth recalling than one that never left the buffer.
+    if !effects.is_empty() {
+        effects.extend(record_history(state, cql));
+    }
+
+    effects
 }
 
 /// Remembers a statement sent from the buffer against the connection in use.
 /// Only the buffer: reading a table from the tree is not something the user
 /// typed (query history design §2).
-fn record_history(state: &mut State, cql: &str) {
+fn record_history(state: &mut State, cql: &str) -> Option<Effect> {
     let ConnectionState::Connected(connection) = &state.connection else {
-        return;
+        return None;
     };
+    let name = connection.name.clone();
 
     state
         .histories
-        .record(&connection.name, cql, state.config.history.limit);
+        .record(&name, cql, state.config.history.limit)
+        .then(|| Effect::SaveHistory {
+            entries: state.histories.of(&name).to_vec(),
+            connection: name,
+        })
 }
 
 /// Puts `stmt`'s result in the Contents panel, cancelling whatever it was

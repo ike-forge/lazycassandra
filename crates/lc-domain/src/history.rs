@@ -21,18 +21,25 @@ impl History {
     ///
     /// An entry already held moves to the front instead of repeating, and a
     /// blank statement is not an entry. The oldest entries past `limit` fall
-    /// off.
-    pub fn record(&mut self, statement: &str, limit: HistoryLimit) {
+    /// off. Answers whether anything changed, so a repeat of the newest entry
+    /// costs no write.
+    pub fn record(&mut self, statement: &str, limit: HistoryLimit) -> bool {
         let statement = statement.trim();
 
-        if statement.is_empty() {
-            return;
+        if statement.is_empty()
+            || self
+                .entries
+                .first()
+                .is_some_and(|newest| newest == statement)
+        {
+            return false;
         }
 
         self.entries.retain(|held| held != statement);
         self.entries.insert(0, statement.to_owned());
         self.entries
             .truncate(usize::try_from(limit.get()).unwrap_or(usize::MAX));
+        true
     }
 
     #[must_use]
@@ -47,11 +54,30 @@ impl History {
 pub struct Histories(BTreeMap<ConnectionName, History>);
 
 impl Histories {
-    pub fn record(&mut self, connection: &ConnectionName, statement: &str, limit: HistoryLimit) {
+    pub fn record(
+        &mut self,
+        connection: &ConnectionName,
+        statement: &str,
+        limit: HistoryLimit,
+    ) -> bool {
         self.0
             .entry(connection.clone())
             .or_default()
-            .record(statement, limit);
+            .record(statement, limit)
+    }
+
+    /// Replaces `connection`'s entries with `stored`, newest first as a store
+    /// keeps them, under the same rules as [`History::record`] — so a file
+    /// edited by hand, or written under a larger limit, still yields a list
+    /// the picker can rely on.
+    pub fn restore(&mut self, connection: &ConnectionName, stored: &[String], limit: HistoryLimit) {
+        let mut history = History::default();
+
+        for statement in stored.iter().rev() {
+            history.record(statement, limit);
+        }
+
+        self.0.insert(connection.clone(), history);
     }
 
     /// `connection`'s entries, newest first; none for one never asked anything.
@@ -148,6 +174,30 @@ mod tests {
         assert_eq!(histories.of(&name("dev")), ["SELECT 1;"]);
         assert_eq!(histories.of(&name("prod")), ["SELECT 2;"]);
         assert!(histories.of(&name("stage")).is_empty());
+    }
+
+    #[test]
+    fn recording_says_whether_anything_changed() {
+        let mut history = History::default();
+
+        assert!(history.record("SELECT 1;", limit(10)));
+        assert!(
+            !history.record("SELECT 1;", limit(10)),
+            "already the newest"
+        );
+        assert!(history.record("SELECT 2;", limit(10)));
+        assert!(history.record("SELECT 1;", limit(10)), "moved to the front");
+        assert!(!history.record("  ", limit(10)));
+    }
+
+    #[test]
+    fn restoring_keeps_a_stores_order_and_applies_the_limit() {
+        let mut histories = Histories::default();
+        let stored = ["SELECT 3;", "SELECT 2;", "SELECT 2;", "SELECT 1;"].map(str::to_owned);
+
+        histories.restore(&name("dev"), &stored, limit(2));
+
+        assert_eq!(histories.of(&name("dev")), ["SELECT 3;", "SELECT 2;"]);
     }
 
     #[test]

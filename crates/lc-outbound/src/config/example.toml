@@ -41,7 +41,8 @@
 # page_rows        = 200   # 1..=100000; rows per page read into the grid
 
 # ── query history ─────────────────────────────────────────────
-# Kept per connection, for the session. ctrl-g in Queries opens it.
+# Kept per connection, between runs, in $XDG_STATE_HOME/lazycassandra.
+# ctrl-g in Queries opens it.
 # [history]
 # limit = 100   # 1..=10000; statements remembered per connection
 
