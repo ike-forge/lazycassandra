@@ -1193,8 +1193,8 @@ a permanently grey hint teaches nothing.
 
 **A key the connection's posture refuses is off the bar, named as refused in
 the palette, and answered when it is pressed.** A read-only connection leaves
-`d` off the bar on both panels it is bound in, and draws the palette's four
-drop-and-delete rows with a muted `(disabled, read-only)` after their keys.
+`d` off the bar on both panels it is bound in, and draws the palette's
+drop-and-delete rows, under their panel's heading too, with a muted `(disabled, read-only)` after their keys.
 `ctrl-r` is greyed rather than dropped, against a buffer holding anything but a
 read: the same key in the same frame runs a `SELECT` and would be refused a
 `DELETE`, so it follows the text as typed. The palette keeps its rows: it
@@ -1639,7 +1639,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | The Tables border names the open connection and its posture, in the picker's spelling and colours | `the_border_names_the_connection_and_its_posture`, `the_posture_is_spelled_the_way_the_picker_and_the_config_spell_it`, `the_posture_carries_its_own_colour_and_the_rest_of_the_name_does_not`, `a_panel_with_no_connection_names_no_connection` (`view/tables.rs`), `a_sidebar_wide_enough_names_the_connection_on_the_border`, `a_writable_posture_wears_its_own_colour_on_the_border` (`inbound/render/tests/`) |
 | A border too narrow for the badge drops it, and one too narrow for badge and `/term` keeps the term | `a_narrow_border_falls_back_to_the_panels_name_alone` (`view/tables.rs`), `a_sidebar_too_narrow_for_the_badge_keeps_the_panels_name_alone`, `a_border_holding_both_puts_the_badge_at_the_name_and_the_marker_at_the_corner`, `a_border_that_cannot_hold_both_keeps_the_marker_and_drops_the_badge` (`inbound/render/tests/`) |
 | The bar greys `ctrl-r` against a buffer the posture would refuse | `the_run_hint_greys_against_a_buffer_the_posture_would_refuse` (`view/hints.rs`) |
-| The palette names the posture on every mutating row on a read-only connection, and drops none | `a_read_only_connection_refuses_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys`, `a_refused_row_names_the_posture_after_its_keys_in_muted` (`inbound/palette.rs`), `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_a_delete_or_an_edit` (`commands.rs`) |
+| The palette names the posture on every mutating row on a read-only connection, and drops none | `a_read_only_connection_refuses_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys`, `a_refused_row_names_the_posture_after_its_keys_in_muted` (`inbound/palette.rs`), `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_a_delete_or_an_edit`, `a_panels_group_lists_the_mutations_it_opens` (`commands.rs`) |
 | A second modifier is not a binding | `ctrl_alt_r_does_not_run_the_buffer` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
 | A statement is classified by the verb opening it, comments and strings scanned past | `a_leading_comment_does_not_hide_the_verb`, `a_semicolon_inside_a_string_does_not_open_a_statement`, `a_trailing_semicolon_adds_no_statement` (`model/statement.rs`) |

@@ -242,11 +242,43 @@ const MOTION: &[Command] = &[
 //
 // The horizontal keys are not here: they are `Navigate`'s, and a panel group
 // lists only what that panel alone answers.
-const TABLES: &[Command] = &[Command::new(
-    &[Stroke::key(Key::Enter)],
-    "fold/unfold, or read",
+const TABLES: &[Command] = &[
+    Command::new(
+        &[Stroke::key(Key::Enter)],
+        "fold/unfold, or read",
+        Run::In(Panel::Tables),
+    ),
+    DROP_TABLE,
+];
+
+// The openers are listed under their panel as well as under the group that
+// holds the rest of their flow: a reader looks for what a panel can do under
+// the panel's heading.
+const DROP_TABLE: Command = Command::mutating(
+    &[Stroke::key(Key::Char('d'))],
+    "drop this",
     Run::In(Panel::Tables),
-)];
+);
+const DELETE_ROWS: Command = Command::mutating(
+    &[Stroke::key(Key::Char('d'))],
+    "delete these rows",
+    Run::In(Panel::Contents),
+);
+const EDIT_VALUE: Command = Command::mutating(
+    &[Stroke::key(Key::Char('e'))],
+    "edit this value",
+    Run::Inert,
+);
+const COMMIT_EDITS: Command = Command::mutating(
+    &[Stroke::ctrl(Key::Char('s'))],
+    "commit the edits",
+    Run::In(Panel::Contents),
+);
+const EXPORT_ROWS: Command = Command::new(
+    &[Stroke::ctrl(Key::Char('e'))],
+    "export these rows",
+    Run::In(Panel::Contents),
+);
 
 /// One key aimed at two panels, and the confirmation's own keys. `y`, `n`,
 /// `⏎` and `esc` all appear elsewhere meaning something else, which is the
@@ -263,16 +295,8 @@ const TABLES: &[Command] = &[Command::new(
 /// so a palette that pressed one would yank rather than confirm (palette
 /// execution design §5).
 const DROP: &[Command] = &[
-    Command::mutating(
-        &[Stroke::key(Key::Char('d'))],
-        "drop this",
-        Run::In(Panel::Tables),
-    ),
-    Command::mutating(
-        &[Stroke::key(Key::Char('d'))],
-        "delete these rows",
-        Run::In(Panel::Contents),
-    ),
+    DROP_TABLE,
+    DELETE_ROWS,
     Command::mutating(&[Stroke::key(Key::Char('y'))], "yes, drop it", Run::Inert),
     Command::mutating(
         &[Stroke::key(Key::Enter)],
@@ -298,16 +322,8 @@ const DROP: &[Command] = &[
 /// the confirmation, and their keys mean something else outside it, so the
 /// palette may not run them either (palette execution design §5).
 const EDIT: &[Command] = &[
-    Command::mutating(
-        &[Stroke::key(Key::Char('e'))],
-        "edit this value",
-        Run::Inert,
-    ),
-    Command::mutating(
-        &[Stroke::ctrl(Key::Char('s'))],
-        "commit the edits",
-        Run::In(Panel::Contents),
-    ),
+    EDIT_VALUE,
+    COMMIT_EDITS,
     Command::mutating(
         &[Stroke::key(Key::Char('y'))],
         "yes, write them",
@@ -358,6 +374,10 @@ const CONTENTS: &[Command] = &[
         "clear this filter",
         Run::Inert,
     ),
+    DELETE_ROWS,
+    EDIT_VALUE,
+    COMMIT_EDITS,
+    EXPORT_ROWS,
 ];
 
 /// The form's own keys. `Tab` and `Esc` also appear under `Global` meaning
@@ -365,11 +385,7 @@ const CONTENTS: &[Command] = &[
 /// not omit what a key does somewhere
 /// (docs/superpowers/specs/2026-08-09-command-palette-design.md §2).
 const EXPORT: &[Command] = &[
-    Command::new(
-        &[Stroke::ctrl(Key::Char('e'))],
-        "export these rows",
-        Run::In(Panel::Contents),
-    ),
+    EXPORT_ROWS,
     Command::new(&[Stroke::key(Key::Tab)], "next field", Run::Inert),
     Command::new(&[Stroke::key(Key::BackTab)], "previous field", Run::Inert),
     Command::new(
@@ -1418,6 +1434,23 @@ mod tests {
             "every row but the completion's, which is inert for the reason the \
              export form's rows are"
         );
+    }
+
+    /// A panel's heading lists what the panel can start, even where the rest
+    /// of the flow lives under a group of its own.
+    #[test]
+    fn a_panels_group_lists_the_mutations_it_opens() {
+        let group = |heading| {
+            CATALOGUE
+                .iter()
+                .find(|group| group.heading == heading)
+                .unwrap_or_else(|| panic!("no {heading} group"))
+        };
+
+        assert!(group("Tables").commands.contains(&DROP_TABLE));
+        for opener in [DELETE_ROWS, EDIT_VALUE, COMMIT_EDITS, EXPORT_ROWS] {
+            assert!(group("Table contents").commands.contains(&opener));
+        }
     }
 
     /// The form's `tab`, `space` and `esc` mean what they say only while the
