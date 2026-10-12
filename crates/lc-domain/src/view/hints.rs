@@ -259,6 +259,36 @@ pub(crate) const CONNECTIONS: &[Binding] = &[Binding {
     action: "search",
 }];
 
+/// Named only where `ctrl-g` opens something, and last of the panel's own
+/// hints so a narrow bar drops it before `run` (query history design §4).
+const HISTORY_HINT: Binding = Binding {
+    keys: &[Stroke::ctrl(Key::Char('g'))],
+    action: "history",
+};
+
+/// What the bar names while the history is open: `⏎` loads and runs nothing,
+/// which is the difference from `ctrl-r` worth saying (query history design
+/// §3). Motion is assumed, as in the connection picker.
+pub(crate) const HISTORY: &[Binding] = &[Binding {
+    keys: &[Stroke::key(Key::Char('/'))],
+    action: "search",
+}];
+
+pub(crate) const HISTORY_GLOBAL: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "load",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Escape)],
+        action: "close",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('q'))],
+        action: "quit",
+    },
+];
+
 /// The two ways out differ in what they leave behind, as the theme picker's
 /// do: `⏎` opens the connection under the cursor, and `esc` leaves the tool
 /// connected to whatever it already was — which at startup is nothing.
@@ -495,6 +525,14 @@ fn overlay_bar(state: &State, export: Option<&String>) -> Option<HintBar> {
         return Some(connections_bar(state, export));
     }
 
+    if matches!(state.overlay, Some(Overlay::History { .. })) {
+        return Some(HintBar {
+            panel: HISTORY.iter().map(rendered).collect(),
+            global: HISTORY_GLOBAL.iter().map(rendered).collect(),
+            export,
+        });
+    }
+
     if matches!(state.overlay, Some(Overlay::Diagnostics(_))) {
         return Some(HintBar {
             panel: Vec::new(),
@@ -602,6 +640,13 @@ pub(crate) fn bar(state: &State) -> HintBar {
     }
     if state.focus() == Panel::Contents && crate::update::has_uncommitted(state) {
         panel.push(rendered(&COMMIT_HINT));
+    }
+    if state.focus() == Panel::Queries
+        && state.queries.tab() == QueriesTab::Cql
+        && !state.history().is_empty()
+        && state.geometry.history_rows() > 0
+    {
+        panel.push(rendered(&HISTORY_HINT));
     }
     if state.focus() == Panel::Contents && state.contents.fetching_all() {
         panel.push(rendered(&STOP));
@@ -744,7 +789,11 @@ fn export_bar(form: &crate::export::ExportForm, export: Option<String>) -> HintB
 fn sifting(state: &State) -> bool {
     match &state.overlay {
         Some(Overlay::Commands(panel)) => panel.sift().is_some(),
-        Some(Overlay::Themes { sift, .. } | Overlay::Connections { sift, .. }) => sift.is_some(),
+        Some(
+            Overlay::Themes { sift, .. }
+            | Overlay::Connections { sift, .. }
+            | Overlay::History { sift, .. },
+        ) => sift.is_some(),
         _ => false,
     }
 }

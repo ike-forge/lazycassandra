@@ -51,8 +51,12 @@ one value, an accepted value is held uncommitted on the `GridPage` beside the
 sort and the filters, `ctrl-s` turns every one of them into an `UPDATE` —
 one bare, several as one logged batch — behind a scrollable confirmation, and
 `q` with anything outstanding warns before it discards
-(docs/superpowers/specs/2026-09-18-cell-editing-design.md).
-**Last updated:** 2026-09-18
+(docs/superpowers/specs/2026-09-18-cell-editing-design.md). `ctrl-g` in
+Queries opens a per-connection history of what the buffer has run, bounded by
+`history.limit`, held in `State` and kept between runs by the `Store` port in
+`$XDG_STATE_HOME/lazycassandra/history.toml`
+(docs/superpowers/specs/2026-10-09-query-history-design.md).
+**Last updated:** 2026-10-09
 
 ---
 

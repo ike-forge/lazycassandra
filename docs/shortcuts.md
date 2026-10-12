@@ -191,7 +191,7 @@ for its own reason. `ctrl-d`/`ctrl-u` page nothing because `PageDown`/`PageUp`
 page nothing here, and the two spellings reach one implementation. `ctrl-t` is
 refused outright: it is the one opener a prompt cannot swallow, and a picker
 opened over a live query would strand the panel searched with nothing left
-holding what it was searched from. `ctrl-r` runs a statement only from Queries,
+holding what it was searched from. `ctrl-r` and `ctrl-g` act only from Queries,
 and no prompt can be open while Queries has focus. That takes two halves:
 Queries holds no search, so no prompt can be opened *over* it; and focus cannot
 move *to* it under a live prompt, since the prompt swallows `Tab`/`Shift-Tab`,
@@ -319,6 +319,42 @@ would be final and a connection opened by mistake would cost a restart.
 
 See [connection picker design](specs/2026-08-31-connection-picker-design.md)
 §3, §4, §5.
+
+### The query history
+
+`ctrl-g` opens `Overlay::History` from Queries, whichever of the Cql tab's
+modes it is in. An `Overlay` of the same rank as the pickers: it outranks
+focus, claims every key, is refused on its own gate and over a live search
+prompt. It lists what the connection in use has been asked from the buffer —
+`ctrl-r` only, never a table read from the tree — newest first, each
+statement as one line, a repeat moving to the front instead of appearing
+twice. At most `history.limit` are kept per connection (default 100; 0 turns
+the history off, and `ctrl-g` then answers with a "history is disabled" toast).
+The palette carries a row for it.
+
+Kept between runs in `$XDG_STATE_HOME/lazycassandra/history.toml` (default
+`~/.local/state`), keyed by connection name. Statements can hold credentials,
+so the file is `0600`.
+
+| Key | Effect |
+|---|---|
+| `j` / `k`, `Down` / `Up` | Moves the cursor. Previews nothing. |
+| `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen. |
+| `Home` / `End`, `g` / `G` | The newest entry, the oldest. |
+| `Enter` | Replaces the buffer with the entry under the cursor, and closes. Runs nothing: `ctrl-r` is the one key that sends a statement. |
+| `Esc` | Closes, leaving the buffer as it was. |
+| `q` | Quits, as everywhere else. The list takes motion, not text. |
+| `/` | Filter the list. `⏎` closes the prompt onto its row without loading it, `Esc` puts the cursor back — the connection picker's two `⏎`s, for its reason. |
+
+The block scrolls, where the pickers refuse a list that does not fit: a
+hundred rows is far more than a frame holds.
+
+`ctrl-g` is the history's chord because `ctrl-r`, the CLI's reverse search,
+already runs a statement here, and a chord is never a synonym for another
+(§2). Of the free ctrl letters, `ctrl-h` is Backspace on terminals that cannot
+tell the two apart.
+
+See [query history design](superpowers/specs/2026-10-09-query-history-design.md).
 
 ### The configuration diagnostics overlay
 
@@ -866,6 +902,7 @@ is edited with the keys below, and `ctrl-e` is the way to any other editor
 | `j` / `k` / `↓` / `↑` | With the buffer closed: band the next / previous statement. A step off either end stays where it is. |
 | `g` / `G` / `Home` / `End` | With the buffer closed: band the first / last statement. |
 | `ctrl-r` | Run the banded statement — the one the cursor is in, in either mode. Its page replaces whatever Contents was showing. A buffer holding no statement runs nothing, and the bar greys the hint out while that is so — §2. |
+| `ctrl-g` | Open the query history: what this connection has been asked from the buffer, newest first. Inert with nothing remembered, and the bar names it only once there is something to open. See the query history's own subsection in §1. |
 | `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
 | `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
 | `ctrl-n` / `ctrl-p` | The next / previous completion. With no popup up, raise one against the word under the cursor. |
@@ -1029,7 +1066,7 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has nine members now. `ctrl-r` runs the Queries
+for whatever is focused. The layer has ten members now. `ctrl-r` runs the Queries
 panel's banded statement, `ctrl-e` opens the buffer in an external editor, `ctrl-f` lays it
 out, and `ctrl-n`/`ctrl-p` walk the completion popup: the panel takes
 text, so every printable key there is a character and none of those actions has
@@ -1040,7 +1077,8 @@ an unmodified key available
 export form, gated on focus exactly as `ctrl-r`'s one meaning already is —
 a chord is never a synonym for the plain key, and nothing in the rule says
 it may carry only one meaning of its own (export design §1). `ctrl-t` opens
-the theme picker, for the reason §1's picker subsection gives. `ctrl-f`,
+the theme picker, for the reason §1's picker subsection gives. `ctrl-g` opens
+the query history, for the reason §1's history subsection gives. `ctrl-f`,
 `ctrl-n` and `ctrl-p` are Queries members exactly as `ctrl-r` is, gated on that
 panel and inert outside it; none of them shadows the plain `f`, `n` or `p`,
 and `n`/`N` still walk a search
@@ -1324,7 +1362,7 @@ editor and the export form's path stop bind.
 `Enter` is gated on focus three ways, the shape `d` has on two: the tree folds
 or reads, the grid inspects, and the editor splits a line (§1).
 
-Ctrl taken: `ctrl-r`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
+Ctrl taken: `ctrl-r`, `ctrl-g`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
 `ctrl-s` in Table contents, `ctrl-t` and `ctrl-o` everywhere, and
 `ctrl-d`/`ctrl-u` everywhere
@@ -1573,6 +1611,20 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | A matched cell reads apart from an unmatched one, on and off the selected row | `a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row` (`inbound/render/tests/`) |
 | `Token::Match` is legible over `Token::Selected` | `a_match_is_legible_over_a_selected_row` (`inbound/theme/mod.rs`) |
 | `ctrl-r` runs the buffer | `ctrl_r_runs_the_query_buffer`, `a_run_query_titles_the_panel_with_what_was_typed` |
+| A statement run from the buffer is remembered, and a table read is not | `a_statement_run_from_the_buffer_is_remembered`, `a_table_read_from_the_tree_is_not_remembered` (`history.rs`) |
+| A run saves the whole list for its connection, a repeat of the newest saves nothing, a refused statement neither | `a_run_saves_the_whole_list_for_its_connection`, `running_the_newest_statement_again_saves_nothing`, `a_statement_the_posture_refused_is_neither_remembered_nor_saved` (`history.rs`) |
+| A failed save is a trail line, not a modal | `a_failed_save_lands_in_the_trail_and_not_in_a_modal` (`history.rs`), `a_history_that_could_not_be_saved_reports_why` (`app/effects.rs`) |
+| What one run saves the next loads, per connection, trimmed to the limit | `what_one_run_saves_the_next_loads`, `saving_one_connection_leaves_the_others_alone`, `a_lower_limit_trims_on_load` (`outbound/tests/history.rs`, integration tier) |
+| A corrupt file is reported and replaced; the file is `0600` | `a_file_that_is_not_toml_is_reported_and_replaced_by_the_next_save`, `the_file_is_private_to_the_user` (`outbound/tests/history.rs`, integration tier) |
+| The file format round-trips | `what_is_rendered_parses_back`, `a_name_that_needs_quoting_survives` (`outbound/history.rs`) |
+| `history.limit = 0` records and saves nothing; `ctrl-g` toasts and the toast expires | `a_zero_limit_records_nothing_and_saves_nothing`, `ctrl_g_with_the_history_disabled_toasts_instead_of_opening`, `the_toast_leaves_after_its_ticks` (`history.rs`) |
+| `history.limit` bounds what is kept | `the_configured_limit_bounds_what_is_kept` (`history.rs`), `the_oldest_entries_fall_off_past_the_limit` (`domain/history.rs`) |
+| A repeat moves to the front, and each connection keeps its own | `a_repeated_statement_moves_to_the_front_instead_of_repeating`, `each_connection_keeps_its_own` (`domain/history.rs`) |
+| `ctrl-g` opens the history on the newest entry, from Queries only, and not on nothing | `ctrl_g_opens_the_history_on_the_newest_entry`, `ctrl_g_belongs_to_queries`, `ctrl_g_opens_nothing_with_no_history`, `ctrl_g_opens_nothing_where_the_frame_cannot_draw_it` (`history.rs`) |
+| `⏎` loads the entry and runs nothing; `esc` leaves the buffer alone | `enter_loads_the_entry_into_the_buffer_and_runs_nothing`, `a_loaded_entry_can_be_run_straight_away`, `esc_closes_it_and_leaves_the_buffer_alone` (`history.rs`) |
+| The filter's `⏎` closes onto its row before anything loads | `a_filter_narrows_the_list_and_enter_closes_it_onto_the_row_before_loading`, `a_filter_that_matches_nothing_closes_onto_the_row_the_prompt_opened_on`, `esc_in_a_filter_puts_the_cursor_back` (`history.rs`) |
+| The bar names `ctrl-g` only once there is something to open | `the_bar_names_ctrl_g_only_once_there_is_something_to_open` (`history.rs`) |
+| The block scrolls to the cursor and clips a long statement | `a_list_longer_than_the_frame_scrolls_to_the_cursor`, `a_statement_wider_than_the_block_is_cut_with_an_ellipsis` (`inbound/history.rs`) |
 | It runs only from Queries | `ctrl_r_outside_queries_runs_nothing` |
 | An empty buffer is inert | `an_empty_buffer_runs_nothing` |
 | `j`/`k` band statement by statement, and `ctrl-r` runs the banded one | `j_and_k_walk_the_bands_over_the_buffers_statements`, `ctrl_r_runs_the_banded_statement_and_not_the_rest_of_the_buffer`, `stepping_the_band_changes_what_ctrl_r_runs` |

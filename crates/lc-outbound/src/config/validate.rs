@@ -10,16 +10,16 @@ use std::path::PathBuf;
 use lc_domain::config::{
     Background, ClientIdentity, Compression, Config, ConnectionConfig, ConnectionName, Consistency,
     Credential, Credentials, CustomTheme, Diagnostic, Discovery, DriverConfig, ExportConfig,
-    GridConfig, Icons, MaxColumnWidth, Millis, Mouse, Origin, OutOfRange, PageRows, PageSize,
-    PanelRatios, Rgb, Span, Tls, TlsSettings, Trust, Verification,
+    GridConfig, HistoryConfig, HistoryLimit, Icons, MaxColumnWidth, Millis, Mouse, Origin,
+    OutOfRange, PageRows, PageSize, PanelRatios, Rgb, Span, Tls, TlsSettings, Trust, Verification,
 };
 use lc_domain::posture::Posture;
 use lc_domain::style::Severity;
 use lc_domain::theme::{BuiltIn, Ours, Role, ThemeChoice, ThemeName};
 
 use super::wire::{
-    ConnectionLayer, CredentialLayer, CredentialSource, DriverLayer, ExportLayer, GridLayer, Layer,
-    LayoutLayer, Located, ThemeLayer, TlsLayer, TlsTable,
+    ConnectionLayer, CredentialLayer, CredentialSource, DriverLayer, ExportLayer, GridLayer,
+    HistoryLayer, Layer, LayoutLayer, Located, ThemeLayer, TlsLayer, TlsTable,
 };
 
 /// Collects diagnostics so a caller never has to thread a `Vec` by hand.
@@ -116,6 +116,7 @@ pub(crate) fn validate(merged: Layer) -> (Config, Vec<Diagnostic>) {
         mouse: merged.mouse.map_or_else(Default::default, bool_to_mouse),
         layout: layout(merged.layout, &mut report),
         grid: grid(merged.grid, &mut report),
+        history: history(merged.history, &mut report),
         driver: driver(merged.driver, &mut report),
         export: export(merged.export),
         default_connection: default_connection(
@@ -148,6 +149,16 @@ fn grid(layer: Option<GridLayer>, report: &mut Report) -> GridConfig {
     GridConfig {
         max_column_width: width.unwrap_or_default(),
         page_rows: rows.unwrap_or_default(),
+    }
+}
+
+fn history(layer: Option<HistoryLayer>, report: &mut Report) -> HistoryConfig {
+    let limit = layer
+        .and_then(|layer| layer.limit)
+        .and_then(|value| report.keep(HistoryLimit::try_new(value.value), &value, "history.limit"));
+
+    HistoryConfig {
+        limit: limit.unwrap_or_default(),
     }
 }
 
@@ -730,6 +741,31 @@ mod tests {
 
         assert_eq!(config.grid.page_rows.get(), 50);
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_stated_history_limit_is_kept() {
+        let (config, diagnostics) = config_of(&["[history]\nlimit = 25\n"]);
+
+        assert_eq!(config.history.limit.get(), 25);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_history_limit_of_zero_turns_the_history_off() {
+        let (config, diagnostics) = config_of(&["[history]\nlimit = 0\n"]);
+
+        assert!(config.history.limit.is_off());
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_history_limit_out_of_range_falls_back_to_the_default() {
+        let (config, diagnostics) = config_of(&["[history]\nlimit = 10001\n"]);
+
+        assert_eq!(config.history.limit.get(), 100);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("history.limit"));
     }
 
     #[test]

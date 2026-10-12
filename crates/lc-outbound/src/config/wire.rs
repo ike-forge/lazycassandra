@@ -70,6 +70,7 @@ pub(crate) struct Layer {
     pub(crate) default_connection: Option<Located<String>>,
     pub(crate) layout: Option<LayoutLayer>,
     pub(crate) grid: Option<GridLayer>,
+    pub(crate) history: Option<HistoryLayer>,
     pub(crate) driver: Option<DriverLayer>,
     pub(crate) export: Option<ExportLayer>,
     #[serde(default)]
@@ -103,6 +104,9 @@ impl Layer {
         if let Some(grid) = self.grid.as_mut() {
             at(grid.max_column_width.as_mut(), source, origin);
             at(grid.page_rows.as_mut(), source, origin);
+        }
+        if let Some(history) = self.history.as_mut() {
+            at(history.limit.as_mut(), source, origin);
         }
         if let Some(driver) = self.driver.as_mut() {
             at(driver.page_size.as_mut(), source, origin);
@@ -140,6 +144,13 @@ pub(crate) struct LayoutLayer {
 pub(crate) struct GridLayer {
     pub(crate) max_column_width: Option<Located<u16>>,
     pub(crate) page_rows: Option<Located<u32>>,
+    #[serde(flatten)]
+    pub(crate) unknown: Unknown,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct HistoryLayer {
+    pub(crate) limit: Option<Located<u32>>,
     #[serde(flatten)]
     pub(crate) unknown: Unknown,
 }

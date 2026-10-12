@@ -18,6 +18,7 @@ mod filter;
 mod footer;
 mod highlight;
 mod hints;
+mod history;
 pub mod hit;
 mod icons;
 pub mod input;
@@ -30,6 +31,7 @@ mod palette;
 pub mod render;
 pub mod theme;
 mod themes;
+mod toast;
 mod too_small;
 mod wrap;
 

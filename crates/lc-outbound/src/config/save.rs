@@ -65,7 +65,7 @@ pub(crate) fn set_theme(source: &str, slug: &str) -> Result<String, ConfigWriteE
 /// `Cargo.toml` keeps `toml`'s `display` feature off — one scalar is not a
 /// reason to carry a serialiser — and `ThemeName::try_new` rejects whitespace
 /// but not a quote or a backslash, so a custom theme's name can need escaping.
-fn quote(value: &str) -> String {
+pub(crate) fn quote(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('"');
 

@@ -15,6 +15,7 @@ use crate::contents::{ContentsPanel, Filter, SelectionMode, TableRef};
 use crate::ddl::DdlPanel;
 use crate::drop::{DropPrompt, Target};
 use crate::export::ExportForm;
+use crate::history::Histories;
 use crate::inspect::Inspector;
 use crate::log::{Log, Outcome};
 use crate::model::{ConnId, DbError, JobId, Key, QueryId, Schema, Statement};
@@ -40,6 +41,9 @@ pub struct State {
     /// The Logs tab: a bounded trail of what the session issued and what came
     /// back (query log design §3).
     pub log: Log,
+    /// What each connection has been asked from the Queries buffer, for
+    /// `ctrl-g` (query history design §1).
+    pub histories: Histories,
     /// What the last frame turned out to be, so a motion knows how far a page
     /// is and where the end is.
     pub geometry: Geometry,
@@ -56,6 +60,9 @@ pub struct State {
     /// What the last `y` copied, lit for as long as [`Flash`] lasts. `None`
     /// once it has faded or the next key has ended it.
     pub flash: Option<Flash>,
+    /// A one-line answer to a key that did nothing, for as long as [`Toast`]
+    /// lasts.
+    pub toast: Option<Toast>,
     /// Set when something changed that the next frame must show. Avoids
     /// repainting on every keypress of a held-down `j` (architecture.md §3).
     pub dirty: bool,
@@ -348,6 +355,16 @@ pub enum Overlay {
         /// The live search over the list. A field rather than a sibling
         /// variant, for `Themes`' reason: a prompt and a picker must both be
         /// up (overlay search design §4).
+        sift: Option<Sift>,
+    },
+    /// The statements the connection in use has been asked, newest first,
+    /// one of which the user chooses to load into the buffer. Previews and
+    /// connects nothing, so it has no `restored` twin either: choosing is a
+    /// copy into the buffer, and the buffer is only touched by `⏎`
+    /// (query history design §3).
+    History {
+        cursor: Cursor,
+        /// The live search over the list, for `Themes`' reason.
         sift: Option<Sift>,
     },
     /// What the config files got wrong, drawn over the panels at startup.
@@ -1185,6 +1202,39 @@ impl Flash {
     }
 }
 
+/// A line of feedback for a chord that is bound but has nothing to do, where
+/// silence would read as a dead key. Not a modal: it asks nothing and leaves
+/// on its own, counted in ticks as [`Flash`] is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toast {
+    message: String,
+    remaining: usize,
+}
+
+/// Three seconds of [`crate::Msg::Tick`]s at `lc-app`'s forty milliseconds.
+pub const TOAST_TICKS: usize = 75;
+
+impl Toast {
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            remaining: TOAST_TICKS,
+        }
+    }
+
+    /// As [`Flash::spend`]: true only on the tick that ends it.
+    pub const fn spend(&mut self) -> bool {
+        self.remaining = self.remaining.saturating_sub(1);
+        self.remaining == 0
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 /// Where a selected row was drawn, counted in the lines a viewport scrolls
 /// over.
 ///
@@ -1329,6 +1379,10 @@ pub struct Geometry {
     /// fits one picker need not fit the other
     /// (connection picker design §7).
     connection_rows: usize,
+    /// Rows the history list could show, measured like `theme_rows`. The
+    /// block scrolls, so unlike the pickers' it is a ceiling and not a
+    /// refusal threshold (query history design §3).
+    history_rows: usize,
     /// Rows the inspector's body could show, and the lines its open value
     /// wrapped to. The block is sized from the terminal alone, so neither
     /// depends on the offset they bound (cell inspector design §5).
@@ -1363,6 +1417,7 @@ impl Geometry {
             grid_width: 0,
             theme_rows: 0,
             connection_rows: 0,
+            history_rows: 0,
             inspector_rows: 0,
             inspector_lines: 0,
             inspector_selection: Span { first: 0, lines: 0 },
@@ -1526,6 +1581,21 @@ impl Geometry {
     pub const fn with_connection_rows(self, connection_rows: usize) -> Self {
         Self {
             connection_rows,
+            ..self
+        }
+    }
+
+    /// Rows the history list would show at this frame size, whether or not one
+    /// is open. Zero means not even its borders fit.
+    #[must_use]
+    pub const fn history_rows(self) -> usize {
+        self.history_rows
+    }
+
+    #[must_use]
+    pub const fn with_history_rows(self, history_rows: usize) -> Self {
+        Self {
+            history_rows,
             ..self
         }
     }
@@ -1701,6 +1771,18 @@ impl State {
             | ConnectionState::Disconnected
             | ConnectionState::Connecting { .. }
             | ConnectionState::Failed(_) => Posture::ReadOnly,
+        }
+    }
+
+    /// The statements the connection in use has been asked, newest first.
+    #[must_use]
+    pub fn history(&self) -> &[String] {
+        match &self.connection {
+            ConnectionState::Connected(connection) => self.histories.of(&connection.name),
+            ConnectionState::Unchosen
+            | ConnectionState::Disconnected
+            | ConnectionState::Connecting { .. }
+            | ConnectionState::Failed(_) => &[],
         }
     }
 

@@ -11,6 +11,7 @@ pub mod clock;
 pub mod config;
 pub mod fake;
 pub mod file;
+pub mod history;
 pub mod secret;
 mod tls;
 mod value;

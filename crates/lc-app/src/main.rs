@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use input::Incoming;
-use lc_domain::ports::{Cluster, ConfigSink, ConfigSource, Writer};
+use lc_domain::ports::{Cluster, ConfigSink, ConfigSource, Store, Writer};
 use lc_domain::state::Geometry;
 use lc_domain::{Effect, Msg, State, update, view_model};
 use lc_inbound::{FrameMap, Rendered, Themes};
@@ -189,18 +189,26 @@ async fn run(
         source = source.opening(name);
     }
     let source = Arc::new(source);
-    let (config, diagnostics) = source.load().await;
+    let (config, mut diagnostics) = source.load().await;
     let sink: Arc<dyn ConfigSink> = source;
+
+    // Loaded here rather than by an effect, as the config is: `init` runs
+    // before there is a runtime loop to answer one, and nothing can run a
+    // statement before the first frame.
+    let store: Arc<dyn Store> = Arc::new(lc_outbound::history::FileStore::from_env());
+    let (histories, history_diagnostics) = store.load(config.history.limit).await;
+    diagnostics.extend(history_diagnostics);
     let themes = Themes::new(&config.themes, config.background);
 
     let config_home = lc_outbound::config::global_path();
     let (mut state, startup) = lc_domain::init(config, diagnostics, lc_outbound::clock::now());
+    state.histories = histories;
     state.cwd = std::env::current_dir().unwrap_or_default();
     state.config_home = config_home;
     let mut measured: Option<Geometry> = None;
 
     for effect in &startup {
-        effects::run(&tx, &cluster, &writer, &sink, effect);
+        effects::run(&tx, &cluster, &writer, &sink, &store, effect);
     }
 
     let rendered = draw(&mut terminal, &state, &themes)?;
@@ -237,7 +245,7 @@ async fn run(
                         continue;
                     }
 
-                    effects::run(&tx, &cluster, &writer, &sink, &effect);
+                    effects::run(&tx, &cluster, &writer, &sink, &store, &effect);
                 }
             }
 

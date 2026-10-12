@@ -8,7 +8,7 @@
 use lc_domain::config::{Diagnostic, Origin};
 use lc_domain::style::Severity;
 
-use super::wire::{DriverLayer, ExportLayer, GridLayer, Layer, LayoutLayer, Located};
+use super::wire::{DriverLayer, ExportLayer, GridLayer, HistoryLayer, Layer, LayoutLayer, Located};
 
 /// Diagnostics here are only the ones the merge itself discovers — a name
 /// stated twice within one file. Per-layer problems were reported by `parse`.
@@ -25,6 +25,7 @@ pub(crate) fn merge(layers: Vec<Layer>) -> (Layer, Vec<Diagnostic>) {
         merged.layout = merge_layout(merged.layout, layer.layout);
         merged.grid = merge_grid(merged.grid, layer.grid);
         merged.driver = merge_driver(merged.driver, layer.driver);
+        merged.history = merge_history(merged.history, layer.history);
         merged.export = merge_export(merged.export, layer.export);
         merged.connections = union(
             merged.connections,
@@ -129,6 +130,17 @@ fn merge_grid(lower: Option<GridLayer>, upper: Option<GridLayer>) -> Option<Grid
         (Some(lower), Some(upper)) => Some(GridLayer {
             max_column_width: upper.max_column_width.or(lower.max_column_width),
             page_rows: upper.page_rows.or(lower.page_rows),
+            unknown: lower.unknown,
+        }),
+    }
+}
+
+fn merge_history(lower: Option<HistoryLayer>, upper: Option<HistoryLayer>) -> Option<HistoryLayer> {
+    match (lower, upper) {
+        (lower, None) => lower,
+        (None, upper) => upper,
+        (Some(lower), Some(upper)) => Some(HistoryLayer {
+            limit: upper.limit.or(lower.limit),
             unknown: lower.unknown,
         }),
     }

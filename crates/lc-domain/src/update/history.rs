@@ -1,0 +1,160 @@
+//! The query history picker (docs/superpowers/specs/2026-10-09-query-history-design.md).
+
+use crate::history::one_line;
+use crate::model::Key;
+use crate::search::Sift;
+use crate::state::{Cursor, Overlay, Panel, State, Toast};
+
+use super::{Effect, escape, picker_matches, quit};
+
+/// The picker's rows, newest first. The one builder, shared with
+/// [`crate::view`]: the search's correctness claim is that `history_labels[i]`
+/// is the row the renderer draws at `i`.
+pub(crate) fn history_labels(state: &State) -> Vec<String> {
+    state
+        .history()
+        .iter()
+        .map(|entry| one_line(entry))
+        .collect()
+}
+
+/// `ctrl-g` opens the history, seated on the newest entry.
+///
+/// Queries' chord, as `ctrl-r` is. Refused with nothing to list, so the bar
+/// greys it rather than the key opening an empty box; over a live prompt for
+/// `open_themes`' reason; and where the frame cannot draw the block.
+pub(super) fn open_history(state: &mut State) {
+    let busy = matches!(state.overlay, Some(Overlay::Search(_)));
+
+    if state.focus() == Panel::Queries && !busy && state.config.history.limit.is_off() {
+        state.toast = Some(Toast::new("history is disabled"));
+        state.mark_dirty();
+        return;
+    }
+
+    if state.focus() != Panel::Queries
+        || state.history().is_empty()
+        || state.geometry.history_rows() == 0
+        || busy
+    {
+        return;
+    }
+
+    state.overlay = Some(Overlay::History {
+        cursor: Cursor::default(),
+        sift: None,
+    });
+}
+
+/// What an open history responds to: the pickers' motion, `⏎` to load the
+/// entry into the buffer, `/` to filter.
+pub(super) fn history_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(state.overlay, Some(Overlay::History { sift: Some(_), .. })) {
+        return history_sift_key(state, key);
+    }
+
+    match key {
+        Key::Char('q') => return quit(state),
+        Key::Enter => {
+            load(state);
+            return Vec::new();
+        }
+        Key::Escape => {
+            escape(state);
+            return Vec::new();
+        }
+        _ => {}
+    }
+
+    let last = state.history().len();
+    let height = state.geometry.history_rows();
+    let Some(Overlay::History { cursor, sift }) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char('j') | Key::Down => cursor.down(last),
+        Key::Char('k') | Key::Up => cursor.up(),
+        Key::PageDown => cursor.page_down(last, height),
+        Key::PageUp => cursor.page_up(height),
+        Key::Home => cursor.to_start(),
+        Key::End => cursor.to_end(last),
+        Key::Char('/') => *sift = Some(Sift::opened(cursor.index())),
+        _ => {}
+    }
+
+    Vec::new()
+}
+
+/// [`super::connections::connections_sift_key`]'s contract: `⏎` closes the
+/// prompt onto its row and does not load it, because the row the cursor holds
+/// may not be the one the user was still narrowing towards.
+fn history_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
+    if matches!(key, Key::Escape) {
+        escape(state);
+        return Vec::new();
+    }
+
+    let labels = history_labels(state);
+    let Some(Overlay::History { cursor, sift }) = &mut state.overlay else {
+        return Vec::new();
+    };
+    let Some(open) = sift else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char(character) => open.push(character),
+        Key::Backspace => {
+            if !open.pop() {
+                *sift = None;
+                return Vec::new();
+            }
+        }
+        Key::Enter => {
+            let at = picker_matches(&labels, open.search().as_ref())
+                .get(cursor.index())
+                .copied()
+                .unwrap_or_else(|| open.origin());
+            *sift = None;
+            cursor.go_to(at, labels.len());
+            return Vec::new();
+        }
+        _ => return Vec::new(),
+    }
+
+    let origin = open.origin();
+    let matches = picker_matches(&labels, open.search().as_ref());
+    let seat = matches
+        .iter()
+        .position(|at| *at >= origin)
+        .unwrap_or_else(|| matches.len().saturating_sub(1));
+    cursor.go_to(seat, matches.len());
+
+    Vec::new()
+}
+
+/// Replaces the buffer with the entry under the cursor and closes the picker.
+///
+/// Loads and does not run: the entry is a starting point to edit, and
+/// `ctrl-r` is the one key that sends anything. The cursor counts in the rows
+/// a live sift left, so it is resolved through those first; a term that
+/// matched nothing holds no row and loads nothing.
+fn load(state: &mut State) {
+    let labels = history_labels(state);
+    let Some(Overlay::History { cursor, sift }) = &state.overlay else {
+        return;
+    };
+    let search = sift.as_ref().and_then(Sift::search);
+    let Some(entry) = picker_matches(&labels, search.as_ref())
+        .get(cursor.index())
+        .copied()
+        .and_then(|at| state.history().get(at))
+        .cloned()
+    else {
+        return;
+    };
+
+    state.overlay = None;
+    state.queries.replace(&entry);
+}

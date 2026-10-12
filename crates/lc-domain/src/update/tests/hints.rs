@@ -379,7 +379,13 @@ fn no_key_does_anything_the_palette_does_not_list() {
 /// `a_letter_typed_in_queries_is_text_not_a_shortcut`.
 fn editor_fixture() -> State {
     let mut editor = editing("SELECT * FROM shop.orders");
-    editor.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+    editor.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_history_rows(10);
+    // `ctrl-g` opens nothing on a connection that has run nothing.
+    editor.histories.record(
+        &crate::config::ConnectionName::try_new("local").expect("a valid name"),
+        "SELECT 1;",
+        editor.config.history.limit,
+    );
     // One step off the buffer's end: `Delete` has nothing to remove
     // sitting exactly there (`delete_at_the_end_of_the_buffer_does_nothing`
     // in editor.rs), and `End` from the end is a no-op. Off by one, `Home`,

@@ -35,7 +35,7 @@ use crate::export::{Confirm, Format, Scope, Stop};
 use crate::posture::Posture;
 use crate::queries::{CqlMode, Highlight, QueriesTab};
 use crate::search::{Direction, Search, Sift};
-use crate::state::{Message, Overlay, Panel, Ranges, State};
+use crate::state::{Cursor, Message, Overlay, Panel, Ranges, State};
 use crate::style::{Severity, Token};
 use crate::theme::ThemeChoice;
 
@@ -50,6 +50,8 @@ pub struct ViewModel {
     /// What the focused panel responds to, along the bottom of the frame.
     pub hints: HintBar,
     pub theme: ThemeChoice,
+    /// Drawn in a corner over everything, until it expires.
+    pub toast: Option<String>,
 }
 
 /// What one panel's loader has to say.
@@ -126,6 +128,14 @@ pub enum OverlayView {
         /// `$XDG_CONFIG_HOME` nor `$HOME` is set and there is no global file
         /// to name (connection picker design §3).
         config_home: Option<String>,
+    },
+    /// The history's rows, one line each, and where its cursor is. Carries
+    /// only the rows a live sift left, as [`Self::Themes`] does: the block
+    /// scrolls and is sized from the frame, so a filter moves no border.
+    History {
+        labels: Vec<String>,
+        selected: usize,
+        sift: Option<SiftView>,
     },
     /// The config diagnostics' rows and where its cursor is.
     Diagnostics {
@@ -374,6 +384,21 @@ fn connection_row(config: &Config, connection: &ConnectionConfig) -> ConnectionR
     }
 }
 
+/// The history's rows under the sift, newest first.
+fn history_view(state: &State, cursor: Cursor, sift: Option<&Sift>) -> OverlayView {
+    let labels = crate::update::history_labels(state);
+    let search = sift.and_then(Sift::search);
+
+    OverlayView::History {
+        labels: crate::update::picker_matches(&labels, search.as_ref())
+            .into_iter()
+            .map(|at| labels[at].clone())
+            .collect(),
+        selected: cursor.index(),
+        sift: sift.map(sift_view),
+    }
+}
+
 fn overlay(state: &State) -> Option<OverlayView> {
     match state.overlay.as_ref()? {
         Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
@@ -409,6 +434,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
                 sift: sift.as_ref().map(sift_view),
             })
         }
+        Overlay::History { cursor, sift } => Some(history_view(state, *cursor, sift.as_ref())),
         Overlay::Connections { cursor, sift } => {
             let names = crate::update::connection_names(&state.config);
             let search = sift.as_ref().and_then(Sift::search);
@@ -696,6 +722,7 @@ pub fn view_model(state: &State) -> ViewModel {
         hints: hints::bar(state),
         overlay: overlay(state),
         theme: state.theme.clone(),
+        toast: state.toast.as_ref().map(|toast| toast.message().to_owned()),
     }
 }
 

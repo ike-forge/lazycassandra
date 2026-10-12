@@ -127,6 +127,7 @@ mod tests {
         assert_eq!(config.mouse, default.mouse, "{mismatch}");
         assert_eq!(config.layout, default.layout, "{mismatch}");
         assert_eq!(config.grid, default.grid, "{mismatch}");
+        assert_eq!(config.history, default.history, "{mismatch}");
         assert_eq!(config.driver, default.driver, "{mismatch}");
     }
 
@@ -149,6 +150,8 @@ mod tests {
         "[grid]",
         "max_column_width",
         "page_rows",
+        "[history]",
+        "limit",
         "[driver]",
         "page_size",
         "request_timeout_ms",

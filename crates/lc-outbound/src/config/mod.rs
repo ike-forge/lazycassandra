@@ -7,7 +7,7 @@
 mod discover;
 mod example;
 mod merge;
-mod save;
+pub(crate) mod save;
 mod validate;
 mod wire;
 
@@ -97,6 +97,9 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
     if let Some(driver) = &layer.driver {
         report("driver.", &driver.unknown);
     }
+    if let Some(history) = &layer.history {
+        report("history.", &history.unknown);
+    }
     if let Some(export) = &layer.export {
         report("export.", &export.unknown);
     }
@@ -129,7 +132,7 @@ fn renamed(table: &str, key: &str) -> Option<&'static str> {
 /// `./lazycassandra/config.toml` into whatever directory the process happened
 /// to start in, exactly the untracked-file-in-a-repository outcome design §2
 /// rules out for the project file.
-fn non_empty_env(name: &str) -> Option<PathBuf> {
+pub(crate) fn non_empty_env(name: &str) -> Option<PathBuf> {
     non_empty(std::env::var_os(name))
 }
 

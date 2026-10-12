@@ -17,6 +17,7 @@ pub mod edit;
 pub mod editor;
 pub mod export;
 pub mod grid;
+pub mod history;
 pub mod inspect;
 pub mod key;
 pub mod line;

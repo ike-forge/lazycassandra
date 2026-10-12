@@ -32,6 +32,7 @@ mod editor;
 mod export;
 mod filter;
 mod hints;
+mod history;
 mod inspect;
 mod lifecycle;
 mod logs;
@@ -137,6 +138,7 @@ fn palette(state: &State) -> Option<&CommandsPanel> {
         | Overlay::Search(_)
         | Overlay::Themes { .. }
         | Overlay::Connections { .. }
+        | Overlay::History { .. }
         | Overlay::Diagnostics(_)
         | Overlay::Export(_)
         | Overlay::Filter(_)
