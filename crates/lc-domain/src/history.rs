@@ -9,8 +9,9 @@
 use std::collections::BTreeMap;
 
 use crate::config::{ConnectionName, HistoryLimit};
+use crate::cql::fold;
 
-/// One connection's statements, most recent first, each present once.
+/// One connection's statements, most recent first, none twice in a row.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct History {
     entries: Vec<String>,
@@ -19,25 +20,24 @@ pub struct History {
 impl History {
     /// Remembers `statement` as the newest entry.
     ///
-    /// An entry already held moves to the front instead of repeating, and a
-    /// blank statement is not an entry. The oldest entries past `limit` fall
-    /// off. Answers whether anything changed, so a repeat of the newest entry
-    /// costs no write.
+    /// A statement that differs from the newest only in what CQL does not
+    /// distinguish (keyword and name case) replaces it instead of repeating;
+    /// an older repeat is a new entry. A blank statement is not an entry. The
+    /// oldest entries past `limit` fall off. Answers whether anything
+    /// changed, so an exact repeat of the newest entry costs no write.
     pub fn record(&mut self, statement: &str, limit: HistoryLimit) -> bool {
         let statement = statement.trim();
 
-        if limit.is_off()
-            || statement.is_empty()
-            || self
-                .entries
-                .first()
-                .is_some_and(|newest| newest == statement)
-        {
+        if limit.is_off() || statement.is_empty() {
             return false;
         }
 
-        self.entries.retain(|held| held != statement);
-        self.entries.insert(0, statement.to_owned());
+        match self.entries.first_mut() {
+            Some(newest) if newest == statement => return false,
+            Some(newest) if fold(newest) == fold(statement) => statement.clone_into(newest),
+            _ => self.entries.insert(0, statement.to_owned()),
+        }
+
         self.entries
             .truncate(usize::try_from(limit.get()).unwrap_or(usize::MAX));
         true
@@ -117,13 +117,33 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_statement_moves_to_the_front_instead_of_repeating() {
+    fn a_statement_asked_again_after_another_is_kept_again() {
         let mut history = History::default();
         history.record("SELECT 1;", limit(10));
         history.record("SELECT 2;", limit(10));
         history.record("SELECT 1;", limit(10));
 
-        assert_eq!(history.entries(), ["SELECT 1;", "SELECT 2;"]);
+        assert_eq!(history.entries(), ["SELECT 1;", "SELECT 2;", "SELECT 1;"]);
+    }
+
+    #[test]
+    fn a_repeat_differing_in_keyword_or_name_case_replaces_the_newest() {
+        let mut history = History::default();
+        history.record("SELECT * FROM Shop.Orders;", limit(10));
+        history.record("select * from shop.orders;", limit(10));
+
+        assert_eq!(history.entries(), ["select * from shop.orders;"]);
+    }
+
+    #[test]
+    fn case_inside_a_literal_or_a_quoted_name_is_a_different_statement() {
+        let mut history = History::default();
+        history.record("SELECT * FROM t WHERE a = 'X';", limit(10));
+        history.record("SELECT * FROM t WHERE a = 'x';", limit(10));
+        history.record("SELECT * FROM \"T\";", limit(10));
+        history.record("SELECT * FROM \"t\";", limit(10));
+
+        assert_eq!(history.entries().len(), 4);
     }
 
     #[test]
@@ -187,14 +207,15 @@ mod tests {
             "already the newest"
         );
         assert!(history.record("SELECT 2;", limit(10)));
-        assert!(history.record("SELECT 1;", limit(10)), "moved to the front");
+        assert!(history.record("SELECT 1;", limit(10)), "not the newest");
+        assert!(history.record("select 1;", limit(10)), "case replaced");
         assert!(!history.record("  ", limit(10)));
     }
 
     #[test]
     fn restoring_keeps_a_stores_order_and_applies_the_limit() {
         let mut histories = Histories::default();
-        let stored = ["SELECT 3;", "SELECT 2;", "SELECT 2;", "SELECT 1;"].map(str::to_owned);
+        let stored = ["SELECT 3;", "SELECT 2;", "select 2;", "SELECT 1;"].map(str::to_owned);
 
         histories.restore(&name("dev"), &stored, limit(2));
 

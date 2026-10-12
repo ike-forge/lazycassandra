@@ -327,8 +327,8 @@ modes it is in. An `Overlay` of the same rank as the pickers: it outranks
 focus, claims every key, is refused on its own gate and over a live search
 prompt. It lists what the connection in use has been asked from the buffer —
 `ctrl-r` only, never a table read from the tree — newest first, each
-statement as one line, a repeat moving to the front instead of appearing
-twice. At most `history.limit` are kept per connection (default 100; 0 turns
+statement as one line, a repeat of the newest statement, bar keyword and
+name case, replacing it instead of appearing twice. At most `history.limit` are kept per connection (default 100; 0 turns
 the history off, and `ctrl-g` then answers with a "history is disabled" toast).
 The palette carries a row for it.
 
@@ -1619,7 +1619,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | The file format round-trips | `what_is_rendered_parses_back`, `a_name_that_needs_quoting_survives` (`outbound/history.rs`) |
 | `history.limit = 0` records and saves nothing; `ctrl-g` toasts and the toast expires | `a_zero_limit_records_nothing_and_saves_nothing`, `ctrl_g_with_the_history_disabled_toasts_instead_of_opening`, `the_toast_leaves_after_its_ticks` (`history.rs`) |
 | `history.limit` bounds what is kept | `the_configured_limit_bounds_what_is_kept` (`history.rs`), `the_oldest_entries_fall_off_past_the_limit` (`domain/history.rs`) |
-| A repeat moves to the front, and each connection keeps its own | `a_repeated_statement_moves_to_the_front_instead_of_repeating`, `each_connection_keeps_its_own` (`domain/history.rs`) |
+| A repeat of the newest replaces it, case-insensitively outside literals and quoted names; an older one is kept again; each connection keeps its own | `a_statement_asked_again_after_another_is_kept_again`, `a_repeat_differing_in_keyword_or_name_case_replaces_the_newest`, `case_inside_a_literal_or_a_quoted_name_is_a_different_statement`, `each_connection_keeps_its_own` (`domain/history.rs`) |
 | `ctrl-g` opens the history on the newest entry, from Queries only, and not on nothing | `ctrl_g_opens_the_history_on_the_newest_entry`, `ctrl_g_belongs_to_queries`, `ctrl_g_opens_nothing_with_no_history`, `ctrl_g_opens_nothing_where_the_frame_cannot_draw_it` (`history.rs`) |
 | `⏎` appends the entry and runs nothing; `esc` leaves the buffer alone | `enter_loads_the_entry_into_the_buffer_and_runs_nothing`, `enter_appends_the_entry_after_what_the_buffer_holds`, `a_loaded_entry_can_be_run_straight_away`, `esc_closes_it_and_leaves_the_buffer_alone` (`history.rs`) |
 | The filter's `⏎` closes onto its row before anything loads | `a_filter_narrows_the_list_and_enter_closes_it_onto_the_row_before_loading`, `a_filter_that_matches_nothing_closes_onto_the_row_the_prompt_opened_on`, `esc_in_a_filter_puts_the_cursor_back` (`history.rs`) |

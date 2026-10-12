@@ -24,6 +24,22 @@ use crate::style::{Segment, Token};
 use lex::Kind;
 use resolve::resolve;
 
+/// `cql` with everything CQL treats as case-insensitive lower-cased: keywords
+/// and unquoted names. String literals, quoted names and comments keep their
+/// case, so two statements are the same statement exactly when their folds
+/// are equal.
+#[must_use]
+pub fn fold(cql: &str) -> String {
+    lex::pieces(cql)
+        .into_iter()
+        .map(|piece| match piece.kind {
+            Kind::Keyword => piece.text.to_lowercase(),
+            Kind::Identifier if !piece.text.starts_with('"') => piece.text.to_lowercase(),
+            _ => piece.text,
+        })
+        .collect()
+}
+
 /// The one table `cql` names, for a caller that has CQL text and no pieces
 /// of its own — `view` must not reach into [`lex`], which is private to this
 /// module.
