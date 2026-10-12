@@ -56,7 +56,7 @@ pub(super) fn history_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char('q') => return quit(state),
         Key::Enter => {
-            load(state);
+            append(state);
             return Vec::new();
         }
         Key::Escape => {
@@ -134,13 +134,13 @@ fn history_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Replaces the buffer with the entry under the cursor and closes the picker.
+/// Appends the entry under the cursor to the buffer and closes the picker.
 ///
-/// Loads and does not run: the entry is a starting point to edit, and
+/// Appends and does not run: the entry is a starting point to edit, and
 /// `ctrl-r` is the one key that sends anything. The cursor counts in the rows
 /// a live sift left, so it is resolved through those first; a term that
-/// matched nothing holds no row and loads nothing.
-fn load(state: &mut State) {
+/// matched nothing holds no row and appends nothing.
+fn append(state: &mut State) {
     let labels = history_labels(state);
     let Some(Overlay::History { cursor, sift }) = &state.overlay else {
         return;
@@ -156,5 +156,5 @@ fn load(state: &mut State) {
     };
 
     state.overlay = None;
-    state.queries.replace(&entry);
+    state.queries.append(&entry);
 }

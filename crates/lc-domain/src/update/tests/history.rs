@@ -192,6 +192,17 @@ fn enter_loads_the_entry_into_the_buffer_and_runs_nothing() {
 }
 
 #[test]
+fn enter_appends_the_entry_after_what_the_buffer_holds() {
+    let mut state = having_run(&["SELECT 1;", "SELECT 2;"]);
+    state.queries.replace("SELECT half");
+    open_history(&mut state);
+
+    press(&mut state, Key::Enter);
+
+    assert_eq!(buffer(&state), "SELECT half\n\nSELECT 2;");
+}
+
+#[test]
 fn the_cursor_walks_back_through_older_entries() {
     let mut state = having_run(&["SELECT 1;", "SELECT 2;", "SELECT 3;"]);
     open_history(&mut state);

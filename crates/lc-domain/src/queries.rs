@@ -284,6 +284,18 @@ impl QueriesPanel {
         self.completion = None;
     }
 
+    /// Adds `text` after what the buffer holds, a blank line between, with the
+    /// cursor at its end. An empty buffer takes `text` alone.
+    pub fn append(&mut self, text: &str) {
+        let current = self.text();
+
+        if current.trim().is_empty() {
+            self.replace(text);
+        } else {
+            self.replace(&format!("{}\n\n{text}", current.trim_end()));
+        }
+    }
+
     /// Lays the buffer out. Answers whether anything changed, so a press that
     /// formats an already-formatted buffer costs no frame.
     pub fn format(&mut self) -> bool {

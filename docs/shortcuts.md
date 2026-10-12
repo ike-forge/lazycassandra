@@ -341,7 +341,7 @@ so the file is `0600`.
 | `j` / `k`, `Down` / `Up` | Moves the cursor. Previews nothing. |
 | `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen. |
 | `Home` / `End`, `g` / `G` | The newest entry, the oldest. |
-| `Enter` | Replaces the buffer with the entry under the cursor, and closes. Runs nothing: `ctrl-r` is the one key that sends a statement. |
+| `Enter` | Appends the entry under the cursor to the buffer, after a blank line, and closes. An empty buffer takes it alone. Runs nothing: `ctrl-r` is the one key that sends a statement. |
 | `Esc` | Closes, leaving the buffer as it was. |
 | `q` | Quits, as everywhere else. The list takes motion, not text. |
 | `/` | Filter the list. `⏎` closes the prompt onto its row without loading it, `Esc` puts the cursor back — the connection picker's two `⏎`s, for its reason. |
@@ -1621,7 +1621,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | `history.limit` bounds what is kept | `the_configured_limit_bounds_what_is_kept` (`history.rs`), `the_oldest_entries_fall_off_past_the_limit` (`domain/history.rs`) |
 | A repeat moves to the front, and each connection keeps its own | `a_repeated_statement_moves_to_the_front_instead_of_repeating`, `each_connection_keeps_its_own` (`domain/history.rs`) |
 | `ctrl-g` opens the history on the newest entry, from Queries only, and not on nothing | `ctrl_g_opens_the_history_on_the_newest_entry`, `ctrl_g_belongs_to_queries`, `ctrl_g_opens_nothing_with_no_history`, `ctrl_g_opens_nothing_where_the_frame_cannot_draw_it` (`history.rs`) |
-| `⏎` loads the entry and runs nothing; `esc` leaves the buffer alone | `enter_loads_the_entry_into_the_buffer_and_runs_nothing`, `a_loaded_entry_can_be_run_straight_away`, `esc_closes_it_and_leaves_the_buffer_alone` (`history.rs`) |
+| `⏎` appends the entry and runs nothing; `esc` leaves the buffer alone | `enter_loads_the_entry_into_the_buffer_and_runs_nothing`, `enter_appends_the_entry_after_what_the_buffer_holds`, `a_loaded_entry_can_be_run_straight_away`, `esc_closes_it_and_leaves_the_buffer_alone` (`history.rs`) |
 | The filter's `⏎` closes onto its row before anything loads | `a_filter_narrows_the_list_and_enter_closes_it_onto_the_row_before_loading`, `a_filter_that_matches_nothing_closes_onto_the_row_the_prompt_opened_on`, `esc_in_a_filter_puts_the_cursor_back` (`history.rs`) |
 | The bar names `ctrl-g` only once there is something to open | `the_bar_names_ctrl_g_only_once_there_is_something_to_open` (`history.rs`) |
 | The block scrolls to the cursor and clips a long statement | `a_list_longer_than_the_frame_scrolls_to_the_cursor`, `a_statement_wider_than_the_block_is_cut_with_an_ellipsis` (`inbound/history.rs`) |
