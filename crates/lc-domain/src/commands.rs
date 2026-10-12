@@ -267,7 +267,7 @@ const DELETE_ROWS: Command = Command::mutating(
 const EDIT_VALUE: Command = Command::mutating(
     &[Stroke::key(Key::Char('e'))],
     "edit this value",
-    Run::Inert,
+    Run::In(Panel::Contents),
 );
 const COMMIT_EDITS: Command = Command::mutating(
     &[Stroke::ctrl(Key::Char('s'))],
@@ -316,11 +316,9 @@ const DROP: &[Command] = &[
 /// Editing a value, and writing what has been edited
 /// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7).
 ///
-/// `e` is inert: it answers inside the inspector alone, and the palette
-/// pressing it outside one would find nothing — the rule the column keys
-/// under `CONTENTS` already follow. The last two mean something only inside
-/// the confirmation, and their keys mean something else outside it, so the
-/// palette may not run them either (palette execution design §5).
+/// The last two mean something only inside the confirmation, and their keys
+/// mean something else outside it, so the palette may not run them
+/// (palette execution design §5).
 const EDIT: &[Command] = &[
     EDIT_VALUE,
     COMMIT_EDITS,

@@ -18,6 +18,61 @@ fn e_opens_a_field_seeded_with_what_the_cell_says() {
 }
 
 #[test]
+fn e_on_the_grid_opens_the_inspector_on_a_field() {
+    let mut state = editable_grid(1);
+    for key in [
+        Key::Char('m'),
+        Key::Char('m'),
+        Key::Char('l'),
+        Key::Char('l'),
+    ] {
+        press(&mut state, key);
+    }
+
+    press(&mut state, Key::Char('e'));
+
+    assert_eq!(field_text(&state).as_deref(), Some("ada@example.com"));
+}
+
+#[test]
+fn a_cell_inspector_edits_the_column_the_cursor_was_on() {
+    let mut state = editable_grid(1);
+    for key in [
+        Key::Char('m'),
+        Key::Char('m'),
+        Key::Char('l'),
+        Key::Char('l'),
+        Key::Enter,
+        Key::Char('e'),
+    ] {
+        press(&mut state, key);
+    }
+
+    assert_eq!(field_text(&state).as_deref(), Some("ada@example.com"));
+}
+
+#[test]
+fn e_on_the_grid_is_refused_as_enter_then_e_is() {
+    let mut state = editable_grid(1);
+    press(&mut state, Key::Char('e'));
+
+    assert_eq!(
+        refusal(&state).as_deref(),
+        Some("id is part of the primary key. A key column cannot be updated.")
+    );
+}
+
+#[test]
+fn e_on_a_grid_that_inspects_nothing_does_nothing() {
+    let mut state = editable_grid(1);
+    press(&mut state, Key::Char('m'));
+
+    press(&mut state, Key::Char('e'));
+
+    assert!(state.overlay.is_none());
+}
+
+#[test]
 fn a_key_column_is_refused_with_the_reason_rather_than_silently() {
     let mut state = inspecting_row(3);
 

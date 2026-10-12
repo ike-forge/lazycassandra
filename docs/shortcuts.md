@@ -721,6 +721,7 @@ below.
 | Key | Action |
 |---|---|
 | `Enter` | Open the inspector over the row under the cursor in row mode, or the cell under it in cell mode. Inert in column mode, with nothing loaded, on an empty grid, while a range is held, and on a frame with no room to draw the block. See the inspector's own subsection below. |
+| `e` | `Enter`, then `e` in the inspector, in one press: opens the inspector and an edit field over the value, refused the way the inspector's `e` is. Opens nothing where `Enter` opens nothing. |
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
 | `p` | Fetch the next page of the result and append it. Inert once the result has ended and while a page is in flight. |
 | `P` | Fetch pages until the result ends or a stop is reached. Inert where `p` is. |
@@ -1327,14 +1328,14 @@ mode design §4, overlay search design §1).
 Taken, lowercase: `c` `d` `e` `f` `g` `h` `j` `k` `l` `m` `n` `p` `q` `s` `v`
 `y`, plus `?` and `/`. `c`, `f` and `s` are taken by Table contents' column
 mode alone — a panel's claim on a letter stops at that panel's border, and
-this one stops at a mode's (§1's Table contents subsection). `e` stops at an
-overlay's: it opens an edit field inside the inspector and is free
-everywhere else.
+this one stops at a mode's (§1's Table contents subsection). `e` opens an
+edit field, from the inspector and from the grid, and is free everywhere
+else.
 Taken, digits: `1` `2` `3` `4` `5`.
 Taken, punctuation: `[` and `]`.
 Taken, uppercase: `N`, `G`, `P` and `Y` — the only shifted letters bound (§2).
-`p` and `P` answer in Table contents alone, and `Y` and `e` in the inspector
-alone.
+`p`, `P` and `e` answer in Table contents alone, and `Y` and `e` in the
+inspector.
 
 Free, lowercase: `a` `b` `i` `o` `r` `t` `u` `w` `x` `z`, the
 digits `6`–`9` and `0`, and every uppercase letter but `N`, `G`, `P` and `Y`.
@@ -1716,7 +1717,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | The cursor's line is banded whole, and the offset follows the span drawn for it | `the_cursor_line_is_banded_across_every_row_it_wrapped_to` (`inbound/inspect.rs`), `the_offset_follows_the_span_the_frame_drew_the_cursor_at` |
 | `y` in the inspector yanks per mode and leaves it open; `Y` yanks the cursor's line | `y_yanks_the_bare_value_and_leaves_the_inspector_open`, `y_yanks_the_row_as_one_csv_line`, `shift_y_yanks_the_line_the_cursor_is_on`, `shift_y_yanks_a_row_field_without_its_column_name`, `y_over_a_null_yanks_nothing` |
 | The wheel moves the inspector's cursor; a click and a shrink close it | `the_wheel_moves_the_inspector_and_a_click_closes_it`, `a_frame_too_small_for_the_block_closes_it`, `a_value_that_rewraps_shorter_pulls_the_offset_back` |
-| `e` opens a field seeded with what the cell says | `e_opens_a_field_seeded_with_what_the_cell_says`, `an_open_field_is_drawn_in_place_of_the_value_it_types_over` (`inbound/inspect.rs`) |
+| `e` opens a field seeded with what the cell says, from the inspector and from the grid | `e_opens_a_field_seeded_with_what_the_cell_says`, `e_on_the_grid_opens_the_inspector_on_a_field`, `e_on_the_grid_is_refused_as_enter_then_e_is`, `e_on_a_grid_that_inspects_nothing_does_nothing`, `a_cell_inspector_edits_the_column_the_cursor_was_on`, `an_open_field_is_drawn_in_place_of_the_value_it_types_over` (`inbound/inspect.rs`) |
 | Every refusal of `e` is spoken rather than silent | `a_key_column_is_refused_with_the_reason_rather_than_silently`, `a_read_only_connection_is_refused_before_anything_else_is_asked`, `a_typed_statement_has_no_table_to_update`, `the_bar_greys_e_where_the_column_cannot_be_edited_and_lights_it_where_it_can` |
 | A value is read against the column's declared type, not its variant | every test in `edit.rs` |
 | `⏎` accepts, `esc` abandons, and a restored value leaves no mark | `enter_accepts_the_field_and_the_cell_goes_dirty`, `escape_abandons_the_field_and_changes_nothing`, `an_edit_that_restores_the_value_it_started_from_leaves_no_mark`, `setting_none_clears_what_was_there` (`edit.rs`) |

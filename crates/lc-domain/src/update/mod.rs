@@ -57,7 +57,7 @@ use drop::{drop_key, finish_drop, open_drop};
 use edit::{field_key, start_edit};
 use export::{cancel_pending_export, export_key, export_progress, finish_export, open_export};
 use history::{history_key, open_history};
-use inspect::{inspect_key, inspector_extent, open_inspector};
+use inspect::{edit_from_grid, inspect_key, inspector_extent, open_inspector};
 use palette::{open_palette, palette_key};
 use pointer::handle_pointer;
 use search::{next_match_key, open_prompt, restore_origin, search_key};
@@ -893,6 +893,7 @@ fn panel_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::Home => scroll(state, Motion::Start),
         Key::End => scroll(state, Motion::End),
         Key::Enter if state.focus() == Panel::Contents => open_inspector(state),
+        Key::Char('e') if state.focus() == Panel::Contents => return edit_from_grid(state),
         Key::Enter | Key::Char('i') if state.focus() == Panel::Queries => {
             state.queries.start_editing();
         }
