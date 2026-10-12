@@ -274,6 +274,11 @@ const COMMIT_EDITS: Command = Command::mutating(
     "commit the edits",
     Run::In(Panel::Contents),
 );
+const COMMIT_ROW: Command = Command::mutating(
+    &[Stroke::ctrl(Key::Char('s'))],
+    "commit this row",
+    Run::Inert,
+);
 const EXPORT_ROWS: Command = Command::new(
     &[Stroke::ctrl(Key::Char('e'))],
     "export these rows",
@@ -316,12 +321,14 @@ const DROP: &[Command] = &[
 /// Editing a value, and writing what has been edited
 /// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7).
 ///
-/// The last two mean something only inside the confirmation, and their keys
-/// mean something else outside it, so the palette may not run them
-/// (palette execution design §5).
+/// "Commit this row" is inert: `ctrl-s` writes one row only inside the
+/// inspector, and from the grid it would write them all. The last two mean
+/// something only inside the confirmation, and their keys mean something else
+/// outside it, so the palette may not run them (palette execution design §5).
 const EDIT: &[Command] = &[
     EDIT_VALUE,
     COMMIT_EDITS,
+    COMMIT_ROW,
     Command::mutating(
         &[Stroke::key(Key::Char('y'))],
         "yes, write them",
@@ -375,6 +382,7 @@ const CONTENTS: &[Command] = &[
     DELETE_ROWS,
     EDIT_VALUE,
     COMMIT_EDITS,
+    COMMIT_ROW,
     EXPORT_ROWS,
 ];
 

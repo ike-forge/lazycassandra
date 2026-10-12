@@ -801,6 +801,7 @@ Like the palette it dims the panels, claims every key and leaves `q` quitting.
 | `y` | Yank what the grid's `y` would in the mode it was opened from: the bare value, or the row as one CSV line. The inspector stays open. |
 | `Y` | Yank the line the cursor is on, its indent dropped and, in row mode, without the column name beside it. Nothing over a null field. |
 | `e` | Open an edit field over the value the cursor is on. Refused *with a message* where the column is part of the primary key, where its type cannot be typed into, where the row's whole primary key is not in the page, where the grid came from a typed statement, and on a read-only connection. |
+| `ctrl-s` | Commit this row: the commit confirmation over this row's edits alone, every other dirty row staying dirty. Accepts an open edit field first; inert while its text does not parse and over a row with nothing uncommitted. |
 | `Enter` / `Esc` | Close it. |
 | `q` | Quits, or raises the uncommitted-changes warning. |
 | anything else | Inert, every other ctrl chord included. |
@@ -847,7 +848,8 @@ not move out from under the cursor that just edited it.
 ### The commit confirmation
 
 `ctrl-s` over Table contents opens `Overlay::Commit` over every uncommitted
-edit, showing the CQL that would run. One dirty row is a bare `UPDATE`;
+edit — or, inside the inspector, over the edits of the row it shows,
+which is the only edit written when `y` answers it — showing the CQL that would run. One dirty row is a bare `UPDATE`;
 several are one logged batch, so a confirmation that said "3 rows" has
 promised three rows. Like the drop confirmation it dims the panels and claims
 every key.
@@ -1365,7 +1367,7 @@ or reads, the grid inspects, and the editor splits a line (§1).
 
 Ctrl taken: `ctrl-r`, `ctrl-g`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
-`ctrl-s` in Table contents, `ctrl-t` and `ctrl-o` everywhere, and
+`ctrl-s` in Table contents and its inspector, `ctrl-t` and `ctrl-o` everywhere, and
 `ctrl-d`/`ctrl-u` everywhere
 `PageDown`/`PageUp` do anything. The rest of the layer is free — including
 `r`, `t`, `o` and `u` as plain keys, which nothing binds. `s` is bound plain,
@@ -1641,6 +1643,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | A border too narrow for the badge drops it, and one too narrow for badge and `/term` keeps the term | `a_narrow_border_falls_back_to_the_panels_name_alone` (`view/tables.rs`), `a_sidebar_too_narrow_for_the_badge_keeps_the_panels_name_alone`, `a_border_holding_both_puts_the_badge_at_the_name_and_the_marker_at_the_corner`, `a_border_that_cannot_hold_both_keeps_the_marker_and_drops_the_badge` (`inbound/render/tests/`) |
 | The bar greys `ctrl-r` against a buffer the posture would refuse | `the_run_hint_greys_against_a_buffer_the_posture_would_refuse` (`view/hints.rs`) |
 | The palette names the posture on every mutating row on a read-only connection, and drops none | `a_read_only_connection_refuses_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys`, `a_refused_row_names_the_posture_after_its_keys_in_muted` (`inbound/palette.rs`), `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_a_delete_or_an_edit`, `a_panels_group_lists_the_mutations_it_opens` (`commands.rs`) |
+| `ctrl-s` in the inspector commits that row alone and leaves the others dirty | `ctrl_s_in_the_inspector_commits_only_the_row_it_shows`, `a_row_commit_leaves_the_other_rows_dirty`, `ctrl_s_over_a_field_accepts_it_first`, `ctrl_s_over_a_row_with_nothing_dirty_is_inert` |
 | A second modifier is not a binding | `ctrl_alt_r_does_not_run_the_buffer` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
 | A statement is classified by the verb opening it, comments and strings scanned past | `a_leading_comment_does_not_hide_the_verb`, `a_semicolon_inside_a_string_does_not_open_a_statement`, `a_trailing_semicolon_adds_no_statement` (`model/statement.rs`) |

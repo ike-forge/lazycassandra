@@ -272,3 +272,99 @@ fn d_over_a_sorted_grid_asks_about_the_row_the_cursor_is_actually_on() {
         "the cursor is on the first drawn row, which sorting made the last fetched one"
     );
 }
+
+/// Two dirty rows, the cursor on the second, its inspector open.
+fn inspecting_second_of_two() -> State {
+    let mut state = committable(2);
+    press(&mut state, Key::Enter);
+    state
+}
+
+#[test]
+fn ctrl_s_in_the_inspector_commits_only_the_row_it_shows() {
+    let mut state = inspecting_second_of_two();
+
+    ctrl(&mut state, Key::Char('s'));
+
+    let prompt = committing(&state).expect("the confirmation is up");
+    assert_eq!(
+        prompt.statement().cql,
+        "UPDATE \"shop\".\"orders\" SET \"email\" = 'ada@example.com!' \
+         WHERE \"id\" = 8f14e45f-0001 AND \"created_at\" = 1699999999001"
+    );
+}
+
+#[test]
+fn a_row_commit_leaves_the_other_rows_dirty() {
+    let mut state = inspecting_second_of_two();
+    ctrl(&mut state, Key::Char('s'));
+    press(&mut state, Key::Char('y'));
+    let query = state.committing.as_ref().expect("in flight").query();
+
+    update(
+        &mut state,
+        Msg::PageReady {
+            query,
+            page: Box::new(Page {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                next: None,
+            }),
+            took: Duration::ZERO,
+        },
+    );
+
+    assert_eq!(dirty_cells(&state), 1);
+    assert!(state.committing.is_none());
+    let page = state.contents.loaded().expect("loaded");
+    assert!(page.is_edited(0, 2), "the first row is still uncommitted");
+    assert!(!page.is_edited(1, 2));
+    assert_eq!(
+        page.page().rows[1]
+            .values
+            .get(2)
+            .map(crate::cell::text)
+            .as_deref(),
+        Some("ada@example.com!")
+    );
+    assert!(
+        refusal(&state).is_some_and(|message| message.starts_with("1 cell written")),
+        "{:?}",
+        refusal(&state)
+    );
+}
+
+#[test]
+fn ctrl_s_over_a_field_accepts_it_first() {
+    let mut state = inspecting_row(1);
+    on_email(&mut state);
+    press(&mut state, Key::Char('e'));
+    type_in(&mut state, "!");
+
+    ctrl(&mut state, Key::Char('s'));
+
+    let prompt = committing(&state).expect("the confirmation is up");
+    assert!(
+        prompt.statement().cql.contains("'ada@example.com!'"),
+        "{}",
+        prompt.statement().cql
+    );
+}
+
+#[test]
+fn ctrl_s_over_a_row_with_nothing_dirty_is_inert() {
+    let mut state = inspecting_row(3);
+    on_email(&mut state);
+    press(&mut state, Key::Char('e'));
+    type_in(&mut state, "!");
+    press(&mut state, Key::Enter);
+    press(&mut state, Key::Escape);
+    press(&mut state, Key::Char('j'));
+    press(&mut state, Key::Char('j'));
+    press(&mut state, Key::Enter);
+
+    ctrl(&mut state, Key::Char('s'));
+
+    assert!(committing(&state).is_none());
+    assert!(matches!(state.overlay, Some(Overlay::Inspect(_))));
+}

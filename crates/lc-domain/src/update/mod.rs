@@ -49,7 +49,10 @@ mod search;
 mod themes;
 mod yank;
 
-use commit::{commit_extent, commit_key, discard_key, finish_commit, open_commit, uncommitted};
+use commit::{
+    commit_extent, commit_inspected_row, commit_key, discard_key, finish_commit, open_commit,
+    uncommitted,
+};
 use connections::{
     connect, connections_key, default_connection_index, offer_connections, open_connections,
 };
@@ -1645,6 +1648,10 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::Char('d') => return page(state, Key::PageDown),
         Key::Char('u') => return page(state, Key::PageUp),
         _ => {}
+    }
+
+    if key == Key::Char('s') && matches!(state.overlay, Some(Overlay::Inspect(_))) {
+        return commit_inspected_row(state);
     }
 
     if matches!(

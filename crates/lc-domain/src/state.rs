@@ -14,6 +14,7 @@ use crate::config::{Config, ConnectionName, Diagnostic};
 use crate::contents::{ContentsPanel, Filter, SelectionMode, TableRef};
 use crate::ddl::DdlPanel;
 use crate::drop::{DropPrompt, Target};
+use crate::edit::CommitScope;
 use crate::export::ExportForm;
 use crate::history::Histories;
 use crate::inspect::Inspector;
@@ -202,12 +203,22 @@ impl Dropping {
 pub struct Committing {
     query: QueryId,
     table: TableRef,
+    scope: CommitScope,
 }
 
 impl Committing {
     #[must_use]
-    pub const fn started(query: QueryId, table: TableRef) -> Self {
-        Self { query, table }
+    pub const fn started(query: QueryId, table: TableRef, scope: CommitScope) -> Self {
+        Self {
+            query,
+            table,
+            scope,
+        }
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> CommitScope {
+        self.scope
     }
 
     #[must_use]

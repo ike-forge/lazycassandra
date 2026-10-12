@@ -3,6 +3,7 @@
 
 use crate::commit::CommitPrompt;
 use crate::contents::{ContentsState, Subject, TableRef};
+use crate::edit::CommitScope;
 use crate::key;
 use crate::key::RowKey;
 use crate::log::Outcome;
@@ -10,7 +11,9 @@ use crate::model::{DbError, Key, QueryId, Statement, UpdatedRow};
 use crate::state::{Committing, Message, Overlay, State};
 use crate::style::Severity;
 
-use super::{Effect, logged, quit_now, raise, refuse_read_only, statement_subject, submit};
+use super::{
+    Effect, field_key, logged, quit_now, raise, refuse_read_only, statement_subject, submit,
+};
 
 /// The commit block's wrapped line count and body height, as the last frame
 /// measured them.
@@ -24,6 +27,34 @@ pub(super) const fn commit_extent(state: &State) -> (usize, usize) {
 /// Silently inert with nothing dirty and on a frame with no room for the
 /// block; spoken on a read-only connection, for [`start_edit`]'s reason.
 pub(super) fn open_commit(state: &mut State) -> Vec<Effect> {
+    open_scoped_commit(state, CommitScope::All)
+}
+
+/// `ctrl-s` inside the inspector: the same confirmation over the edits of the
+/// row it shows, leaving every other row's dirty. An open field is accepted
+/// first, and one that does not parse keeps the key from doing anything.
+pub(super) fn commit_inspected_row(state: &mut State) -> Vec<Effect> {
+    if matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.field().is_some()) {
+        field_key(state, Key::Enter);
+    }
+    let Some(Overlay::Inspect(inspector)) = &state.overlay else {
+        return Vec::new();
+    };
+    if inspector.field().is_some() {
+        return Vec::new();
+    }
+    let Some(row) = state
+        .contents
+        .loaded()
+        .and_then(|page| page.page_row(inspector.row()))
+    else {
+        return Vec::new();
+    };
+
+    open_scoped_commit(state, CommitScope::Row(row))
+}
+
+fn open_scoped_commit(state: &mut State, scope: CommitScope) -> Vec<Effect> {
     if !state.posture().permits_mutation() {
         refuse_read_only(state, "committing an edit");
         return Vec::new();
@@ -32,13 +63,13 @@ pub(super) fn open_commit(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     }
 
-    let Some((table, statement, rows, cells)) = pending_commit(state) else {
+    let Some((table, statement, rows, cells)) = pending_commit(state, scope) else {
         return Vec::new();
     };
 
-    state.overlay = Some(Overlay::Commit(CommitPrompt::opened(
-        table, statement, rows, cells,
-    )));
+    state.overlay = Some(Overlay::Commit(
+        CommitPrompt::opened(table, statement, rows, cells).scoped(scope),
+    ));
     state.mark_dirty();
     Vec::new()
 }
@@ -49,14 +80,18 @@ pub(super) fn open_commit(state: &mut State) -> Vec<Effect> {
 /// `None` with nothing dirty, and where the page's rows cannot all be
 /// addressed — the same [`RowKey`] gate `e` applies per row, re-applied here
 /// because a schema can be reloaded between the two.
-pub(super) fn pending_commit(state: &State) -> Option<(TableRef, Statement, usize, usize)> {
+pub(super) fn pending_commit(
+    state: &State,
+    scope: CommitScope,
+) -> Option<(TableRef, Statement, usize, usize)> {
     let ContentsState::Loaded { subject, page, .. } = state.contents.state() else {
         return None;
     };
     let Subject::Table(table) = subject else {
         return None;
     };
-    if page.edits().is_empty() {
+    let cells = page.edits().cells_in(scope);
+    if cells == 0 {
         return None;
     }
     let described = state
@@ -74,6 +109,7 @@ pub(super) fn pending_commit(state: &State) -> Option<(TableRef, Statement, usiz
     let rows: Vec<UpdatedRow> = page
         .edits()
         .by_row()
+        .filter(|(at, _)| scope.admits(*at))
         .map(|(at, edited)| {
             let sets = edited
                 .into_iter()
@@ -91,7 +127,6 @@ pub(super) fn pending_commit(state: &State) -> Option<(TableRef, Statement, usiz
         })
         .collect::<Option<Vec<_>>>()?;
 
-    let cells = page.edits().cells();
     let statement = Statement::update_rows(&table.keyspace, &table.table, &rows);
 
     Some((table.clone(), statement, rows.len(), cells))
@@ -134,12 +169,13 @@ pub(super) fn start_commit(state: &mut State) -> Vec<Effect> {
     };
 
     let table = prompt.table().clone();
+    let scope = prompt.scope();
     let stmt = prompt.statement().clone();
     let log_subject = statement_subject(&stmt);
 
     match submit(state, stmt) {
         Ok((query, effects)) => {
-            state.committing = Some(Committing::started(query, table));
+            state.committing = Some(Committing::started(query, table, scope));
             effects
         }
         Err(error) => {
@@ -199,9 +235,10 @@ pub(super) fn finish_commit(
         return Vec::new();
     }
 
+    let scope = committed.scope();
     let cells = state.contents.loaded_mut().map_or(0, |page| {
-        let cells = page.edits().cells();
-        page.commit_edits();
+        let cells = page.edits().cells_in(scope);
+        page.commit_edits(scope);
         cells
     });
 
