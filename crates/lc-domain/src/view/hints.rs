@@ -266,7 +266,7 @@ const HISTORY_HINT: Binding = Binding {
     action: "history",
 };
 
-/// What the bar names while the history is open: `⏎` loads and runs nothing,
+/// What the bar names while the history is open: `⏎` appends and runs nothing,
 /// which is the difference from `ctrl-r` worth saying (query history design
 /// §3). Motion is assumed, as in the connection picker.
 pub(crate) const HISTORY: &[Binding] = &[Binding {
@@ -277,7 +277,7 @@ pub(crate) const HISTORY: &[Binding] = &[Binding {
 pub(crate) const HISTORY_GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
-        action: "load",
+        action: "append",
     },
     Binding {
         keys: &[Stroke::key(Key::Escape)],
