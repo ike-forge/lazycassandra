@@ -3,6 +3,7 @@
 //! (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5, §6).
 
 use crate::contents::TableRef;
+use crate::edit::CommitScope;
 use crate::model::Statement;
 use crate::state::Scroll;
 use crate::style::Segment;
@@ -18,6 +19,7 @@ pub struct CommitPrompt {
     statement: Statement,
     rows: usize,
     cells: usize,
+    scope: CommitScope,
     /// The block scrolls: thirty edited rows is thirty-plus lines of CQL, and
     /// a confirmation that clips the statement it is asking about is worse
     /// than no preview at all (design §5).
@@ -35,8 +37,20 @@ impl CommitPrompt {
             statement,
             rows,
             cells,
+            scope: CommitScope::All,
             scroll: Scroll::default(),
         }
+    }
+
+    /// Narrows what answering `y` writes back into the page.
+    #[must_use]
+    pub fn scoped(self, scope: CommitScope) -> Self {
+        Self { scope, ..self }
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> CommitScope {
+        self.scope
     }
 
     #[must_use]

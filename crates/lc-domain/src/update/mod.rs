@@ -49,7 +49,10 @@ mod search;
 mod themes;
 mod yank;
 
-use commit::{commit_extent, commit_key, discard_key, finish_commit, open_commit, uncommitted};
+use commit::{
+    commit_extent, commit_inspected_row, commit_key, discard_key, finish_commit, open_commit,
+    uncommitted,
+};
 use connections::{
     connect, connections_key, default_connection_index, offer_connections, open_connections,
 };
@@ -57,7 +60,7 @@ use drop::{drop_key, finish_drop, open_drop};
 use edit::{field_key, start_edit};
 use export::{cancel_pending_export, export_key, export_progress, finish_export, open_export};
 use history::{history_key, open_history};
-use inspect::{inspect_key, inspector_extent, open_inspector};
+use inspect::{edit_from_grid, inspect_key, inspector_extent, open_inspector};
 use palette::{open_palette, palette_key};
 use pointer::handle_pointer;
 use search::{next_match_key, open_prompt, restore_origin, search_key};
@@ -895,6 +898,7 @@ fn panel_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::Home => scroll(state, Motion::Start),
         Key::End => scroll(state, Motion::End),
         Key::Enter if state.focus() == Panel::Contents => open_inspector(state),
+        Key::Char('e') if state.focus() == Panel::Contents => return edit_from_grid(state),
         Key::Enter | Key::Char('i') if state.focus() == Panel::Queries => {
             state.queries.start_editing();
         }
@@ -1647,6 +1651,10 @@ fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::Char('d') => return page(state, Key::PageDown),
         Key::Char('u') => return page(state, Key::PageUp),
         _ => {}
+    }
+
+    if key == Key::Char('s') && matches!(state.overlay, Some(Overlay::Inspect(_))) {
+        return commit_inspected_row(state);
     }
 
     if matches!(
