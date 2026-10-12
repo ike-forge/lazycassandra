@@ -679,8 +679,16 @@ mod tests {
     }
 
     #[test]
-    fn a_history_limit_out_of_range_falls_back_to_the_default() {
+    fn a_history_limit_of_zero_turns_the_history_off() {
         let (config, diagnostics) = config_of(&["[history]\nlimit = 0\n"]);
+
+        assert!(config.history.limit.is_off());
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn a_history_limit_out_of_range_falls_back_to_the_default() {
+        let (config, diagnostics) = config_of(&["[history]\nlimit = 10001\n"]);
 
         assert_eq!(config.history.limit.get(), 100);
         assert_eq!(diagnostics.len(), 1);

@@ -50,6 +50,8 @@ pub struct ViewModel {
     /// What the focused panel responds to, along the bottom of the frame.
     pub hints: HintBar,
     pub theme: ThemeChoice,
+    /// Drawn in a corner over everything, until it expires.
+    pub toast: Option<String>,
 }
 
 /// What one panel's loader has to say.
@@ -720,6 +722,7 @@ pub fn view_model(state: &State) -> ViewModel {
         hints: hints::bar(state),
         overlay: overlay(state),
         theme: state.theme.clone(),
+        toast: state.toast.as_ref().map(|toast| toast.message().to_owned()),
     }
 }
 

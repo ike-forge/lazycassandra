@@ -26,7 +26,7 @@ use crate::queries::{CqlMode, QueriesTab, Refresh};
 use crate::search::{Direction, Search, Searched};
 use crate::state::{
     ConnectionState, Cursor, DiagnosticsPanel, Flash, Geometry, Message, Overlay, Panel, Range,
-    Ranges, SchemaState, Scroll, Selection, State,
+    Ranges, SchemaState, Scroll, Selection, State, Toast,
 };
 use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
@@ -635,6 +635,11 @@ fn tick(state: &mut State, now: Stamp) -> Vec<Effect> {
 
     if state.flash.as_mut().is_some_and(Flash::spend) {
         state.flash = None;
+        state.mark_dirty();
+    }
+
+    if state.toast.as_mut().is_some_and(Toast::spend) {
+        state.toast = None;
         state.mark_dirty();
     }
 

@@ -44,7 +44,8 @@
 # Kept per connection, between runs, in $XDG_STATE_HOME/lazycassandra.
 # ctrl-g in Queries opens it.
 # [history]
-# limit = 100   # 1..=10000; statements remembered per connection
+# limit = 100   # 0..=10000; statements remembered per connection. 0 turns
+#               # the history off: nothing is read, kept or written.
 
 # ── the driver ────────────────────────────────────────────────
 # [driver]

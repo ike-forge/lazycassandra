@@ -328,8 +328,9 @@ focus, claims every key, is refused on its own gate and over a live search
 prompt. It lists what the connection in use has been asked from the buffer —
 `ctrl-r` only, never a table read from the tree — newest first, each
 statement as one line, a repeat moving to the front instead of appearing
-twice. At most `history.limit` are kept per connection (default 100). The
-palette carries a row for it.
+twice. At most `history.limit` are kept per connection (default 100; 0 turns
+the history off, and `ctrl-g` then answers with a "history is disabled" toast).
+The palette carries a row for it.
 
 Kept between runs in `$XDG_STATE_HOME/lazycassandra/history.toml` (default
 `~/.local/state`), keyed by connection name. Statements can hold credentials,
@@ -1616,6 +1617,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | What one run saves the next loads, per connection, trimmed to the limit | `what_one_run_saves_the_next_loads`, `saving_one_connection_leaves_the_others_alone`, `a_lower_limit_trims_on_load` (`outbound/tests/history.rs`, integration tier) |
 | A corrupt file is reported and replaced; the file is `0600` | `a_file_that_is_not_toml_is_reported_and_replaced_by_the_next_save`, `the_file_is_private_to_the_user` (`outbound/tests/history.rs`, integration tier) |
 | The file format round-trips | `what_is_rendered_parses_back`, `a_name_that_needs_quoting_survives` (`outbound/history.rs`) |
+| `history.limit = 0` records and saves nothing; `ctrl-g` toasts and the toast expires | `a_zero_limit_records_nothing_and_saves_nothing`, `ctrl_g_with_the_history_disabled_toasts_instead_of_opening`, `the_toast_leaves_after_its_ticks` (`history.rs`) |
 | `history.limit` bounds what is kept | `the_configured_limit_bounds_what_is_kept` (`history.rs`), `the_oldest_entries_fall_off_past_the_limit` (`domain/history.rs`) |
 | A repeat moves to the front, and each connection keeps its own | `a_repeated_statement_moves_to_the_front_instead_of_repeating`, `each_connection_keeps_its_own` (`domain/history.rs`) |
 | `ctrl-g` opens the history on the newest entry, from Queries only, and not on nothing | `ctrl_g_opens_the_history_on_the_newest_entry`, `ctrl_g_belongs_to_queries`, `ctrl_g_opens_nothing_with_no_history`, `ctrl_g_opens_nothing_where_the_frame_cannot_draw_it` (`history.rs`) |

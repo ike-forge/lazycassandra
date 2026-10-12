@@ -60,6 +60,9 @@ pub struct State {
     /// What the last `y` copied, lit for as long as [`Flash`] lasts. `None`
     /// once it has faded or the next key has ended it.
     pub flash: Option<Flash>,
+    /// A one-line answer to a key that did nothing, for as long as [`Toast`]
+    /// lasts.
+    pub toast: Option<Toast>,
     /// Set when something changed that the next frame must show. Avoids
     /// repainting on every keypress of a held-down `j` (architecture.md §3).
     pub dirty: bool,
@@ -1196,6 +1199,39 @@ impl Flash {
     #[must_use]
     pub const fn columns(&self) -> &Ranges {
         &self.columns
+    }
+}
+
+/// A line of feedback for a chord that is bound but has nothing to do, where
+/// silence would read as a dead key. Not a modal: it asks nothing and leaves
+/// on its own, counted in ticks as [`Flash`] is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toast {
+    message: String,
+    remaining: usize,
+}
+
+/// Three seconds of [`crate::Msg::Tick`]s at `lc-app`'s forty milliseconds.
+pub const TOAST_TICKS: usize = 75;
+
+impl Toast {
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            remaining: TOAST_TICKS,
+        }
+    }
+
+    /// As [`Flash::spend`]: true only on the tick that ends it.
+    pub const fn spend(&mut self) -> bool {
+        self.remaining = self.remaining.saturating_sub(1);
+        self.remaining == 0
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 

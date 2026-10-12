@@ -133,7 +133,7 @@ fn warning(path: &Path, message: String) -> Diagnostic {
 impl Store for FileStore {
     async fn load(&self, limit: HistoryLimit) -> (Histories, Vec<Diagnostic>) {
         let mut histories = Histories::default();
-        let Some(path) = &self.path else {
+        let Some(path) = self.path.as_ref().filter(|_| !limit.is_off()) else {
             return (histories, Vec::new());
         };
         let source = match Self::read(path).await {

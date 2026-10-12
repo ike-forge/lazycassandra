@@ -26,7 +26,8 @@ impl History {
     pub fn record(&mut self, statement: &str, limit: HistoryLimit) -> bool {
         let statement = statement.trim();
 
-        if statement.is_empty()
+        if limit.is_off()
+            || statement.is_empty()
             || self
                 .entries
                 .first()

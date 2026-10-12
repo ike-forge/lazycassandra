@@ -328,3 +328,58 @@ fn the_bar_names_ctrl_g_only_once_there_is_something_to_open() {
     assert!(!named(&empty));
     assert!(named(&kept));
 }
+
+fn disabled() -> State {
+    let mut state = having_run(&[]);
+    state.config.history = HistoryConfig {
+        limit: HistoryLimit::try_new(0).expect("in range"),
+    };
+    state
+}
+
+#[test]
+fn a_zero_limit_records_nothing_and_saves_nothing() {
+    let mut state = disabled();
+    state.queries.replace("SELECT 1;");
+
+    let effects = run_query(&mut state);
+
+    assert!(state.history().is_empty());
+    assert!(saves(&effects).is_empty());
+}
+
+#[test]
+fn ctrl_g_with_the_history_disabled_toasts_instead_of_opening() {
+    let mut state = disabled();
+
+    open_history(&mut state);
+
+    assert!(state.overlay.is_none());
+    assert_eq!(
+        state.toast.as_ref().map(crate::state::Toast::message),
+        Some("history is disabled")
+    );
+}
+
+#[test]
+fn the_toast_leaves_after_its_ticks() {
+    let mut state = disabled();
+    open_history(&mut state);
+
+    for _ in 0..crate::state::TOAST_TICKS {
+        assert!(state.toast.is_some());
+        update(&mut state, Msg::Tick(crate::clock::Stamp::default()));
+    }
+
+    assert!(state.toast.is_none());
+}
+
+#[test]
+fn ctrl_g_outside_queries_toasts_nothing() {
+    let mut state = disabled();
+    state.focus_on(Panel::Tables);
+
+    open_history(&mut state);
+
+    assert!(state.toast.is_none());
+}

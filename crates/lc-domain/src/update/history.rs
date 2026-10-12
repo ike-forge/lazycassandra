@@ -3,7 +3,7 @@
 use crate::history::one_line;
 use crate::model::Key;
 use crate::search::Sift;
-use crate::state::{Cursor, Overlay, Panel, State};
+use crate::state::{Cursor, Overlay, Panel, State, Toast};
 
 use super::{Effect, escape, picker_matches, quit};
 
@@ -25,6 +25,12 @@ pub(crate) fn history_labels(state: &State) -> Vec<String> {
 /// `open_themes`' reason; and where the frame cannot draw the block.
 pub(super) fn open_history(state: &mut State) {
     let busy = matches!(state.overlay, Some(Overlay::Search(_)));
+
+    if state.focus() == Panel::Queries && !busy && state.config.history.limit.is_off() {
+        state.toast = Some(Toast::new("history is disabled"));
+        state.mark_dirty();
+        return;
+    }
 
     if state.focus() != Panel::Queries
         || state.history().is_empty()

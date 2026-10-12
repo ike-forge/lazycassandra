@@ -31,6 +31,7 @@ mod palette;
 pub mod render;
 pub mod theme;
 mod themes;
+mod toast;
 mod too_small;
 mod wrap;
 

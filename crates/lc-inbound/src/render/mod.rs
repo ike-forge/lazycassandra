@@ -157,6 +157,10 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         commit_lines,
     } = render_overlay(frame, view, hint_bar, theme);
 
+    if let Some(message) = &view.toast {
+        crate::toast::render(frame, message, theme);
+    }
+
     Rendered {
         geometry: Geometry::new(heights, ddl_lines, room.command_rows)
             .with_ddl_selection(ddl_selection)
