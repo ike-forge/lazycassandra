@@ -234,6 +234,10 @@ fn d_is_inert_where_the_frame_cannot_draw_the_block() {
     press(&mut state, Key::Char('d'));
 
     assert!(state.overlay.is_none());
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Info, "no room to draw the confirmation"))
+    );
 }
 
 #[test]
@@ -247,6 +251,10 @@ fn d_is_inert_while_a_drop_is_running() {
     press(&mut state, Key::Char('d'));
 
     assert!(state.overlay.is_none(), "the second would race the first");
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Info, "a drop is already running"))
+    );
 }
 
 #[test]
@@ -260,6 +268,10 @@ fn d_is_inert_over_a_multi_row_selection() {
     assert!(
         state.overlay.is_none(),
         "'drop these two' is a different question"
+    );
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Info, "drop takes one node, not a selection"))
     );
 }
 
@@ -297,11 +309,11 @@ fn a_completed_drop_re_reads_the_schema() {
 
     assert_eq!(effects, vec![Effect::LoadSchema(current_conn(&state))]);
     assert!(state.dropping.is_none(), "the round trip is over");
-    assert!(
-        matches!(&state.overlay, Some(Overlay::Message(message))
-            if message.message.contains("shop.orders")),
-        "the modal names what is gone"
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Info, "dropped shop.orders"))
     );
+    assert!(state.overlay.is_none(), "nothing to dismiss");
 }
 
 #[test]
@@ -630,9 +642,8 @@ fn a_completed_delete_re_reads_the_grid_rather_than_the_schema() {
         Some("SELECT * FROM \"shop\".\"orders\""),
         "the grid is re-read so the rows stop being drawn"
     );
-    assert!(
-        matches!(&state.overlay, Some(Overlay::Message(message))
-            if message.message.contains("1 row from shop.orders")),
-        "the modal names what is gone"
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Info, "deleted 1 row from shop.orders"))
     );
 }

@@ -129,6 +129,7 @@ fn ctrl_e_does_nothing_over_an_empty_contents_panel() {
     open_form(&mut state);
 
     assert!(state.overlay.is_none());
+    assert_eq!(toasted(&state), Some((Severity::Info, "nothing to export")));
 }
 
 /// A form nothing draws would still claim every key: `q` would not quit,
@@ -142,6 +143,10 @@ fn ctrl_e_is_inert_where_the_frame_cannot_draw_the_form() {
     open_form(&mut state);
 
     assert!(state.overlay.is_none());
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Info, "no room to draw the export form"))
+    );
 }
 
 /// The band between the program's too-small threshold and the form's own
@@ -500,6 +505,10 @@ fn starting_an_export_closes_the_form_and_records_the_job() {
     };
     assert_eq!(state.export.as_ref().map(ExportJob::id), Some(*job));
     assert_eq!(state.export.as_ref().map(ExportJob::rows), Some(0));
+    assert!(
+        matches!(toasted(&state), Some((Severity::Info, message)) if message.starts_with("exporting to ")),
+        "the start is announced"
+    );
 }
 
 #[test]
@@ -555,12 +564,12 @@ fn finishing_clears_the_job_and_says_what_was_written() {
     );
 
     assert!(state.export.is_none());
-    let Some(Overlay::Message(message)) = &state.overlay else {
+    let Some((severity, message)) = toasted(&state) else {
         panic!("the result is on screen");
     };
-    assert_eq!(message.severity, Severity::Info);
-    assert!(message.message.contains("41203"));
-    assert!(message.message.contains("shop.orders.csv"));
+    assert_eq!(severity, Severity::Info);
+    assert!(message.contains("41203"));
+    assert!(message.contains("shop.orders.csv"));
 }
 
 #[test]
@@ -1134,4 +1143,8 @@ fn ctrl_e_is_inert_while_an_export_is_already_running() {
     open_form(&mut state);
 
     assert!(state.overlay.is_none());
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Info, "an export is already running"))
+    );
 }

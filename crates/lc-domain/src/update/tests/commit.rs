@@ -57,6 +57,7 @@ fn ctrl_s_with_nothing_dirty_is_inert() {
     ctrl(&mut state, Key::Char('s'));
 
     assert!(committing(&state).is_none());
+    assert_eq!(toasted(&state), Some((Severity::Info, "nothing to commit")));
 }
 
 #[test]
@@ -100,6 +101,9 @@ fn a_committed_write_lands_in_the_page_and_clears_the_marks() {
 
     assert_eq!(dirty_cells(&state), 0);
     assert!(state.committing.is_none());
+    assert!(
+        matches!(toasted(&state), Some((Severity::Info, message)) if message.starts_with("committed 1 cell to ")),
+    );
     assert_eq!(
         state
             .contents

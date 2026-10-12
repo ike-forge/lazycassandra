@@ -356,6 +356,28 @@ tell the two apart.
 
 See [query history design](superpowers/specs/2026-10-09-query-history-design.md).
 
+### Toasts
+
+A toast is a three-second line in the top-right corner. It asks nothing and
+takes no key. Successes toast; failures stay modal, because they have to be
+read.
+
+| Toast | When |
+|---|---|
+| `connected to <name>` | The connection opens. |
+| `exporting to <path>`, `exported N rows to <path>` | An export starts, and finishes. |
+| `dropped …`, `deleted …`, `committed N cells to …` | The cluster accepted the statement. |
+| `edit staged, close the inspector and ctrl-s to commit` | An inspector edit is accepted and leaves a mark. |
+| `stopped fetching pages` | `Esc` ends a running `P`. |
+| `history not saved, see the logs` | The history file could not be written. Also a trail line. |
+| `nothing to commit`, `nothing to export`, `nothing in the history yet`, `history is disabled` | A bound chord with nothing to act on. |
+| `a drop is already running`, `a commit is already running`, `an export is already running` | The chord's job is still outstanding. |
+| `no room to draw …` | The frame cannot draw the block the chord opens. |
+| `drop takes one node, not a selection`, `these rows cannot be addressed by primary key` | `d` where the question cannot be asked. |
+
+A new toast replaces the one standing. A failed query toasts nothing: the
+Contents panel shows it in place of the buffer on purpose.
+
 ### The configuration diagnostics overlay
 
 `Overlay::Diagnostics` opens itself, once, at startup — there is no key that
@@ -1618,6 +1640,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | A corrupt file is reported and replaced; the file is `0600` | `a_file_that_is_not_toml_is_reported_and_replaced_by_the_next_save`, `the_file_is_private_to_the_user` (`outbound/tests/history.rs`, integration tier) |
 | The file format round-trips | `what_is_rendered_parses_back`, `a_name_that_needs_quoting_survives` (`outbound/history.rs`) |
 | `history.limit = 0` records and saves nothing; `ctrl-g` toasts and the toast expires | `a_zero_limit_records_nothing_and_saves_nothing`, `ctrl_g_with_the_history_disabled_toasts_instead_of_opening`, `the_toast_leaves_after_its_ticks` (`history.rs`) |
+| Successes and refused chords toast | `a_completed_drop_re_reads_the_schema`, `a_completed_delete_re_reads_the_grid_rather_than_the_schema` (`drop.rs`), `finishing_clears_the_job_and_says_what_was_written`, `ctrl_e_does_nothing_over_an_empty_contents_panel` (`export.rs`), `ctrl_s_with_nothing_dirty_is_inert`, `a_committed_write_lands_in_the_page_and_clears_the_marks` (`commit.rs`), `enter_accepts_the_field_and_the_cell_goes_dirty` (`edit.rs`), `a_failed_history_save_warns` (`history.rs`) |
 | `history.limit` bounds what is kept | `the_configured_limit_bounds_what_is_kept` (`history.rs`), `the_oldest_entries_fall_off_past_the_limit` (`domain/history.rs`) |
 | A repeat moves to the front, and each connection keeps its own | `a_repeated_statement_moves_to_the_front_instead_of_repeating`, `each_connection_keeps_its_own` (`domain/history.rs`) |
 | `ctrl-g` opens the history on the newest entry, from Queries only, and not on nothing | `ctrl_g_opens_the_history_on_the_newest_entry`, `ctrl_g_belongs_to_queries`, `ctrl_g_opens_nothing_with_no_history`, `ctrl_g_opens_nothing_where_the_frame_cannot_draw_it` (`history.rs`) |

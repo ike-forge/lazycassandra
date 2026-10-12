@@ -178,7 +178,13 @@ pub(super) fn field_key(state: &mut State, key: Key) -> Vec<Effect> {
         // An edit that restored the value it started from left no mark on the
         // page, so it leaves none on the block either (design §1).
         let dirty = page.is_edited(row, column);
-        if !dirty && let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
+        if dirty {
+            // ctrl chords are inert over the inspector (design §4).
+            state.notify(
+                Severity::Info,
+                "edit staged, close the inspector and ctrl-s to commit",
+            );
+        } else if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
             inspector.unmark(at);
         }
     }

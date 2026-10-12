@@ -51,7 +51,14 @@ pub struct ViewModel {
     pub hints: HintBar,
     pub theme: ThemeChoice,
     /// Drawn in a corner over everything, until it expires.
-    pub toast: Option<String>,
+    pub toast: Option<ToastLine>,
+}
+
+/// What a toast says, and how loudly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToastLine {
+    pub severity: Severity,
+    pub message: String,
 }
 
 /// What one panel's loader has to say.
@@ -722,7 +729,10 @@ pub fn view_model(state: &State) -> ViewModel {
         hints: hints::bar(state),
         overlay: overlay(state),
         theme: state.theme.clone(),
-        toast: state.toast.as_ref().map(|toast| toast.message().to_owned()),
+        toast: state.toast.as_ref().map(|toast| ToastLine {
+            severity: toast.severity(),
+            message: toast.message().to_owned(),
+        }),
     }
 }
 

@@ -1202,11 +1202,12 @@ impl Flash {
     }
 }
 
-/// A line of feedback for a chord that is bound but has nothing to do, where
-/// silence would read as a dead key. Not a modal: it asks nothing and leaves
+/// A line of feedback for an action that finished, or a chord that is bound
+/// but has nothing to do, where silence would read as a dead key. Not a modal: it asks nothing and leaves
 /// on its own, counted in ticks as [`Flash`] is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toast {
+    severity: Severity,
     message: String,
     remaining: usize,
 }
@@ -1216,8 +1217,9 @@ pub const TOAST_TICKS: usize = 75;
 
 impl Toast {
     #[must_use]
-    pub fn new(message: impl Into<String>) -> Self {
+    pub fn new(severity: Severity, message: impl Into<String>) -> Self {
         Self {
+            severity,
             message: message.into(),
             remaining: TOAST_TICKS,
         }
@@ -1232,6 +1234,11 @@ impl Toast {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    #[must_use]
+    pub const fn severity(&self) -> Severity {
+        self.severity
     }
 }
 
@@ -1842,6 +1849,12 @@ impl State {
     }
 
     pub const fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// Replaces whatever toast is up.
+    pub fn notify(&mut self, severity: Severity, message: impl Into<String>) {
+        self.toast = Some(Toast::new(severity, message));
         self.dirty = true;
     }
 

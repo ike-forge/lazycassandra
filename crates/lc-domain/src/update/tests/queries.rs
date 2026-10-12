@@ -20,7 +20,7 @@ fn ctrl_e_hands_the_queries_buffer_to_an_editor() {
 /// well until that half was retired (docs/shortcuts.md §4).
 #[test]
 fn ctrl_e_is_inert_outside_queries() {
-    for focus in [Panel::Tables, Panel::Ddl, Panel::Contents] {
+    for focus in [Panel::Tables, Panel::Ddl] {
         let mut state = State::default();
         state.focus_on(focus);
         let before = crate::view::view_model(&state);

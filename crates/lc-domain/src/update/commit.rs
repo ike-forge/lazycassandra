@@ -10,7 +10,9 @@ use crate::model::{DbError, Key, QueryId, Statement, UpdatedRow};
 use crate::state::{Committing, Message, Overlay, State};
 use crate::style::Severity;
 
-use super::{Effect, logged, quit_now, raise, refuse_read_only, statement_subject, submit};
+use super::{
+    Effect, has_uncommitted, logged, quit_now, raise, refuse_read_only, statement_subject, submit,
+};
 
 /// The commit block's wrapped line count and body height, as the last frame
 /// measured them.
@@ -28,11 +30,24 @@ pub(super) fn open_commit(state: &mut State) -> Vec<Effect> {
         refuse_read_only(state, "committing an edit");
         return Vec::new();
     }
-    if state.committing.is_some() || state.geometry.commit_rows() == 0 {
+    if state.committing.is_some() {
+        state.notify(Severity::Info, "a commit is already running");
+        return Vec::new();
+    }
+    if state.geometry.commit_rows() == 0 {
+        state.notify(Severity::Info, "no room to draw the confirmation");
         return Vec::new();
     }
 
     let Some((table, statement, rows, cells)) = pending_commit(state) else {
+        if has_uncommitted(state) {
+            state.notify(
+                Severity::Warning,
+                "edited rows cannot be addressed by primary key",
+            );
+        } else {
+            state.notify(Severity::Info, "nothing to commit");
+        }
         return Vec::new();
     };
 
@@ -213,17 +228,13 @@ pub(super) fn finish_commit(
         }
     }
 
-    raise(
-        state,
-        Message {
-            title: "Committed".to_owned(),
-            message: format!(
-                "{cells} {} written to {}.",
-                if cells == 1 { "cell" } else { "cells" },
-                committed.table().qualified()
-            ),
-            severity: Severity::Info,
-        },
+    state.notify(
+        Severity::Info,
+        format!(
+            "committed {cells} {} to {}",
+            if cells == 1 { "cell" } else { "cells" },
+            committed.table().qualified()
+        ),
     );
 
     Vec::new()
