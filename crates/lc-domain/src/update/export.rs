@@ -58,7 +58,12 @@ pub(super) fn cancel_pending_export(state: &mut State) {
 /// which is the weaker condition — a frame that draws the palette need not
 /// draw a 56×11 block.
 pub(super) fn open_export(state: &mut State) {
-    if state.export.is_some() || !state.geometry.export_fits() {
+    if state.export.is_some() {
+        state.notify(Severity::Info, "an export is already running");
+        return;
+    }
+    if !state.geometry.export_fits() {
+        state.notify(Severity::Info, "no room to draw the export form");
         return;
     }
 
@@ -68,11 +73,13 @@ pub(super) fn open_export(state: &mut State) {
         paging,
     } = state.contents.state()
     else {
+        state.notify(Severity::Info, "nothing to export");
         return;
     };
 
     let rows = page.len();
     if rows == 0 {
+        state.notify(Severity::Info, "nothing to export");
         return;
     }
 
@@ -216,6 +223,10 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
 
     // Cloned rather than borrowed: the effect carries it out of the domain and
     // the job holds it against an `Exists` that has not come back yet.
+    state.notify(
+        Severity::Info,
+        format!("exporting to {}", destination.display()),
+    );
     state.export = Some(ExportJob::started(
         job,
         destination.clone(),
@@ -330,13 +341,12 @@ pub(super) fn finish_export(
                     took,
                 },
             );
-            raise(
-                state,
-                Message {
-                    title: "Exported".to_owned(),
-                    message: format!("wrote {rows} rows to {}", finished.destination().display()),
-                    severity: Severity::Info,
-                },
+            state.notify(
+                Severity::Info,
+                format!(
+                    "exported {rows} rows to {}",
+                    finished.destination().display()
+                ),
             );
         }
         Err(ExportError::Exists) => {

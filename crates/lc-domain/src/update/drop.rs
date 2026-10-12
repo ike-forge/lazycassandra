@@ -105,11 +105,26 @@ pub(super) fn open_drop(state: &mut State) {
         return;
     }
 
-    if state.dropping.is_some() || !state.geometry.drop_fits() {
+    if state.dropping.is_some() {
+        state.notify(Severity::Info, "a drop is already running");
+        return;
+    }
+    if !state.geometry.drop_fits() {
+        state.notify(Severity::Info, "no room to draw the confirmation");
         return;
     }
 
     let Some(target) = drop_target(state) else {
+        match state.focus() {
+            Panel::Tables if state.tables.selects_many() => {
+                state.notify(Severity::Info, "drop takes one node, not a selection");
+            }
+            Panel::Contents => state.notify(
+                Severity::Info,
+                "these rows cannot be addressed by primary key",
+            ),
+            Panel::Tables | Panel::Ddl | Panel::Queries => {}
+        }
         return;
     };
 
@@ -255,15 +270,13 @@ pub(super) fn finish_drop(
         return Vec::new();
     }
 
-    raise(
-        state,
-        Message {
-            title: match dropped.target() {
-                Target::Rows { .. } => "Deleted".to_owned(),
-                Target::Keyspace(_) | Target::Table(_) => "Dropped".to_owned(),
-            },
-            message: format!("{} is gone", dropped.target().qualified()),
-            severity: Severity::Info,
+    state.notify(
+        Severity::Info,
+        match dropped.target() {
+            Target::Rows { .. } => format!("deleted {}", dropped.target().qualified()),
+            Target::Keyspace(_) | Target::Table(_) => {
+                format!("dropped {}", dropped.target().qualified())
+            }
         },
     );
 

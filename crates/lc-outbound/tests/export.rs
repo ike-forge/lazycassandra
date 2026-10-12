@@ -169,11 +169,11 @@ async fn a_whole_table_export_writes_a_header_and_every_page() {
         writer.written(),
         "id,email\na1,ada@example.com\na2,bob@example.com\na3,cleo@example.com\n"
     );
-    let finished = expect_finished(&state);
-    assert_eq!(finished.severity, Severity::Info, "Ok(3), not a failure");
+    let toast = state.toast.as_ref().expect("the finish is toasted");
+    assert_eq!(toast.severity(), Severity::Info, "Ok(3), not a failure");
     assert!(
-        finished.message.contains("wrote 3 rows"),
-        "the finish message carried Ok(3): {finished:?}"
+        toast.message().contains("exported 3 rows"),
+        "the finish message carried Ok(3): {toast:?}"
     );
 }
 

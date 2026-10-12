@@ -3,7 +3,8 @@
 use crate::history::one_line;
 use crate::model::Key;
 use crate::search::Sift;
-use crate::state::{Cursor, Overlay, Panel, State, Toast};
+use crate::state::{Cursor, Overlay, Panel, State};
+use crate::style::Severity;
 
 use super::{Effect, escape, picker_matches, quit};
 
@@ -27,16 +28,19 @@ pub(super) fn open_history(state: &mut State) {
     let busy = matches!(state.overlay, Some(Overlay::Search(_)));
 
     if state.focus() == Panel::Queries && !busy && state.config.history.limit.is_off() {
-        state.toast = Some(Toast::new("history is disabled"));
-        state.mark_dirty();
+        state.notify(Severity::Info, "history is disabled");
         return;
     }
 
-    if state.focus() != Panel::Queries
-        || state.history().is_empty()
-        || state.geometry.history_rows() == 0
-        || busy
-    {
+    if state.focus() != Panel::Queries || busy {
+        return;
+    }
+    if state.history().is_empty() {
+        state.notify(Severity::Info, "nothing in the history yet");
+        return;
+    }
+    if state.geometry.history_rows() == 0 {
+        state.notify(Severity::Info, "no room to draw the history");
         return;
     }
 

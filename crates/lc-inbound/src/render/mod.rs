@@ -157,8 +157,8 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         commit_lines,
     } = render_overlay(frame, view, hint_bar, theme);
 
-    if let Some(message) = &view.toast {
-        crate::toast::render(frame, message, theme);
+    if let Some(toast) = &view.toast {
+        crate::toast::render(frame, toast.severity, &toast.message, theme);
     }
 
     Rendered {

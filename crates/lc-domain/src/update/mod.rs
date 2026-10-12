@@ -429,6 +429,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
                 sentence("Saving the history"),
                 Outcome::Failed { detail: reason },
             );
+            state.notify(Severity::Warning, "history not saved, see the logs");
             Vec::new()
         }
 
@@ -522,6 +523,7 @@ fn connected(state: &mut State, conn: ConnId, posture: Posture, took: Duration) 
         return Vec::new();
     }
     let name = name.clone();
+    state.notify(Severity::Info, format!("connected to {}", name.as_str()));
 
     state.connection = ConnectionState::Connected(crate::state::Connection {
         id: conn,
@@ -1386,6 +1388,7 @@ fn escape(state: &mut State) {
     // Directly under the overlays: a running `P` is still putting rows on
     // screen (grid paging design §2).
     if state.focus() == Panel::Contents && state.contents.stop_fetching() {
+        state.notify(Severity::Info, "stopped fetching pages");
         return;
     }
 

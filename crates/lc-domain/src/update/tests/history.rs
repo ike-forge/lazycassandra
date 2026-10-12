@@ -394,3 +394,34 @@ fn ctrl_g_outside_queries_toasts_nothing() {
 
     assert!(state.toast.is_none());
 }
+
+#[test]
+fn ctrl_g_with_nothing_remembered_toasts_instead_of_opening() {
+    let mut state = State::default();
+    state.focus_on(Panel::Queries);
+
+    open_history(&mut state);
+
+    assert!(state.overlay.is_none());
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Info, "nothing in the history yet"))
+    );
+}
+
+#[test]
+fn a_failed_history_save_warns() {
+    let mut state = State::default();
+
+    update(
+        &mut state,
+        Msg::HistorySaveFailed {
+            reason: "disk full".to_owned(),
+        },
+    );
+
+    assert_eq!(
+        toasted(&state),
+        Some((Severity::Warning, "history not saved, see the logs"))
+    );
+}

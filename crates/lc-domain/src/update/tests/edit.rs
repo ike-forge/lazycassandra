@@ -87,6 +87,13 @@ fn enter_accepts_the_field_and_the_cell_goes_dirty() {
     assert_eq!(field_text(&state), None, "the field closed");
     assert_eq!(dirty_cells(&state), 1);
     assert_eq!(
+        toasted(&state),
+        Some((
+            Severity::Info,
+            "edit staged, close the inspector and ctrl-s to commit"
+        ))
+    );
+    assert_eq!(
         state
             .contents
             .loaded()

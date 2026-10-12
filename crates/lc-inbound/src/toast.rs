@@ -28,13 +28,13 @@ fn rect(area: Rect, message: &str) -> Option<Rect> {
     ))
 }
 
-pub(crate) fn render(frame: &mut Frame, message: &str, theme: Theme) {
+pub(crate) fn render(frame: &mut Frame, severity: Severity, message: &str, theme: Theme) {
     let Some(area) = rect(frame.area(), message) else {
         return;
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme.style(Token::Severity(Severity::Info)));
+        .border_style(theme.style(Token::Severity(severity)));
     let inner = block.inner(area);
 
     frame.render_widget(Clear, area);
@@ -55,7 +55,14 @@ mod tests {
     fn drawn(width: u16, height: u16, message: &str) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
         terminal
-            .draw(|frame| render(frame, message, Theme::of(&ThemeChoice::default())))
+            .draw(|frame| {
+                render(
+                    frame,
+                    Severity::Info,
+                    message,
+                    Theme::of(&ThemeChoice::default()),
+                );
+            })
             .expect("draw");
 
         terminal

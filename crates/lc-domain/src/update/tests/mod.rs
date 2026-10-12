@@ -50,6 +50,13 @@ mod themes;
 mod tree;
 mod yank;
 
+fn toasted(state: &State) -> Option<(Severity, &str)> {
+    state
+        .toast
+        .as_ref()
+        .map(|toast| (toast.severity(), toast.message()))
+}
+
 fn schema_of(names: &[&str]) -> Schema {
     tabled_schema(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
 }
