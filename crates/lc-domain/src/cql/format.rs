@@ -42,6 +42,9 @@ struct Layout {
     /// so where one statement ends and the next begins is visible without
     /// reading for the `;` (design §4.2).
     batched: bool,
+    /// Set by a statement's `;`; the next written piece starts after a blank
+    /// line, so separate statements read as separate queries.
+    separate: bool,
     previous: Option<Piece>,
 }
 
@@ -53,6 +56,10 @@ impl Layout {
             kind: piece.kind,
             text: Self::written(piece),
         };
+
+        if std::mem::take(&mut self.separate) {
+            self.lines.push(String::new());
+        }
 
         // `APPLY BATCH` closes the block rather than sitting in it. The
         // indent for its line was written when the last member's `;` wrapped,
@@ -78,6 +85,8 @@ impl Layout {
         if ends_a_line(piece) {
             self.wrap(false);
         }
+
+        self.separate = piece.text == ";" && !self.batched;
     }
 
     /// A keyword is written upper case; everything else is written as typed. A
@@ -353,7 +362,22 @@ mod tests {
 
     #[test]
     fn each_statement_gets_its_own_line() {
-        assert_eq!(formatted("SELECT 1; SELECT 2;"), "SELECT 1;\nSELECT 2;");
+        assert_eq!(formatted("SELECT 1; SELECT 2;"), "SELECT 1;\n\nSELECT 2;");
+    }
+
+    #[test]
+    fn a_trailing_separator_adds_no_blank_line() {
+        assert_eq!(formatted("SELECT 1;\n\n\n"), "SELECT 1;");
+    }
+
+    #[test]
+    fn a_batch_is_one_unit_between_its_brackets() {
+        assert_eq!(
+            formatted(
+                "BEGIN BATCH UPDATE t SET a = 1; DELETE FROM t WHERE id = 8; APPLY BATCH; SELECT 1"
+            ),
+            "BEGIN BATCH\n  UPDATE t\n  SET a = 1;\n  DELETE FROM t\n  WHERE id = 8;\nAPPLY BATCH;\n\nSELECT 1"
+        );
     }
 
     #[test]
