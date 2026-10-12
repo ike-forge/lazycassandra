@@ -167,6 +167,13 @@ const EDIT: Binding = Binding {
     action: "edit",
 };
 
+/// The `⏎` hint over the insert form, where `⏎` writes rather than closes
+/// (insert design §4).
+const INSERT: Binding = Binding {
+    keys: &[Stroke::key(Key::Enter)],
+    action: "insert",
+};
+
 /// What the bar names while a field is open. No panel group and no `q`: the
 /// field claims every printable key, so naming anything else would be the
 /// lie this bar exists to prevent (design §3).
@@ -709,9 +716,7 @@ fn inspect_bar(
                 .iter()
                 .map(|binding| Hint {
                     liveness: if binding.keys == [Stroke::key(Key::Enter)]
-                        && inspector
-                            .field()
-                            .is_none_or(|field| field.parsed().is_none())
+                        && !inspector.can_accept()
                     {
                         Liveness::Inert
                     } else {
@@ -748,6 +753,10 @@ fn inspect_bar(
         },
         ..rendered(&EDIT)
     });
+    if inspector.is_inserting() {
+        panel.retain(|hint| !matches!(hint.action, "copy" | "copy line"));
+        panel.push(rendered(&INSERT));
+    }
 
     HintBar {
         panel,
@@ -901,6 +910,13 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
         return Liveness::Inert;
     }
 
+    let inserts = binding.keys == [Stroke::key(Key::Char('i'))] && state.focus() == Panel::Contents;
+    if inserts
+        && (state.geometry.inspector_rows() == 0 || crate::update::insert_form(state).is_err())
+    {
+        return Liveness::Inert;
+    }
+
     Liveness::Live
 }
 
@@ -913,7 +929,9 @@ fn pages(binding: &Binding) -> bool {
 ///
 /// `ctrl-r` is not one: whether it is refused follows the buffer as typed.
 fn refused(state: &State, binding: &Binding) -> bool {
-    binding.keys == [Stroke::key(Key::Char('d'))] && !state.posture().permits_mutation()
+    (binding.keys == [Stroke::key(Key::Char('d'))]
+        || (binding.keys == [Stroke::key(Key::Char('i'))] && state.focus() == Panel::Contents))
+        && !state.posture().permits_mutation()
 }
 
 /// Whether `n`/`N` would move `target`'s cursor this frame: whether the

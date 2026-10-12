@@ -30,6 +30,11 @@ pub(super) fn start_edit(state: &mut State) -> Vec<Effect> {
                 inspector.start_edit(field);
             }
         }
+        // A modal would take the half-filled form with it (insert design §4).
+        Err(refusal) if matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.is_inserting()) =>
+        {
+            state.notify(Severity::Warning, refusal);
+        }
         Err(refusal) => raise(
             state,
             Message {
@@ -87,7 +92,10 @@ fn editable(state: &State) -> Result<Field, String> {
         return Err(format!("{name} is not a column of {}.", table.qualified()));
     };
 
-    if key::columns(described).iter().any(|(key, _)| *key == name) {
+    // A new row's key columns are the first thing it needs (insert design §2).
+    let inserting = inspector.is_inserting();
+
+    if !inserting && key::columns(described).iter().any(|(key, _)| *key == name) {
         return Err(format!(
             "{name} is part of the primary key. A key column cannot be updated."
         ));
@@ -98,7 +106,7 @@ fn editable(state: &State) -> Result<Field, String> {
             declared.cql_type
         ));
     }
-    if row_key(state, described).is_none() {
+    if !inserting && row_key(state, described).is_none() {
         return Err("This row cannot be addressed: its primary key is not in the page.".to_owned());
     }
 
@@ -150,6 +158,10 @@ pub(super) fn field_key(state: &mut State, key: Key) -> Vec<Effect> {
         match key {
             Key::Escape => {
                 inspector.cancel_edit();
+                return Vec::new();
+            }
+            Key::Enter if inspector.is_inserting() => {
+                inspector.accept_new();
                 return Vec::new();
             }
             Key::Enter => inspector.accept_edit(),

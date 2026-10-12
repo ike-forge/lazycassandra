@@ -748,6 +748,7 @@ below.
 | `P` | Fetch pages until the result ends or a stop is reached. Inert where `p` is. |
 | `ctrl-e` | Open the export form. Inert on an empty grid, while an export is running, and on a frame with no room to draw the form. |
 | `d` | Open the delete confirmation over the selected rows, or the row under the cursor when no range is held. Inert unless those rows can be addressed by their whole primary key. See the drop confirmation's own subsection in §1. |
+| `i` | Open the inspector over a new row: every column of the table, unset. See the insert form's own subsection below. Inert on a frame with no room, refused with a message on a typed statement's grid, and refused with the posture modal on a read-only connection. |
 | `ctrl-s` | Open the commit confirmation over every uncommitted edit. Inert with nothing edited, while a commit is in flight, and on a frame with no room to draw the block. Refused with a message on a read-only connection. See the commit confirmation's own subsection below. |
 
 The panel opens in row mode, which lights the whole row: reading a table is
@@ -822,7 +823,7 @@ Like the palette it dims the panels, claims every key and leaves `q` quitting.
 | `y` | Yank what the grid's `y` would in the mode it was opened from: the bare value, or the row as one CSV line. The inspector stays open. |
 | `Y` | Yank the line the cursor is on, its indent dropped and, in row mode, without the column name beside it. Nothing over a null field. |
 | `e` | Open an edit field over the value the cursor is on. Refused *with a message* where the column is part of the primary key, where its type cannot be typed into, where the row's whole primary key is not in the page, where the grid came from a typed statement, and on a read-only connection. |
-| `Enter` / `Esc` | Close it. |
+| `Enter` / `Esc` | Close it. Over the insert form, `Enter` opens the confirmation instead. |
 | `q` | Quits, or raises the uncommitted-changes warning. |
 | anything else | Inert, every other ctrl chord included. |
 
@@ -865,6 +866,26 @@ page all carry them, and a re-read discards them. A sorted or filtered grid
 reads the value the cluster sent rather than the edit, so an edited row does
 not move out from under the cursor that just edited it.
 
+### Inserting a row
+
+`i` over Table contents opens the inspector over a row that does not exist
+yet, titled `· new row`: one field per column, schema order, all unset. `e`
+types into a field as in *Editing a value*, with three differences: key
+columns are typeable, an empty field is accepted and unsets the column, and
+nothing reaches the page.
+
+| Key | Effect |
+|---|---|
+| `e` | As in the inspector. |
+| `Enter` | Open the confirmation over the `INSERT`. Refused with a toast, keeping the form, while any key column is unset. |
+| `Esc` | Close the form, discarding what was typed. |
+
+The confirmation is the commit confirmation, titled `Insert n cells into
+ks.t`; `n` and `Esc` there return to the form. On success the grid is
+re-read: a new row has no place in the page to land, and where it sorts is the
+cluster's to say. See
+[row insert design](superpowers/specs/2026-10-12-row-insert-design.md).
+
 ### The commit confirmation
 
 `ctrl-s` over Table contents opens `Overlay::Commit` over every uncommitted
@@ -876,7 +897,7 @@ every key.
 | Key | Effect |
 |---|---|
 | `y` | Run it. The posture is checked here, not only where the block opened. |
-| `n` / `Esc` | Abandon it, leaving the edits standing. |
+| `n` / `Esc` | Abandon it, leaving the edits standing — or, over an insert, handing the form back with what was typed. |
 | `j` / `k`, `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u`, `Home` / `End`, `g` / `G` | Scroll the statement. Unlike the drop confirmation, which elides a long batch to its head, this block scrolls: every statement a commit would run is readable. |
 | anything else | Inert. `⏎` answers nothing — an `UPDATE` is a write, so there is no typed spelling. |
 
@@ -1347,7 +1368,9 @@ mode design §4, overlay search design §1).
 ## 3. The key budget
 
 Taken, lowercase: `c` `d` `e` `f` `g` `h` `j` `k` `l` `m` `n` `p` `q` `s` `v`
-`y`, plus `?` and `/`. `c`, `f` and `s` are taken by Table contents' column
+`y`, plus `?` and `/`. `i` is taken by Table contents, where it opens the
+insert form, and by Queries, where it opens the buffer: a panel's claim on a
+letter stops at its border. `c`, `f` and `s` are taken by Table contents' column
 mode alone — a panel's claim on a letter stops at that panel's border, and
 this one stops at a mode's (§1's Table contents subsection). `e` stops at an
 overlay's: it opens an edit field inside the inspector and is free
@@ -1358,7 +1381,7 @@ Taken, uppercase: `N`, `G`, `P` and `Y` — the only shifted letters bound (§2)
 `p` and `P` answer in Table contents alone, and `Y` and `e` in the inspector
 alone.
 
-Free, lowercase: `a` `b` `i` `o` `r` `t` `u` `w` `x` `z`, the
+Free, lowercase: `a` `b` `o` `r` `t` `u` `w` `x` `z`, the
 digits `6`–`9` and `0`, and every uppercase letter but `N`, `G`, `P` and `Y`.
 
 `Space` is claimed for the first time, inside the export form only: it
@@ -1749,6 +1772,11 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | `ctrl-s` shows the CQL it would run, one row bare and several as a batch | `ctrl_s_shows_the_update_it_would_run`, `several_edited_rows_become_one_batch`, `ctrl_s_with_nothing_dirty_is_inert`, `updating_a_row_sets_in_the_order_given_and_quotes_every_name` (`model/statement.rs`), `one_updated_row_is_a_statement_and_several_are_a_batch` (`model/statement.rs`), `the_contents_bar_names_commit_only_while_something_is_uncommitted` |
 | The commit block scrolls rather than eliding, and names its counts | `a_batch_longer_than_the_body_scrolls_rather_than_eliding`, `one_row_draws_the_statement_and_the_two_keys`, `a_frame_too_small_for_the_block_draws_none_and_reports_no_room` (`inbound/commit.rs`), `the_title_counts_the_cells_and_the_rows_and_names_the_table` (`commit.rs`) |
 | `y` writes, `n` leaves the edits standing, and the page takes what was sent | `y_runs_the_statement_and_n_leaves_the_edits_standing`, `a_committed_write_lands_in_the_page_and_clears_the_marks`, `a_failed_commit_leaves_the_edits_dirty` |
+| `i` opens a form over a row with nothing in it, over an empty grid too | `i_opens_the_inspector_over_a_row_with_nothing_in_it`, `i_opens_over_a_grid_with_no_rows`, `i_is_inert_outside_table_contents` |
+| Every refusal of `i` is spoken, and the bar greys or drops it to match | `a_read_only_connection_is_refused_with_the_reason`, `a_typed_statement_has_no_table_to_insert_into`, `the_contents_bar_names_insert_and_lights_it_where_a_form_would_open`, `the_contents_bar_drops_insert_on_a_read_only_connection`, `the_contents_bar_greys_insert_where_the_frame_has_no_room` |
+| The form takes key columns, holds what it is given off the page, and an empty field unsets | `a_key_column_can_be_typed_into_on_a_new_row`, `an_accepted_field_is_held_by_the_form_and_not_the_page`, `an_emptied_field_unsets_the_column`, `a_refused_field_keeps_the_form`, `the_form_names_enter_as_insert_and_an_empty_field_may_be_saved` |
+| `⏎` needs the whole key, then shows the `INSERT` of what was filled in | `enter_without_the_whole_key_names_what_is_missing_and_keeps_the_form`, `enter_shows_the_insert_it_would_run_with_only_what_was_filled_in`, `a_key_alone_is_a_row`, `an_insert_quotes_the_names_and_is_a_write` (`model/statement.rs`), `an_insert_names_the_cells_and_the_table_and_hands_the_form_back` (`commit.rs`) |
+| `n`/`Esc` hand the form back, `y` writes, and success re-reads the grid | `n_hands_the_filled_form_back`, `escape_over_the_confirmation_hands_the_form_back_too`, `y_runs_the_insert`, `a_read_only_connection_refuses_the_write_at_the_confirmation_too`, `a_completed_insert_re_reads_the_grid_rather_than_patching_it`, `a_failed_insert_is_raised_and_nothing_is_re_read`, `enter_still_closes_an_inspector_over_an_existing_row` |
 | `q` with edits outstanding warns before it discards | `q_warns_before_it_discards_and_y_quits_through_the_warning`, `n_leaves_the_warning_and_the_edits_where_they_were`, `q_with_nothing_dirty_still_quits_outright`, `the_warning_never_says_one_rows` (`commit.rs`) |
 | `p` appends the next page and `P` pages to the end, both from where the last page left off | `p_fetches_the_next_page_from_where_the_last_one_left_off`, `shift_p_fetches_pages_until_the_result_ends`, `a_page_asked_for_is_sized_by_grid_page_rows`, `the_next_page_is_appended_and_the_last_ends_the_result`, `every_page_runs_to_the_end` (`contents.rs`) |
 | `p` and `P` are inert without more, outside the grid and while a page is in flight | `paging_is_inert_without_more_elsewhere_and_while_a_page_is_in_flight`, `nothing_is_fetched_twice_at_once` (`contents.rs`) |

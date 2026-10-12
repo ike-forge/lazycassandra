@@ -42,6 +42,7 @@ mod drop;
 mod edit;
 mod export;
 mod history;
+mod insert;
 mod inspect;
 mod palette;
 mod pointer;
@@ -57,6 +58,7 @@ use drop::{drop_key, finish_drop, open_drop};
 use edit::{field_key, start_edit};
 use export::{cancel_pending_export, export_key, export_progress, finish_export, open_export};
 use history::{history_key, open_history};
+use insert::{open_insert, open_insert_commit};
 use inspect::{inspect_key, inspector_extent, open_inspector};
 use palette::{open_palette, palette_key};
 use pointer::handle_pointer;
@@ -68,6 +70,7 @@ pub(crate) use connections::connection_names;
 pub(crate) use drop::drop_target;
 pub(crate) use edit::{editable_here, has_uncommitted};
 pub(crate) use history::history_labels;
+pub(crate) use insert::insert_form;
 pub(crate) use inspect::inspection;
 pub(crate) use themes::theme_labels;
 
@@ -924,6 +927,7 @@ fn panel_key(state: &mut State, key: Key) -> Vec<Effect> {
             state.contents.set_filter(column_of(state), None);
         }
         Key::Char('d') => open_drop(state),
+        Key::Char('i') => open_insert(state),
         Key::Char('p') => return next_page(state),
         Key::Char('P') => return every_page(state),
         Key::Char('v') => toggle_visual(state),

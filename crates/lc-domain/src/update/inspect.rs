@@ -6,7 +6,7 @@ use crate::inspect::{Inspected, Inspector};
 use crate::model::{CqlValue, Key};
 use crate::state::{Overlay, Panel, State};
 
-use super::{Effect, copied, escape, field_key, quit, start_edit};
+use super::{Effect, copied, escape, field_key, open_insert_commit, quit, start_edit};
 
 /// The inspector's wrapped line count and body height, as the last frame
 /// measured them.
@@ -99,6 +99,15 @@ pub(super) fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     if matches!(key, Key::Char('e')) {
         return start_edit(state);
+    }
+
+    // `⏎` closes the inspector everywhere but over a row that does not exist
+    // yet, where it asks to write it (insert design §4).
+    if matches!(key, Key::Enter)
+        && matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.is_inserting())
+    {
+        open_insert_commit(state);
+        return Vec::new();
     }
 
     let (_, height) = inspector_extent(state);

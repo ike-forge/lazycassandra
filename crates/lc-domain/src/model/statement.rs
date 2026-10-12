@@ -165,6 +165,30 @@ impl Statement {
         }
     }
 
+    /// One row, from every column the user filled in, in the order given.
+    ///
+    /// `values` is `(column, literal)`, spelled by [`crate::edit`]. A column
+    /// left out is left unset rather than written as `null`, which would
+    /// store a tombstone (insert design §3).
+    ///
+    /// [`StatementKind::Write`], as `kind_of` classifies a typed `INSERT`.
+    #[must_use]
+    pub fn insert_row(keyspace: &str, table: &str, values: &[(String, String)]) -> Self {
+        let columns: Vec<String> = values.iter().map(|(column, _)| quoted(column)).collect();
+        let literals: Vec<&str> = values.iter().map(|(_, literal)| literal.as_str()).collect();
+
+        Self {
+            cql: format!(
+                "INSERT INTO {}.{} ({}) VALUES ({})",
+                quoted(keyspace),
+                quoted(table),
+                columns.join(", "),
+                literals.join(", ")
+            ),
+            kind: StatementKind::Write,
+        }
+    }
+
     /// Several rows, as one batch — [`Self::delete_rows`]' rule and its
     /// reason: a confirmation that said "3 rows" has promised three rows, and
     /// an unlogged batch that half-applies has told the user something
@@ -499,6 +523,25 @@ mod tests {
     fn the_cql_is_kept_verbatim() {
         let cql = "SELECT *\nFROM shop.orders";
         assert_eq!(Statement::typed(cql).cql, cql);
+    }
+
+    #[test]
+    fn an_insert_quotes_the_names_and_is_a_write() {
+        let stmt = Statement::insert_row(
+            "My\"Ks",
+            "orders",
+            &[
+                ("id".to_owned(), "7".to_owned()),
+                ("note".to_owned(), "'x'".to_owned()),
+            ],
+        );
+
+        assert_eq!(
+            stmt.cql,
+            "INSERT INTO \"My\"\"Ks\".\"orders\" (\"id\", \"note\") VALUES (7, 'x')"
+        );
+        assert_eq!(stmt.kind, StatementKind::Write);
+        assert!(stmt.mutates());
     }
 
     #[test]

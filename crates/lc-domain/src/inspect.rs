@@ -102,6 +102,9 @@ pub struct Inspector {
     /// into the values the block draws, so the projection can band them
     /// without going back to the page.
     edited: Vec<usize>,
+    /// Set while the block is the form for a row that does not exist yet
+    /// (docs/superpowers/specs/2026-10-12-row-insert-design.md §2).
+    new_row: Option<BTreeMap<usize, Edited>>,
 }
 
 impl Inspector {
@@ -115,7 +118,97 @@ impl Inspector {
             scroll: Scroll::default(),
             field: None,
             edited: Vec::new(),
+            new_row: None,
         }
+    }
+
+    /// The form for a row that does not exist yet: every column of `subject`,
+    /// all unset (insert design §2).
+    ///
+    /// The grid row is `0` and means nothing: nothing typed here is applied
+    /// to the page, which is what [`Self::row`] otherwise addresses.
+    #[must_use]
+    pub fn inserting(subject: Subject, columns: Vec<String>) -> Self {
+        let values = vec![CqlValue::Null; columns.len()];
+        let mut form = Self::opened(
+            0,
+            subject,
+            Inspected::Row {
+                number: 0,
+                columns,
+                values,
+            },
+        );
+        form.new_row = Some(BTreeMap::new());
+
+        form
+    }
+
+    #[must_use]
+    pub const fn is_inserting(&self) -> bool {
+        self.new_row.is_some()
+    }
+
+    /// The fields typed into so far, as `(drawn field, value)` in column
+    /// order, which is the order the statement reads in.
+    pub fn typed(&self) -> impl Iterator<Item = (usize, &Edited)> {
+        self.new_row
+            .iter()
+            .flat_map(|typed| typed.iter().map(|(at, edited)| (*at, edited)))
+    }
+
+    /// Whether `⏎` would accept the open field. An empty field is accepted in
+    /// the form, where it unsets the column (insert design §3).
+    #[must_use]
+    pub fn can_accept(&self) -> bool {
+        self.field.as_ref().is_some_and(|field| {
+            field.parsed().is_some() || (self.is_inserting() && field.line().text().is_empty())
+        })
+    }
+
+    /// Why `⏎` is greyed, `None` while it is not.
+    #[must_use]
+    pub fn field_error(&self) -> Option<String> {
+        if self.can_accept() {
+            return None;
+        }
+
+        self.field.as_ref().and_then(Field::error)
+    }
+
+    /// Accepts the open field into the form: a value is held, an empty field
+    /// unsets the column. `false` while the text does not parse, which leaves
+    /// the field open (cell editing design §3).
+    pub fn accept_new(&mut self) -> bool {
+        if !self.can_accept() {
+            return false;
+        }
+        let Some(at) = self.at_field().map(|(at, _, _)| at) else {
+            return false;
+        };
+        let Some(field) = self.field.take() else {
+            return false;
+        };
+        let Some(typed) = self.new_row.as_mut() else {
+            self.field = Some(field);
+            return false;
+        };
+
+        if let Some(edited) = field.parsed()
+            && !field.line().text().is_empty()
+        {
+            self.inspected.set(at, edited.value().clone());
+            typed.insert(at, edited);
+            if !self.edited.contains(&at) {
+                self.edited.push(at);
+            }
+        } else {
+            self.inspected.set(at, CqlValue::Null);
+            typed.remove(&at);
+            self.edited.retain(|marked| *marked != at);
+        }
+
+        true
     }
 
     /// The drawn grid row this was opened over.
@@ -339,6 +432,7 @@ impl Inspector {
 
         segments.push(Segment::plain(match &self.inspected {
             Inspected::Cell { column, .. } => format!(" · {column}"),
+            Inspected::Row { .. } if self.is_inserting() => " · new row".to_owned(),
             Inspected::Row { number, .. } => format!(" · row {number}"),
         }));
 

@@ -202,12 +202,33 @@ impl Dropping {
 pub struct Committing {
     query: QueryId,
     table: TableRef,
+    inserting: bool,
 }
 
 impl Committing {
     #[must_use]
     pub const fn started(query: QueryId, table: TableRef) -> Self {
-        Self { query, table }
+        Self {
+            query,
+            table,
+            inserting: false,
+        }
+    }
+
+    /// An `INSERT`, which lands in no row of the page: the grid is re-read
+    /// rather than patched (docs/superpowers/specs/2026-10-12-row-insert-design.md §5).
+    #[must_use]
+    pub const fn inserted(query: QueryId, table: TableRef) -> Self {
+        Self {
+            query,
+            table,
+            inserting: true,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_insert(&self) -> bool {
+        self.inserting
     }
 
     #[must_use]
@@ -582,6 +603,13 @@ const CONTENTS_HINTS: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('d'))],
         action: "delete",
+    },
+    // Greyed where no form could open — a typed statement's grid, a frame
+    // with no room — and left off a read-only connection, as `d` is (insert
+    // design §1).
+    Binding {
+        keys: &[Stroke::key(Key::Char('i'))],
+        action: "insert",
     },
     Binding {
         keys: &[Stroke::key(Key::Char('m'))],

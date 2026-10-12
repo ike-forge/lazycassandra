@@ -442,7 +442,7 @@ pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
                 field: inspector.at_field()?.0,
                 text: field.line().text().to_owned(),
                 cursor: field.line().cursor(),
-                error: field.error(),
+                error: inspector.field_error(),
             })
         }),
     }

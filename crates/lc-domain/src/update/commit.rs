@@ -12,6 +12,7 @@ use crate::style::Severity;
 
 use super::{
     Effect, has_uncommitted, logged, quit_now, raise, refuse_read_only, statement_subject, submit,
+    submit_into_contents,
 };
 
 /// The commit block's wrapped line count and body height, as the last frame
@@ -131,7 +132,10 @@ pub(super) fn commit_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::Home => prompt.to_start(),
         Key::End => prompt.to_end(lines, height),
         Key::Char('y') => return start_commit(state),
-        Key::Char('n') | Key::Escape => state.overlay = None,
+        Key::Char('n') | Key::Escape => {
+            let form = prompt.take_form();
+            state.overlay = form.map(Overlay::Inspect);
+        }
         _ => {}
     }
 
@@ -149,12 +153,17 @@ pub(super) fn start_commit(state: &mut State) -> Vec<Effect> {
     };
 
     let table = prompt.table().clone();
+    let inserting = prompt.is_insert();
     let stmt = prompt.statement().clone();
     let log_subject = statement_subject(&stmt);
 
     match submit(state, stmt) {
         Ok((query, effects)) => {
-            state.committing = Some(Committing::started(query, table));
+            state.committing = Some(if inserting {
+                Committing::inserted(query, table)
+            } else {
+                Committing::started(query, table)
+            });
             effects
         }
         Err(error) => {
@@ -212,6 +221,19 @@ pub(super) fn finish_commit(
             },
         );
         return Vec::new();
+    }
+
+    // A new row has no place in the page to be written into, and where it
+    // sorts is the cluster's to say (insert design §5).
+    if committed.is_insert() {
+        let table = committed.table().clone();
+        state.notify(
+            Severity::Info,
+            format!("inserted a row into {}", table.qualified()),
+        );
+
+        let stmt = Statement::select_all(&table.keyspace, &table.table);
+        return submit_into_contents(state, Subject::Table(table), stmt);
     }
 
     let cells = state.contents.loaded_mut().map_or(0, |page| {

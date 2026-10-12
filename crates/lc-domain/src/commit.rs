@@ -3,6 +3,7 @@
 //! (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5, §6).
 
 use crate::contents::TableRef;
+use crate::inspect::Inspector;
 use crate::model::Statement;
 use crate::state::Scroll;
 use crate::style::Segment;
@@ -12,12 +13,16 @@ use crate::style::Segment;
 /// Answered with `y`/`n` alone: an `UPDATE` is a
 /// [`crate::model::StatementKind::Write`], so the typed spelling the drop
 /// confirmation raises on a protected connection does not apply (design §5).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CommitPrompt {
     table: TableRef,
     statement: Statement,
     rows: usize,
     cells: usize,
+    /// The insert form this was opened over, which `n` and `Esc` hand back:
+    /// a form filled in by hand is not something to lose to a mistyped key
+    /// (insert design §4).
+    form: Option<Box<Inspector>>,
     /// The block scrolls: thirty edited rows is thirty-plus lines of CQL, and
     /// a confirmation that clips the statement it is asking about is worse
     /// than no preview at all (design §5).
@@ -35,8 +40,30 @@ impl CommitPrompt {
             statement,
             rows,
             cells,
+            form: None,
             scroll: Scroll::default(),
         }
+    }
+
+    /// The confirmation over one `INSERT`, remembering the form it came from.
+    #[must_use]
+    pub fn inserting(table: TableRef, statement: Statement, form: Inspector) -> Self {
+        let cells = form.typed().count();
+
+        Self {
+            form: Some(Box::new(form)),
+            ..Self::opened(table, statement, 1, cells)
+        }
+    }
+
+    #[must_use]
+    pub const fn is_insert(&self) -> bool {
+        self.form.is_some()
+    }
+
+    /// The form to go back to on cancel, `None` for a commit of edits.
+    pub fn take_form(&mut self) -> Option<Inspector> {
+        self.form.take().map(|form| *form)
     }
 
     #[must_use]
@@ -102,13 +129,21 @@ impl CommitPrompt {
     /// reason (drop design §2).
     #[must_use]
     pub fn title(&self) -> Vec<Segment> {
-        let mut segments = vec![Segment::plain(format!(
-            "Write {} {} in {} {} of ",
-            self.cells,
-            noun(self.cells, "cell", "cells"),
-            self.rows,
-            noun(self.rows, "row", "rows")
-        ))];
+        let mut segments = vec![Segment::plain(if self.form.is_some() {
+            format!(
+                "Insert {} {} into ",
+                self.cells,
+                noun(self.cells, "cell", "cells")
+            )
+        } else {
+            format!(
+                "Write {} {} in {} {} of ",
+                self.cells,
+                noun(self.cells, "cell", "cells"),
+                self.rows,
+                noun(self.rows, "row", "rows")
+            )
+        })];
         segments.extend(self.table.segments());
         segments
     }
@@ -187,6 +222,26 @@ mod tests {
             .iter()
             .map(|line| crate::style::text(line))
             .collect()
+    }
+
+    #[test]
+    fn an_insert_names_the_cells_and_the_table_and_hands_the_form_back() {
+        let form = Inspector::inserting(
+            crate::contents::Subject::Table(TableRef::new("shop", "orders")),
+            vec!["id".to_owned()],
+        );
+        let mut prompt = CommitPrompt::inserting(
+            TableRef::new("shop", "orders"),
+            Statement::insert_row("shop", "orders", &[("id".to_owned(), "7".to_owned())]),
+            form.clone(),
+        );
+
+        assert_eq!(
+            crate::style::text(&prompt.title()),
+            "Insert 0 cells into shop.orders"
+        );
+        assert_eq!(prompt.take_form(), Some(form));
+        assert_eq!(prompt.take_form(), None);
     }
 
     #[test]

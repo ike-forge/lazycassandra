@@ -33,6 +33,7 @@ mod export;
 mod filter;
 mod hints;
 mod history;
+mod insert;
 mod inspect;
 mod lifecycle;
 mod logs;

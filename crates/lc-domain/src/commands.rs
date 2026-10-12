@@ -299,6 +299,12 @@ const DROP: &[Command] = &[
 /// palette may not run them either (palette execution design §5).
 const EDIT: &[Command] = &[
     Command::mutating(
+        &[Stroke::key(Key::Char('i'))],
+        "insert a row",
+        Run::In(Panel::Contents),
+    ),
+    Command::mutating(&[Stroke::key(Key::Enter)], "insert the row", Run::Inert),
+    Command::mutating(
         &[Stroke::key(Key::Char('e'))],
         "edit this value",
         Run::Inert,
