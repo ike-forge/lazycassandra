@@ -174,6 +174,12 @@ const INSERT: Binding = Binding {
     action: "insert",
 };
 
+/// The `x` hint over the insert form, greyed over a field holding nothing.
+const UNSET: Binding = Binding {
+    keys: &[Stroke::key(Key::Char('x'))],
+    action: "unset",
+};
+
 /// What the bar names while a field is open. No panel group and no `q`: the
 /// field claims every printable key, so naming anything else would be the
 /// lie this bar exists to prevent (design §3).
@@ -755,6 +761,14 @@ fn inspect_bar(
     });
     if inspector.is_inserting() {
         panel.retain(|hint| !matches!(hint.action, "copy" | "copy line"));
+        panel.push(Hint {
+            liveness: if inspector.is_set_at_cursor() {
+                Liveness::Live
+            } else {
+                Liveness::Inert
+            },
+            ..rendered(&UNSET)
+        });
         panel.push(rendered(&INSERT));
     }
 

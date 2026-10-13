@@ -167,7 +167,11 @@ pub(super) fn field_key(state: &mut State, key: Key) -> Vec<Effect> {
             Key::Enter => inspector.accept_edit(),
             _ => {
                 if let Some(field) = inspector.field_mut() {
+                    let before = field.line().text().to_owned();
                     edit_line(field.line_mut(), key);
+                    if field.line().text() != before {
+                        field.touch();
+                    }
                 }
                 return Vec::new();
             }

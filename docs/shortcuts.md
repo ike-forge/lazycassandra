@@ -871,16 +871,19 @@ not move out from under the cursor that just edited it.
 `i` over Table contents opens the inspector over a row that does not exist
 yet, titled `· new row`: one field per column, schema order, all unset. `e`
 types into a field as in *Editing a value*, with three differences: key
-columns are typeable, an empty field is accepted and unsets the column, and
-nothing reaches the page.
+columns are typeable, an empty `text`, `varchar` or `ascii` is a value (`''`)
+while an empty field of any other type unsets its column, and nothing reaches
+the page.
 
 | Key | Effect |
 |---|---|
 | `e` | As in the inspector. |
+| `x` | Unset the field under the cursor. Greyed over a field holding nothing. |
 | `Enter` | Open the confirmation over the `INSERT`. Refused with a toast, keeping the form, while any key column is unset. |
 | `Esc` | Close the form, discarding what was typed. |
 
-The confirmation is the commit confirmation, titled `Insert n cells into
+A write the cluster refuses keeps the form: the next `i` gives it back, until
+the panel's content is replaced. The confirmation is the commit confirmation, titled `Insert n cells into
 ks.t`; `n` and `Esc` there return to the form. On success the grid is
 re-read: a new row has no place in the page to land, and where it sorts is the
 cluster's to say. See
@@ -1775,6 +1778,8 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | `i` opens a form over a row with nothing in it, over an empty grid too | `i_opens_the_inspector_over_a_row_with_nothing_in_it`, `i_opens_over_a_grid_with_no_rows`, `i_is_inert_outside_table_contents` |
 | Every refusal of `i` is spoken, and the bar greys or drops it to match | `a_read_only_connection_is_refused_with_the_reason`, `a_typed_statement_has_no_table_to_insert_into`, `the_contents_bar_names_insert_and_lights_it_where_a_form_would_open`, `the_contents_bar_drops_insert_on_a_read_only_connection`, `the_contents_bar_greys_insert_where_the_frame_has_no_room` |
 | The form takes key columns, holds what it is given off the page, and an empty field unsets | `a_key_column_can_be_typed_into_on_a_new_row`, `an_accepted_field_is_held_by_the_form_and_not_the_page`, `an_emptied_field_unsets_the_column`, `a_refused_field_keeps_the_form`, `the_form_names_enter_as_insert_and_an_empty_field_may_be_saved` |
+| An empty string is a value for the free-text types, `x` unsets | `a_text_field_typed_to_empty_is_an_empty_string`, `opening_a_text_field_and_accepting_it_untouched_leaves_it_unset`, `a_field_typed_then_emptied_over_a_column_that_takes_no_empty_value_unsets_it`, `an_empty_string_is_written_as_one`, `x_unsets_the_field_under_the_cursor` |
+| A refused insert's form comes back on `i`, once, until the content is replaced | `i_gives_back_what_a_refused_insert_held`, `a_draft_is_handed_over_once`, `a_new_read_drops_the_draft`, `a_written_insert_leaves_no_draft` |
 | `⏎` needs the whole key, then shows the `INSERT` of what was filled in | `enter_without_the_whole_key_names_what_is_missing_and_keeps_the_form`, `enter_shows_the_insert_it_would_run_with_only_what_was_filled_in`, `a_key_alone_is_a_row`, `an_insert_quotes_the_names_and_is_a_write` (`model/statement.rs`), `an_insert_names_the_cells_and_the_table_and_hands_the_form_back` (`commit.rs`) |
 | `n`/`Esc` hand the form back, `y` writes, and success re-reads the grid | `n_hands_the_filled_form_back`, `escape_over_the_confirmation_hands_the_form_back_too`, `y_runs_the_insert`, `a_read_only_connection_refuses_the_write_at_the_confirmation_too`, `a_completed_insert_re_reads_the_grid_rather_than_patching_it`, `a_failed_insert_is_raised_and_nothing_is_re_read`, `enter_still_closes_an_inspector_over_an_existing_row` |
 | `q` with edits outstanding warns before it discards | `q_warns_before_it_discards_and_y_quits_through_the_warning`, `n_leaves_the_warning_and_the_edits_where_they_were`, `q_with_nothing_dirty_still_quits_outright`, `the_warning_never_says_one_rows` (`commit.rs`) |

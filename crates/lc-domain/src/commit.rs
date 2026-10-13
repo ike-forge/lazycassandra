@@ -56,11 +56,6 @@ impl CommitPrompt {
         }
     }
 
-    #[must_use]
-    pub const fn is_insert(&self) -> bool {
-        self.form.is_some()
-    }
-
     /// The form to go back to on cancel, `None` for a commit of edits.
     pub fn take_form(&mut self) -> Option<Inspector> {
         self.form.take().map(|form| *form)

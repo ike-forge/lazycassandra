@@ -176,6 +176,26 @@ impl Inspector {
         self.field.as_ref().and_then(Field::error)
     }
 
+    /// Whether the field under the cursor holds a value in the form.
+    #[must_use]
+    pub fn is_set_at_cursor(&self) -> bool {
+        self.new_row
+            .as_ref()
+            .is_some_and(|typed| typed.contains_key(&self.field_at_cursor()))
+    }
+
+    /// Unsets the field under the cursor, which is the only way back to
+    /// "not written" for a free-text column once it holds a value.
+    pub fn unset(&mut self) {
+        let at = self.field_at_cursor();
+
+        if let Some(typed) = self.new_row.as_mut() {
+            typed.remove(&at);
+            self.inspected.set(at, CqlValue::Null);
+            self.edited.retain(|marked| *marked != at);
+        }
+    }
+
     /// Accepts the open field into the form: a value is held, an empty field
     /// unsets the column. `false` while the text does not parse, which leaves
     /// the field open (cell editing design §3).
@@ -194,8 +214,16 @@ impl Inspector {
             return false;
         };
 
+        // An empty field is a value only for a free-text column, and only once
+        // it has been typed to empty or already held one: opening a field and
+        // pressing `⏎` leaves the column unset (insert design §3).
+        let blank = field.line().text().is_empty();
+        let keeps_blank = blank
+            && crate::edit::takes_empty(field.cql_type())
+            && (field.touched() || typed.contains_key(&at));
+
         if let Some(edited) = field.parsed()
-            && !field.line().text().is_empty()
+            && (!blank || keeps_blank)
         {
             self.inspected.set(at, edited.value().clone());
             typed.insert(at, edited);

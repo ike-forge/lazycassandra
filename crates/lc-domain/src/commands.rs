@@ -305,6 +305,11 @@ const EDIT: &[Command] = &[
     ),
     Command::mutating(&[Stroke::key(Key::Enter)], "insert the row", Run::Inert),
     Command::mutating(
+        &[Stroke::key(Key::Char('x'))],
+        "unset the field",
+        Run::Inert,
+    ),
+    Command::mutating(
         &[Stroke::key(Key::Char('e'))],
         "edit this value",
         Run::Inert,

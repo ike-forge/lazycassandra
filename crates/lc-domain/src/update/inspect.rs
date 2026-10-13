@@ -122,6 +122,7 @@ pub(super) fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
         Key::PageUp => inspector.page_up(height),
         Key::Home => inspector.to_start(),
         Key::End => inspector.to_end(),
+        Key::Char('x') if inspector.is_inserting() => inspector.unset(),
         Key::Char('y') => return copied(inspector.yank()),
         Key::Char('Y') => return copied(inspector.line()),
         Key::Enter | Key::Escape => escape(state),

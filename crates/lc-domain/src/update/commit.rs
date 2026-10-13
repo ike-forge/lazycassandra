@@ -148,25 +148,27 @@ pub(super) fn commit_key(state: &mut State, key: Key) -> Vec<Effect> {
 /// convenience and a posture that changed under a held-open confirmation is
 /// still refused here — `start_drop`'s arrangement, and its reason.
 pub(super) fn start_commit(state: &mut State) -> Vec<Effect> {
-    let Some(Overlay::Commit(prompt)) = state.overlay.take() else {
+    let Some(Overlay::Commit(mut prompt)) = state.overlay.take() else {
         return Vec::new();
     };
 
     let table = prompt.table().clone();
-    let inserting = prompt.is_insert();
+    let form = prompt.take_form();
     let stmt = prompt.statement().clone();
     let log_subject = statement_subject(&stmt);
 
     match submit(state, stmt) {
         Ok((query, effects)) => {
-            state.committing = Some(if inserting {
-                Committing::inserted(query, table)
-            } else {
-                Committing::started(query, table)
+            state.committing = Some(match form {
+                Some(form) => Committing::inserted(query, table, form),
+                None => Committing::started(query, table),
             });
             effects
         }
         Err(error) => {
+            if let Some(form) = form {
+                state.contents.keep_draft(form);
+            }
             logged(
                 state,
                 log_subject,
@@ -206,12 +208,15 @@ pub(super) fn finish_commit(
     if state.committing.as_ref().map(Committing::query) != Some(query) {
         return Vec::new();
     }
-    let Some(committed) = state.committing.take() else {
+    let Some(mut committed) = state.committing.take() else {
         return Vec::new();
     };
     state.dirty = true;
 
     if let Some(error) = error {
+        if let Some(form) = committed.take_form() {
+            state.contents.keep_draft(form);
+        }
         raise(
             state,
             Message {

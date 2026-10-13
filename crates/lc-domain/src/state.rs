@@ -198,11 +198,13 @@ impl Dropping {
 /// live for the whole round trip, so what the message names when the answer
 /// arrives is carried here rather than read again
 /// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Committing {
     query: QueryId,
     table: TableRef,
-    inserting: bool,
+    /// The insert form being written, kept so a refusal can give it back
+    /// (insert design §5).
+    form: Option<Box<Inspector>>,
 }
 
 impl Committing {
@@ -211,24 +213,29 @@ impl Committing {
         Self {
             query,
             table,
-            inserting: false,
+            form: None,
         }
     }
 
     /// An `INSERT`, which lands in no row of the page: the grid is re-read
     /// rather than patched (docs/superpowers/specs/2026-10-12-row-insert-design.md §5).
     #[must_use]
-    pub const fn inserted(query: QueryId, table: TableRef) -> Self {
+    pub fn inserted(query: QueryId, table: TableRef, form: Inspector) -> Self {
         Self {
             query,
             table,
-            inserting: true,
+            form: Some(Box::new(form)),
         }
     }
 
     #[must_use]
     pub const fn is_insert(&self) -> bool {
-        self.inserting
+        self.form.is_some()
+    }
+
+    /// The form that was being written, `None` for an update.
+    pub fn take_form(&mut self) -> Option<Inspector> {
+        self.form.take().map(|form| *form)
     }
 
     #[must_use]

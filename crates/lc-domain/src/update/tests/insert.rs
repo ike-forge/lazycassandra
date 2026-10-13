@@ -136,13 +136,72 @@ fn an_accepted_field_is_held_by_the_form_and_not_the_page() {
 }
 
 #[test]
-fn an_emptied_field_unsets_the_column() {
+fn a_text_field_typed_to_empty_is_an_empty_string() {
     let mut state = inserting(1);
     fill(&mut state, 2, "x");
 
     press(&mut state, Key::Char('e'));
     press(&mut state, Key::Backspace);
     press(&mut state, Key::Enter);
+
+    let form = form(&state).expect("the form");
+    assert_eq!(
+        form.typed()
+            .map(|(_, edited)| edited.literal())
+            .collect::<Vec<_>>(),
+        ["''"]
+    );
+}
+
+#[test]
+fn opening_a_text_field_and_accepting_it_untouched_leaves_it_unset() {
+    let mut state = inserting(1);
+
+    fill(&mut state, 2, "");
+
+    let form = form(&state).expect("the form");
+    assert_eq!(form.typed().count(), 0);
+    assert!(form.edited().is_empty());
+}
+
+#[test]
+fn a_field_typed_then_emptied_over_a_column_that_takes_no_empty_value_unsets_it() {
+    let mut state = inserting(1);
+    fill(&mut state, 1, "x");
+
+    press(&mut state, Key::Char('e'));
+    press(&mut state, Key::Backspace);
+    press(&mut state, Key::Enter);
+
+    assert_eq!(form(&state).map(|form| form.typed().count()), Some(0));
+}
+
+#[test]
+fn an_empty_string_is_written_as_one() {
+    let mut state = inserting(1);
+    filled_key(&mut state);
+    fill(&mut state, 2, "x");
+    press(&mut state, Key::Char('e'));
+    press(&mut state, Key::Backspace);
+    press(&mut state, Key::Enter);
+
+    press(&mut state, Key::Enter);
+
+    assert_eq!(
+        prompt(&state).map(|prompt| prompt.statement().cql.clone()),
+        Some(format!(
+            "INSERT INTO \"shop\".\"orders\" (\"id\", \"created_at\", \"email\") \
+             VALUES ({UUID}, '2026-01-01', '')"
+        ))
+    );
+}
+
+#[test]
+fn x_unsets_the_field_under_the_cursor() {
+    let mut state = inserting(1);
+    fill(&mut state, 2, "x");
+
+    press(&mut state, Key::Char('x'));
 
     let form = form(&state).expect("the form");
     assert_eq!(form.typed().count(), 0);
@@ -385,4 +444,85 @@ fn the_form_names_enter_as_insert_and_an_empty_field_may_be_saved() {
         Some(crate::view::Liveness::Live),
         "an empty field unsets the column"
     );
+}
+
+fn refused_insert(state: &mut State) {
+    press(state, Key::Enter);
+    press(state, Key::Char('y'));
+    let query = state.committing.as_ref().expect("in flight").query();
+
+    update(
+        state,
+        Msg::Failed {
+            query,
+            error: DbError::Unreachable("boom".to_owned()),
+            took: Duration::ZERO,
+        },
+    );
+    press(state, Key::Escape);
+}
+
+#[test]
+fn i_gives_back_what_a_refused_insert_held() {
+    let mut state = inserting(1);
+    filled_key(&mut state);
+    fill(&mut state, 2, "ada");
+    refused_insert(&mut state);
+    assert!(form(&state).is_none(), "the refusal closed the form");
+
+    press(&mut state, Key::Char('i'));
+
+    assert_eq!(form(&state).map(|form| form.typed().count()), Some(3));
+}
+
+#[test]
+fn a_draft_is_handed_over_once() {
+    let mut state = inserting(1);
+    filled_key(&mut state);
+    refused_insert(&mut state);
+    press(&mut state, Key::Char('i'));
+    press(&mut state, Key::Escape);
+
+    press(&mut state, Key::Char('i'));
+
+    assert_eq!(form(&state).map(|form| form.typed().count()), Some(0));
+}
+
+#[test]
+fn a_new_read_drops_the_draft() {
+    let mut state = inserting(1);
+    filled_key(&mut state);
+    refused_insert(&mut state);
+
+    state.contents.requested(
+        QueryId::next(),
+        Subject::Table(TableRef::new("shop", "customers")),
+        crate::model::Statement::select_all("shop", "customers"),
+    );
+
+    assert_eq!(state.contents.take_draft(), None);
+}
+
+#[test]
+fn a_written_insert_leaves_no_draft() {
+    let mut state = inserting(1);
+    filled_key(&mut state);
+    press(&mut state, Key::Enter);
+    press(&mut state, Key::Char('y'));
+    let query = state.committing.as_ref().expect("in flight").query();
+
+    update(
+        &mut state,
+        Msg::PageReady {
+            query,
+            page: Box::new(Page {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                next: None,
+            }),
+            took: Duration::ZERO,
+        },
+    );
+
+    assert_eq!(state.contents.take_draft(), None);
 }

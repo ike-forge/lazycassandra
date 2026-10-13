@@ -12,6 +12,7 @@ use crate::bytes::Bytes;
 use crate::config::MaxColumnWidth;
 use crate::edit::{Edited, Edits};
 use crate::grid::ColumnScroll;
+use crate::inspect::Inspector;
 use crate::model::{CqlValue, DbError, KeyspaceKind, Page, PagingState, QueryId, Row, Statement};
 use crate::search::{Direction, Search};
 use crate::state::{Cursor, Scroll, Selection};
@@ -45,6 +46,9 @@ pub struct ContentsPanel {
     /// searches, not because setting it here owes a repair — Contents narrows
     /// nothing, so there is no clamp to skip.
     search: Option<Search>,
+    /// The insert form of a write the cluster refused, for `i` to give back
+    /// (docs/superpowers/specs/2026-10-12-row-insert-design.md §5).
+    draft: Option<Inspector>,
 }
 
 /// Which of the grid's two cursors is painted, and how.
@@ -1010,6 +1014,9 @@ impl ContentsPanel {
 
     /// Starts waiting on `query`, discarding whatever was showing.
     pub fn requested(&mut self, query: QueryId, subject: Subject, stmt: Statement) {
+        // What was typed addressed the rows of the old content (insert design
+        // §5).
+        self.draft = None;
         self.state = ContentsState::Loading {
             query,
             subject,
@@ -1021,6 +1028,17 @@ impl ContentsPanel {
         self.column_scroll = ColumnScroll::default();
         self.rows = Selection::default();
         self.columns = Selection::default();
+    }
+
+    /// Keeps `form` for the next `i`, in place of any held.
+    pub fn keep_draft(&mut self, form: Inspector) {
+        self.draft = Some(form);
+    }
+
+    /// The draft, handed over: whoever opens it owns it, and puts it back if
+    /// the write fails again.
+    pub fn take_draft(&mut self) -> Option<Inspector> {
+        self.draft.take()
     }
 
     /// Applies a page, if it is one the panel is waiting on, its columns

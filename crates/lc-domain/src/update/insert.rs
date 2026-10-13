@@ -71,7 +71,15 @@ pub(super) fn open_insert(state: &mut State) {
     }
 
     match insert_form(state) {
-        Ok(form) => {
+        Ok(blank) => {
+            // What the cluster refused last time, for the same table
+            // (insert design §5).
+            let form = state
+                .contents
+                .take_draft()
+                .filter(|draft| draft.subject() == blank.subject())
+                .unwrap_or(blank);
+
             state.overlay = Some(Overlay::Inspect(form));
             state.mark_dirty();
         }

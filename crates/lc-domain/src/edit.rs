@@ -72,6 +72,17 @@ pub fn editable(cql_type: &str) -> bool {
     )
 }
 
+/// Whether the empty string is a value of a column declared `cql_type`, as
+/// opposed to the absence of one. Only the three free-text types: an empty
+/// `date` is the cluster's to reject, and no other type has one.
+#[must_use]
+pub fn takes_empty(cql_type: &str) -> bool {
+    matches!(
+        literal::normalised(cql_type).as_str(),
+        "text" | "varchar" | "ascii"
+    )
+}
+
 /// `text` read as a value of a column declared `cql_type`, or `None` where it
 /// is not one.
 ///
@@ -246,6 +257,10 @@ pub struct Field {
     name: String,
     cql_type: String,
     line: Line,
+    /// Whether the text has changed since the field opened, so an empty field
+    /// that was typed to empty can be told from one never touched
+    /// (insert design §3).
+    touched: bool,
 }
 
 impl Field {
@@ -258,7 +273,17 @@ impl Field {
             name: name.to_owned(),
             cql_type: cql_type.to_owned(),
             line: Line::new(text),
+            touched: false,
         }
+    }
+
+    #[must_use]
+    pub const fn touched(&self) -> bool {
+        self.touched
+    }
+
+    pub const fn touch(&mut self) {
+        self.touched = true;
     }
 
     #[must_use]

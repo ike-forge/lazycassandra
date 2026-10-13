@@ -308,6 +308,15 @@ fn sweep_fixtures() -> Vec<State> {
 
     let dirty = committable(1);
 
+    // The insert form with a value in it, so `x` has one to unset.
+    let mut form = editable_grid(1);
+    press(&mut form, Key::Char('i'));
+    press(&mut form, Key::Char('j'));
+    press(&mut form, Key::Char('j'));
+    press(&mut form, Key::Char('e'));
+    type_in(&mut form, "x");
+    press(&mut form, Key::Enter);
+
     vec![
         covered,
         elsewhere,
@@ -325,6 +334,7 @@ fn sweep_fixtures() -> Vec<State> {
         pageable,
         editing,
         dirty,
+        form,
     ]
 }
 
