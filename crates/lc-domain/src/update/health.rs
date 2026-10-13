@@ -1,0 +1,127 @@
+//! The table health block
+//! (docs/superpowers/specs/2026-10-13-table-health-design.md).
+
+use std::time::Duration;
+
+use crate::contents::TableRef;
+use crate::health::{Health, HealthPanel};
+use crate::log::{Outcome, Trace};
+use crate::model::{DbError, Key, QueryId};
+use crate::state::{Overlay, Panel, State};
+use crate::style::Severity;
+use crate::tree::Node;
+
+use super::{Effect, escape, logged, quit, sentence};
+
+/// The table `H` would read in this frame. Shared with the hint bar, so the
+/// bar cannot promise a block the key refuses.
+pub(crate) fn health_target(state: &State) -> Option<TableRef> {
+    if state.focus() != Panel::Tables || state.tables.selects_many() {
+        return None;
+    }
+
+    match state.tables.selected(state.schema()?)? {
+        Node::Table { keyspace, table } => Some(TableRef::new(&keyspace.name, &table.name)),
+        Node::Keyspace { .. } => None,
+    }
+}
+
+/// `H` opens the block over the table under the tree cursor and sends the
+/// read.
+pub(super) fn open_health(state: &mut State) -> Vec<Effect> {
+    if state.focus() != Panel::Tables {
+        return Vec::new();
+    }
+    let Some(table) = health_target(state) else {
+        if state.tables.selects_many() {
+            state.notify(Severity::Info, "health takes one table, not a selection");
+        }
+        return Vec::new();
+    };
+    let Some(conn) = state.conn_id() else {
+        return Vec::new();
+    };
+    if state.geometry.health_rows() == 0 {
+        state.notify(Severity::Info, "no room to draw the health");
+        return Vec::new();
+    }
+
+    let request = QueryId::next();
+    logged(
+        state,
+        sentence(format!("Reading the health of {}", table.qualified())),
+        Outcome::Pending {
+            trace: Trace::Query(request),
+        },
+    );
+    state.overlay = Some(Overlay::Health(HealthPanel::new(table.clone(), request)));
+    state.mark_dirty();
+
+    vec![Effect::LoadHealth {
+        conn,
+        request,
+        table,
+    }]
+}
+
+/// The trail is completed whether or not the block is still up: the read
+/// happened either way.
+pub(super) fn health_loaded(
+    state: &mut State,
+    request: QueryId,
+    health: Result<Health, DbError>,
+    took: Duration,
+) -> Vec<Effect> {
+    let outcome = match &health {
+        Ok(health) => Outcome::Succeeded {
+            detail: format!("{} nodes", health.nodes.len()),
+            took,
+        },
+        Err(error) => Outcome::Failed {
+            detail: error.to_string(),
+        },
+    };
+    state.log.complete(Trace::Query(request), outcome);
+
+    if let Some(Overlay::Health(panel)) = &mut state.overlay
+        && panel.request() == request
+    {
+        panel.landed(health);
+    }
+    state.mark_dirty();
+
+    Vec::new()
+}
+
+/// Motion, the tree's fold keys, and the two ways out.
+pub(super) fn health_key(state: &mut State, key: Key) -> Vec<Effect> {
+    match key {
+        Key::Char('q') => return quit(state),
+        Key::Escape => {
+            escape(state);
+            return Vec::new();
+        }
+        _ => {}
+    }
+
+    let height = state.geometry.health_rows();
+    let Some(Overlay::Health(panel)) = &mut state.overlay else {
+        return Vec::new();
+    };
+
+    match key {
+        Key::Char('j') | Key::Down => panel.down(),
+        Key::Char('k') | Key::Up => panel.up(),
+        Key::PageDown => panel.page_down(height),
+        Key::PageUp => panel.page_up(height),
+        Key::Home => panel.to_start(),
+        Key::End => panel.to_end(),
+        Key::Char('l') | Key::Right => panel.step_in(),
+        Key::Char('h') | Key::Left => panel.step_out(),
+        Key::Enter => panel.toggle(),
+        _ => return Vec::new(),
+    }
+    state.mark_dirty();
+
+    Vec::new()
+}

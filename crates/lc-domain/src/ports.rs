@@ -15,6 +15,8 @@ use crate::config::{
     Config, ConnectionConfig, ConnectionName, Credential, Diagnostic, DriverConfig, HistoryLimit,
     PageSize,
 };
+use crate::contents::TableRef;
+use crate::health::Health;
 use crate::history::Histories;
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
@@ -56,6 +58,11 @@ pub trait Cluster: Send + Sync {
         page_size: PageSize,
         cursor: Option<&PagingState>,
     ) -> Result<Page, DbError>;
+
+    /// What every node reports about `table`. A node that fails is a
+    /// [`crate::health::NodeOutcome`] rather than an `Err`; `Err` is for a
+    /// read that reached no node at all.
+    async fn table_health(&self, conn: ConnId, table: &TableRef) -> Result<Health, DbError>;
 }
 
 /// Locates and layers configuration files (design §7).

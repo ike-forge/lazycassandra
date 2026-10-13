@@ -16,6 +16,7 @@ use crate::ddl::DdlPanel;
 use crate::drop::{DropPrompt, Target};
 use crate::edit::CommitScope;
 use crate::export::ExportForm;
+use crate::health::HealthPanel;
 use crate::history::Histories;
 use crate::inspect::Inspector;
 use crate::log::{Log, Outcome};
@@ -395,6 +396,8 @@ pub enum Overlay {
     /// consequence of being this overlay is the same either way
     /// (drop design §2).
     Drop(DropPrompt),
+    /// One table's health, read from every node (table health design).
+    Health(HealthPanel),
     /// A value or a row read whole, over the grid it came from
     /// (docs/superpowers/specs/2026-09-17-cell-inspector-design.md).
     Inspect(Inspector),
@@ -544,6 +547,11 @@ const TABLES_HINTS: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('d'))],
         action: "drop",
+    },
+    // Greyed on a keyspace and where the block has no room, as `d` is.
+    Binding {
+        keys: &[Stroke::key(Key::Char('H'))],
+        action: "health",
     },
     Binding {
         keys: &[Stroke::key(Key::Char('v'))],
@@ -1401,6 +1409,9 @@ pub struct Geometry {
     /// block scrolls, so unlike the pickers' it is a ceiling and not a
     /// refusal threshold (query history design §3).
     history_rows: usize,
+    /// Rows the health block's body could show. Sized from the terminal
+    /// alone, like the inspector's.
+    health_rows: usize,
     /// Rows the inspector's body could show, and the lines its open value
     /// wrapped to. The block is sized from the terminal alone, so neither
     /// depends on the offset they bound (cell inspector design §5).
@@ -1436,6 +1447,7 @@ impl Geometry {
             theme_rows: 0,
             connection_rows: 0,
             history_rows: 0,
+            health_rows: 0,
             inspector_rows: 0,
             inspector_lines: 0,
             inspector_selection: Span { first: 0, lines: 0 },
@@ -1614,6 +1626,21 @@ impl Geometry {
     pub const fn with_history_rows(self, history_rows: usize) -> Self {
         Self {
             history_rows,
+            ..self
+        }
+    }
+
+    /// Rows the health block would show at this frame size, whether or not
+    /// one is open. Zero means it does not fit, which makes `H` inert.
+    #[must_use]
+    pub const fn health_rows(self) -> usize {
+        self.health_rows
+    }
+
+    #[must_use]
+    pub const fn with_health_rows(self, health_rows: usize) -> Self {
+        Self {
+            health_rows,
             ..self
         }
     }
@@ -1875,7 +1902,7 @@ impl State {
     /// worth a repaint.
     #[must_use]
     pub fn is_working(&self) -> bool {
-        Panel::ALL.iter().any(|&panel| self.is_working_in(panel))
+        self.is_reading_health() || Panel::ALL.iter().any(|&panel| self.is_working_in(panel))
     }
 
     /// Whether `panel` is the one waiting on the cluster.
@@ -1910,6 +1937,13 @@ impl State {
                 .any(|entry| matches!(entry.outcome(), Outcome::Pending { .. })),
             Panel::Ddl => false,
         }
+    }
+
+    /// Whether the health block is waiting on its read, which turns the
+    /// loader on its border.
+    #[must_use]
+    pub fn is_reading_health(&self) -> bool {
+        matches!(&self.overlay, Some(Overlay::Health(panel)) if panel.is_loading())
     }
 
     /// The search applied to `target`, if any.

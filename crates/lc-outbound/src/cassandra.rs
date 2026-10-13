@@ -12,6 +12,8 @@ use async_trait::async_trait;
 use lc_domain::config::{
     Compression, ConnectionConfig, Consistency, Discovery, DriverConfig, PageSize, Tls,
 };
+use lc_domain::contents::TableRef;
+use lc_domain::health::Health;
 use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, DbError, Index, IndexKind, IndexTarget,
     Keyspace, Page, PagingState, PrimaryKey, Replication, Row, Schema, Statement, Table,
@@ -312,6 +314,10 @@ impl Cluster for CassandraCluster {
         page.next = next;
 
         Ok(page)
+    }
+
+    async fn table_health(&self, conn: ConnId, table: &TableRef) -> Result<Health, DbError> {
+        crate::health::read(&self.session(conn).await?, table).await
     }
 }
 

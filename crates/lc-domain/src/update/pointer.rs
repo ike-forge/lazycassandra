@@ -70,6 +70,7 @@ fn scrolls(overlay: Option<&Overlay>) -> bool {
                 | Overlay::Themes { .. }
                 | Overlay::Connections { .. }
                 | Overlay::History { .. }
+                | Overlay::Health(_)
                 | Overlay::Commit(_)
         )
     )

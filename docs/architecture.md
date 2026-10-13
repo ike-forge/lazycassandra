@@ -55,8 +55,12 @@ one bare, several as one logged batch — behind a scrollable confirmation, and
 Queries opens a per-connection history of what the buffer has run, bounded by
 `history.limit`, held in `State` and kept between runs by the `Store` port in
 `$XDG_STATE_HOME/lazycassandra/history.toml`
-(docs/superpowers/specs/2026-10-09-query-history-design.md).
-**Last updated:** 2026-10-09
+(docs/superpowers/specs/2026-10-09-query-history-design.md). `H` on a
+table opens a health block: `Cluster::table_health` reads every node's
+`system_views` through a single-node load balancing policy, and the domain
+aggregates and flags what it reports
+(docs/superpowers/specs/2026-10-13-table-health-design.md).
+**Last updated:** 2026-10-13
 
 ---
 

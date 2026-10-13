@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use lc_domain::config::PageSize;
+use lc_domain::contents::TableRef;
+use lc_domain::health::Health;
 use lc_domain::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
 use lc_domain::posture::Posture;
@@ -48,6 +50,8 @@ pub struct FakeCluster {
     /// still delivered, so a scenario can prove a mid-export abort rather
     /// than a first-page one.
     failing_page: Option<(usize, DbError)>,
+    /// What `table_health` hands back, whatever the table.
+    health: Health,
 }
 
 impl FakeCluster {
@@ -107,6 +111,12 @@ impl FakeCluster {
             failing_page: Some((index, error)),
             ..self
         }
+    }
+
+    /// What `table_health` reports.
+    #[must_use]
+    pub fn reporting(self, health: Health) -> Self {
+        Self { health, ..self }
     }
 
     /// Every statement `execute` has been handed, in order.
@@ -223,6 +233,10 @@ impl Cluster for FakeCluster {
         }
 
         Ok(self.pages.get(index).cloned().unwrap_or_default())
+    }
+
+    async fn table_health(&self, _conn: ConnId, _table: &TableRef) -> Result<Health, DbError> {
+        Ok(self.health.clone())
     }
 }
 

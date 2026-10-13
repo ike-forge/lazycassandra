@@ -14,6 +14,7 @@ use crate::cql;
 use crate::ddl::DdlTab;
 use crate::export::Format;
 use crate::grid::{self, ColumnScroll};
+use crate::health::Health;
 use crate::line::Line;
 use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
 use crate::model::{
@@ -41,6 +42,7 @@ mod connections;
 mod drop;
 mod edit;
 mod export;
+mod health;
 mod history;
 mod inspect;
 mod palette;
@@ -59,6 +61,7 @@ use connections::{
 use drop::{drop_key, finish_drop, open_drop};
 use edit::{field_key, start_edit};
 use export::{cancel_pending_export, export_key, export_progress, finish_export, open_export};
+use health::{health_key, health_loaded, open_health};
 use history::{history_key, open_history};
 use inspect::{edit_from_grid, inspect_key, inspector_extent, open_inspector};
 use palette::{open_palette, palette_key};
@@ -70,6 +73,7 @@ use yank::{copied, yank};
 pub(crate) use connections::connection_names;
 pub(crate) use drop::drop_target;
 pub(crate) use edit::{editable_here, has_uncommitted};
+pub(crate) use health::health_target;
 pub(crate) use history::history_labels;
 pub(crate) use inspect::inspection;
 pub(crate) use themes::theme_labels;
@@ -147,6 +151,13 @@ pub enum Msg {
     HistorySaveFailed {
         reason: String,
     },
+    /// What the nodes said about the table the health block is open on.
+    HealthLoaded {
+        request: QueryId,
+        health: Result<Health, DbError>,
+        /// As [`Msg::Connected::took`].
+        took: Duration,
+    },
     /// Rows written so far by `job`, a running total.
     ExportProgress {
         job: JobId,
@@ -194,6 +205,13 @@ pub enum Effect {
         cursor: Option<PagingState>,
     },
     Cancel(QueryId),
+    /// Read every node's view of `table`, answered by
+    /// [`Msg::HealthLoaded`] under `request`.
+    LoadHealth {
+        conn: ConnId,
+        request: QueryId,
+        table: TableRef,
+    },
     RecordHistory(Box<Statement>),
     /// Write `connection`'s history, newest first, to the store. Carries the
     /// whole list rather than the new entry: a save replaces, so a lost one
@@ -435,6 +453,12 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
             state.notify(Severity::Warning, "history not saved, see the logs");
             Vec::new()
         }
+
+        Msg::HealthLoaded {
+            request,
+            health,
+            took,
+        } => health_loaded(state, request, health, took),
 
         Msg::ExportProgress { job, rows } => export_progress(state, job, rows),
 
@@ -858,6 +882,8 @@ fn overlay_key(state: &mut State, key: Key) -> Option<Vec<Effect>> {
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Connections { .. }) => connections_key(state, key),
         Some(Overlay::History { .. }) => history_key(state, key),
+        // Motion and the tree's fold keys; `q` still quits.
+        Some(Overlay::Health(_)) => health_key(state, key),
         Some(Overlay::Search(_)) => search_key(state, key),
         // Text on one of its stops, and most printable keys go nowhere on the
         // others (export design §2).
@@ -928,6 +954,7 @@ fn panel_key(state: &mut State, key: Key) -> Vec<Effect> {
             state.contents.set_filter(column_of(state), None);
         }
         Key::Char('d') => open_drop(state),
+        Key::Char('H') => return open_health(state),
         Key::Char('p') => return next_page(state),
         Key::Char('P') => return every_page(state),
         Key::Char('v') => toggle_visual(state),
@@ -979,7 +1006,11 @@ fn takes_text(state: &State) -> bool {
         // Neither confirmation has a field to type into either; the commit
         // block drives a body `g`/`G` move, which `goto` answers below.
         Some(
-            Overlay::Diagnostics(_) | Overlay::Fatal(_) | Overlay::Commit(_) | Overlay::Discard(_),
+            Overlay::Diagnostics(_)
+            | Overlay::Health(_)
+            | Overlay::Fatal(_)
+            | Overlay::Commit(_)
+            | Overlay::Discard(_),
         ) => false,
         Some(Overlay::Message(_)) | None => state.takes_text(),
     }
@@ -1028,6 +1059,10 @@ fn goto(state: &mut State, edge: Edge) {
         Some(Overlay::History { cursor, .. }) => match edge {
             Edge::Start => cursor.to_start(),
             Edge::End => cursor.to_end(history),
+        },
+        Some(Overlay::Health(panel)) => match edge {
+            Edge::Start => panel.to_start(),
+            Edge::End => panel.to_end(),
         },
         Some(Overlay::Message(_)) | None => scroll(state, edge.motion()),
         // The drop confirmation drives no list either, and `Fatal` never
@@ -1496,6 +1531,7 @@ fn dismiss_overlay(state: &mut State) -> bool {
             Overlay::Message(_)
             | Overlay::Commands(_)
             | Overlay::History { .. }
+            | Overlay::Health(_)
             | Overlay::Diagnostics(_)
             | Overlay::Inspect(_)
             | Overlay::Export(_)
@@ -1826,6 +1862,7 @@ fn page(state: &mut State, key: Key) -> Vec<Effect> {
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Connections { .. }) => connections_key(state, key),
         Some(Overlay::History { .. }) => history_key(state, key),
+        Some(Overlay::Health(_)) => health_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),
         Some(Overlay::Inspect(_)) => inspect_key(state, key),
         // The prompt takes text and pages nothing, so neither spelling does;
@@ -2158,6 +2195,7 @@ fn fits(overlay: &Overlay, geometry: Geometry, config: &Config) -> bool {
             config.connections.is_empty() || geometry.connection_rows() > 0
         }
         Overlay::History { .. } => geometry.history_rows() > 0,
+        Overlay::Health(_) => geometry.health_rows() > 0,
         Overlay::Inspect(_) => geometry.inspector_rows() > 0,
         Overlay::Commit(_) => geometry.commit_rows() > 0,
         Overlay::Export(_) => geometry.export_fits(),

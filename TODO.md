@@ -1,6 +1,9 @@
 - Support/test older cassandra version (<5). The fixture runs `cassandra:5.0.8`
   only.
 - Test performance (for display and querying) when datasets are huge
+- Health block refresh: reopening is the only reload. A key or a `Msg::Tick`
+  interval needs deciding (table health design §1). SSTable count and percent
+  repaired wait on a CQL source; 5.0.8 has none.
 - Show the connection's posture at all times. Today it is named only in the
   connection picker, the palette's disabled rows, the bar and the refusal
   modal; nothing on the frame says "read-only" while you browse.

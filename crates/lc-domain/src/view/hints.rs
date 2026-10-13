@@ -294,6 +294,24 @@ pub(crate) const HISTORY_GLOBAL: &[Binding] = &[
     },
 ];
 
+/// What the bar names while the health block is open. Motion is assumed, as
+/// in the pickers; `⏎` is named because it folds here rather than choosing.
+pub(crate) const HEALTH: &[Binding] = &[Binding {
+    keys: &[Stroke::key(Key::Enter)],
+    action: "fold/unfold",
+}];
+
+pub(crate) const HEALTH_GLOBAL: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Escape)],
+        action: "close",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('q'))],
+        action: "quit",
+    },
+];
+
 /// The two ways out differ in what they leave behind, as the theme picker's
 /// do: `⏎` opens the connection under the cursor, and `esc` leaves the tool
 /// connected to whatever it already was — which at startup is nothing.
@@ -534,6 +552,14 @@ fn overlay_bar(state: &State, export: Option<&String>) -> Option<HintBar> {
         return Some(HintBar {
             panel: HISTORY.iter().map(rendered).collect(),
             global: HISTORY_GLOBAL.iter().map(rendered).collect(),
+            export,
+        });
+    }
+
+    if matches!(state.overlay, Some(Overlay::Health(_))) {
+        return Some(HintBar {
+            panel: HEALTH.iter().map(rendered).collect(),
+            global: HEALTH_GLOBAL.iter().map(rendered).collect(),
             export,
         });
     }
@@ -912,6 +938,13 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
         && (!state.geometry.drop_fits()
             || state.dropping.is_some()
             || crate::update::drop_target(state).is_none())
+    {
+        return Liveness::Inert;
+    }
+
+    let reads_health = binding.keys == [Stroke::key(Key::Char('H'))];
+    if reads_health
+        && (state.geometry.health_rows() == 0 || crate::update::health_target(state).is_none())
     {
         return Liveness::Inert;
     }
@@ -1755,6 +1788,32 @@ mod tests {
     }
 
     #[test]
+    fn the_health_hint_is_live_on_a_table_with_room_for_the_block() {
+        let loaded = crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
+            "shop",
+            &["orders"],
+        )]));
+        let mut state = connected(crate::Posture::ReadOnly, loaded);
+        state.focus_on(Panel::Tables);
+        let schema = state.schema().expect("loaded").clone();
+        state.tables.open(&schema);
+        state.tables.open(&schema);
+        state.geometry = state.geometry.with_health_rows(0);
+
+        assert_eq!(hint(&state, "health"), Liveness::Inert, "no room");
+
+        state.geometry = state.geometry.with_health_rows(10);
+        assert_eq!(hint(&state, "health"), Liveness::Live);
+
+        state.tables.cursor.up();
+        assert_eq!(
+            hint(&state, "health"),
+            Liveness::Inert,
+            "a keyspace has no health of its own"
+        );
+    }
+
+    #[test]
     fn a_read_only_connection_leaves_d_off_the_bar() {
         let loaded = crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
             "shop",
@@ -1804,6 +1863,7 @@ mod tests {
                         || hint.action == "format"
                         || hint.action == "export"
                         || hint.action == "drop"
+                        || hint.action == "health"
                         || hint.action == "delete",
                     "{panel:?}'s '{} {}' is inert and nothing says why",
                     hint.keys,
