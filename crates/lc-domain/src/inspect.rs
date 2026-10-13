@@ -54,7 +54,9 @@ impl Inspected {
     /// is the column the grid cursor was on.
     fn column_of(&self, at: usize) -> Option<(usize, &str)> {
         match self {
-            Self::Cell { at: column, .. } if at == 0 => Some((*column, "")),
+            Self::Cell {
+                at: index, column, ..
+            } if at == 0 => Some((*index, column.as_str())),
             Self::Cell { .. } => None,
             Self::Row { columns, .. } => columns.get(at).map(|name| (at, name.as_str())),
         }

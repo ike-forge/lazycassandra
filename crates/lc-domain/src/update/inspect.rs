@@ -86,6 +86,15 @@ pub(super) fn open_inspector(state: &mut State) {
     }
 }
 
+/// `Enter` then `e`, in one press.
+pub(super) fn edit_from_grid(state: &mut State) -> Vec<Effect> {
+    open_inspector(state);
+    if matches!(state.overlay, Some(Overlay::Inspect(_))) {
+        return start_edit(state);
+    }
+    Vec::new()
+}
+
 /// Every key the inspector claims (cell inspector design §4). Anything else
 /// is inert, so no key means "close" in one frame and something else in the
 /// next.

@@ -14,6 +14,7 @@ use crate::config::{Config, ConnectionName, Diagnostic};
 use crate::contents::{ContentsPanel, Filter, SelectionMode, TableRef};
 use crate::ddl::DdlPanel;
 use crate::drop::{DropPrompt, Target};
+use crate::edit::CommitScope;
 use crate::export::ExportForm;
 use crate::history::Histories;
 use crate::inspect::Inspector;
@@ -205,14 +206,16 @@ pub struct Committing {
     /// The insert form being written, kept so a refusal can give it back
     /// (insert design §5).
     form: Option<Box<Inspector>>,
+    scope: CommitScope,
 }
 
 impl Committing {
     #[must_use]
-    pub const fn started(query: QueryId, table: TableRef) -> Self {
+    pub const fn started(query: QueryId, table: TableRef, scope: CommitScope) -> Self {
         Self {
             query,
             table,
+            scope,
             form: None,
         }
     }
@@ -224,6 +227,7 @@ impl Committing {
         Self {
             query,
             table,
+            scope: CommitScope::All,
             form: Some(Box::new(form)),
         }
     }
@@ -236,6 +240,11 @@ impl Committing {
     /// The form that was being written, `None` for an update.
     pub fn take_form(&mut self) -> Option<Inspector> {
         self.form.take().map(|form| *form)
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> CommitScope {
+        self.scope
     }
 
     #[must_use]

@@ -526,3 +526,17 @@ fn a_written_insert_leaves_no_draft() {
 
     assert_eq!(state.contents.take_draft(), None);
 }
+
+#[test]
+fn ctrl_s_over_the_form_asks_to_insert_rather_than_commit_a_row() {
+    let mut state = inserting(1);
+    filled_key(&mut state);
+
+    ctrl(&mut state, Key::Char('s'));
+
+    assert!(
+        prompt(&state).is_some_and(|prompt| prompt.statement().cql.starts_with("INSERT INTO")),
+        "{:?}",
+        state.overlay
+    );
+}

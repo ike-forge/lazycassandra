@@ -180,6 +180,11 @@ const UNSET: Binding = Binding {
     action: "unset",
 };
 
+const COMMIT_ROW: Binding = Binding {
+    keys: &[Stroke::ctrl(Key::Char('s'))],
+    action: "commit row",
+};
+
 /// What the bar names while a field is open. No panel group and no `q`: the
 /// field claims every printable key, so naming anything else would be the
 /// lie this bar exists to prevent (design §3).
@@ -759,6 +764,16 @@ fn inspect_bar(
         },
         ..rendered(&EDIT)
     });
+    if state.posture().permits_mutation() && !inspector.is_inserting() {
+        panel.push(Hint {
+            liveness: if inspector.edited().is_empty() {
+                Liveness::Inert
+            } else {
+                Liveness::Live
+            },
+            ..rendered(&COMMIT_ROW)
+        });
+    }
     if inspector.is_inserting() {
         panel.retain(|hint| !matches!(hint.action, "copy" | "copy line"));
         panel.push(Hint {

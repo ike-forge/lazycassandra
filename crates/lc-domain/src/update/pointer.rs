@@ -6,7 +6,7 @@ use crate::pointer::{Click, Mark, Pointer, Wheel};
 use crate::state::{Overlay, Panel, State};
 
 use super::{
-    Effect, activate, axes, escape, inspect_key, open_filter, panel_scroll, row_count, scroll_len,
+    Effect, activate, axes, escape, open_filter, overlay_key, panel_scroll, row_count, scroll_len,
     show_tab,
 };
 
@@ -32,16 +32,18 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
     if state.overlay.is_some() {
         match pointer {
             Pointer::Click(_) => escape(state),
-            // The one modal the wheel reaches: it is a document, and wheeling
-            // a document is reading it (cell inspector design §4).
+            // The modals that are a list or a document: wheeling one is
+            // reading it, and a notch is the `j`/`k` the overlay already
+            // answers (cell inspector design §4, design §1). The rest are
+            // questions, not things to scroll.
             Pointer::Wheel { direction, .. } => {
-                if matches!(state.overlay, Some(Overlay::Inspect(_))) {
+                if scrolls(state.overlay.as_ref()) {
                     let key = match direction {
                         Wheel::Down => Key::Down,
                         Wheel::Up => Key::Up,
                     };
                     for _ in 0..WHEEL_ROWS {
-                        inspect_key(state, key);
+                        overlay_key(state, key);
                     }
                 }
             }
@@ -56,6 +58,21 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
             Vec::new()
         }
     }
+}
+
+fn scrolls(overlay: Option<&Overlay>) -> bool {
+    matches!(
+        overlay,
+        Some(
+            Overlay::Commands(_)
+                | Overlay::Diagnostics(_)
+                | Overlay::Inspect(_)
+                | Overlay::Themes { .. }
+                | Overlay::Connections { .. }
+                | Overlay::History { .. }
+                | Overlay::Commit(_)
+        )
+    )
 }
 
 /// Scrolls `panel`'s viewport without focusing it and without moving its

@@ -3,6 +3,7 @@
 //! (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5, §6).
 
 use crate::contents::TableRef;
+use crate::edit::CommitScope;
 use crate::inspect::Inspector;
 use crate::model::Statement;
 use crate::state::Scroll;
@@ -23,6 +24,7 @@ pub struct CommitPrompt {
     /// a form filled in by hand is not something to lose to a mistyped key
     /// (insert design §4).
     form: Option<Box<Inspector>>,
+    scope: CommitScope,
     /// The block scrolls: thirty edited rows is thirty-plus lines of CQL, and
     /// a confirmation that clips the statement it is asking about is worse
     /// than no preview at all (design §5).
@@ -41,6 +43,7 @@ impl CommitPrompt {
             rows,
             cells,
             form: None,
+            scope: CommitScope::All,
             scroll: Scroll::default(),
         }
     }
@@ -59,6 +62,17 @@ impl CommitPrompt {
     /// The form to go back to on cancel, `None` for a commit of edits.
     pub fn take_form(&mut self) -> Option<Inspector> {
         self.form.take().map(|form| *form)
+    }
+
+    /// Narrows what answering `y` writes back into the page.
+    #[must_use]
+    pub fn scoped(self, scope: CommitScope) -> Self {
+        Self { scope, ..self }
+    }
+
+    #[must_use]
+    pub const fn scope(&self) -> CommitScope {
+        self.scope
     }
 
     #[must_use]

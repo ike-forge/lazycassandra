@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 
 use crate::bytes::Bytes;
 use crate::config::MaxColumnWidth;
-use crate::edit::{Edited, Edits};
+use crate::edit::{CommitScope, Edited, Edits};
 use crate::grid::ColumnScroll;
 use crate::inspect::Inspector;
 use crate::model::{CqlValue, DbError, KeyspaceKind, Page, PagingState, QueryId, Row, Statement};
@@ -500,8 +500,8 @@ impl GridPage {
     /// cluster was sent (design §5). The arrangement is left alone for the
     /// same reason it was left alone while they were dirty: re-sorting here
     /// would move the row out from under the cursor that edited it.
-    pub fn commit_edits(&mut self) {
-        for ((row, column), edited) in self.edits.drain() {
+    pub fn commit_edits(&mut self, scope: CommitScope) {
+        for ((row, column), edited) in self.edits.drain_in(scope) {
             if let Some(cell) = self
                 .page
                 .rows
@@ -569,6 +569,13 @@ impl GridPage {
     #[must_use]
     pub fn rows(&self) -> impl ExactSizeIterator<Item = &Row> {
         self.order.iter().map(|at| &self.page.rows[*at])
+    }
+
+    /// The page row the `index`th drawn row is, which is what edits are keyed
+    /// by.
+    #[must_use]
+    pub fn page_row(&self, index: usize) -> Option<usize> {
+        self.order.get(index).copied()
     }
 
     /// The `index`th drawn row, counted the way the cursor counts.

@@ -695,3 +695,22 @@ fn a_resize_that_moves_a_viewport_asks_for_a_repaint() {
          moved would otherwise not be drawn until the next keypress"
     );
 }
+
+#[test]
+fn a_wheel_over_the_palette_walks_its_cursor_without_closing_it() {
+    let mut state = measured(&["shop"]);
+    press(&mut state, Key::Char('?'));
+    let wheel = |direction| Pointer::Wheel {
+        panel: Panel::Contents,
+        direction,
+    };
+
+    point(&mut state, wheel(Wheel::Down));
+    let down = palette(&state)
+        .expect("the wheel does not dismiss")
+        .selected();
+    point(&mut state, wheel(Wheel::Up));
+    let back = palette(&state).expect("nor does the way back").selected();
+
+    assert!(down > back, "down moved the cursor and up undid it");
+}

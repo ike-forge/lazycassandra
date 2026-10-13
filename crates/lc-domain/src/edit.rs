@@ -169,6 +169,25 @@ fn hex(text: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Which of a page's uncommitted edits a commit writes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CommitScope {
+    #[default]
+    All,
+    /// The edits of one page row, by page index (see [`Edits`]).
+    Row(usize),
+}
+
+impl CommitScope {
+    #[must_use]
+    pub const fn admits(self, row: usize) -> bool {
+        match self {
+            Self::All => true,
+            Self::Row(only) => only == row,
+        }
+    }
+}
+
 /// The cells of one page that have been typed into and not yet written.
 ///
 /// Keyed by `(page row index, column index)` rather than by drawn position:
@@ -234,13 +253,27 @@ impl Edits {
         grouped.into_iter()
     }
 
+    /// Cells typed into within `scope`.
+    #[must_use]
+    pub fn cells_in(&self, scope: CommitScope) -> usize {
+        self.0.keys().filter(|(row, _)| scope.admits(*row)).count()
+    }
+
     pub fn clear(&mut self) {
         self.0.clear();
     }
 
-    /// Every edit, for writing into the page once the cluster has taken them.
-    pub fn drain(&mut self) -> impl Iterator<Item = ((usize, usize), Edited)> {
-        std::mem::take(&mut self.0).into_iter()
+    /// Every edit within `scope`, for writing into the page once the cluster
+    /// has taken them. The rest stay dirty.
+    pub fn drain_in(
+        &mut self,
+        scope: CommitScope,
+    ) -> impl Iterator<Item = ((usize, usize), Edited)> {
+        let (taken, kept): (BTreeMap<_, _>, BTreeMap<_, _>) = std::mem::take(&mut self.0)
+            .into_iter()
+            .partition(|((row, _), _)| scope.admits(*row));
+        self.0 = kept;
+        taken.into_iter()
     }
 }
 

@@ -743,6 +743,7 @@ below.
 | Key | Action |
 |---|---|
 | `Enter` | Open the inspector over the row under the cursor in row mode, or the cell under it in cell mode. Inert in column mode, with nothing loaded, on an empty grid, while a range is held, and on a frame with no room to draw the block. See the inspector's own subsection below. |
+| `e` | `Enter`, then `e` in the inspector, in one press: opens the inspector and an edit field over the value, refused the way the inspector's `e` is. Opens nothing where `Enter` opens nothing. |
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
 | `p` | Fetch the next page of the result and append it. Inert once the result has ended and while a page is in flight. |
 | `P` | Fetch pages until the result ends or a stop is reached. Inert where `p` is. |
@@ -823,6 +824,7 @@ Like the palette it dims the panels, claims every key and leaves `q` quitting.
 | `y` | Yank what the grid's `y` would in the mode it was opened from: the bare value, or the row as one CSV line. The inspector stays open. |
 | `Y` | Yank the line the cursor is on, its indent dropped and, in row mode, without the column name beside it. Nothing over a null field. |
 | `e` | Open an edit field over the value the cursor is on. Refused *with a message* where the column is part of the primary key, where its type cannot be typed into, where the row's whole primary key is not in the page, where the grid came from a typed statement, and on a read-only connection. |
+| `ctrl-s` | Commit this row: the commit confirmation over this row's edits alone, every other dirty row staying dirty. Accepts an open edit field first; inert while its text does not parse and over a row with nothing uncommitted. Over the insert form it opens the insert confirmation, as `Enter` does. |
 | `Enter` / `Esc` | Close it. Over the insert form, `Enter` opens the confirmation instead. |
 | `q` | Quits, or raises the uncommitted-changes warning. |
 | anything else | Inert, every other ctrl chord included. |
@@ -892,7 +894,8 @@ cluster's to say. See
 ### The commit confirmation
 
 `ctrl-s` over Table contents opens `Overlay::Commit` over every uncommitted
-edit, showing the CQL that would run. One dirty row is a bare `UPDATE`;
+edit — or, inside the inspector, over the edits of the row it shows,
+which is the only edit written when `y` answers it — showing the CQL that would run. One dirty row is a bare `UPDATE`;
 several are one logged batch, so a confirmation that said "3 rows" has
 promised three rows. Like the drop confirmation it dims the panels and claims
 every key.
@@ -1239,8 +1242,8 @@ a permanently grey hint teaches nothing.
 
 **A key the connection's posture refuses is off the bar, named as refused in
 the palette, and answered when it is pressed.** A read-only connection leaves
-`d` off the bar on both panels it is bound in, and draws the palette's four
-drop-and-delete rows with a muted `(disabled, read-only)` after their keys.
+`d` off the bar on both panels it is bound in, and draws the palette's
+drop-and-delete rows, under their panel's heading too, with a muted `(disabled, read-only)` after their keys.
 `ctrl-r` is greyed rather than dropped, against a buffer holding anything but a
 read: the same key in the same frame runs a `SELECT` and would be refused a
 `DELETE`, so it follows the text as typed. The palette keeps its rows: it
@@ -1375,16 +1378,16 @@ Taken, lowercase: `c` `d` `e` `f` `g` `h` `j` `k` `l` `m` `n` `p` `q` `s` `v`
 insert form, and by Queries, where it opens the buffer: a panel's claim on a
 letter stops at its border. `c`, `f` and `s` are taken by Table contents' column
 mode alone — a panel's claim on a letter stops at that panel's border, and
-this one stops at a mode's (§1's Table contents subsection). `e` stops at an
-overlay's: it opens an edit field inside the inspector and is free
-everywhere else.
+this one stops at a mode's (§1's Table contents subsection). `e` opens an
+edit field, from the inspector and from the grid, and is free everywhere
+else.
 Taken, digits: `1` `2` `3` `4` `5`.
 Taken, punctuation: `[` and `]`.
 Taken, uppercase: `N`, `G`, `P` and `Y` — the only shifted letters bound (§2).
-`p` and `P` answer in Table contents alone, and `Y` and `e` in the inspector
-alone.
+`p`, `P` and `e` answer in Table contents alone, and `Y` and `e` in the
+inspector. `x` answers inside the insert form alone.
 
-Free, lowercase: `a` `b` `o` `r` `t` `u` `w` `x` `z`, the
+Free, lowercase: `a` `b` `o` `r` `t` `u` `w` `z`, the
 digits `6`–`9` and `0`, and every uppercase letter but `N`, `G`, `P` and `Y`.
 
 `Space` is claimed for the first time, inside the export form only: it
@@ -1412,7 +1415,7 @@ or reads, the grid inspects, and the editor splits a line (§1).
 
 Ctrl taken: `ctrl-r`, `ctrl-g`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
-`ctrl-s` in Table contents, `ctrl-t` and `ctrl-o` everywhere, and
+`ctrl-s` in Table contents and its inspector, `ctrl-t` and `ctrl-o` everywhere, and
 `ctrl-d`/`ctrl-u` everywhere
 `PageDown`/`PageUp` do anything. The rest of the layer is free — including
 `r`, `t`, `o` and `u` as plain keys, which nothing binds. `s` is bound plain,
@@ -1688,7 +1691,8 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | The Tables border names the open connection and its posture, in the picker's spelling and colours | `the_border_names_the_connection_and_its_posture`, `the_posture_is_spelled_the_way_the_picker_and_the_config_spell_it`, `the_posture_carries_its_own_colour_and_the_rest_of_the_name_does_not`, `a_panel_with_no_connection_names_no_connection` (`view/tables.rs`), `a_sidebar_wide_enough_names_the_connection_on_the_border`, `a_writable_posture_wears_its_own_colour_on_the_border` (`inbound/render/tests/`) |
 | A border too narrow for the badge drops it, and one too narrow for badge and `/term` keeps the term | `a_narrow_border_falls_back_to_the_panels_name_alone` (`view/tables.rs`), `a_sidebar_too_narrow_for_the_badge_keeps_the_panels_name_alone`, `a_border_holding_both_puts_the_badge_at_the_name_and_the_marker_at_the_corner`, `a_border_that_cannot_hold_both_keeps_the_marker_and_drops_the_badge` (`inbound/render/tests/`) |
 | The bar greys `ctrl-r` against a buffer the posture would refuse | `the_run_hint_greys_against_a_buffer_the_posture_would_refuse` (`view/hints.rs`) |
-| The palette names the posture on every mutating row on a read-only connection, and drops none | `a_read_only_connection_refuses_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys`, `a_refused_row_names_the_posture_after_its_keys_in_muted` (`inbound/palette.rs`), `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_a_delete_or_an_edit` (`commands.rs`) |
+| The palette names the posture on every mutating row on a read-only connection, and drops none | `a_read_only_connection_refuses_every_command_that_would_change_the_cluster`, `a_read_only_connection_drops_no_row_from_the_palette`, `a_writable_connection_refuses_nothing_and_greys_only_what_the_run_greys`, `a_refused_row_names_the_posture_after_its_keys_in_muted` (`inbound/palette.rs`), `cancelling_a_drop_is_not_gated_on_the_posture`, `every_gated_command_is_a_drop_a_delete_or_an_edit`, `a_panels_group_lists_the_mutations_it_opens` (`commands.rs`) |
+| `ctrl-s` in the inspector commits that row alone and leaves the others dirty | `ctrl_s_in_the_inspector_commits_only_the_row_it_shows`, `a_row_commit_leaves_the_other_rows_dirty`, `ctrl_s_over_a_field_accepts_it_first`, `ctrl_s_over_a_row_with_nothing_dirty_is_inert` |
 | A second modifier is not a binding | `ctrl_alt_r_does_not_run_the_buffer` |
 | The palette outranks the ctrl layer | `an_open_palette_swallows_ctrl_r` |
 | A statement is classified by the verb opening it, comments and strings scanned past | `a_leading_comment_does_not_hide_the_verb`, `a_semicolon_inside_a_string_does_not_open_a_statement`, `a_trailing_semicolon_adds_no_statement` (`model/statement.rs`) |
@@ -1765,7 +1769,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | The cursor's line is banded whole, and the offset follows the span drawn for it | `the_cursor_line_is_banded_across_every_row_it_wrapped_to` (`inbound/inspect.rs`), `the_offset_follows_the_span_the_frame_drew_the_cursor_at` |
 | `y` in the inspector yanks per mode and leaves it open; `Y` yanks the cursor's line | `y_yanks_the_bare_value_and_leaves_the_inspector_open`, `y_yanks_the_row_as_one_csv_line`, `shift_y_yanks_the_line_the_cursor_is_on`, `shift_y_yanks_a_row_field_without_its_column_name`, `y_over_a_null_yanks_nothing` |
 | The wheel moves the inspector's cursor; a click and a shrink close it | `the_wheel_moves_the_inspector_and_a_click_closes_it`, `a_frame_too_small_for_the_block_closes_it`, `a_value_that_rewraps_shorter_pulls_the_offset_back` |
-| `e` opens a field seeded with what the cell says | `e_opens_a_field_seeded_with_what_the_cell_says`, `an_open_field_is_drawn_in_place_of_the_value_it_types_over` (`inbound/inspect.rs`) |
+| `e` opens a field seeded with what the cell says, from the inspector and from the grid | `e_opens_a_field_seeded_with_what_the_cell_says`, `e_on_the_grid_opens_the_inspector_on_a_field`, `e_on_the_grid_is_refused_as_enter_then_e_is`, `e_on_a_grid_that_inspects_nothing_does_nothing`, `a_cell_inspector_edits_the_column_the_cursor_was_on`, `an_open_field_is_drawn_in_place_of_the_value_it_types_over` (`inbound/inspect.rs`) |
 | Every refusal of `e` is spoken rather than silent | `a_key_column_is_refused_with_the_reason_rather_than_silently`, `a_read_only_connection_is_refused_before_anything_else_is_asked`, `a_typed_statement_has_no_table_to_update`, `the_bar_greys_e_where_the_column_cannot_be_edited_and_lights_it_where_it_can` |
 | A value is read against the column's declared type, not its variant | every test in `edit.rs` |
 | `⏎` accepts, `esc` abandons, and a restored value leaves no mark | `enter_accepts_the_field_and_the_cell_goes_dirty`, `escape_abandons_the_field_and_changes_nothing`, `an_edit_that_restores_the_value_it_started_from_leaves_no_mark`, `setting_none_clears_what_was_there` (`edit.rs`) |
@@ -1781,7 +1785,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | An empty string is a value for the free-text types, `x` unsets | `a_text_field_typed_to_empty_is_an_empty_string`, `opening_a_text_field_and_accepting_it_untouched_leaves_it_unset`, `a_field_typed_then_emptied_over_a_column_that_takes_no_empty_value_unsets_it`, `an_empty_string_is_written_as_one`, `x_unsets_the_field_under_the_cursor` |
 | A refused insert's form comes back on `i`, once, until the content is replaced | `i_gives_back_what_a_refused_insert_held`, `a_draft_is_handed_over_once`, `a_new_read_drops_the_draft`, `a_written_insert_leaves_no_draft` |
 | `⏎` needs the whole key, then shows the `INSERT` of what was filled in | `enter_without_the_whole_key_names_what_is_missing_and_keeps_the_form`, `enter_shows_the_insert_it_would_run_with_only_what_was_filled_in`, `a_key_alone_is_a_row`, `an_insert_quotes_the_names_and_is_a_write` (`model/statement.rs`), `an_insert_names_the_cells_and_the_table_and_hands_the_form_back` (`commit.rs`) |
-| `n`/`Esc` hand the form back, `y` writes, and success re-reads the grid | `n_hands_the_filled_form_back`, `escape_over_the_confirmation_hands_the_form_back_too`, `y_runs_the_insert`, `a_read_only_connection_refuses_the_write_at_the_confirmation_too`, `a_completed_insert_re_reads_the_grid_rather_than_patching_it`, `a_failed_insert_is_raised_and_nothing_is_re_read`, `enter_still_closes_an_inspector_over_an_existing_row` |
+| `n`/`Esc` hand the form back, `y` writes, and success re-reads the grid | `n_hands_the_filled_form_back`, `escape_over_the_confirmation_hands_the_form_back_too`, `y_runs_the_insert`, `a_read_only_connection_refuses_the_write_at_the_confirmation_too`, `a_completed_insert_re_reads_the_grid_rather_than_patching_it`, `a_failed_insert_is_raised_and_nothing_is_re_read`, `enter_still_closes_an_inspector_over_an_existing_row`, `ctrl_s_over_the_form_asks_to_insert_rather_than_commit_a_row` |
 | `q` with edits outstanding warns before it discards | `q_warns_before_it_discards_and_y_quits_through_the_warning`, `n_leaves_the_warning_and_the_edits_where_they_were`, `q_with_nothing_dirty_still_quits_outright`, `the_warning_never_says_one_rows` (`commit.rs`) |
 | `p` appends the next page and `P` pages to the end, both from where the last page left off | `p_fetches_the_next_page_from_where_the_last_one_left_off`, `shift_p_fetches_pages_until_the_result_ends`, `a_page_asked_for_is_sized_by_grid_page_rows`, `the_next_page_is_appended_and_the_last_ends_the_result`, `every_page_runs_to_the_end` (`contents.rs`) |
 | `p` and `P` are inert without more, outside the grid and while a page is in flight | `paging_is_inert_without_more_elsewhere_and_while_a_page_is_in_flight`, `nothing_is_fetched_twice_at_once` (`contents.rs`) |
