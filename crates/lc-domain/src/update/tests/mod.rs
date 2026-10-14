@@ -31,6 +31,7 @@ mod edit;
 mod editor;
 mod export;
 mod filter;
+mod health;
 mod hints;
 mod history;
 mod insert;
@@ -147,6 +148,7 @@ fn palette(state: &State) -> Option<&CommandsPanel> {
         | Overlay::Themes { .. }
         | Overlay::Connections { .. }
         | Overlay::History { .. }
+        | Overlay::Health(_)
         | Overlay::Diagnostics(_)
         | Overlay::Export(_)
         | Overlay::Filter(_)

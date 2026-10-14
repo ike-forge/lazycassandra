@@ -710,3 +710,63 @@ async fn a_mutation_answers_with_an_empty_page_rather_than_an_error() {
     assert!(page.columns.is_empty());
     assert!(page.next.is_none());
 }
+
+#[tokio::test]
+async fn the_fixture_reports_a_tables_health_from_its_one_node() {
+    use lc_domain::contents::TableRef;
+    use lc_domain::health::{Metric, NodeOutcome};
+
+    let conn = ConnId::next();
+    let cluster = CassandraCluster::new();
+    cluster
+        .connect(conn, &fixture(), &DriverConfig::default())
+        .await
+        .expect("the fixture is up");
+    // A histogram that has seen no read reports no percentile at all. A
+    // whole-table select is a range scan, not a read.
+    cluster
+        .execute_paged(
+            conn,
+            &Statement::select_all("shop", "orders_by_customer"),
+            PageSize::default(),
+            None,
+        )
+        .await
+        .expect("the read succeeds");
+
+    let health = cluster
+        .table_health(conn, &TableRef::new("shop", "orders_by_customer"))
+        .await
+        .expect("the read reaches the node");
+
+    let [node] = health.nodes.as_slice() else {
+        panic!("the fixture is one node, got {:?}", health.nodes);
+    };
+    assert_eq!(node.version.as_deref(), Some("5.0.8"));
+    assert_eq!(node.datacenter.as_deref(), Some("datacenter1"));
+    let NodeOutcome::Read {
+        readings,
+        thresholds,
+    } = &node.outcome
+    else {
+        panic!("a 5.0 node answers, got {:?}", node.outcome);
+    };
+    for metric in [
+        Metric::DiskUsed,
+        Metric::LargestPartition,
+        Metric::LargestSstable,
+        Metric::TombstonesMax,
+        Metric::ReadRate,
+        Metric::ScanLatencyP99,
+        Metric::WriteRate,
+        Metric::RunningCompactions,
+        Metric::Snapshots,
+    ] {
+        assert!(
+            readings.get(metric).is_some(),
+            "5.0.8 exposes {metric:?} over CQL"
+        );
+    }
+    assert_eq!(thresholds.tombstone_warn, Some(1000.0));
+    assert_eq!(thresholds.tombstone_failure, Some(100_000.0));
+}

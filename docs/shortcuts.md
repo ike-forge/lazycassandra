@@ -356,6 +356,28 @@ tell the two apart.
 
 See [query history design](superpowers/specs/2026-10-09-query-history-design.md).
 
+### The health block
+
+`H` opens `Overlay::Health` over the table under the Tables cursor, and sends
+one read of every node's view of it. An `Overlay` of the inspector's size and
+rank. Inert on a keyspace, over a range of several rows, before a schema has
+loaded, and on a frame with no room for the block; the bar greys it there. `h`
+was the obvious letter and is motion (§2); a shifted letter is a binding of its
+own.
+
+| Key | Effect |
+|---|---|
+| `j` / `k`, `Down` / `Up` | Moves the cursor. |
+| `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u` | The same, by a screen. |
+| `Home` / `End`, `g` / `G` | The first row, the last. |
+| `l` / `Right` | Unfolds the row; on an open one, steps onto the first row under it. |
+| `h` / `Left` | Folds the row; on a folded or leaf row, steps out to its parent. |
+| `Enter` | Folds or unfolds the row. Inert on a leaf. |
+| `Esc` | Closes. A read still out lands in the Logs trail and nowhere else. |
+| `q` | Quits, as everywhere else. |
+
+See [table health design](superpowers/specs/2026-10-13-table-health-design.md).
+
 ### Toasts
 
 A toast is a three-second line in the top-right corner. It asks nothing and
@@ -671,6 +693,7 @@ offered. See those subsections below.
 | Key | Action |
 |---|---|
 | `Enter` | On a keyspace: fold/unfold. On a table: read it into Contents and focus that panel. |
+| `H` | Open the health block over the table under the cursor. Inert on a keyspace, over a range of more than one row, and on a frame with no room to draw it. See the health block's own subsection in §1. |
 | `d` | Open the drop confirmation over the node under the cursor. Inert on a connection that is not writable, on a frame with no room to draw the block, while a drop is already running, and over a range of more than one row. The same key answers Table contents, aimed at its rows. See the drop confirmation's own subsection in §1. |
 
 `Space` used to be `Enter`'s synonym here and is now free (§3): one key for one
@@ -1383,12 +1406,13 @@ edit field, from the inspector and from the grid, and is free everywhere
 else.
 Taken, digits: `1` `2` `3` `4` `5`.
 Taken, punctuation: `[` and `]`.
-Taken, uppercase: `N`, `G`, `P` and `Y` — the only shifted letters bound (§2).
+Taken, uppercase: `G`, `H`, `N`, `P` and `Y` — the only shifted letters bound (§2).
+`H` answers in Tables alone.
 `p`, `P` and `e` answer in Table contents alone, and `Y` and `e` in the
 inspector. `x` answers inside the insert form alone.
 
 Free, lowercase: `a` `b` `o` `r` `t` `u` `w` `z`, the
-digits `6`–`9` and `0`, and every uppercase letter but `N`, `G`, `P` and `Y`.
+digits `6`–`9` and `0`, and every uppercase letter but `G`, `H`, `N`, `P` and `Y`.
 
 `Space` is claimed for the first time, inside the export form only: it
 activates the focused stop there (§1's export-form subsection) and is free
@@ -1672,6 +1696,8 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | Successes and refused chords toast | `a_completed_drop_re_reads_the_schema`, `a_completed_delete_re_reads_the_grid_rather_than_the_schema` (`drop.rs`), `finishing_clears_the_job_and_says_what_was_written`, `ctrl_e_does_nothing_over_an_empty_contents_panel` (`export.rs`), `ctrl_s_with_nothing_dirty_is_inert`, `a_committed_write_lands_in_the_page_and_clears_the_marks` (`commit.rs`), `enter_accepts_the_field_and_the_cell_goes_dirty` (`edit.rs`), `a_failed_history_save_warns` (`history.rs`) |
 | `history.limit` bounds what is kept | `the_configured_limit_bounds_what_is_kept` (`history.rs`), `the_oldest_entries_fall_off_past_the_limit` (`domain/history.rs`) |
 | A repeat of the newest replaces it, case-insensitively outside literals and quoted names; an older one is kept again; each connection keeps its own | `a_statement_asked_again_after_another_is_kept_again`, `a_repeat_differing_in_keyword_or_name_case_replaces_the_newest`, `case_inside_a_literal_or_a_quoted_name_is_a_different_statement`, `each_connection_keeps_its_own` (`domain/history.rs`) |
+| `H` opens the health block on a table, from Tables only, and not where it cannot be drawn | `shift_h_on_a_table_opens_the_block_and_reads_that_table`, `shift_h_on_a_keyspace_does_nothing`, `shift_h_outside_tables_does_nothing`, `shift_h_where_the_block_cannot_be_drawn_says_so` (`health.rs`), `the_health_hint_is_live_on_a_table_with_room_for_the_block` (`view/hints.rs`) |
+| Inside the block, `l`/`h`/`⏎` fold as the tree does and motion stays in the block | `l_unfolds_a_metric_into_its_nodes_then_steps_onto_the_first`, `h_steps_out_of_a_node_then_folds_its_metric_then_steps_to_the_heading`, `enter_toggles_a_heading_and_does_nothing_on_a_leaf` (`domain/health.rs`), `motion_inside_the_block_moves_its_cursor_not_the_tree`, `esc_closes_the_block_and_q_quits_from_it` (`health.rs`) |
 | `ctrl-g` opens the history on the newest entry, from Queries only, and not on nothing | `ctrl_g_opens_the_history_on_the_newest_entry`, `ctrl_g_belongs_to_queries`, `ctrl_g_opens_nothing_with_no_history`, `ctrl_g_opens_nothing_where_the_frame_cannot_draw_it` (`history.rs`) |
 | `⏎` appends the entry and runs nothing; `esc` leaves the buffer alone | `enter_loads_the_entry_into_the_buffer_and_runs_nothing`, `enter_appends_the_entry_after_what_the_buffer_holds`, `a_loaded_entry_can_be_run_straight_away`, `esc_closes_it_and_leaves_the_buffer_alone` (`history.rs`) |
 | The filter's `⏎` closes onto its row before anything loads | `a_filter_narrows_the_list_and_enter_closes_it_onto_the_row_before_loading`, `a_filter_that_matches_nothing_closes_onto_the_row_the_prompt_opened_on`, `esc_in_a_filter_puts_the_cursor_back` (`history.rs`) |
@@ -1878,6 +1904,7 @@ Bound, and spending nothing from §3's budget. See the
 | Left click | The hint bar | Nothing |
 | Wheel | The panel under the pointer | Scrolls three rows or lines, moving neither focus nor the selection |
 | Wheel | Anywhere, inspector up | Scrolls the inspector three lines |
+| Wheel | Anywhere, a list overlay up | Moves its cursor three rows: the palette, the pickers, the diagnostics, the history, the commit confirmation and the health block |
 
 **A click on an open search prompt cancels it**, restoring the search and
 the cursor that stood before the prompt opened — the same thing `Esc` does

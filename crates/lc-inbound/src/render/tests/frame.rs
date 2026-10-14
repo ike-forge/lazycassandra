@@ -128,7 +128,7 @@ fn the_hint_bar_sits_on_the_bottom_row() {
 
     assert_eq!(
         row(&buffer, 23).trim_end(),
-        " ⏎ open | / search | v select | tab panel | q quit",
+        " ⏎ open | / search | H health | v select | tab panel | q quit",
         "the whole row is the bar's: the loader draws on panel borders now"
     );
     assert!(

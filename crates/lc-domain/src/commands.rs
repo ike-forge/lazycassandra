@@ -249,6 +249,24 @@ const TABLES: &[Command] = &[
         Run::In(Panel::Tables),
     ),
     DROP_TABLE,
+    TABLE_HEALTH,
+];
+
+const TABLE_HEALTH: Command = Command::new(
+    &[Stroke::key(Key::Char('H'))],
+    "table health",
+    Run::In(Panel::Tables),
+);
+
+/// The opener, and `⏎`, which folds inside the block and reads a table
+/// outside it.
+const HEALTH: &[Command] = &[
+    TABLE_HEALTH,
+    Command::new(
+        &[Stroke::key(Key::Enter)],
+        "fold/unfold a metric",
+        Run::Inert,
+    ),
 ];
 
 // The openers are listed under their panel as well as under the group that
@@ -497,6 +515,10 @@ pub const CATALOGUE: &[Group] = &[
     Group {
         heading: "Table contents",
         commands: CONTENTS,
+    },
+    Group {
+        heading: "Health",
+        commands: HEALTH,
     },
     Group {
         heading: "Drop and delete",

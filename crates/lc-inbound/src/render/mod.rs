@@ -171,6 +171,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_theme_rows(room.theme_rows)
             .with_connection_rows(room.connection_rows)
             .with_history_rows(room.history_rows)
+            .with_health_rows(room.health_rows)
             .with_inspector(room.inspector_rows, inspector_lines, inspector_selection)
             .with_commit(room.commit_rows, commit_lines),
         map: FrameMap::new(hits),
@@ -188,6 +189,7 @@ struct Room {
     theme_rows: usize,
     connection_rows: usize,
     history_rows: usize,
+    health_rows: usize,
     export_fits: bool,
     drop_fits: bool,
     inspector_rows: usize,
@@ -201,6 +203,7 @@ impl Room {
             theme_rows: crate::themes::visible_rows(area),
             connection_rows: crate::connections::visible_rows(area),
             history_rows: crate::history::visible_rows(area),
+            health_rows: crate::health::visible_rows(area),
             export_fits: crate::export::fits(area),
             drop_fits: crate::drop::fits(area),
             inspector_rows: crate::inspect::visible_rows(area),
@@ -297,6 +300,7 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
         Some(OverlayView::Diagnostics { rows, selected }) => {
             crate::diagnostics::render(frame, rows, *selected, theme);
         }
+        Some(OverlayView::Health(view)) => crate::health::render(frame, view, theme),
         Some(OverlayView::Export(view)) => crate::export::render(frame, view, theme),
         Some(OverlayView::Filter { column, query }) => {
             crate::filter::render(frame, column, query, theme);
@@ -387,6 +391,7 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             | OverlayView::Connections { .. }
             | OverlayView::History { .. }
             | OverlayView::Diagnostics { .. }
+            | OverlayView::Health(_)
             // A modal that owns the frame. Unlike the export form, which is
             // asking about the grid beneath it, a drop is asking about one
             // row its own title already names (drop design §2).
