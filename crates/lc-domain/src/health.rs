@@ -26,7 +26,35 @@ pub struct NodeReport {
     pub address: String,
     pub datacenter: Option<String>,
     pub version: Option<String>,
+    /// What gossip on a reached node says about this one. `None` where no
+    /// reached node has `system_views.gossip_info` (before 5.0).
+    pub gossip: Option<Gossip>,
     pub outcome: NodeOutcome,
+}
+
+/// One node's gossip state, as the node that answered hears it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gossip {
+    /// The first word of the gossip `STATUS`: `NORMAL`, `LEAVING`,
+    /// `shutdown`…
+    pub status: String,
+    /// Bytes the node holds across every table.
+    pub load: Option<f64>,
+}
+
+impl Gossip {
+    /// Gossip spells a drained or stopped node `shutdown`; a node that died
+    /// without saying so still reads `NORMAL` until it is removed, and only
+    /// the failure detector, which CQL does not expose, knows otherwise.
+    fn severity(&self) -> Option<Severity> {
+        if self.status.eq_ignore_ascii_case("NORMAL") {
+            None
+        } else if self.status.eq_ignore_ascii_case("shutdown") {
+            Some(Severity::Danger)
+        } else {
+            Some(Severity::Warning)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +66,10 @@ pub enum NodeOutcome {
     /// Older than 4.0: no `system_views` to read.
     Unsupported,
     Failed(String),
+    /// Named in a reached node's `system.peers_v2` and never asked: behind
+    /// `discovery = "contact-points"` every request lands on the tunnelled
+    /// node, and a virtual table answers only for the node it is read on.
+    Unreached,
 }
 
 /// The metrics a node reported, each in its metric's [`Unit`]. A metric
@@ -353,7 +385,36 @@ impl Health {
     /// Every warning, in node order and then metric order.
     #[must_use]
     pub fn warnings(&self) -> Vec<Warning> {
-        self.nodes.iter().flat_map(NodeReport::warnings).collect()
+        let (answered, known) = self.coverage();
+        let partial = self
+            .nodes
+            .iter()
+            .any(|node| matches!(node.outcome, NodeOutcome::Unreached))
+            .then(|| Warning {
+                metric: None,
+                node: String::new(),
+                severity: Severity::Info,
+                text: format!(
+                    "this connection reaches {answered} of {known} nodes; \
+                     totals and maxima cover those alone"
+                ),
+            });
+
+        partial
+            .into_iter()
+            .chain(self.nodes.iter().flat_map(NodeReport::warnings))
+            .collect()
+    }
+
+    /// How many nodes answered, of every node known to the cluster.
+    #[must_use]
+    pub fn coverage(&self) -> (usize, usize) {
+        let answered = self
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.outcome, NodeOutcome::Read { .. }))
+            .count();
+        (answered, self.nodes.len())
     }
 
     /// The aggregate of `metric` over every node that reported it.
@@ -378,11 +439,24 @@ impl NodeReport {
     pub fn reading(&self, metric: Metric) -> Option<f64> {
         match &self.outcome {
             NodeOutcome::Read { readings, .. } => readings.get(metric),
-            NodeOutcome::Unsupported | NodeOutcome::Failed(_) => None,
+            NodeOutcome::Unsupported | NodeOutcome::Failed(_) | NodeOutcome::Unreached => None,
         }
     }
 
     fn warnings(&self) -> Vec<Warning> {
+        let gossip = self.gossip.as_ref().and_then(|gossip| {
+            gossip.severity().map(|severity| Warning {
+                metric: None,
+                node: self.address.clone(),
+                severity,
+                text: format!("gossip reports {}", gossip.status),
+            })
+        });
+
+        gossip.into_iter().chain(self.outcome_warnings()).collect()
+    }
+
+    fn outcome_warnings(&self) -> Vec<Warning> {
         let warning = |metric, severity, text| Warning {
             metric,
             node: self.address.clone(),
@@ -409,6 +483,7 @@ impl NodeReport {
                     "did not answer".to_owned(),
                 )];
             }
+            NodeOutcome::Unreached => return Vec::new(),
         };
 
         let mut warnings = Vec::new();
@@ -752,22 +827,22 @@ fn tree(health: &Health, open: &BTreeSet<Fold>) -> Vec<Row> {
         category_rows(&mut rows, health, &warnings, open, category);
     }
 
-    let unanswered = health.any_unanswered().then_some(Severity::Warning);
+    let last = health.nodes.len().saturating_sub(1);
+    let nodes: Vec<Row> = health
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(at, node)| node_row(node, at == last))
+        .collect();
+    let worst = nodes.iter().filter_map(|row| row.severity).max();
     if heading(
         &mut rows,
         open,
         Section::Nodes,
-        unanswered,
+        worst,
         health.nodes.len().to_string(),
     ) {
-        let last = health.nodes.len().saturating_sub(1);
-        rows.extend(
-            health
-                .nodes
-                .iter()
-                .enumerate()
-                .map(|(at, node)| node_row(node, at == last)),
-        );
+        rows.extend(nodes);
     }
 
     rows
@@ -872,11 +947,28 @@ fn reading(metric: Metric, value: Option<f64>) -> String {
 }
 
 fn node_row(node: &NodeReport, last: bool) -> Row {
+    let gossip = node.gossip.as_ref();
     let (value, severity) = match &node.outcome {
-        NodeOutcome::Read { .. } => (String::new(), None),
-        NodeOutcome::Unsupported => ("unsupported".to_owned(), Some(Severity::Warning)),
+        NodeOutcome::Read { .. } => (
+            gossip.map_or_else(String::new, |gossip| gossip.status.to_lowercase()),
+            None,
+        ),
+        NodeOutcome::Unsupported => ("older than 4.0".to_owned(), Some(Severity::Warning)),
         NodeOutcome::Failed(reason) => (reason.clone(), Some(Severity::Warning)),
+        NodeOutcome::Unreached => ("not reachable through this connection".to_owned(), None),
     };
+    let severity = severity.max(gossip.and_then(Gossip::severity));
+    let running = node
+        .version
+        .iter()
+        .cloned()
+        .chain(
+            gossip
+                .and_then(|gossip| gossip.load)
+                .map(|load| format!("{} on disk", format(Unit::Bytes, load))),
+        )
+        .collect::<Vec<_>>()
+        .join(" · ");
 
     Row {
         place: Place::Leaf(Fold::Section(Section::Nodes)),
@@ -887,7 +979,7 @@ fn node_row(node: &NodeReport, last: bool) -> Row {
             |datacenter| format!("{} ({datacenter})", node.address),
         ),
         value,
-        note: node.version.clone().unwrap_or_default(),
+        note: running,
         severity,
     }
 }
@@ -905,6 +997,7 @@ mod tests {
             address: address.to_owned(),
             datacenter: None,
             version: Some("5.0.8".to_owned()),
+            gossip: None,
             outcome: NodeOutcome::Read {
                 readings,
                 thresholds,
@@ -917,8 +1010,30 @@ mod tests {
             address: address.to_owned(),
             datacenter: None,
             version: None,
+            gossip: None,
             outcome: NodeOutcome::Failed("connection refused".to_owned()),
         }
+    }
+
+    fn unreached(address: &str) -> NodeReport {
+        NodeReport {
+            address: address.to_owned(),
+            datacenter: None,
+            version: Some("5.0.8".to_owned()),
+            gossip: Some(Gossip {
+                status: "NORMAL".to_owned(),
+                load: Some(2048.0),
+            }),
+            outcome: NodeOutcome::Unreached,
+        }
+    }
+
+    fn gossiping(mut report: NodeReport, status: &str) -> NodeReport {
+        report.gossip = Some(Gossip {
+            status: status.to_owned(),
+            load: None,
+        });
+        report
     }
 
     fn warn_at(warn: f64, failure: f64) -> Thresholds {
@@ -1086,6 +1201,103 @@ mod tests {
         assert_eq!(row(&rows, "did not answer").value, "b");
         assert_eq!(row(&rows, "Nodes").fold, Some(true));
         assert_eq!(row(&rows, "b").value, "connection refused");
+    }
+
+    #[test]
+    fn a_node_only_named_by_its_peers_is_listed_and_the_partial_view_is_said_once() {
+        let panel = panel(Health {
+            nodes: vec![
+                node("a", &[(Metric::DiskUsed, 1.0)], Thresholds::default()),
+                unreached("b"),
+                unreached("c"),
+            ],
+        });
+        let rows = panel.rows();
+
+        let said: Vec<&Row> = rows
+            .iter()
+            .filter(|row| {
+                row.label
+                    .starts_with("this connection reaches 1 of 3 nodes")
+            })
+            .collect();
+        assert_eq!(said.len(), 1);
+        assert_eq!(said[0].severity, Some(Severity::Info));
+        assert_eq!(row(&rows, "Nodes").fold, Some(true));
+        assert_eq!(
+            row(&rows, "b").value,
+            "not reachable through this connection"
+        );
+        assert_eq!(row(&rows, "b").note, "5.0.8 · 2.0 KB on disk");
+        assert_eq!(
+            row(&rows, "Nodes").severity,
+            None,
+            "an unreached node is not by itself a fault"
+        );
+        assert_eq!(
+            row(&rows, "Disk used").value,
+            "1 B",
+            "an unreached node contributes nothing to a total"
+        );
+    }
+
+    #[test]
+    fn gossip_that_is_not_normal_warns_and_shutdown_is_danger() {
+        let health = Health {
+            nodes: vec![
+                gossiping(node("a", &[], Thresholds::default()), "NORMAL"),
+                gossiping(unreached("b"), "LEAVING"),
+                gossiping(unreached("c"), "shutdown"),
+            ],
+        };
+
+        let flagged: Vec<(String, Severity, String)> = health
+            .warnings()
+            .into_iter()
+            .filter(|warning| !warning.node.is_empty())
+            .map(|warning| (warning.node, warning.severity, warning.text))
+            .collect();
+
+        assert_eq!(
+            flagged,
+            [
+                (
+                    "b".to_owned(),
+                    Severity::Warning,
+                    "gossip reports LEAVING".to_owned()
+                ),
+                (
+                    "c".to_owned(),
+                    Severity::Danger,
+                    "gossip reports shutdown".to_owned()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_nodes_heading_carries_its_worst_row() {
+        let panel = panel(Health {
+            nodes: vec![
+                node("a", &[], Thresholds::default()),
+                gossiping(unreached("b"), "shutdown"),
+            ],
+        });
+
+        assert_eq!(row(&panel.rows(), "Nodes").severity, Some(Severity::Danger));
+    }
+
+    #[test]
+    fn every_node_answering_says_nothing_about_coverage() {
+        let health = Health {
+            nodes: vec![
+                node("a", &[], Thresholds::default()),
+                node("b", &[], Thresholds::default()),
+            ],
+        };
+
+        assert_eq!(health.coverage(), (2, 2));
+        assert!(health.warnings().is_empty());
     }
 
     #[test]

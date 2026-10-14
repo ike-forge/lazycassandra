@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lc_domain::contents::TableRef;
-use lc_domain::health::{Health, Metric, NodeOutcome, NodeReport, Readings, Thresholds};
+use lc_domain::health::{Gossip, Health, Metric, NodeOutcome, NodeReport, Readings, Thresholds};
 use lc_domain::model::DbError;
 use scylla::client::session::Session;
 use scylla::cluster::Node;
@@ -35,6 +35,19 @@ const PARTITION_SETTINGS: [&str; 3] = [
     "compaction_large_partition_warning_threshold_mb",
 ];
 
+const PEERS: &str = "SELECT peer, data_center, host_id, release_version FROM system.peers_v2";
+
+/// `status_with_port` first: a node gossips its peers' state under that key
+/// alone, and fills `status` only for itself.
+const GOSSIP: &str = "SELECT host_id, status_with_port, status, load FROM system_views.gossip_info";
+
+/// One node's answer, under the `host_id` it is known by.
+struct Answer {
+    host: String,
+    node: Arc<Node>,
+    report: NodeReport,
+}
+
 pub(crate) async fn read(session: &Arc<Session>, table: &TableRef) -> Result<Health, DbError> {
     let nodes = session.get_cluster_state().get_nodes_info().to_vec();
     if nodes.is_empty() {
@@ -47,42 +60,134 @@ pub(crate) async fn read(session: &Arc<Session>, table: &TableRef) -> Result<Hea
         reads.spawn(async move { node_report(&session, node, &table).await });
     }
 
-    let mut answered: Vec<(Option<DriverValue>, NodeReport)> = Vec::new();
+    let mut answered: Vec<Answer> = Vec::new();
     while let Some(joined) = reads.join_next().await {
-        let (host, report) =
+        let answer =
             joined.map_err(|error| DbError::Other(format!("health read panicked: {error}")))?;
         // Behind `discovery = "contact-points"` every node is pooled to the
         // same socket, so several `Node`s answer as one host.
-        if host.is_some() && answered.iter().any(|(seen, _)| *seen == host) {
+        if answered.iter().any(|seen| seen.host == answer.host) {
             continue;
         }
-        answered.push((host, report));
+        answered.push(answer);
     }
 
-    let mut nodes: Vec<NodeReport> = answered.into_iter().map(|(_, report)| report).collect();
+    let reached = answered
+        .iter()
+        .find(|answer| matches!(answer.report.outcome, NodeOutcome::Read { .. }))
+        .map(|answer| Arc::clone(&answer.node));
+    let mut known: Vec<(String, NodeReport)> = answered
+        .into_iter()
+        .map(|answer| (answer.host, answer.report))
+        .collect();
+
+    if let Some(reached) = reached {
+        for (host, peer) in peers(session, &reached).await {
+            match known.iter_mut().find(|(seen, _)| *seen == host) {
+                // A node that failed never said what it runs; its peers know.
+                Some((_, report)) => {
+                    report.version = report.version.take().or(peer.version);
+                    report.datacenter = report.datacenter.take().or(peer.datacenter);
+                }
+                None => known.push((host, peer)),
+            }
+        }
+        let gossip = gossip(session, &reached).await;
+        for (host, report) in &mut known {
+            report.gossip = gossip
+                .iter()
+                .find(|(id, _)| id == host)
+                .map(|(_, gossip)| gossip.clone());
+        }
+    }
+
+    let mut nodes: Vec<NodeReport> = known.into_iter().map(|(_, report)| report).collect();
     nodes.sort_by(|left, right| left.address.cmp(&right.address));
 
     Ok(Health { nodes })
 }
 
+/// Every other node `reached` knows of, none of them asked anything. The
+/// ones the driver reached as well are dropped by the caller.
+async fn peers(session: &Session, reached: &Arc<Node>) -> Vec<(String, NodeReport)> {
+    let Ok(rows) = rows(session, reached, PEERS, ()).await else {
+        return Vec::new();
+    };
+
+    rows.into_iter()
+        .filter_map(|row| {
+            let mut columns = row.columns.into_iter();
+            let address = match columns.next().flatten()? {
+                DriverValue::Inet(ip) => ip.to_string(),
+                _ => return None,
+            };
+            let datacenter = columns.next().flatten().and_then(text);
+            let host = match columns.next().flatten()? {
+                DriverValue::Uuid(id) => id.to_string(),
+                _ => return None,
+            };
+            let version = columns.next().flatten().and_then(text);
+
+            Some((
+                host,
+                NodeReport {
+                    address,
+                    datacenter,
+                    version,
+                    gossip: None,
+                    outcome: NodeOutcome::Unreached,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Every node's gossip state as `reached` hears it, by `host_id`. Empty
+/// before 5.0, which has no `gossip_info`.
+async fn gossip(session: &Session, reached: &Arc<Node>) -> Vec<(String, Gossip)> {
+    let Ok(rows) = rows(session, reached, GOSSIP, ()).await else {
+        return Vec::new();
+    };
+
+    rows.into_iter()
+        .filter_map(|row| {
+            let [host, with_port, status, load] = <[_; 4]>::try_from(row.columns)
+                .ok()?
+                .map(|value| value.and_then(text));
+            let status = with_port.or(status)?;
+
+            Some((host?, gossip_state(&status, load.as_deref())))
+        })
+        .collect()
+}
+
+/// `STATUS` carries the node's tokens after its state (`NORMAL,-1508…`),
+/// and `LOAD` is bytes printed as a float.
+fn gossip_state(status: &str, load: Option<&str>) -> Gossip {
+    Gossip {
+        status: status.split(',').next().unwrap_or(status).to_owned(),
+        load: load.and_then(|load| load.trim().parse().ok()),
+    }
+}
+
 /// The node's own name for itself, and what it said. A failure to read
 /// `system.local` is the node failing; a source missing after that is a
 /// metric its version does not have.
-async fn node_report(
-    session: &Session,
-    node: Arc<Node>,
-    table: &TableRef,
-) -> (Option<DriverValue>, NodeReport) {
-    let failed = |reason: String| {
-        (
-            None,
-            NodeReport {
-                address: node.address.ip().to_string(),
-                datacenter: node.datacenter.clone(),
-                version: None,
-                outcome: NodeOutcome::Failed(reason),
-            },
-        )
+///
+/// A node that answered is known by the `host_id` it reports, which behind a
+/// tunnel is the tunnelled node's whatever `Node` the request was aimed at.
+/// One that did not is known by the driver's, the only one there is.
+async fn node_report(session: &Session, node: Arc<Node>, table: &TableRef) -> Answer {
+    let failed = |reason: String| Answer {
+        host: node.host_id.to_string(),
+        report: NodeReport {
+            address: node.address.ip().to_string(),
+            datacenter: node.datacenter.clone(),
+            version: None,
+            gossip: None,
+            outcome: NodeOutcome::Failed(reason),
+        },
+        node: Arc::clone(&node),
     };
 
     let local = match rows(session, &node, LOCAL, ()).await {
@@ -94,7 +199,10 @@ async fn node_report(
     };
 
     let mut columns = local.columns.into_iter();
-    let host = columns.next().flatten();
+    let host = match columns.next().flatten() {
+        Some(DriverValue::Uuid(id)) => id.to_string(),
+        _ => node.host_id.to_string(),
+    };
     let address = columns.next().flatten().and_then(|value| match value {
         DriverValue::Inet(ip) => Some(ip.to_string()),
         _ => None,
@@ -105,6 +213,7 @@ async fn node_report(
     let report = NodeReport {
         address: address.unwrap_or_else(|| node.address.ip().to_string()),
         datacenter: datacenter.or_else(|| node.datacenter.clone()),
+        gossip: None,
         outcome: if version.as_deref().is_some_and(predates_virtual_tables) {
             NodeOutcome::Unsupported
         } else {
@@ -116,7 +225,7 @@ async fn node_report(
         version,
     };
 
-    (host, report)
+    Answer { host, node, report }
 }
 
 fn predates_virtual_tables(version: &str) -> bool {
@@ -543,6 +652,15 @@ mod tests {
                 .is_some_and(f64::is_sign_positive),
             "an empty sum is 0, not -0"
         );
+    }
+
+    #[test]
+    fn a_gossip_status_drops_the_tokens_after_its_state() {
+        let gossip = gossip_state("NORMAL,-1508567132727724545", Some("3168085.0"));
+
+        assert_eq!(gossip.status, "NORMAL");
+        assert_eq!(gossip.load, Some(3_168_085.0));
+        assert_eq!(gossip_state("shutdown,true", None).status, "shutdown");
     }
 
     #[test]

@@ -29,6 +29,7 @@ fn one_node() -> Health {
             address: "10.0.0.1".to_owned(),
             datacenter: None,
             version: Some("5.0.8".to_owned()),
+            gossip: None,
             outcome: NodeOutcome::Read {
                 readings: Readings::default(),
                 thresholds: Thresholds::default(),

@@ -59,10 +59,16 @@ pub(crate) fn render(frame: &mut Frame, view: &HealthView, theme: Theme) {
 
     let mut title = vec![Segment::plain("Health of ")];
     title.extend(view.table.segments());
-    let block = Block::bordered()
+    let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(theme.focus_border())
         .title(crate::drop::title(&title, theme));
+    if let Some(coverage) = &view.coverage {
+        block = block.title_bottom(Line::from(Span::styled(
+            format!(" {coverage} "),
+            theme.style(Token::Muted),
+        )));
+    }
     let inner = body(area);
 
     frame.render_widget(Clear, area);
@@ -244,6 +250,7 @@ mod tests {
                 address: "10.0.0.1".to_owned(),
                 datacenter: Some("dc1".to_owned()),
                 version: Some("5.0.8".to_owned()),
+                gossip: None,
                 outcome: NodeOutcome::Read {
                     readings,
                     thresholds: Thresholds {
@@ -262,6 +269,7 @@ mod tests {
                 rows: panel.rows(),
                 selected: 0,
             },
+            coverage: Some("1 of 1 nodes answered".to_owned()),
             activity: Activity::Resting,
         }
     }
@@ -276,8 +284,11 @@ mod tests {
     }
 
     #[test]
-    fn the_title_names_the_table() {
-        assert!(drawn(100, 30, &loaded()).contains("Health of shop.orders"));
+    fn the_title_names_the_table_and_the_bottom_border_how_many_nodes_answered() {
+        let frame = drawn(100, 30, &loaded());
+
+        assert!(frame.contains("Health of shop.orders"));
+        assert!(frame.contains(" 1 of 1 nodes answered "));
     }
 
     #[test]
@@ -297,6 +308,7 @@ mod tests {
         let view = HealthView {
             table: TableRef::new("shop", "orders"),
             body: HealthBody::Loading,
+            coverage: None,
             activity: Activity::Working { frame: 0 },
         };
         let frame = drawn(100, 30, &view);

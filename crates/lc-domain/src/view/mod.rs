@@ -182,6 +182,9 @@ pub enum OverlayView {
 pub struct HealthView {
     pub table: crate::contents::TableRef,
     pub body: HealthBody,
+    /// `answered of known nodes`, once the read is back: every total in the
+    /// block is over the first number, never the second.
+    pub coverage: Option<String>,
     /// Working while the read is out, which turns the loader on the border.
     pub activity: Activity,
 }
@@ -438,6 +441,13 @@ fn health_view(state: &State, panel: &crate::health::HealthPanel) -> HealthView 
                 rows: panel.rows(),
                 selected: panel.selected(),
             },
+        },
+        coverage: match panel.report() {
+            Report::Loaded(health) => {
+                let (answered, known) = health.coverage();
+                Some(format!("{answered} of {known} nodes answered"))
+            }
+            Report::Loading | Report::Failed(_) => None,
         },
         activity: if panel.is_loading() {
             Activity::Working {
