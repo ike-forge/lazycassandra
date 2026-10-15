@@ -375,6 +375,7 @@ own.
 | `Enter` | Folds or unfolds the row. Inert on a leaf. |
 | `Esc` | Closes. A read still out lands in the Logs trail and nowhere else. |
 | `q` | Quits, as everywhere else. |
+| Left click on a row | Selects it, then `Enter`. Elsewhere in the block, nothing; outside it, closes. |
 
 See [table health design](superpowers/specs/2026-10-13-table-health-design.md).
 
@@ -1699,6 +1700,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | A repeat of the newest replaces it, case-insensitively outside literals and quoted names; an older one is kept again; each connection keeps its own | `a_statement_asked_again_after_another_is_kept_again`, `a_repeat_differing_in_keyword_or_name_case_replaces_the_newest`, `case_inside_a_literal_or_a_quoted_name_is_a_different_statement`, `each_connection_keeps_its_own` (`domain/history.rs`) |
 | `H` opens the health block on a table, from Tables only, and not where it cannot be drawn | `shift_h_on_a_table_opens_the_block_and_reads_that_table`, `shift_h_on_a_keyspace_does_nothing`, `shift_h_outside_tables_does_nothing`, `shift_h_where_the_block_cannot_be_drawn_says_so` (`health.rs`), `the_health_hint_is_live_on_a_table_with_room_for_the_block` (`view/hints.rs`) |
 | Inside the block, `l`/`h`/`⏎` fold as the tree does and motion stays in the block | `l_unfolds_a_metric_into_its_nodes_then_steps_onto_the_first`, `h_steps_out_of_a_node_then_folds_its_metric_then_steps_to_the_heading`, `enter_toggles_a_heading_and_does_nothing_on_a_leaf` (`domain/health.rs`), `motion_inside_the_block_moves_its_cursor_not_the_tree`, `esc_closes_the_block_and_q_quits_from_it` (`health.rs`) |
+| A click on a block row is that row then `Enter`; the rest of the block answers nothing | `a_click_on_a_row_of_the_block_selects_it_and_folds_it_as_enter_does`, `a_click_on_a_row_the_block_no_longer_has_is_dropped`, `a_click_inside_the_block_off_its_rows_keeps_it_open` (`health.rs`), `a_press_on_a_row_names_it_and_the_rest_of_the_block_answers_nothing`, `a_press_on_a_scrolled_block_counts_from_the_row_at_its_top`, `a_waiting_block_still_claims_its_presses` (`inbound/health.rs`) |
 | `ctrl-g` opens the history on the newest entry, from Queries only, and not on nothing | `ctrl_g_opens_the_history_on_the_newest_entry`, `ctrl_g_belongs_to_queries`, `ctrl_g_opens_nothing_with_no_history`, `ctrl_g_opens_nothing_where_the_frame_cannot_draw_it` (`history.rs`) |
 | `⏎` appends the entry and runs nothing; `esc` leaves the buffer alone | `enter_loads_the_entry_into_the_buffer_and_runs_nothing`, `enter_appends_the_entry_after_what_the_buffer_holds`, `a_loaded_entry_can_be_run_straight_away`, `esc_closes_it_and_leaves_the_buffer_alone` (`history.rs`) |
 | The filter's `⏎` closes onto its row before anything loads | `a_filter_narrows_the_list_and_enter_closes_it_onto_the_row_before_loading`, `a_filter_that_matches_nothing_closes_onto_the_row_the_prompt_opened_on`, `esc_in_a_filter_puts_the_cursor_back` (`history.rs`) |
@@ -1901,10 +1903,12 @@ Bound, and spending nothing from §3's budget. See the
 | Left click | A DDL row | Focus DDL, select it |
 | Left click | A tab on a panel's top border | Whatever that tab's key does: focus the panel, and draw the tab |
 | Left click | Chrome | Focus that panel |
-| Left click | Anywhere, overlay up | Dismiss the overlay — except on a confirmation's own block |
+| Left click | Anywhere, overlay up | Dismiss the overlay — except on a confirmation's or the health block's own block |
 | Left press | A confirmation's button (drop, commit, discard) | Lights it solid; dragging off unlights it |
 | Left release | The button that was pressed | Its key: `y`, `n`, `⏎` or `esc`, answered as if typed. Released anywhere else: nothing |
 | Left click | A confirmation's block, off its buttons | Nothing |
+| Left click | A health block row | Select it and fold/unfold it — `Enter`, reached by pointer |
+| Left click | The health block, off its rows | Nothing |
 | Left click | The hint bar | Nothing |
 | Wheel | The panel under the pointer | Scrolls three rows or lines, moving neither focus nor the selection |
 | Wheel | Anywhere, inspector up | Scrolls the inspector three lines |

@@ -169,3 +169,52 @@ fn motion_inside_the_block_moves_its_cursor_not_the_tree() {
     let panel = block(&state).expect("still up");
     assert_eq!(panel.selected(), panel.rows().len() - 1);
 }
+
+fn landed() -> State {
+    let mut state = on_table();
+    let request = request(&press(&mut state, Key::Char('H')));
+    land(&mut state, request, Ok(one_node()));
+    state
+}
+
+#[test]
+fn a_click_on_a_row_of_the_block_selects_it_and_folds_it_as_enter_does() {
+    let mut clicked = landed();
+    let mut typed = landed();
+
+    let effects = point(&mut clicked, Pointer::Entry(1));
+    press(&mut typed, Key::Char('j'));
+    press(&mut typed, Key::Enter);
+
+    let (clicked, typed) = (
+        block(&clicked).expect("still up"),
+        block(&typed).expect("still up"),
+    );
+    assert!(effects.is_empty());
+    assert_eq!(clicked.selected(), 1);
+    assert_eq!(clicked.rows(), typed.rows());
+    assert_ne!(
+        clicked.rows(),
+        block(&landed()).expect("up").rows(),
+        "the heading folded"
+    );
+}
+
+#[test]
+fn a_click_on_a_row_the_block_no_longer_has_is_dropped() {
+    let mut state = landed();
+    let len = block(&state).expect("up").rows().len();
+
+    point(&mut state, Pointer::Entry(len));
+
+    assert_eq!(block(&state).expect("still up").selected(), 0);
+}
+
+#[test]
+fn a_click_inside_the_block_off_its_rows_keeps_it_open() {
+    let mut state = landed();
+
+    point(&mut state, Pointer::Modal);
+
+    assert!(block(&state).is_some());
+}

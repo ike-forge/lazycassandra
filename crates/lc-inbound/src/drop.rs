@@ -217,6 +217,7 @@ pub(crate) fn render(
     Some(Modal {
         area,
         buttons: buttons.at(row),
+        list: None,
     })
 }
 

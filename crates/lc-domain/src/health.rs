@@ -707,6 +707,16 @@ impl HealthPanel {
         }
     }
 
+    /// Moves onto `row`, answering whether the tree has one there.
+    pub fn select(&mut self, row: usize) -> bool {
+        let len = self.rows().len();
+        if row >= len {
+            return false;
+        }
+        self.cursor.go_to(row, len);
+        true
+    }
+
     pub fn down(&mut self) {
         self.cursor.down(self.rows().len());
     }

@@ -10,6 +10,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
 
+use crate::hit::{Listed, Modal};
 use crate::theme::Theme;
 
 const MIN_WIDTH: u16 = 40;
@@ -52,10 +53,10 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
     rect(area).map_or(0, |block| usize::from(body(block).height))
 }
 
-pub(crate) fn render(frame: &mut Frame, view: &HealthView, theme: Theme) {
-    let Some(area) = rect(frame.area()) else {
-        return;
-    };
+/// Draws the block, and answers where it and its rows landed: a press inside
+/// it is the block's, never the click outside that dismisses it.
+pub(crate) fn render(frame: &mut Frame, view: &HealthView, theme: Theme) -> Option<Modal> {
+    let area = rect(frame.area())?;
 
     let mut title = vec![Segment::plain("Health of ")];
     title.extend(view.table.segments());
@@ -81,21 +82,27 @@ pub(crate) fn render(frame: &mut Frame, view: &HealthView, theme: Theme) {
         frame.render_widget(line, place);
     }
 
-    match &view.body {
-        HealthBody::Loading => frame.render_widget(
-            Paragraph::new(Span::styled(
-                "Asking every node…",
-                theme.style(Token::Faint),
-            )),
-            inner,
-        ),
-        HealthBody::Failed(reason) => frame.render_widget(
-            Paragraph::new(Span::styled(
-                reason.clone(),
-                theme.style(Token::Severity(Severity::Danger)),
-            )),
-            inner,
-        ),
+    let list = match &view.body {
+        HealthBody::Loading => {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    "Asking every node…",
+                    theme.style(Token::Faint),
+                )),
+                inner,
+            );
+            None
+        }
+        HealthBody::Failed(reason) => {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    reason.clone(),
+                    theme.style(Token::Severity(Severity::Danger)),
+                )),
+                inner,
+            );
+            None
+        }
         HealthBody::Rows { rows, selected } => {
             let names = rows
                 .iter()
@@ -114,8 +121,20 @@ pub(crate) fn render(frame: &mut Frame, view: &HealthView, theme: Theme) {
                 inner,
                 &mut state,
             );
+
+            Some(Listed {
+                area: inner,
+                first: state.offset(),
+                len: rows.len(),
+            })
         }
-    }
+    };
+
+    Some(Modal {
+        area,
+        buttons: Vec::new(),
+        list,
+    })
 }
 
 /// A warning, or a node's status: prose rather than a name, so it sets no
@@ -224,7 +243,9 @@ mod tests {
         let theme = Theme::of(&ThemeChoice::default());
 
         terminal
-            .draw(|frame| render(frame, view, theme))
+            .draw(|frame| {
+                render(frame, view, theme);
+            })
             .expect("a frame");
 
         terminal
@@ -315,6 +336,61 @@ mod tests {
 
         assert!(frame.contains("Asking every node…"));
         assert!(frame.contains('■'), "the scanner is on the border");
+    }
+
+    /// `view` drawn in a `width`×`height` frame, as the presses it answers.
+    fn pressed(width: u16, height: u16, view: &HealthView) -> crate::hit::FrameMap {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a backend");
+        let mut modal = None;
+        terminal
+            .draw(|frame| modal = render(frame, view, Theme::of(&ThemeChoice::default())))
+            .expect("a frame");
+
+        crate::hit::FrameMap::default().with_modal(modal)
+    }
+
+    #[test]
+    fn a_press_on_a_row_names_it_and_the_rest_of_the_block_answers_nothing() {
+        use lc_domain::pointer::Pointer;
+
+        // The block's body starts at (12, 4) in a 100×30 frame.
+        let map = pressed(100, 30, &loaded());
+
+        assert_eq!(map.press(12, 4), Some(Pointer::Entry(0)));
+        assert_eq!(map.press(80, 5), Some(Pointer::Entry(1)), "the whole width");
+        assert_eq!(map.press(12, 3), Some(Pointer::Modal), "the title border");
+        assert_eq!(map.press(12, 26), Some(Pointer::Modal), "the bottom border");
+        assert_eq!(map.press(0, 0), None, "outside, which dismisses");
+    }
+
+    #[test]
+    fn a_press_on_a_scrolled_block_counts_from_the_row_at_its_top() {
+        use lc_domain::pointer::Pointer;
+
+        let mut view = loaded();
+        let HealthBody::Rows { rows, selected } = &mut view.body else {
+            unreachable!("loaded");
+        };
+        *selected = rows.len() - 1;
+        let last = *selected;
+
+        // Six rows of body, at y=2..8 in a 100×10 frame.
+        let map = pressed(100, 10, &view);
+
+        assert_eq!(map.press(12, 7), Some(Pointer::Entry(last)));
+        assert_eq!(map.press(12, 2), Some(Pointer::Entry(last - 5)));
+    }
+
+    #[test]
+    fn a_waiting_block_still_claims_its_presses() {
+        use lc_domain::pointer::Pointer;
+
+        let view = HealthView {
+            body: HealthBody::Loading,
+            ..loaded()
+        };
+
+        assert_eq!(pressed(100, 30, &view).press(12, 4), Some(Pointer::Modal));
     }
 
     #[test]

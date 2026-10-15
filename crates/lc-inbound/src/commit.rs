@@ -119,6 +119,7 @@ pub(crate) fn render(
     let modal = Modal {
         area,
         buttons: buttons.at(keys),
+        list: None,
     };
 
     let extent = Extent {
@@ -219,6 +220,7 @@ pub(crate) fn render_discard(
     Some(Modal {
         area,
         buttons: buttons.at(row),
+        list: None,
     })
 }
 

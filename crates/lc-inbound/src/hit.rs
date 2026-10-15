@@ -58,15 +58,35 @@ pub(crate) struct MarkAt {
 pub struct FrameMap {
     /// In [`Panel::ALL`] order.
     panels: [PanelHit; 4],
-    /// The modal standing over them, when it has buttons to press.
+    /// The modal standing over them, when it answers presses of its own.
     modal: Option<Modal>,
 }
 
-/// A modal's block and the buttons drawn in it, as a press sees them.
+/// A modal's block and what is drawn in it, as a press sees them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Modal {
     pub(crate) area: Rect,
     pub(crate) buttons: Vec<ButtonAt>,
+    pub(crate) list: Option<Listed>,
+}
+
+/// A list drawn one row to a line down `area`, `first` at its top.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Listed {
+    pub(crate) area: Rect,
+    pub(crate) first: usize,
+    pub(crate) len: usize,
+}
+
+impl Listed {
+    fn row_at(&self, position: Position) -> Option<usize> {
+        if !self.area.contains(position) {
+            return None;
+        }
+        let row = self.first + usize::from(position.y - self.area.y);
+
+        (row < self.len).then_some(row)
+    }
 }
 
 /// One button, and the key pressing it stands for.
@@ -138,21 +158,27 @@ impl FrameMap {
         Self { modal, ..self }
     }
 
-    /// What a press at `column`, `row` means: a modal's button, the modal's
-    /// own block (which answers nothing), or else whatever [`Self::hit`] finds
+    /// What a press at `column`, `row` means: a modal's button, a row of its
+    /// list, the rest of its block (which answers nothing), or else whatever [`Self::hit`] finds
     /// beneath — which, with a modal up, the domain reads as the click outside
     /// it that dismisses it.
     pub(crate) fn press(&self, column: u16, row: u16) -> Option<Pointer> {
         let position = Position::new(column, row);
 
         if let Some(modal) = self.modal.as_ref().filter(|m| m.area.contains(position)) {
-            return Some(
+            let button = modal
+                .buttons
+                .iter()
+                .find(|button| button.area.contains(position))
+                .map(|button| Pointer::Hold(button.key));
+            let entry = || {
                 modal
-                    .buttons
-                    .iter()
-                    .find(|button| button.area.contains(position))
-                    .map_or(Pointer::Modal, |button| Pointer::Hold(button.key)),
-            );
+                    .list
+                    .and_then(|list| list.row_at(position))
+                    .map(Pointer::Entry)
+            };
+
+            return Some(button.or_else(entry).unwrap_or(Pointer::Modal));
         }
 
         self.hit(column, row).map(Pointer::Click)

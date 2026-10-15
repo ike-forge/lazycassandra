@@ -28,6 +28,10 @@ pub enum Pointer {
     /// A press on a modal's own block, off its buttons. Spent on nothing, so
     /// a slip of the pointer inside the question does not answer it.
     Modal,
+    /// A press on a row of a modal's list, by its index in the previous
+    /// frame's list. Selects it and answers `⏎`, as a click on a tree row
+    /// does (design §1).
+    Entry(usize),
     /// Scrolls `panel` without focusing it: scrolling is a glance where
     /// clicking is a commitment
     /// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §6).

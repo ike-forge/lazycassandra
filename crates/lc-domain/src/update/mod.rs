@@ -62,7 +62,7 @@ use connections::{
 use drop::{drop_key, finish_drop, open_drop};
 use edit::{field_key, start_edit};
 use export::{cancel_pending_export, export_key, export_progress, finish_export, open_export};
-use health::{health_key, health_loaded, open_health};
+use health::{health_entry, health_key, health_loaded, open_health};
 use history::{history_key, open_history};
 use insert::{open_insert, open_insert_commit};
 use inspect::{edit_from_grid, inspect_key, inspector_extent, open_inspector};
