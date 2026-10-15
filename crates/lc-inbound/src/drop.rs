@@ -236,17 +236,19 @@ fn set_caret(frame: &mut Frame, inner: Rect, view: &DropView, typed: &TypedName)
     frame.set_cursor_position((cursor_x, inner.y + row));
 }
 
-/// The block's own keys, drawn the way a hint bar draws one
-/// (`hints::Segment::spans`): the key in the colour a shortcut always wears,
-/// the label beside it dim. A key that would do nothing this frame recedes to
-/// `Faint` with its label, an inert hint rather than a live one — the promise
-/// the bar's greyed hints already keep (docs/shortcuts.md §2).
+/// The block's own keys as buttons: the key in the colour a shortcut always
+/// wears and its label beside it, on the quiet band the export form's button
+/// rests on. A key that would do nothing this frame recedes to `Faint` with
+/// its label, an inert hint rather than a live one — the promise the bar's
+/// greyed hints already keep (docs/shortcuts.md §2). The last button stops one
+/// column short of the border.
 pub(crate) fn keys(pairs: &[(&str, &str, bool)], theme: Theme) -> TextLine<'static> {
+    let band = theme.style(Token::Ranged);
     let mut spans = Vec::new();
 
     for (index, (key, label, live)) in pairs.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::raw("    "));
+            spans.push(Span::raw("  "));
         }
 
         let (key_token, label_token) = if *live {
@@ -254,9 +256,16 @@ pub(crate) fn keys(pairs: &[(&str, &str, bool)], theme: Theme) -> TextLine<'stat
         } else {
             (Token::Faint, Token::Faint)
         };
-        spans.push(Span::styled((*key).to_owned(), theme.style(key_token)));
-        spans.push(Span::styled(format!(" {label}"), theme.style(label_token)));
+        spans.push(Span::styled(
+            format!(" {key}"),
+            band.patch(theme.style(key_token)),
+        ));
+        spans.push(Span::styled(
+            format!(" {label} "),
+            band.patch(theme.style(label_token)),
+        ));
     }
+    spans.push(Span::raw(" "));
 
     TextLine::from(spans).right_aligned()
 }
