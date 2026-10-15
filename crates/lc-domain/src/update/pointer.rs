@@ -6,8 +6,8 @@ use crate::pointer::{Click, Held, Mark, Pointer, Wheel};
 use crate::state::{Overlay, Panel, State};
 
 use super::{
-    Effect, activate, axes, escape, open_filter, overlay_key, panel_scroll, row_count, scroll_len,
-    show_tab,
+    Effect, activate, axes, escape, health_entry, open_filter, overlay_key, panel_scroll,
+    row_count, scroll_len, show_tab,
 };
 
 /// Rows a wheel notch moves, in whatever unit the panel scrolls in. One is
@@ -62,6 +62,10 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
                 }
             }
             Pointer::Modal => state.held = None,
+            Pointer::Entry(row) => {
+                state.held = None;
+                return health_entry(state, row);
+            }
             // The modals that are a list or a document: wheeling one is
             // reading it, and a notch is the `j`/`k` the overlay already
             // answers (cell inspector design §4, design §1). The rest are
@@ -88,7 +92,8 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
         | Pointer::Drag(_)
         | Pointer::Release(_)
         | Pointer::Field(_)
-        | Pointer::Modal => {
+        | Pointer::Modal
+        | Pointer::Entry(_) => {
             state.held = None;
             Vec::new()
         }

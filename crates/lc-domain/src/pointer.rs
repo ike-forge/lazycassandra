@@ -31,6 +31,10 @@ pub enum Pointer {
     /// A press on a form's field or radio, which takes effect on the press
     /// as a text field's does.
     Field(crate::export::Field),
+    /// A press on a row of a modal's list, by its index in the previous
+    /// frame's list. Selects it and answers `⏎`, as a click on a tree row
+    /// does (design §1).
+    Entry(usize),
     /// Scrolls `panel` without focusing it: scrolling is a glance where
     /// clicking is a commitment
     /// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §6).

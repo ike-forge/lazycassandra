@@ -60,17 +60,18 @@ pub(crate) struct MarkAt {
 pub struct FrameMap {
     /// In [`Panel::ALL`] order.
     panels: [PanelHit; 4],
-    /// The modal standing over them, when it has buttons to press.
+    /// The modal standing over them, when it answers presses of its own.
     modal: Option<Modal>,
 }
 
-/// A modal's block and the buttons drawn in it, as a press sees them.
+/// A modal's block and what is drawn in it, as a press sees them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Modal {
     pub(crate) area: Rect,
     pub(crate) buttons: Vec<ButtonAt>,
     /// What a press takes effect on, off the buttons: a form's fields.
     pub(crate) fields: Vec<FieldAt>,
+    pub(crate) list: Option<Listed>,
 }
 
 impl Modal {
@@ -79,11 +80,16 @@ impl Modal {
             area,
             buttons,
             fields: Vec::new(),
+            list: None,
         }
     }
 
     pub(crate) fn with_fields(self, fields: Vec<FieldAt>) -> Self {
         Self { fields, ..self }
+    }
+
+    pub(crate) fn with_list(self, list: Option<Listed>) -> Self {
+        Self { list, ..self }
     }
 }
 
@@ -144,6 +150,25 @@ impl TextAt {
         }
 
         self.text.chars().count()
+    }
+}
+
+/// A list drawn one row to a line down `area`, `first` at its top.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Listed {
+    pub(crate) area: Rect,
+    pub(crate) first: usize,
+    pub(crate) len: usize,
+}
+
+impl Listed {
+    fn row_at(&self, position: Position) -> Option<usize> {
+        if !self.area.contains(position) {
+            return None;
+        }
+        let row = self.first + usize::from(position.y - self.area.y);
+
+        (row < self.len).then_some(row)
     }
 }
 
@@ -216,8 +241,8 @@ impl FrameMap {
         Self { modal, ..self }
     }
 
-    /// What a press at `column`, `row` means: a modal's button, the modal's
-    /// own block (which answers nothing), or else whatever [`Self::hit`] finds
+    /// What a press at `column`, `row` means: a modal's button, a row of its
+    /// list, the rest of its block (which answers nothing), or else whatever [`Self::hit`] finds
     /// beneath — which, with a modal up, the domain reads as the click outside
     /// it that dismisses it.
     pub(crate) fn press(&self, column: u16, row: u16) -> Option<Pointer> {
@@ -231,15 +256,19 @@ impl FrameMap {
             {
                 return Some(Pointer::Hold(button.key));
             }
+            if let Some(field) = modal
+                .fields
+                .iter()
+                .find(|field| field.area.contains(position))
+            {
+                return Some(Pointer::Field(field.target.at(column - field.area.x)));
+            }
 
             return Some(
                 modal
-                    .fields
-                    .iter()
-                    .find(|field| field.area.contains(position))
-                    .map_or(Pointer::Modal, |field| {
-                        Pointer::Field(field.target.at(column - field.area.x))
-                    }),
+                    .list
+                    .and_then(|list| list.row_at(position))
+                    .map_or(Pointer::Modal, Pointer::Entry),
             );
         }
 

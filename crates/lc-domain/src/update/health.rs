@@ -125,3 +125,17 @@ pub(super) fn health_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     Vec::new()
 }
+
+/// A click on a row of the block: the row, then `⏎`. A row the previous frame
+/// drew and this one no longer has is dropped rather than clamped (mouse input
+/// design §6).
+pub(super) fn health_entry(state: &mut State, row: usize) -> Vec<Effect> {
+    let Some(Overlay::Health(panel)) = &mut state.overlay else {
+        return Vec::new();
+    };
+    if !panel.select(row) {
+        return Vec::new();
+    }
+
+    health_key(state, Key::Enter)
+}
