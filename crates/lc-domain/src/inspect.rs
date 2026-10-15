@@ -288,6 +288,25 @@ impl Inspector {
         self.inspected.values().get(self.field_at_cursor())
     }
 
+    /// How many values the block draws.
+    #[must_use]
+    pub fn field_count(&self) -> usize {
+        self.inspected.values().len()
+    }
+
+    /// Puts the cursor on the first line of the `at`th drawn value.
+    pub fn focus_field(&mut self, at: usize) {
+        let before = self
+            .inspected
+            .values()
+            .iter()
+            .take(at)
+            .map(|value| lines(value).len())
+            .sum();
+
+        self.go_to(before);
+    }
+
     /// Opens `field` over the value the cursor is on.
     pub fn start_edit(&mut self, field: Field) {
         self.field = Some(field);
