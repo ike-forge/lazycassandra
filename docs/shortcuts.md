@@ -68,8 +68,8 @@ on the mode rather than fixed to the panel:
 | Tables | The node's bare name — `shop`, `shop.orders` — not a CSV line |
 | Any panel, a selection held | Every selected row, in the order the rows are drawn — every column in column mode, every row of the rectangle in cell mode — one line each, joined with `\n`, no trailing newline and nothing between the groups. A single cell in cell mode still yanks bare. |
 
-See [yank design](specs/2026-08-13-yank-design.md) §2 and
-[yank selection modes](specs/2026-08-13-yank-selection-modes-design.md) §1.
+See [yank design](superpowers/specs/2026-08-13-yank-design.md) §2 and
+[yank selection modes](superpowers/specs/2026-08-13-yank-selection-modes-design.md) §1.
 
 ³ Except in Queries with a completion popup up, where it accepts the selected
 candidate — as `⏎` does there too. The Queries subsection below is where that
@@ -82,13 +82,13 @@ binding is learned by looking at the panel rather than by reading this file
 (vision.md §4, principle 1). The number is drawn in the same style as the
 panel's active tab: it names the panel, and so does the tab. A tab with a
 number of its own, Logs' `[5]-`, carries it ahead of its name.
-See [panel numbers design](specs/2026-08-15-panel-numbers-design.md).
+See [panel numbers design](superpowers/specs/2026-08-15-panel-numbers-design.md).
 
 Moving focus — by `Tab`, `Shift-Tab`, a number, `Enter` on a table or a
 click — drops the selection of the panel being left, so only the focused panel
 ever holds one: a selection says what the next command acts on, and the next
 command acts on what has focus
-([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §4).
+([multi-group selection design](superpowers/specs/2026-08-14-multi-group-selection-design.md) §4).
 
 `1` `2` `3` `4` run down the frame in the order the panels are drawn —
 top-left, bottom-left, top-right, bottom-right — and `Tab` walks the same
@@ -127,7 +127,7 @@ nothing the user chose.
 On a keyspace the DDL strip draws one tab, so walking stays on it. A table's
 three no longer fit a sidebar of the usual width, where the strip draws them
 short — `DDL - Cols - Idx` — rather than dropping the two not being read
-([ddl tabs design](specs/2026-08-12-ddl-tabs-design.md) §4). A press that
+([ddl tabs design](superpowers/specs/2026-08-12-ddl-tabs-design.md) §4). A press that
 stored a tab nothing draws would put the panel somewhere the user cannot see it
 is. The tab the panel was left on is kept, not reset: stepping onto a keyspace
 and back is navigation, and it may not cost you the tab you were reading.
@@ -219,10 +219,10 @@ that keystroke is the prompt's first or one that walks a term that used to
 match into one that no longer does. `Esc` restores `origin` alongside the
 search it restores, so an abandoned prompt leaves the panel exactly as it
 was found.
-See [panel search design](specs/2026-08-10-panel-search-design.md) §3,
-[search that highlights rather than hides](specs/2026-08-15-search-highlight-design.md) §5.2
-[Tables drops the keyspaces a search never reaches](specs/2026-08-31-tables-filter-design.md) §1
-and [Tables drops the tables a search never reaches](specs/2026-09-18-tables-filter-rows-design.md) §1.
+See [panel search design](superpowers/specs/2026-08-10-panel-search-design.md) §3,
+[search that highlights rather than hides](superpowers/specs/2026-08-15-search-highlight-design.md) §5.2
+[Tables drops the keyspaces a search never reaches](superpowers/specs/2026-08-31-tables-filter-design.md) §1
+and [Tables drops the tables a search never reaches](superpowers/specs/2026-09-18-tables-filter-rows-design.md) §1.
 
 ### The theme picker
 
@@ -271,7 +271,7 @@ list that is different, which costs more than the arm does.
 Live preview is why the picker restores rather than merely reverts: a message
 arriving over an open picker, or a frame shrinking below it, unwinds the
 preview the same way `Esc` does, so a half-previewed theme never strands
-itself. See [themes design](specs/2026-08-10-themes-design.md) §6.
+itself. See [themes design](superpowers/specs/2026-08-10-themes-design.md) §6.
 
 The picker is behind ctrl because a shifted letter was not free to give it a
 plain-key opener of its own: `T` was the one shifted letter ever bound and
@@ -317,7 +317,7 @@ hidden.
 choice, and nothing re-offers it, so without a way back a dismissed picker
 would be final and a connection opened by mistake would cost a restart.
 
-See [connection picker design](specs/2026-08-31-connection-picker-design.md)
+See [connection picker design](superpowers/specs/2026-08-31-connection-picker-design.md)
 §3, §4, §5.
 
 ### The query history
@@ -418,7 +418,7 @@ file has a problem it never appears at all.
 Unlike the palette, the prompt and the theme picker, `q` does nothing here
 rather than quitting: a diagnostics list is read once and dismissed, and the
 one key a user reaches for on a screen full of text they did not ask to read
-is `Esc`, not `q` — see [design](specs/2026-08-14-configuration-design.md) §9.
+is `Esc`, not `q` — see [design](superpowers/specs/2026-08-14-configuration-design.md) §9.
 
 ### The export form
 
@@ -463,7 +463,7 @@ confirmation over the form rather than a sixth overlay variant:
 | `Space` / `Enter` | Confirms, and re-emits the export with `overwrite: true`. |
 | `Esc` | Returns to the form, every field exactly as it was. |
 
-See [export design](specs/2026-08-14-export-design.md) §2, §7.
+See [export design](superpowers/specs/2026-08-14-export-design.md) §2, §7.
 
 ### The drop confirmation
 
@@ -502,7 +502,7 @@ showing a table rather than a typed statement, that table is in the loaded
 schema, every partition and clustering column is among the page's columns,
 and every one of those values is one this program can spell as a CQL literal.
 A `DELETE` restricts the whole primary key or it deletes something else. See
-[drop design](specs/2026-08-31-drop-design.md) §3.1 for what is spelled and
+[drop design](superpowers/specs/2026-08-31-drop-design.md) §3.1 for what is spelled and
 what is refused.
 
 On a connection whose posture permits no mutation `d` opens nothing at all and
@@ -550,7 +550,7 @@ panel's own read, which resets its cursor, viewport and selection: the rows
 the selection named are the rows that are gone. `r` is still unbound, because
 a refresh key is a binding with its own argument to make.
 
-See [drop design](specs/2026-08-31-drop-design.md).
+See [drop design](superpowers/specs/2026-08-31-drop-design.md).
 
 ### Motion
 
@@ -591,7 +591,7 @@ picker, page the editor, or nothing under a search prompt — `ctrl-d` does.
 `End` reaches the last row everywhere it applies, DDL included — a list
 has an end, not a document with room to scroll past its last line. Both are
 the same `Motion::End`, resolved by the focused panel
-([panel scrolling design](specs/2026-08-09-panel-scrolling-design.md)). Table
+([panel scrolling design](superpowers/specs/2026-08-09-panel-scrolling-design.md)). Table
 DDL is the one place paging is not exact: `PageDown`/`PageUp` move the cursor
 by the panel's height counted in wrapped **lines**, while the cursor itself
 counts **rows**, so a page overshoots on a run of wrapped values. `Home` and
@@ -599,7 +599,7 @@ counts **rows**, so a page overshoots on a run of wrapped values. `Home` and
 counting in either unit. The fix needs a line-to-row map from the renderer,
 and the design accepted the imprecision rather than build one for a panel
 that usually fits on one screen
-([ddl selection design](specs/2026-08-10-ddl-selection-design.md) §4).
+([ddl selection design](superpowers/specs/2026-08-10-ddl-selection-design.md) §4).
 An open Cql buffer never reaches `Motion::End` at all: the editor claims
 `Home`/`End` itself, before the match that would call it (queries editor design
 §3). A closed one resolves every motion but the two paging ones against its
@@ -610,7 +610,7 @@ screen (cql statement selection design §7).
 The Contents grid has two axes, and only `h`/`l`/`←`/`→` reach the second one.
 `Home`, `End`, `PageUp` and `PageDown` move the **row** cursor there, as they do
 everywhere else; the column cursor moves one column at a time or not at all, and
-§4 says why ([table display design](specs/2026-08-10-table-display-design.md) §2).
+§4 says why ([table display design](superpowers/specs/2026-08-10-table-display-design.md) §2).
 The column offset follows the cell the way the row offset follows the row, and
 the panel's bottom border grows a scrollbar exactly when a column is off screen.
 
@@ -631,7 +631,7 @@ contents and every row from there to wherever the cursor moves next is in
 range, drawn as a band rather than picked one at a time. A second `v`
 freezes what is extending — the range stops following the cursor, which is
 then free to walk off it without losing what was marked
-([visual mode design](specs/2026-08-14-visual-mode-design.md) §2).
+([visual mode design](superpowers/specs/2026-08-14-visual-mode-design.md) §2).
 
 `v` reads as one verb with three arms, decided by where the cursor is when it
 is pressed: extending a group freezes it, as above; a row no group holds opens
@@ -639,7 +639,7 @@ a new group there and starts extending it, beside whatever is already frozen;
 a row a group already holds drops that group. There is no way to restart a
 selection from scratch with `v` alone — `Esc` first is the route, since it is
 already the key that means *drop what is held*
-([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §1).
+([multi-group selection design](superpowers/specs/2026-08-14-multi-group-selection-design.md) §1).
 
 `Esc` is a chain of five rungs now rather than three, first hit wins: an
 overlay dismisses; failing that, an extending range freezes exactly the way
@@ -652,7 +652,7 @@ the rule it now is.
 In Table contents, which axis `v` extends is `m`'s to say: cell mode grows
 a rectangle on both cursors at once, row mode a run of rows, column mode a
 run of columns — the same three shapes the panel already draws
-([selection modes design](specs/2026-08-13-selection-modes-design.md) §2).
+([selection modes design](superpowers/specs/2026-08-13-selection-modes-design.md) §2).
 Pressing `m` while a selection stands clears it, groups and all, rather than
 reinterpreting it on the mode's new axis: a rectangle read as a column range
 would name cells nobody selected, and a key that quietly repaints what is
@@ -682,7 +682,7 @@ column, in column mode — as one line each, in the order the rows are drawn,
 joined with `\n` and no trailing newline, with nothing between the groups; a
 single cell in cell mode still yanks bare, unescaped, exactly as it always
 did. §1's `y` footnote table carries the row-by-row shape
-([multi-group selection design](specs/2026-08-14-multi-group-selection-design.md) §5).
+([multi-group selection design](superpowers/specs/2026-08-14-multi-group-selection-design.md) §5).
 
 ### Tables panel
 
@@ -715,7 +715,7 @@ the read.
 Reading a table cancels whatever read Contents was waiting on, and moves focus
 to Contents immediately rather than when the page lands: focus is a consequence
 of the keypress, not of the network
-([table display design](specs/2026-08-10-table-display-design.md) §1). A refused
+([table display design](superpowers/specs/2026-08-10-table-display-design.md) §1). A refused
 read moves it too — the panel is where the refusal is narrated. Returning is
 `Tab` or `t`, and the tree selection is where you left it.
 
@@ -743,7 +743,7 @@ viewport a line without the cursor, are gone.
 
 DDL is still the one panel whose cursor and viewport count in different
 units and can therefore disagree
-([design](specs/2026-08-10-ddl-selection-design.md) §4.1). What is left to move
+([design](superpowers/specs/2026-08-10-ddl-selection-design.md) §4.1). What is left to move
 the viewport alone is the wheel (§7), which is a look somewhere else rather
 than a way to reach a row; the next `j` or `k` brings the viewport back to the
 cursor. `ctrl-e`/`ctrl-y` went because a viewport the cursor keeps yanking back
@@ -1028,7 +1028,7 @@ A keyword is accepted upper case; a name is accepted exactly as the cluster
 spells it. Accepting a **qualified column** — one offered where the statement
 names no table — also writes the `FROM` clause that puts it in scope, at the
 end of that statement, leaving the cursor on the select list. See
-[completion ranking design](specs/2026-08-17-completion-ranking-design.md).
+[completion ranking design](superpowers/specs/2026-08-17-completion-ranking-design.md).
 
 `Tab` and `Shift-Tab` still reach here, except as ³ says, but from the Cql tab
 neither leaves the panel outright: `Tab` lands on the Logs tab first, the
@@ -1038,9 +1038,9 @@ instead, since Logs sits after Cql in the cycle, not before it. Nothing else
 global survives inside an open buffer — including `q`, which types a `q`. `ctrl-r` is not global either:
 it is the ctrl layer's Queries member and does nothing outside this panel,
 and neither does `ctrl-e`, which opens the buffer in the user's editor
-([external editor design](specs/2026-08-12-external-editor-design.md) §1).
-See [queries editor design](specs/2026-08-09-queries-editor-design.md) and
-[query editor design](specs/2026-08-16-query-editor-design.md).
+([external editor design](superpowers/specs/2026-08-12-external-editor-design.md) §1).
+See [queries editor design](superpowers/specs/2026-08-09-queries-editor-design.md) and
+[query editor design](superpowers/specs/2026-08-16-query-editor-design.md).
 
 ### Logs tab
 
@@ -1144,8 +1144,8 @@ panel's banded statement, `ctrl-e` opens the buffer in an external editor, `ctrl
 out, and `ctrl-n`/`ctrl-p` walk the completion popup: the panel takes
 text, so every printable key there is a character and none of those actions has
 an unmodified key available
-([query execution design](specs/2026-08-10-query-execution-design.md) §1,
-[external editor design](specs/2026-08-12-external-editor-design.md) §1).
+([query execution design](superpowers/specs/2026-08-10-query-execution-design.md) §1,
+[external editor design](superpowers/specs/2026-08-12-external-editor-design.md) §1).
 `ctrl-e` carries a second meaning too, over Table contents: it opens the
 export form, gated on focus exactly as `ctrl-r`'s one meaning already is —
 a chord is never a synonym for the plain key, and nothing in the rule says
@@ -1155,7 +1155,7 @@ the query history, for the reason §1's history subsection gives. `ctrl-f`,
 `ctrl-n` and `ctrl-p` are Queries members exactly as `ctrl-r` is, gated on that
 panel and inert outside it; none of them shadows the plain `f`, `n` or `p`,
 and `n`/`N` still walk a search
-([query editor design](specs/2026-08-16-query-editor-design.md) §4.2, §5.5).
+([query editor design](superpowers/specs/2026-08-16-query-editor-design.md) §4.2, §5.5).
 `ctrl-d` and `ctrl-u` are the exception the rule can afford, and are described
 under §1's motion table: they delegate to the paging arm rather than carry a
 meaning of their own, so the layer still holds nothing that shadows a plain
@@ -1200,7 +1200,7 @@ That is the shape `j`/`k` have had since the first list: "down one row" is a
 tree row, a grid row or a wrapped line depending on what the panel is showing,
 and is inert where it is showing nothing. Reading the horizontal keys as "fold"
 and "unfold" was a description of the only panel that had claimed them, not a
-rule ([table display design](specs/2026-08-10-table-display-design.md) §2).
+rule ([table display design](superpowers/specs/2026-08-10-table-display-design.md) §2).
 
 `Home` and `End` are a second exception. Everywhere else they reach the ends
 of the document; in the editor they reach the ends of the line, because that
@@ -1221,14 +1221,14 @@ row list on screen.
 The condition is on screen — the popup itself — and the bar drops `tab panel`
 and `⏎ newline` for exactly those frames rather than name something the next
 keystroke will not do
-([query editor design](specs/2026-08-16-query-editor-design.md) §5.4,
-[completion ranking design](specs/2026-08-17-completion-ranking-design.md) §5).
+([query editor design](superpowers/specs/2026-08-16-query-editor-design.md) §5.4,
+[completion ranking design](superpowers/specs/2026-08-17-completion-ranking-design.md) §5).
 
 **A binding must be visible.** vision.md §4, principle 1: discoverability is
 ambient. Each panel's title opens with the key that reaches it; the hint bar along
 the bottom row names each focused panel's principal bindings, not its full
 surface — the bar has never claimed to be the complete list
-([design](specs/2026-08-09-hint-bar-design.md) §6). `Esc` is named wherever it
+([design](superpowers/specs/2026-08-09-hint-bar-design.md) §6). `Esc` is named wherever it
 is unconditionally true, in that frame, that pressing it does something —
 which, since the chain's last rung became every panel rather than the editor
 alone, is every frame but Tables' own. The bar names the rung that would fire:
@@ -1277,11 +1277,11 @@ the config key that changes it — greying alone leaves a user who pressed the
 key with nothing, and no bar can say *which* connection is the read-only one.
 There is no way past the modal, deliberately: a posture is a property of the
 connection, and an override key would make it a suggestion
-([posture design](specs/2026-09-02-posture-design.md) §1, §3).
+([posture design](superpowers/specs/2026-09-02-posture-design.md) §1, §3).
 
 The palette is the half of that pair with no discretion. The bar picks what a
 panel's hints teach; the palette claims to be complete, so it may not omit a key
-that does something ([command palette design](specs/2026-08-09-command-palette-design.md)
+that does something ([command palette design](superpowers/specs/2026-08-09-command-palette-design.md)
 §2). That claim is about keys, not about wordings. The shared motions — `j`/`k`,
 `h`/`l`, the arrows, the paging keys, `Home`/`End` — are listed once, under
 `Navigate`, and worded for the movement rather than for what a panel makes of
@@ -1304,7 +1304,7 @@ The Table contents selection mode does not touch this. `m` changes what the
 grid highlights — a row, a column, or the cell they cross — and no key changes
 meaning: `j`/`k` move the row cursor and `h`/`l` go one column left or right in
 all three modes, exactly as they did when there was only one way to draw them
-([design](specs/2026-08-13-selection-modes-design.md) §3). Row mode spends that
+([design](superpowers/specs/2026-08-13-selection-modes-design.md) §3). Row mode spends that
 column on the window rather than on the cursor it does not paint (the design's
 2026-09-02 amendment), which is the same key with the same meaning resolved in
 the vocabulary of what is on screen — the shape §2 already gives `h`/`l` across
@@ -1313,7 +1313,7 @@ this rule, and is not what this is.
 
 The command palette sits above that. It is opened deliberately with `?`, closes
 with either `?` or `esc` — both named on its bar
-([design](specs/2026-08-09-command-palette-design.md) §7) — and while it is up it
+([design](superpowers/specs/2026-08-09-command-palette-design.md) §7) — and while it is up it
 takes motion, runs the selected row on `⏎`, leaves `q` quitting, and makes
 every other key inert rather than dismissing. A key that means "close" in one
 frame and something else in the next is the ambiguity both halves of this
@@ -1330,7 +1330,7 @@ and is listing them itself. The search prompt, the
 export form and the filter prompt are excluded — the prompt reads against the
 panel it filters, the form confirms what the grid beneath it has selected, and
 the filter narrows that same grid
-([command palette design](specs/2026-08-09-command-palette-design.md) §8).
+([command palette design](superpowers/specs/2026-08-09-command-palette-design.md) §8).
 
 The search prompt sits at the same rank, entered deliberately with `/` and
 left with `Enter` or `Esc`. Unlike the palette it takes text, not motion:
@@ -1891,7 +1891,7 @@ happens at all.
 ## 7. The pointer
 
 Bound, and spending nothing from §3's budget. See the
-[mouse input design](specs/2026-08-09-mouse-input-design.md).
+[mouse input design](superpowers/specs/2026-08-09-mouse-input-design.md).
 
 | Gesture | Lands on | Action |
 |---|---|---|
@@ -1936,7 +1936,7 @@ bent.
 
 A click on a row's number is a click on that row, and names no column: the bar
 and the gutter share one widget column that is not a column of the page
-([table display design](specs/2026-08-10-table-display-design.md) §8), so a
+([table display design](superpowers/specs/2026-08-10-table-display-design.md) §8), so a
 press there moves the row cursor and leaves the column cursor alone.
 
 **The two heading marks answer a press in any selection mode**, unlike the
@@ -1981,7 +1981,7 @@ the user acts on* is reachable only by mouse. The selection, which every
 command operates against, is moved only by things the bar names; what the wheel
 moves alone is which rows you are looking at, and the panel shows that in the
 scrollbar rather than in the bar
-([list viewport design](specs/2026-08-09-list-viewport-design.md) §1).
+([list viewport design](superpowers/specs/2026-08-09-list-viewport-design.md) §1).
 
 Any further gesture is measured against the narrower rule, not this exception.
 

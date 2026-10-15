@@ -1001,15 +1001,12 @@ fn takes_text(state: &State) -> bool {
             | Overlay::Connections { sift, .. }
             | Overlay::History { sift, .. },
         ) => sift.is_some(),
-        // `Fatal` is unreachable here — `handle_key` claims every press for
-        // it before this is consulted — but written down anyway, rather than
-        // grouped with `Message`/`None`, because neither it nor `Diagnostics`
-        // has text of its own to type into.
         // The inspector takes text on exactly the frames a field is open,
         // the rule the prompt and the form follow (cell editing design §3).
         Some(Overlay::Inspect(inspector)) => inspector.field().is_some(),
-        // Neither confirmation has a field to type into either; the commit
-        // block drives a body `g`/`G` move, which `goto` answers below.
+        // None of these has a field to type into. `Fatal` is unreachable —
+        // `handle_key` claims every press for it first. The commit block
+        // drives a body `g`/`G` move, which `goto` answers below.
         Some(
             Overlay::Diagnostics(_)
             | Overlay::Health(_)

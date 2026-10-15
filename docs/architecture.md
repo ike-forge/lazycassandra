@@ -1,66 +1,15 @@
 # LazyCassandra — Architecture
 
-Companion to [VISION.md](VISION.md). This document covers structure and the
+Companion to [vision.md](vision.md). This document covers structure and the
 decisions already made; open questions are marked as such in §11 rather than
 guessed at.
 
-**Status:** Phase 1 begun — four crates, a running binary, the four-panel TUI
-shell rendering, the driver decided (§8), the first end-to-end query path: a
-keypress becomes an `Effect::Execute` and a driver page becomes a grid
-navigable in both axes, a writable CQL buffer in the Queries panel
-(`editor.rs`), a themed renderer with a runtime picker (`ctrl-t`) over twelve built-in
-themes plus whatever a config file adds (§6), and layered TOML configuration
-with startup diagnostics (§7). The grid now supports row, column and cell
-selection with yank to the clipboard, a visual range over any of the three
-list panels, and `ctrl-e` over a loaded Contents grid opens a form that writes
-the fetched rows or the whole table to a CSV or JSON file. Every read into
-Table contents pages: `p` fetches the next page and `P` fetches until the
-result ends or a memory or row stop (§5, `execute_paged`,
-specs/2026-09-17-grid-paging-design.md). The Queries buffer is now a CQL editor rather than a text
-box: `cql/` scans the buffer once and readers share that scan —
-highlighting into the `Token` path §6 has carried unused since the themes
-slice, a `ctrl-f` that lays a statement out, and a completion popup over CQL's
-keywords and the cluster's own keyspaces and tables
-(docs/superpowers/specs/2026-08-16-query-editor-design.md). `cql/resolve.rs`
-adds a semantic pass over that scan — every identifier gets a role and every
-statement gets the tables it names — read by the highlighter, completion, and
-the grid, so a keyspace colours as a keyspace, completion offers columns, and
-a typed statement's key columns colour in the grid
-(docs/superpowers/specs/2026-08-16-cql-semantics-design.md). The popup ranks
-what it offers by what the grammar takes at the cursor, offers whole statement
-shapes where a statement begins, and writes the `FROM` clause a column offered
-without one implies
-(docs/superpowers/specs/2026-08-17-completion-ranking-design.md). A Logs tab
-beside the CQL buffer now holds a bounded trail of everything the session
-issued and what came back — the connection, the schema read, every query and
-export — and a startup connect or schema failure raises `Overlay::Fatal`, a
-modal with no dismissal that ends the process rather than leaving a
-half-connected app on screen
-(docs/superpowers/specs/2026-08-19-query-log-design.md). The DDL panel's strip
-has a third tab: `Indexes` reads `system_schema.indexes` — metadata the driver
-does not carry — and draws the ways into a table, its primary key first and
-then a block per secondary index
-(docs/superpowers/specs/2026-09-03-ddl-indexes-design.md). `cql/statements.rs`
-splits the buffer into the statements a run acts on — a `;` outside a batch
-ends one, and `BEGIN … APPLY BATCH` is one whole — so a closed Cql tab bands
-the statement its cursor is in, `j`/`k` step that band, and `ctrl-r` sends one
-statement rather than the buffer
-(docs/superpowers/specs/2026-09-18-cql-statement-selection-design.md). Data
-is editable for the first time: `e` inside the inspector opens a field over
-one value, an accepted value is held uncommitted on the `GridPage` beside the
-sort and the filters, `ctrl-s` turns every one of them into an `UPDATE` —
-one bare, several as one logged batch — behind a scrollable confirmation, and
-`q` with anything outstanding warns before it discards
-(docs/superpowers/specs/2026-09-18-cell-editing-design.md). `ctrl-g` in
-Queries opens a per-connection history of what the buffer has run, bounded by
-`history.limit`, held in `State` and kept between runs by the `Store` port in
-`$XDG_STATE_HOME/lazycassandra/history.toml`
-(docs/superpowers/specs/2026-10-09-query-history-design.md). `H` on a
-table opens a health block: `Cluster::table_health` reads every node's
-`system_views` through a single-node load balancing policy, and the domain
-aggregates and flags what it reports
-(docs/superpowers/specs/2026-10-13-table-health-design.md).
-**Last updated:** 2026-10-13
+**Status:** Phase 1 (Browse) built end to end; Phase 2 and 3 begun — table
+health (`H`), cell editing and row insert/delete, drops behind typed
+confirmation. What each slice decided is in its spec under
+[superpowers/specs/](superpowers/specs/); what is bound is in
+[shortcuts.md](shortcuts.md).
+**Last updated:** 2026-10-15
 
 ---
 
@@ -183,25 +132,31 @@ the domain never, so it needs no guard and is free to depend on the offsets
 here and must stay `dyn`-compatible. It is a proc macro over boxed futures, not
 a runtime — it pulls in no executor, so the rule above still holds.
 
+Abridged; the full enums are in `lc-domain/src/update/mod.rs`.
+
 ```rust
 enum Msg {
     // Not crossterm's KeyEvent: the domain owns its own input vocabulary and
     // lc-inbound translates. Same direction of travel as §6's style tokens.
     Input(KeyPress),
-    Tick,
-    SchemaLoaded { conn: ConnId, schema: Schema },
-    PageReady   { query: QueryId, page: Result<Page, DbError> },
-    Failed      { query: QueryId, error: DbError },
+    Pointer(Pointer),
+    Measured(Geometry),
+    Tick(Stamp),
+    SchemaLoaded { conn: ConnId, schema: Box<Schema>, took: Duration },
+    PageReady    { query: QueryId, page: Box<Page>, took: Duration },
+    Failed       { query: QueryId, error: DbError, took: Duration },
     // ...
 }
 
 enum Effect {
-    Connect(ConnId),
+    Connect { conn: ConnId, target: Box<ConnectionConfig>, driver: DriverConfig },
     LoadSchema(ConnId),
-    Execute { conn: ConnId, query: QueryId, stmt: Statement },
-    FetchNextPage { conn: ConnId, query: QueryId, cursor: PagingState },
+    Execute { conn: ConnId, query: QueryId, stmt: Box<Statement> },
+    ExecutePaged { conn: ConnId, query: QueryId, stmt: Box<Statement>,
+                   page_size: PageSize, cursor: Option<PagingState> },
     Cancel(QueryId),
-    RecordHistory(Statement),
+    RecordHistory(Box<Statement>),
+    // ...
     Quit,
 }
 ```
@@ -241,18 +196,29 @@ Testing the whole application becomes synchronous. `update` is a function from
 ```
 lc-domain/src/
   model/        # Schema, Keyspace, Table, PrimaryKey, CqlValue, Statement
-  state.rs      # State, Panel, selection, in-flight registry
-  tree.rs       # the Tables panel's tree: unfold set, flattening, transitions
-  contents.rs   # the Contents panel: the outstanding read and its result
-  editor.rs     # the Queries panel's text buffer
-  log.rs        # the Logs tab: a bounded trail of what ran
-  clock.rs      # the wall-clock, as a value handed in
-  cell.rs       # one CqlValue as the text a grid draws
+  state.rs      # State, Panel, Cursor, Scroll, Selection, Overlay, Geometry
   update/       # update() and its dispatch; one module per overlay or flow
-  view.rs       # ViewModel projection (see §3)
+  view/         # ViewModel projection (see §3), hint bar bindings
   ports.rs      # trait definitions (see §5)
+  tree.rs       # Tables panel: unfold set, flattening, transitions
+  ddl.rs        # DDL panel and its tabs
+  contents.rs   # Contents panel: the outstanding read and its result
+  grid.rs       # column widths and horizontal fitting
+  queries.rs    # Queries panel: Cql/Logs tabs over the editor
+  editor.rs     # the CQL text buffer
+  cql/          # lexer, resolver, statements, completion, formatter
+  log.rs        # Logs tab: a bounded trail of what ran
+  history.rs    # per-connection query history
+  commands.rs   # the command palette: every binding
+  search.rs     # panel and overlay search
+  inspect.rs    # cell inspector; edit.rs, commit.rs, drop.rs its write flows
+  export.rs     # export form and row serialisation
+  health.rs     # table health aggregation and flags
+  yank.rs       # what a selection copies
+  config.rs     # the merged, validated Config
+  theme.rs      # ThemeChoice; style.rs semantic tokens (see §6)
   posture.rs    # read-only / writable / protected rules
-  style.rs      # semantic style tokens (see §6)
+  clock.rs      # the wall-clock, as a value handed in
 ```
 
 Two model choices worth stating now:
@@ -280,9 +246,10 @@ async.
 |---|---|
 | `Cluster` | connect, describe schema, execute, execute paged, node/table state |
 | `ConfigSource` | locate, layer and validate config files; never fails |
+| `ConfigSink` | write the chosen theme back into the user config |
 | `SecretResolver` | resolve a credential (literal / env / file) to a value |
-| `Store` | query history, saved queries |
-| `Writer` | open a destination and stream an export to it |
+| `Store` | query history |
+| `Writer` | open a destination as a `Sink` an export streams into |
 
 Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
 `#[async_trait]` on the async ones until native AFIT is `dyn`-safe.
@@ -318,7 +285,7 @@ enum Token {
 }
 ```
 
-A theme is a `Palette` — a struct of 30 plain `Color` fields, no
+A theme is a `Palette` — a struct of 29 plain `Color` fields, no
 `Option<Color>` — plus one `Token -> ratatui::Style` function shared by every
 theme, both in `lc-inbound`. `ThemeChoice` lives in `lc-domain` instead,
 because a theme *name* is not a colour: `State.theme` holds one.
@@ -383,7 +350,7 @@ Full design: specs/2026-08-14-configuration-design.md.
 ## 8. Driver — decided
 
 `scylla` 1.7.0, default features. The spike is written up in
-[specs/2026-08-08-keyspace-list-design.md](specs/2026-08-08-keyspace-list-design.md) §2.
+[specs/2026-08-08-keyspace-list-design.md](superpowers/specs/2026-08-08-keyspace-list-design.md) §2.
 
 | Candidate | Outcome |
 |---|---|
@@ -460,9 +427,10 @@ in VISION §8.
 - **Where schema caching lives.** Domain (testable, but the domain starts
   holding a cache invalidation problem) or adapter (simpler domain, but cache
   behaviour becomes untestable at the fast tier).
-- **Panic and terminal restoration.** Raw mode must be restored on panic or the
-  user's terminal is left broken. An RAII guard plus a panic hook is the plan;
-  the interaction with tokio worker panics needs verifying.
+- **Panic on a tokio worker.** `ratatui::init`'s hook restores the terminal
+  on any panic, but a worker panic does not end the process: the terminal is
+  restored under a program that is still drawing, and the effect's result
+  `Msg` is never sent.
 
 ## 12. Conventions
 

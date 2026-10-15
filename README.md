@@ -16,7 +16,9 @@ panel layout keep your data and its physical shape side by side.
 - **Explore and export.** Paging, local sorting and filtering, full-value
   inspection, clipboard selection, and CSV/JSON exports.
 - **Control writes.** Read-only by default, with CQL previews before committing
-  cell edits or deleting rows.
+  cell edits, inserting or deleting rows.
+- **Check table health.** Per-node storage, latency, tombstone and compaction
+  readings from `system_views`, flagged against the node's own thresholds.
 
 ## In action
 
@@ -81,7 +83,9 @@ The bottom bar shows contextual actions; `?` lists all commands.
 | `Ctrl-r` / `Ctrl-f` | Run the current CQL statement / format the buffer |
 | `Ctrl-n` / `Ctrl-p` | Next / previous CQL completion; `Tab` or `Enter` accepts |
 | `Ctrl-e` | Export from contents; open `$VISUAL` / `$EDITOR` from Queries |
-| `e` · `Ctrl-s` | Edit a value in the inspector · preview and commit edits from contents |
+| `e` · `i` · `Ctrl-s` | Edit a value in the inspector · insert a row · preview and commit edits from contents |
+| `H` | Table health: storage, latencies, tombstones and compaction per node |
+| `Ctrl-g` | Query history for this connection, from Queries |
 | `d` | Confirm a table/keyspace drop or row deletion, when writes are enabled |
 | `Ctrl-o` / `Ctrl-t` | Connection picker / theme picker |
 | `Esc` / `q` | Back out or stop fetching / quit |
@@ -134,8 +138,8 @@ custom themes, backgrounds, mouse input, driver settings, and export defaults.
 
 ## Project
 
-LazyCassandra is under active development. Cluster monitoring, query analysis,
-and persistent query history are on the [roadmap](docs/vision.md#7-roadmap).
+LazyCassandra is under active development. Cluster operations and query
+analysis are on the [roadmap](docs/vision.md#7-roadmap).
 Found a bug or have an idea? [Open an issue](https://github.com/ike-forge/lazycassandra/issues).
 
 For local development and the sample Cassandra cluster, see the

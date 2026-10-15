@@ -3,8 +3,9 @@
 > A terminal UI for Apache Cassandra, in the tradition of LazyGit, LazySQL, and k9s.
 > Fast for experts. Legible for everyone else.
 
-**Status:** pre-implementation. This document is the north star, not a spec.
-**Last updated:** 2026-08-15
+**Status:** north star, not a spec. Progress against §7 is in
+architecture.md.
+**Last updated:** 2026-10-15
 
 ---
 
@@ -155,7 +156,7 @@ Themes come in two kinds. Ours — Default, Ash, Beacon and Quill, each light
 and dark — are held to the contrast rules above. Ported palettes, Catppuccin
 today, are their authors' work: we take them as given and impose nothing on
 them beyond deciding whether to ship them, which is stated in the type system
-rather than in a comment. `T` moves between all twelve with a live preview.
+rather than in a comment. `ctrl-t` moves between all twelve with a live preview.
 
 Users who run a translucent, blurred or image background can declare it:
 `background = "terminal"` paints no ground at all, and `background =
@@ -164,7 +165,7 @@ contrast guarantee of *our* palettes, whose ratios are measured against the
 theme's own declared `base` — override the ground and the measurement no
 longer describes what is on screen. That is the user's call to make and
 theirs to tune around, not a degraded mode. See architecture.md §6 and
-specs/2026-08-13-colour-palettes-design.md.
+[the palettes spec](superpowers/specs/2026-08-13-colour-palettes-design.md).
 
 **6. Destructive things are obvious, reversible, or confirmed — pick two.**
 Read-only is the default posture on any connection not explicitly marked
@@ -336,10 +337,10 @@ real-time display that a novice can still read) · `tig`, `gitui`, `bottom`,
 
 **Rust.** Chosen for the latency floor (principle 7), for a single static binary
 with no runtime, and because a long-lived TUI holding cluster state benefits
-from the type system. `ratatui` for rendering. Driver selection is deliberately
-open pending Phase 0 evaluation.
+from the type system. `ratatui` for rendering, `scylla` as the driver
+(architecture.md §8).
 
 Architecturally: the TUI layer must not know how to talk to Cassandra, and the
 Cassandra layer must not know there is a TUI. A headless core that can be driven
-by tests — and eventually by a script or a non-interactive command — is the
-constraint that keeps both halves honest.
+by tests is the constraint that keeps both halves honest; it is not a promised
+CLI (architecture.md §9).
