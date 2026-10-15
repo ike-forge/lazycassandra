@@ -444,8 +444,8 @@ does nothing here.
 
 The bar names what the stop under `tab` answers to: `tab next option` always,
 `space toggle` on a radio group, nothing more on the path stop, where `space` is text, and
-`space/⏎ export` on the Export stop, which is drawn as a filled button, on the
-selection ground while `tab` is on it. `esc close` follows. The overwrite
+`space/⏎ export` on the Export stop, which is drawn as a quiet band, filled solid
+while `tab` is on it. `esc close` follows. The overwrite
 confirmation's bar is `space/⏎ overwrite` and `esc back`.
 
 `ctrl-d`/`ctrl-u` are the only ctrl chords answered while the form is up —

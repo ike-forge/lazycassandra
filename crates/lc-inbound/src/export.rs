@@ -301,18 +301,16 @@ fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
     (visible, cursor - first)
 }
 
-/// A filled block, as lazysql draws its buttons: reversed while at rest, on
-/// the selection ground while `tab` is on it. The key that presses it is the
-/// bar's to name, not the button's.
+/// A band at rest, filled solid while `tab` is on it: focus is the louder
+/// state, as it is for every other stop. The key that presses it is the bar's
+/// to name, not the button's.
 fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
     let style = if focused {
         theme
-            .style(Token::Selected)
-            .patch(theme.style(Token::Focused))
-    } else {
-        theme
             .style(Token::HintAction)
-            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+    } else {
+        theme.style(Token::Ranged)
     };
 
     TextLine::from(Span::styled(format!("  {label}  "), style))
@@ -517,22 +515,20 @@ mod tests {
     }
 
     #[test]
-    fn the_export_button_takes_the_selection_ground_only_under_tab() {
+    fn the_export_button_fills_solid_only_under_tab() {
+        use ratatui::style::Modifier;
+
         let theme = Theme::default();
-        let ground = theme
-            .style(lc_domain::style::Token::Selected)
-            .bg
-            .expect("the selection spends a ground");
 
         assert_eq!(
-            super::button("Export", true, theme).spans[0].style.bg,
-            Some(ground)
+            super::button("Export", true, theme).spans[0].style,
+            theme
+                .style(lc_domain::style::Token::HintAction)
+                .add_modifier(Modifier::REVERSED | Modifier::BOLD)
         );
         assert_eq!(
             super::button("Export", false, theme).spans[0].style,
-            theme
-                .style(lc_domain::style::Token::HintAction)
-                .add_modifier(ratatui::style::Modifier::REVERSED)
+            theme.style(lc_domain::style::Token::Ranged)
         );
     }
 
