@@ -1599,6 +1599,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | A stale row or column is dropped, not clamped | `a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped`, `a_click_on_a_ddl_row_that_has_gone_is_dropped_rather_than_clamped`, `a_click_on_a_column_that_has_gone_is_dropped_rather_than_clamped` |
 | A click spends itself on the overlay | `a_click_dismisses_the_overlay_and_does_nothing_else`, `a_wheel_does_not_dismiss_the_overlay` |
 | A button is its key; the block around it answers nothing; outside it closes | `a_button_answers_as_its_key_does_on_release`, `dragging_off_a_button_unlights_it_and_releasing_elsewhere_cancels`, `a_release_without_a_press_on_the_button_answers_nothing`, `a_click_on_the_modal_off_its_buttons_answers_nothing`, `a_click_outside_the_modal_closes_it`, `a_press_resolves_to_a_button_the_block_or_the_world_outside`, `a_held_button_is_drawn_solid_and_its_neighbour_is_not` (`inbound/drop.rs`) |
+| The export form's elements answer the pointer | `the_export_button_runs_on_release_from_any_stop`, `releasing_off_the_export_button_runs_nothing`, `pressing_a_format_radio_chooses_it_focuses_the_group_and_rewrites_the_extension`, `pressing_a_scope_chooses_it_and_the_count_field_chooses_the_first_scope`, `pressing_the_path_places_the_caret_and_focuses_it`, `a_press_on_the_form_that_hits_no_field_leaves_it_open` (`update/tests/export.rs`), `every_element_of_the_form_resolves_a_press_to_itself`, `a_press_past_the_end_of_the_path_places_the_caret_at_the_end` (`inbound/export.rs`) |
 | The wheel scrolls without focusing | `a_wheel_scrolls_the_panel_under_it_without_focusing_it`, `a_wheel_over_the_ddl_panel_scrolls_its_lines`, `a_wheel_over_a_panel_with_nothing_to_scroll_is_inert`, `a_wheel_over_tables_moves_the_viewport_rather_than_the_selection`, `a_wheel_over_tables_no_longer_scrolls_the_ddl_panel_back` |
 | Only the left button and the vertical wheel are bound | `only_the_left_button_is_bound`, `a_release_a_drag_and_a_move_are_dropped`, `a_horizontal_wheel_is_dropped` (`inbound/input.rs`) |
 | A modified gesture is not a binding | `a_modified_press_is_not_a_gesture` (`inbound/input.rs`) |
@@ -1902,9 +1903,12 @@ Bound, and spending nothing from §3's budget. See the
 | Left click | A tab on a panel's top border | Whatever that tab's key does: focus the panel, and draw the tab |
 | Left click | Chrome | Focus that panel |
 | Left click | Anywhere, overlay up | Dismiss the overlay — except on a confirmation's own block |
-| Left press | A confirmation's button (drop, commit, discard) | Lights it solid; dragging off unlights it |
+| Left press | A confirmation's button (drop, commit, discard, export's Export and Yes, overwrite) | Lights it solid; dragging off unlights it |
 | Left release | The button that was pressed | Its key: `y`, `n`, `⏎` or `esc`, answered as if typed. Released anywhere else: nothing |
 | Left click | A confirmation's block, off its buttons | Nothing |
+| Left press | The export form's path or count field | Focus it and put the caret before the character pressed (at the end, past the text); the count field also chooses the first-N scope |
+| Left press | An export format or scope radio | Focus its group and choose that option, rewriting the path's extension for a format. A scope the form does not offer is inert |
+| Left release | The Export button | Focus it and run the export, from whichever stop the form was on |
 | Left click | The hint bar | Nothing |
 | Wheel | The panel under the pointer | Scrolls three rows or lines, moving neither focus nor the selection |
 | Wheel | Anywhere, inspector up | Scrolls the inspector three lines |

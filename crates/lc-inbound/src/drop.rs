@@ -214,10 +214,7 @@ pub(crate) fn render(
         set_caret(frame, inner, view, typed);
     }
 
-    Some(Modal {
-        area,
-        buttons: buttons.at(row),
-    })
+    Some(Modal::new(area, buttons.at(row)))
 }
 
 /// The `y` key's label. It names the verb, because the two verbs take

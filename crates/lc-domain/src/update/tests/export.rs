@@ -1148,3 +1148,121 @@ fn ctrl_e_is_inert_while_an_export_is_already_running() {
         Some((Severity::Info, "an export is already running"))
     );
 }
+
+#[test]
+fn the_export_button_runs_on_release_from_any_stop() {
+    use crate::export::Stop;
+    use crate::pointer::Pointer;
+
+    let mut state = contents_showing_more(PAGE);
+    open_form(&mut state);
+    assert_eq!(form_of(&state).stop(), Stop::Path);
+
+    let down = update(&mut state, Msg::Pointer(Pointer::Hold(Key::Enter)));
+    assert!(down.is_empty(), "going down runs nothing");
+    assert_eq!(crate::view::view_model(&state).pressed, Some(Key::Enter));
+
+    let up = update(&mut state, Msg::Pointer(Pointer::Release(Some(Key::Enter))));
+
+    assert!(matches!(up.as_slice(), [Effect::Export { .. }]));
+}
+
+#[test]
+fn releasing_off_the_export_button_runs_nothing() {
+    use crate::pointer::Pointer;
+
+    let mut state = contents_showing_more(PAGE);
+    open_form(&mut state);
+
+    update(&mut state, Msg::Pointer(Pointer::Hold(Key::Enter)));
+    let up = update(&mut state, Msg::Pointer(Pointer::Release(None)));
+
+    assert!(up.is_empty());
+    assert!(matches!(state.overlay, Some(Overlay::Export(_))));
+}
+
+#[test]
+fn pressing_a_format_radio_chooses_it_focuses_the_group_and_rewrites_the_extension() {
+    use crate::export::{Field, Format, Stop};
+    use crate::pointer::Pointer;
+
+    let mut state = contents_showing_more(PAGE);
+    open_form(&mut state);
+
+    update(
+        &mut state,
+        Msg::Pointer(Pointer::Field(Field::Format(Format::Json))),
+    );
+
+    assert_eq!(form_of(&state).format(), Format::Json);
+    assert_eq!(form_of(&state).stop(), Stop::Format);
+    assert_eq!(
+        std::path::Path::new(form_of(&state).path().text()).extension(),
+        Some(std::ffi::OsStr::new("json"))
+    );
+
+    update(
+        &mut state,
+        Msg::Pointer(Pointer::Field(Field::Format(Format::Json))),
+    );
+    assert_eq!(
+        form_of(&state).format(),
+        Format::Json,
+        "a radio is not a toggle"
+    );
+}
+
+#[test]
+fn pressing_a_scope_chooses_it_and_the_count_field_chooses_the_first_scope() {
+    use crate::export::{Field, Scope, Stop};
+    use crate::pointer::Pointer;
+
+    let mut state = contents_showing_more(PAGE);
+    open_form(&mut state);
+
+    update(
+        &mut state,
+        Msg::Pointer(Pointer::Field(Field::Scope(Scope::Fetched))),
+    );
+    assert_eq!(form_of(&state).scope(), Scope::Fetched);
+    assert_eq!(form_of(&state).stop(), Stop::Scope);
+
+    update(
+        &mut state,
+        Msg::Pointer(Pointer::Field(Field::Rows { cursor: 1 })),
+    );
+    assert_eq!(form_of(&state).scope(), Scope::First);
+    assert_eq!(form_of(&state).stop(), Stop::Rows);
+    assert_eq!(form_of(&state).rows().cursor(), 1);
+}
+
+#[test]
+fn pressing_the_path_places_the_caret_and_focuses_it() {
+    use crate::export::{Field, Stop};
+    use crate::pointer::Pointer;
+
+    let mut state = contents_showing_more(PAGE);
+    open_form(&mut state);
+    handle_key(&mut state, KeyPress::new(Key::Tab));
+
+    update(
+        &mut state,
+        Msg::Pointer(Pointer::Field(Field::Path { cursor: 3 })),
+    );
+
+    assert_eq!(form_of(&state).stop(), Stop::Path);
+    assert_eq!(form_of(&state).path().cursor(), 3);
+}
+
+#[test]
+fn a_press_on_the_form_that_hits_no_field_leaves_it_open() {
+    use crate::pointer::Pointer;
+
+    let mut state = contents_showing_more(PAGE);
+    open_form(&mut state);
+
+    let effects = update(&mut state, Msg::Pointer(Pointer::Modal));
+
+    assert!(effects.is_empty());
+    assert!(matches!(state.overlay, Some(Overlay::Export(_))));
+}

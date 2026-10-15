@@ -64,6 +64,12 @@ impl Line {
         self.text.remove(at);
     }
 
+    /// Puts the cursor before character `cursor`, or at the end if there are
+    /// fewer: where a pointer pressed the field.
+    pub fn set_cursor(&mut self, cursor: usize) {
+        self.cursor = cursor.min(self.len());
+    }
+
     /// `←`, stopping at the start.
     pub const fn left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);

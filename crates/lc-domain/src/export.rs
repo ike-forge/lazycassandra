@@ -264,6 +264,16 @@ impl Fetched {
     }
 }
 
+/// A place on the form a pointer can press that is not a button: what the
+/// press chooses, and where in the text it landed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    Path { cursor: usize },
+    Format(Format),
+    Scope(Scope),
+    Rows { cursor: usize },
+}
+
 /// Where `Tab` is in the form.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Stop {
@@ -520,6 +530,39 @@ impl ExportForm {
             Stop::Path | Stop::Rows => false,
             Stop::Export => true,
         }
+    }
+
+    /// A press on `field`: the `Tab` that reaches it and the key that answers
+    /// it, in one. A scope the form does not offer is not there to press.
+    pub fn press(&mut self, field: Field) {
+        match field {
+            Field::Path { cursor } => {
+                self.stop = Stop::Path;
+                self.path.set_cursor(cursor);
+            }
+            Field::Format(format) => {
+                self.stop = Stop::Format;
+                if format != self.format {
+                    self.toggle_format();
+                }
+            }
+            Field::Scope(scope) if self.fetched_enabled() => {
+                self.stop = Stop::Scope;
+                self.scope = scope;
+            }
+            Field::Rows { cursor } if self.fetched_enabled() => {
+                self.stop = Stop::Rows;
+                self.scope = Scope::First;
+                self.rows.set_cursor(cursor);
+            }
+            Field::Scope(_) | Field::Rows { .. } => {}
+        }
+    }
+
+    /// The button's stop, which a press on it has to stand on for `Enter` to
+    /// run the export.
+    pub const fn focus_button(&mut self) {
+        self.stop = Stop::Export;
     }
 
     /// `j`/`↓` inside a radio group. The groups have two options each, so a

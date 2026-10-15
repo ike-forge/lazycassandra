@@ -45,7 +45,20 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
                 if let Some(held) = state.held.take()
                     && over == Some(held.key)
                 {
+                    if let Some(Overlay::Export(form)) = &mut state.overlay
+                        && form.confirm().is_none()
+                    {
+                        form.focus_button();
+                    }
                     return overlay_key(state, held.key).unwrap_or_default();
+                }
+            }
+            Pointer::Field(field) => {
+                state.held = None;
+                if let Some(Overlay::Export(form)) = &mut state.overlay
+                    && form.confirm().is_none()
+                {
+                    form.press(field);
                 }
             }
             Pointer::Modal => state.held = None,
@@ -71,7 +84,11 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
     match pointer {
         Pointer::Click(click) => click_at(state, click),
         // Drawn only with a modal, so one arriving without is a stale frame's.
-        Pointer::Hold(_) | Pointer::Drag(_) | Pointer::Release(_) | Pointer::Modal => {
+        Pointer::Hold(_)
+        | Pointer::Drag(_)
+        | Pointer::Release(_)
+        | Pointer::Field(_)
+        | Pointer::Modal => {
             state.held = None;
             Vec::new()
         }

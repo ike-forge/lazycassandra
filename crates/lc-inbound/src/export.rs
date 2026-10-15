@@ -1,7 +1,8 @@
 //! The export form, drawn over the panels
 //! (docs/superpowers/specs/2026-08-14-export-design.md §2).
 
-use lc_domain::export::{Confirm, Format, Scope, Stop};
+use lc_domain::export::{Confirm, Field, Format, Scope, Stop};
+use lc_domain::model::Key;
 use lc_domain::style::{Segment, Token};
 use lc_domain::view::ExportView;
 use ratatui::Frame;
@@ -11,6 +12,7 @@ use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 use unicode_width::UnicodeWidthChar as _;
 
+use crate::hit::{ButtonAt, FieldAt, Modal, Target, TextAt};
 use crate::theme::Theme;
 
 const WIDTH: u16 = 84;
@@ -88,15 +90,17 @@ fn title(segments: &[Segment], theme: Theme) -> TextLine<'static> {
     )
 }
 
-pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
+pub(crate) fn render(
+    frame: &mut Frame,
+    view: &ExportView,
+    pressed: Option<Key>,
+    theme: Theme,
+) -> Option<Modal> {
     if view.confirm == Some(Confirm::Overwrite) {
-        confirmation(frame, view, theme);
-        return;
+        return confirmation(frame, view, theme);
     }
 
-    let Some(area) = form_area(frame.area()) else {
-        return;
-    };
+    let area = form_area(frame.area())?;
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -111,27 +115,45 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
     let label_width = u16::try_from(PATH_LABEL.len()).unwrap_or(0);
     let field_width = usize::from(inner.width.saturating_sub(label_width));
     let (visible, caret) = window(&view.path, view.cursor, field_width);
+    let mut fields = vec![FieldAt {
+        area: Rect::new(
+            inner.x + label_width,
+            inner.y + PATH_ROW,
+            u16::try_from(field_width).unwrap_or(0),
+            1,
+        ),
+        target: Target::Text(TextAt {
+            text: view.path.clone(),
+            first: view.cursor.saturating_sub(caret),
+            rows: false,
+        }),
+    }];
 
     let mut lines = vec![
         path(&visible, field_width, view.stop == Stop::Path, theme),
         TextLine::default(),
     ];
-    lines.extend(formats(view, theme));
+    for (format, line) in [Format::Csv, Format::Json]
+        .into_iter()
+        .zip(formats(view, theme))
+    {
+        fields.push(radio_at(inner, lines.len(), &line, Field::Format(format)));
+        lines.push(line);
+    }
     lines.push(TextLine::default());
     if view.fetched_enabled {
         let focused = view.stop == Stop::Scope;
-        lines.push(radio(
-            &view.scope_labels[0],
-            view.scope == Scope::Fetched,
-            focused,
-            theme,
-        ));
-        lines.push(radio(
-            &view.scope_labels[1],
-            view.scope == Scope::Whole,
-            focused,
-            theme,
-        ));
+        for (index, scope) in [Scope::Fetched, Scope::Whole].into_iter().enumerate() {
+            let line = radio(
+                &view.scope_labels[index],
+                view.scope == scope,
+                focused,
+                theme,
+            );
+            fields.push(radio_at(inner, lines.len(), &line, Field::Scope(scope)));
+            lines.push(line);
+        }
+        fields.extend(first_rows_at(inner, lines.len(), view));
         lines.push(first_rows(view, focused, theme));
     } else {
         lines.push(TextLine::from(Span::styled(
@@ -149,10 +171,23 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
             inner.height.saturating_sub(1),
         ),
     );
-    frame.render_widget(
-        Paragraph::new(button("Export", view.stop == Stop::Export, theme)).centered(),
-        Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
+    let export = button(
+        "Export",
+        view.stop == Stop::Export || pressed == Some(Key::Enter),
+        theme,
     );
+    let row = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
+    let button_width = u16::try_from(export.width()).unwrap_or(0);
+    let buttons = vec![ButtonAt {
+        area: Rect::new(
+            row.x + row.width.saturating_sub(button_width) / 2,
+            row.y,
+            button_width.min(row.width),
+            1,
+        ),
+        key: Key::Enter,
+    }];
+    frame.render_widget(Paragraph::new(export).centered(), row);
 
     if view.stop == Stop::Path {
         set_caret(frame, inner, PATH_ROW, label_width, &visible, caret);
@@ -164,6 +199,51 @@ pub(crate) fn render(frame: &mut Frame, view: &ExportView, theme: Theme) {
         let (shown, caret) = window(&view.rows, view.rows_cursor, ROWS_WIDTH);
         set_caret(frame, inner, ROWS_ROW, before, &shown, caret);
     }
+
+    Some(Modal::new(area, buttons).with_fields(fields))
+}
+
+/// The columns a radio's mark and label cover on `line`, `row` rows down.
+fn radio_at(inner: Rect, row: usize, line: &TextLine, field: Field) -> FieldAt {
+    FieldAt {
+        area: Rect::new(
+            inner.x,
+            inner.y + u16::try_from(row).unwrap_or(0),
+            u16::try_from(line.width()).unwrap_or(0).min(inner.width),
+            1,
+        ),
+        target: Target::Fixed(field),
+    }
+}
+
+/// The first-N scope's two places to press: its radio, and the count typed
+/// into it.
+fn first_rows_at(inner: Rect, row: usize, view: &ExportView) -> [FieldAt; 2] {
+    let before =
+        u16::try_from(TextLine::raw(format!("{MARK_ON}{} ", view.scope_labels[2])).width())
+            .unwrap_or(0);
+    let (_, caret) = window(&view.rows, view.rows_cursor, ROWS_WIDTH);
+    let y = inner.y + u16::try_from(row).unwrap_or(0);
+
+    [
+        FieldAt {
+            area: Rect::new(inner.x, y, before.saturating_sub(1), 1),
+            target: Target::Fixed(Field::Scope(Scope::First)),
+        },
+        FieldAt {
+            area: Rect::new(
+                inner.x + before,
+                y,
+                u16::try_from(ROWS_WIDTH).unwrap_or(0),
+                1,
+            ),
+            target: Target::Text(TextAt {
+                text: view.rows.clone(),
+                first: view.rows_cursor.saturating_sub(caret),
+                rows: true,
+            }),
+        },
+    ]
 }
 
 /// The third scope, with its count typed in place: `◉ Export the first
@@ -338,11 +418,9 @@ fn confirm_width(path: &str, frame_width: u16) -> u16 {
     needed.max(CONFIRM_WIDTH).min(frame_width)
 }
 
-fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) {
+fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) -> Option<Modal> {
     let width = confirm_width(&view.path, frame.area().width);
-    let Some(area) = centred(frame.area(), width, CONFIRM_HEIGHT) else {
-        return;
-    };
+    let area = centred(frame.area(), width, CONFIRM_HEIGHT)?;
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -353,15 +431,29 @@ fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) {
     frame.render_widget(Clear, area);
     frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
+    let overwrite = button("Yes, overwrite", true, theme);
+    let buttons = vec![ButtonAt {
+        area: Rect::new(
+            inner.x,
+            inner.y + 3,
+            u16::try_from(overwrite.width())
+                .unwrap_or(0)
+                .min(inner.width),
+            1,
+        ),
+        key: Key::Enter,
+    }];
     frame.render_widget(
         Paragraph::new(vec![
             TextLine::from(view.path.as_str()),
             TextLine::from("already exists."),
             TextLine::default(),
-            button("Yes, overwrite", true, theme),
+            overwrite,
         ]),
         inner,
     );
+
+    Some(Modal::new(area, buttons))
 }
 
 #[cfg(test)]
@@ -720,5 +812,91 @@ mod tests {
                 "at {width}×{height}"
             );
         }
+    }
+
+    fn find(buffer: &Buffer, needle: &str) -> (u16, u16) {
+        let width = usize::from(buffer.area.width);
+        let cells: Vec<&str> = buffer.content().iter().map(Cell::symbol).collect();
+        let at = (0..cells.len())
+            .find(|&at| cells[at..].concat().starts_with(needle))
+            .unwrap_or_else(|| panic!("{needle:?} is on the frame"));
+
+        (
+            u16::try_from(at % width).expect("a column"),
+            u16::try_from(at / width).expect("a row"),
+        )
+    }
+
+    fn mapped(form: ExportForm) -> (Buffer, crate::hit::FrameMap) {
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Export(form));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("a backend");
+        let mut map = crate::hit::FrameMap::default();
+        terminal
+            .draw(|frame| {
+                map = crate::render::render(frame, &view_model(&state), Theme::default()).map;
+            })
+            .expect("TestBackend always draws");
+
+        (terminal.backend().buffer().clone(), map)
+    }
+
+    #[test]
+    fn every_element_of_the_form_resolves_a_press_to_itself() {
+        use lc_domain::export::{Field, Format, Scope};
+        use lc_domain::model::Key;
+        use lc_domain::pointer::Pointer;
+
+        let (buffer, map) = mapped(form(Fetched::Some(200)));
+
+        let (x, y) = find(&buffer, "JSON");
+        assert_eq!(
+            map.press(x, y),
+            Some(Pointer::Field(Field::Format(Format::Json)))
+        );
+        let (x, y) = find(&buffer, "Export the whole");
+        assert_eq!(
+            map.press(x, y),
+            Some(Pointer::Field(Field::Scope(Scope::Whole)))
+        );
+        let (x, y) = find(&buffer, "Export the first");
+        assert_eq!(
+            map.press(x, y),
+            Some(Pointer::Field(Field::Scope(Scope::First)))
+        );
+        let (x, y) = find(&buffer, "  Export  ");
+        assert_eq!(map.press(x + 3, y), Some(Pointer::Hold(Key::Enter)));
+        let (x, y) = find(&buffer, "Path ");
+        assert!(
+            matches!(
+                map.press(x + 5, y),
+                Some(Pointer::Field(Field::Path { cursor: 0 }))
+            ),
+            "the first column of the field is before the first character"
+        );
+        assert!(matches!(
+            map.press(x + 5 + 3, y),
+            Some(Pointer::Field(Field::Path { cursor: 3 }))
+        ));
+        assert_eq!(
+            map.press(x + 3, y + 1),
+            Some(Pointer::Modal),
+            "the gap between rows is the block's"
+        );
+    }
+
+    #[test]
+    fn a_press_past_the_end_of_the_path_places_the_caret_at_the_end() {
+        use lc_domain::export::Field;
+        use lc_domain::pointer::Pointer;
+
+        let (buffer, map) = mapped(form(Fetched::Some(200)));
+        let (x, y) = find(&buffer, "Path ");
+        let length = form(Fetched::Some(200)).path().text().chars().count();
+
+        assert_eq!(
+            map.press(x + 5 + u16::try_from(length).expect("short") + 2, y),
+            Some(Pointer::Field(Field::Path { cursor: length }))
+        );
     }
 }

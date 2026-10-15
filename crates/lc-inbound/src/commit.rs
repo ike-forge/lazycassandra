@@ -116,10 +116,7 @@ pub(crate) fn render(
         theme,
     );
     frame.render_widget(Paragraph::new(buttons.line()), keys);
-    let modal = Modal {
-        area,
-        buttons: buttons.at(keys),
-    };
+    let modal = Modal::new(area, buttons.at(keys));
 
     let extent = Extent {
         position: view.offset,
@@ -216,10 +213,7 @@ pub(crate) fn render_discard(
 
     frame.render_widget(Paragraph::new(lines), inner);
 
-    Some(Modal {
-        area,
-        buttons: buttons.at(row),
-    })
+    Some(Modal::new(area, buttons.at(row)))
 }
 
 #[cfg(test)]

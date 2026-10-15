@@ -302,12 +302,12 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
             crate::diagnostics::render(frame, rows, *selected, theme);
         }
         Some(OverlayView::Health(view)) => crate::health::render(frame, view, theme),
-        Some(OverlayView::Export(view)) => crate::export::render(frame, view, theme),
         Some(OverlayView::Filter { column, query }) => {
             crate::filter::render(frame, column, query, theme);
         }
         Some(
             OverlayView::Drop(_)
+            | OverlayView::Export(_)
             | OverlayView::Inspect(_)
             | OverlayView::Commit(_)
             | OverlayView::Discard { .. },
@@ -326,6 +326,10 @@ fn render_measured(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Wrapped
     match &view.overlay {
         Some(OverlayView::Drop(view)) => Wrapped {
             modal: crate::drop::render(frame, view, pressed, theme),
+            ..Wrapped::default()
+        },
+        Some(OverlayView::Export(view)) => Wrapped {
+            modal: crate::export::render(frame, view, pressed, theme),
             ..Wrapped::default()
         },
         Some(OverlayView::Inspect(view)) => {

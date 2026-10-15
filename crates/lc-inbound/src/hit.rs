@@ -6,10 +6,12 @@
 //! presses landing on the wrong row
 //! (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
 
+use lc_domain::export::Field;
 use lc_domain::model::Key;
 use lc_domain::pointer::{Click, Mark, Pointer};
 use lc_domain::state::Panel;
 use ratatui::layout::{Position, Rect};
+use unicode_width::UnicodeWidthChar as _;
 
 use crate::body::{Body, Unit};
 
@@ -67,6 +69,82 @@ pub struct FrameMap {
 pub(crate) struct Modal {
     pub(crate) area: Rect,
     pub(crate) buttons: Vec<ButtonAt>,
+    /// What a press takes effect on, off the buttons: a form's fields.
+    pub(crate) fields: Vec<FieldAt>,
+}
+
+impl Modal {
+    pub(crate) const fn new(area: Rect, buttons: Vec<ButtonAt>) -> Self {
+        Self {
+            area,
+            buttons,
+            fields: Vec::new(),
+        }
+    }
+
+    pub(crate) fn with_fields(self, fields: Vec<FieldAt>) -> Self {
+        Self { fields, ..self }
+    }
+}
+
+/// A form field's columns, and what a press in them chooses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FieldAt {
+    pub(crate) area: Rect,
+    pub(crate) target: Target,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Target {
+    Fixed(Field),
+    /// A text field, which a press also places the caret in.
+    Text(TextAt),
+}
+
+/// The text a field drew, and where its window began: enough to say which
+/// character a column was over without asking the renderer again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TextAt {
+    pub(crate) text: String,
+    /// Character index of the first one drawn.
+    pub(crate) first: usize,
+    pub(crate) rows: bool,
+}
+
+impl Target {
+    /// The field a press `offset` columns into the area chose.
+    fn at(&self, offset: u16) -> Field {
+        match self {
+            Self::Fixed(field) => *field,
+            Self::Text(text) => {
+                let cursor = text.cursor_at(offset);
+
+                if text.rows {
+                    Field::Rows { cursor }
+                } else {
+                    Field::Path { cursor }
+                }
+            }
+        }
+    }
+}
+
+impl TextAt {
+    /// The caret goes before the character under the column, or at the end
+    /// of the text when the press is past it.
+    fn cursor_at(&self, offset: u16) -> usize {
+        let mut used = 0u16;
+
+        for (index, character) in self.text.chars().enumerate().skip(self.first) {
+            let width = u16::try_from(character.width().unwrap_or(0)).unwrap_or(0);
+            if offset < used + width {
+                return index;
+            }
+            used += width;
+        }
+
+        self.text.chars().count()
+    }
 }
 
 /// One button, and the key pressing it stands for.
@@ -146,12 +224,22 @@ impl FrameMap {
         let position = Position::new(column, row);
 
         if let Some(modal) = self.modal.as_ref().filter(|m| m.area.contains(position)) {
+            if let Some(button) = modal
+                .buttons
+                .iter()
+                .find(|button| button.area.contains(position))
+            {
+                return Some(Pointer::Hold(button.key));
+            }
+
             return Some(
                 modal
-                    .buttons
+                    .fields
                     .iter()
-                    .find(|button| button.area.contains(position))
-                    .map_or(Pointer::Modal, |button| Pointer::Hold(button.key)),
+                    .find(|field| field.area.contains(position))
+                    .map_or(Pointer::Modal, |field| {
+                        Pointer::Field(field.target.at(column - field.area.x))
+                    }),
             );
         }
 
