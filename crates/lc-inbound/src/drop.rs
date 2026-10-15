@@ -1,6 +1,7 @@
 //! The drop confirmation, drawn over the panels
 //! (docs/superpowers/specs/2026-08-31-drop-design.md §2).
 
+use lc_domain::model::Key;
 use lc_domain::style::{Segment, Severity, Token};
 use lc_domain::view::{DropView, TypedName};
 use ratatui::Frame;
@@ -9,6 +10,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
+use crate::hit::{ButtonAt, Modal};
 use crate::theme::Theme;
 
 /// A floor, not a cap: [`width`] widens the block to fit the statement rather
@@ -120,22 +122,20 @@ fn prompt_line(typed: &TypedName) -> String {
     format!("Type {} to confirm:", typed.name)
 }
 
-pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) {
+pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) -> Option<Modal> {
     // Asked before the block is sized, so the two cannot disagree: [`width`]
     // clamps to the frame, which on a narrow one would otherwise draw a
     // block below the floor `fits` promised, and the height below varies with
     // the statement while the gate does not (drop design §1).
     if !fits(frame.area()) {
-        return;
+        return None;
     }
 
     let cql = statement(view);
     let height = CHROME_HEIGHT
         + u16::try_from(cql.len()).unwrap_or(u16::MAX)
         + if view.typed.is_some() { TYPED_EXTRA } else { 0 };
-    let Some(area) = centred(frame.area(), width(view, frame.area().width), height) else {
-        return;
-    };
+    let area = centred(frame.area(), width(view, frame.area().width), height)?;
 
     // The severity replaces the theme's border style, the one other place a
     // border says how bad the thing behind it is (`overlay.rs`).
@@ -156,14 +156,17 @@ pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) {
     );
     lines.push(TextLine::default());
 
-    match &view.typed {
+    let buttons = match &view.typed {
         None => {
             lines.push(TextLine::from(warning(view)));
             lines.push(TextLine::default());
-            lines.push(keys(
-                &[("y", yes(view), true), ("n", "Cancel", true)],
+            keys(
+                &[
+                    Button::new(Key::Char('y'), yes(view), true),
+                    Button::new(Key::Char('n'), "Cancel", true),
+                ],
                 theme,
-            ));
+            )
         }
         Some(typed) => {
             lines.push(TextLine::from(prompt_line(typed)));
@@ -173,10 +176,10 @@ pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) {
                 theme.style(Token::Selected),
             )));
             lines.push(TextLine::default());
-            lines.push(keys(
+            keys(
                 &[
-                    (
-                        "⏎",
+                    Button::new(
+                        Key::Enter,
                         if view.rows.is_some() {
                             "Delete"
                         } else {
@@ -184,18 +187,30 @@ pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) {
                         },
                         typed.confirmed,
                     ),
-                    ("esc", "Cancel", true),
+                    Button::new(Key::Escape, "Cancel", true),
                 ],
                 theme,
-            ));
+            )
         }
-    }
+    };
+    let row = Rect::new(
+        inner.x,
+        inner.y + u16::try_from(lines.len()).unwrap_or(u16::MAX),
+        inner.width,
+        1,
+    );
+    lines.push(buttons.line());
 
     frame.render_widget(Paragraph::new(lines), inner);
 
     if let Some(typed) = &view.typed {
         set_caret(frame, inner, view, typed);
     }
+
+    Some(Modal {
+        area,
+        buttons: buttons.at(row),
+    })
 }
 
 /// The `y` key's label. It names the verb, because the two verbs take
@@ -236,38 +251,103 @@ fn set_caret(frame: &mut Frame, inner: Rect, view: &DropView, typed: &TypedName)
     frame.set_cursor_position((cursor_x, inner.y + row));
 }
 
+/// One button of a modal: the key that presses it, by click as by keyboard.
+pub(crate) struct Button<'a> {
+    pub(crate) key: Key,
+    pub(crate) label: &'a str,
+    pub(crate) live: bool,
+}
+
+impl<'a> Button<'a> {
+    pub(crate) const fn new(key: Key, label: &'a str, live: bool) -> Self {
+        Self { key, label, live }
+    }
+
+    fn glyph(&self) -> String {
+        match self.key {
+            Key::Char(character) => character.to_string(),
+            Key::Enter => "⏎".to_owned(),
+            Key::Escape => "esc".to_owned(),
+            other => format!("{other:?}").to_lowercase(),
+        }
+    }
+}
+
+/// A row of [`Button`]s, drawn and measured from the same spans so a press
+/// lands on what was painted.
+pub(crate) struct Buttons {
+    line: TextLine<'static>,
+    /// Each live button's columns, from the left edge of the line.
+    spans: Vec<(Key, u16, u16)>,
+    width: u16,
+}
+
+impl Buttons {
+    /// The row, right-aligned.
+    pub(crate) fn line(&self) -> TextLine<'static> {
+        self.line.clone().right_aligned()
+    }
+
+    /// Where each live button sits when the line is drawn across `row`.
+    pub(crate) fn at(&self, row: Rect) -> Vec<ButtonAt> {
+        let left = row.right().saturating_sub(self.width).max(row.x);
+
+        self.spans
+            .iter()
+            .map(|&(key, start, end)| ButtonAt {
+                area: Rect::new(left + start, row.y, end - start, 1),
+                key,
+            })
+            .collect()
+    }
+}
+
 /// The block's own keys as buttons: the key in the colour a shortcut always
 /// wears and its label beside it, on the quiet band the export form's button
 /// rests on. A key that would do nothing this frame recedes to `Faint` with
 /// its label, an inert hint rather than a live one — the promise the bar's
-/// greyed hints already keep (docs/shortcuts.md §2). The last button stops one
-/// column short of the border.
-pub(crate) fn keys(pairs: &[(&str, &str, bool)], theme: Theme) -> TextLine<'static> {
+/// greyed hints already keep (docs/shortcuts.md §2) — and is not pressable.
+/// The last button stops one column short of the border.
+pub(crate) fn keys(buttons: &[Button], theme: Theme) -> Buttons {
     let band = theme.style(Token::Ranged);
     let mut spans = Vec::new();
+    let mut hits = Vec::new();
+    let mut column = 0u16;
 
-    for (index, (key, label, live)) in pairs.iter().enumerate() {
+    for (index, button) in buttons.iter().enumerate() {
         if index > 0 {
             spans.push(Span::raw("  "));
+            column += 2;
         }
 
-        let (key_token, label_token) = if *live {
+        let (key_token, label_token) = if button.live {
             (Token::HintKey, Token::HintAction)
         } else {
             (Token::Faint, Token::Faint)
         };
-        spans.push(Span::styled(
-            format!(" {key}"),
-            band.patch(theme.style(key_token)),
-        ));
-        spans.push(Span::styled(
-            format!(" {label} "),
-            band.patch(theme.style(label_token)),
-        ));
+        let glyph = button.glyph();
+        let label = format!(" {} ", button.label);
+        let width = u16::try_from(
+            1 + TextLine::raw(glyph.as_str()).width() + TextLine::raw(label.as_str()).width(),
+        )
+        .unwrap_or(u16::MAX);
+
+        // The pad is its own span: the key's underline must not run under it.
+        spans.push(Span::styled(" ", band));
+        spans.push(Span::styled(glyph, band.patch(theme.style(key_token))));
+        spans.push(Span::styled(label, band.patch(theme.style(label_token))));
+        if button.live {
+            hits.push((button.key, column, column + width));
+        }
+        column += width;
     }
     spans.push(Span::raw(" "));
 
-    TextLine::from(spans).right_aligned()
+    Buttons {
+        line: TextLine::from(spans),
+        spans: hits,
+        width: column + 1,
+    }
 }
 
 #[cfg(test)]
@@ -476,5 +556,63 @@ mod tests {
         assert!(drawn.contains("BEGIN BATCH"));
         assert!(drawn.contains("… and 4 more"));
         assert!(drawn.contains("APPLY BATCH"));
+    }
+
+    /// Where `needle` starts on the frame, as a column and a row.
+    fn find(buffer: &Buffer, needle: &str) -> (u16, u16) {
+        let width = usize::from(buffer.area.width);
+        let cells: Vec<&str> = buffer.content().iter().map(Cell::symbol).collect();
+
+        let at = (0..cells.len())
+            .find(|&at| cells[at..].concat().starts_with(needle))
+            .unwrap_or_else(|| panic!("{needle:?} is on the frame"));
+
+        (
+            u16::try_from(at % width).expect("a column"),
+            u16::try_from(at / width).expect("a row"),
+        )
+    }
+
+    #[test]
+    fn a_press_resolves_to_a_button_the_block_or_the_world_outside() {
+        use lc_domain::model::Key;
+        use lc_domain::pointer::Pointer;
+
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Drop(table()));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
+        let mut map = crate::hit::FrameMap::default();
+        terminal
+            .draw(|frame| {
+                map = crate::render::render(frame, &view_model(&state), Theme::default()).map;
+            })
+            .expect("TestBackend always draws");
+        let buffer = terminal.backend().buffer();
+
+        let (yes, row) = find(buffer, "Yes, drop it");
+        let (cancel, _) = find(buffer, "Cancel");
+        let (title, title_row) = find(buffer, "Drop table");
+
+        assert_eq!(
+            map.press(yes, row),
+            Some(Pointer::Button(Key::Char('y'))),
+            "the label is the button"
+        );
+        assert_eq!(
+            map.press(cancel + 5, row),
+            Some(Pointer::Button(Key::Char('n')))
+        );
+        assert_eq!(
+            map.press(cancel - 3, row),
+            Some(Pointer::Button(Key::Char('n'))),
+            "and so is the pad around it"
+        );
+        assert_eq!(
+            map.press(cancel - 4, row),
+            Some(Pointer::Modal),
+            "the gap between them is the block's"
+        );
+        assert_eq!(map.press(title, title_row), Some(Pointer::Modal));
+        assert!(matches!(map.press(0, 1), Some(Pointer::Click(_))));
     }
 }

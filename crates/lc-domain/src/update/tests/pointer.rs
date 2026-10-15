@@ -714,3 +714,50 @@ fn a_wheel_over_the_palette_walks_its_cursor_without_closing_it() {
 
     assert!(down > back, "down moved the cursor and up undid it");
 }
+
+fn asked_to_drop_a_table() -> State {
+    let mut state = droppable_tree();
+    press(&mut state, Key::Char('j'));
+    press(&mut state, Key::Char('d'));
+    assert!(dropping(&state).is_some(), "the confirmation is up");
+    state
+}
+
+#[test]
+fn a_pressed_button_answers_as_its_key_does() {
+    let mut pressed = asked_to_drop_a_table();
+    let mut typed = asked_to_drop_a_table();
+
+    let by_pointer = point(&mut pressed, Pointer::Button(Key::Char('y')));
+    let by_key = press(&mut typed, Key::Char('y'));
+
+    let drops = |effects: &[Effect]| {
+        effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Execute { .. }))
+            .count()
+    };
+    assert_eq!(drops(&by_pointer), 1, "the drop is issued");
+    assert_eq!(drops(&by_pointer), drops(&by_key));
+    assert_eq!(pressed.overlay, typed.overlay);
+}
+
+#[test]
+fn a_click_on_the_modal_off_its_buttons_answers_nothing() {
+    let mut state = asked_to_drop_a_table();
+
+    let effects = point(&mut state, Pointer::Modal);
+
+    assert!(effects.is_empty());
+    assert!(dropping(&state).is_some(), "the question is still open");
+}
+
+#[test]
+fn a_click_outside_the_modal_closes_it() {
+    let mut state = asked_to_drop_a_table();
+
+    let effects = click_row(&mut state, Panel::Tables, 0);
+
+    assert!(effects.is_empty());
+    assert!(dropping(&state).is_none());
+}

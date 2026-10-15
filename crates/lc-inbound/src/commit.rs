@@ -7,6 +7,7 @@
 //! renderer's, so the line count goes back to the domain through `Geometry`,
 //! the way the inspector's does.
 
+use lc_domain::model::Key;
 use lc_domain::style::{Severity, Token};
 use lc_domain::view::CommitView;
 use ratatui::Frame;
@@ -16,6 +17,8 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::body::Extent;
+use crate::drop::Button;
+use crate::hit::Modal;
 use crate::theme::Theme;
 
 /// Past this an `UPDATE` is longer than an eye tracks back from, and it wraps
@@ -69,10 +72,11 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
     rect(area).map_or(0, |block| usize::from(body(block).height))
 }
 
-/// Draws the block and answers with the lines its statement wrapped to.
-pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> usize {
+/// Draws the block and answers with the lines its statement wrapped to and
+/// where its buttons landed.
+pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> (usize, Option<Modal>) {
     let Some(area) = rect(frame.area()) else {
-        return 0;
+        return (0, None);
     };
     let inner = body(area);
     let wrapped = wrapped(view, usize::from(inner.width), theme);
@@ -98,13 +102,18 @@ pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> usiz
         height: 1,
         ..inner
     };
-    frame.render_widget(
-        Paragraph::new(crate::drop::keys(
-            &[("y", "Yes, write them", true), ("n", "Cancel", true)],
-            theme,
-        )),
-        keys,
+    let buttons = crate::drop::keys(
+        &[
+            Button::new(Key::Char('y'), "Yes, write them", true),
+            Button::new(Key::Char('n'), "Cancel", true),
+        ],
+        theme,
     );
+    frame.render_widget(Paragraph::new(buttons.line()), keys);
+    let modal = Modal {
+        area,
+        buttons: buttons.at(keys),
+    };
 
     let extent = Extent {
         position: view.offset,
@@ -115,7 +124,7 @@ pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> usiz
         crate::render::scrollbar(frame, area, &extent, theme.focus_border(), theme);
     }
 
-    wrapped.len()
+    (wrapped.len(), Some(modal))
 }
 
 /// Every statement line wrapped to `width`, a continuation keeping the
@@ -145,11 +154,11 @@ fn wrapped(view: &CommitView, width: usize, theme: Theme) -> Vec<Vec<(char, Styl
 ///
 /// Fixed height and no scrolling, unlike the confirmation above — there is
 /// nothing here to read past.
-pub(crate) fn render_discard(frame: &mut Frame, message: &str, theme: Theme) {
+pub(crate) fn render_discard(frame: &mut Frame, message: &str, theme: Theme) -> Option<Modal> {
     let width = MIN_WIDTH.min(frame.area().width);
     let height = MIN_HEIGHT;
     if frame.area().width < width || frame.area().height < height {
-        return;
+        return None;
     }
 
     let area = Rect::new(
@@ -178,12 +187,27 @@ pub(crate) fn render_discard(frame: &mut Frame, message: &str, theme: Theme) {
             .map(Line::from),
     );
     lines.push(Line::default());
-    lines.push(crate::drop::keys(
-        &[("y", "Quit and discard", true), ("n", "Stay", true)],
+    let buttons = crate::drop::keys(
+        &[
+            Button::new(Key::Char('y'), "Quit and discard", true),
+            Button::new(Key::Char('n'), "Stay", true),
+        ],
         theme,
-    ));
+    );
+    let row = Rect::new(
+        inner.x,
+        inner.y + u16::try_from(lines.len()).unwrap_or(u16::MAX),
+        inner.width,
+        1,
+    );
+    lines.push(buttons.line());
 
     frame.render_widget(Paragraph::new(lines), inner);
+
+    Some(Modal {
+        area,
+        buttons: buttons.at(row),
+    })
 }
 
 #[cfg(test)]
@@ -227,7 +251,7 @@ mod tests {
         let mut lines = 0;
 
         terminal
-            .draw(|frame| lines = render(frame, &view, Theme::default()))
+            .draw(|frame| lines = render(frame, &view, Theme::default()).0)
             .expect("TestBackend always draws");
 
         (terminal.backend().buffer().clone(), lines)

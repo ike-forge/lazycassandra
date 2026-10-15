@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Scrollbar, ScrollbarOrientation, ScrollbarState};
 
 use crate::body::Extent;
-use crate::hit::{Band, FrameMap, PanelHit};
+use crate::hit::{Band, FrameMap, Modal, PanelHit};
 use crate::layout::{Shell, layout, queries_height};
 use crate::theme::Theme;
 
@@ -151,11 +151,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
         hint_bar,
     );
 
-    let Wrapped {
-        inspector_lines,
-        inspector_selection,
-        commit_lines,
-    } = render_overlay(frame, view, hint_bar, theme);
+    let wrapped = render_overlay(frame, view, hint_bar, theme);
 
     if let Some(toast) = &view.toast {
         crate::toast::render(frame, toast.severity, &toast.message, theme);
@@ -172,9 +168,13 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             .with_connection_rows(room.connection_rows)
             .with_history_rows(room.history_rows)
             .with_health_rows(room.health_rows)
-            .with_inspector(room.inspector_rows, inspector_lines, inspector_selection)
-            .with_commit(room.commit_rows, commit_lines),
-        map: FrameMap::new(hits),
+            .with_inspector(
+                room.inspector_rows,
+                wrapped.inspector_lines,
+                wrapped.inspector_selection,
+            )
+            .with_commit(room.commit_rows, wrapped.commit_lines),
+        map: FrameMap::new(hits).with_modal(wrapped.modal),
     }
 }
 
@@ -222,6 +222,7 @@ struct Wrapped {
     inspector_lines: usize,
     inspector_selection: Selection,
     commit_lines: usize,
+    modal: Option<Modal>,
 }
 
 fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Theme) -> Wrapped {
@@ -305,29 +306,50 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
         Some(OverlayView::Filter { column, query }) => {
             crate::filter::render(frame, column, query, theme);
         }
-        Some(OverlayView::Drop(view)) => crate::drop::render(frame, view, theme),
-        Some(OverlayView::Inspect(view)) => {
-            let (inspector_lines, inspector_selection) = crate::inspect::render(frame, view, theme);
-
-            return Wrapped {
-                inspector_lines,
-                inspector_selection,
-                commit_lines: 0,
-            };
-        }
-        Some(OverlayView::Commit(view)) => {
-            return Wrapped {
-                commit_lines: crate::commit::render(frame, view, theme),
-                ..Wrapped::default()
-            };
-        }
-        Some(OverlayView::Discard { message }) => {
-            crate::commit::render_discard(frame, message, theme);
-        }
+        Some(
+            OverlayView::Drop(_)
+            | OverlayView::Inspect(_)
+            | OverlayView::Commit(_)
+            | OverlayView::Discard { .. },
+        ) => return render_measured(frame, view, theme),
         None => {}
     }
 
     Wrapped::default()
+}
+
+/// The overlays that report something back about what they drew: how far
+/// their text wrapped, and where their buttons landed.
+fn render_measured(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Wrapped {
+    match &view.overlay {
+        Some(OverlayView::Drop(view)) => Wrapped {
+            modal: crate::drop::render(frame, view, theme),
+            ..Wrapped::default()
+        },
+        Some(OverlayView::Inspect(view)) => {
+            let (inspector_lines, inspector_selection) = crate::inspect::render(frame, view, theme);
+
+            Wrapped {
+                inspector_lines,
+                inspector_selection,
+                ..Wrapped::default()
+            }
+        }
+        Some(OverlayView::Commit(view)) => {
+            let (commit_lines, modal) = crate::commit::render(frame, view, theme);
+
+            Wrapped {
+                commit_lines,
+                modal,
+                ..Wrapped::default()
+            }
+        }
+        Some(OverlayView::Discard { message }) => Wrapped {
+            modal: crate::commit::render_discard(frame, message, theme),
+            ..Wrapped::default()
+        },
+        _ => Wrapped::default(),
+    }
 }
 
 /// `rect` split at `taken` columns from its left edge, clamped to what `rect`

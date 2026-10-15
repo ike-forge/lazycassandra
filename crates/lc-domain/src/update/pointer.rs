@@ -32,6 +32,8 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
     if state.overlay.is_some() {
         match pointer {
             Pointer::Click(_) => escape(state),
+            Pointer::Button(key) => return overlay_key(state, key).unwrap_or_default(),
+            Pointer::Modal => {}
             // The modals that are a list or a document: wheeling one is
             // reading it, and a notch is the `j`/`k` the overlay already
             // answers (cell inspector design §4, design §1). The rest are
@@ -53,6 +55,8 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
 
     match pointer {
         Pointer::Click(click) => click_at(state, click),
+        // Drawn only with a modal, so one arriving without is a stale frame's.
+        Pointer::Button(_) | Pointer::Modal => Vec::new(),
         Pointer::Wheel { panel, direction } => {
             wheel(state, panel, direction);
             Vec::new()

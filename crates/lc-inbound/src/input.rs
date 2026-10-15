@@ -83,9 +83,7 @@ pub fn to_pointer(event: MouseEvent, map: &FrameMap) -> Option<Pointer> {
     }
 
     match event.kind {
-        MouseEventKind::Down(MouseButton::Left) => {
-            map.hit(event.column, event.row).map(Pointer::Click)
-        }
+        MouseEventKind::Down(MouseButton::Left) => map.press(event.column, event.row),
         MouseEventKind::ScrollDown => notch(map, event, Wheel::Down),
         MouseEventKind::ScrollUp => notch(map, event, Wheel::Up),
         _ => None,

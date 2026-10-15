@@ -6,12 +6,20 @@
 //! and the row, the same way it reports a [`crate::model::KeyPress`] rather
 //! than a crossterm event.
 
+use crate::model::Key;
 use crate::state::Panel;
 
 /// A pointer gesture, already resolved against the frame it happened in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pointer {
     Click(Click),
+    /// A press on a button a modal drew: the key that button names, answered
+    /// as if typed — the rule every gesture follows
+    /// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §1).
+    Button(Key),
+    /// A press on a modal's own block, off its buttons. Spent on nothing, so
+    /// a slip of the pointer inside the question does not answer it.
+    Modal,
     /// Scrolls `panel` without focusing it: scrolling is a glance where
     /// clicking is a commitment
     /// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §6).

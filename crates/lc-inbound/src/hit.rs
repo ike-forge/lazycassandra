@@ -6,7 +6,8 @@
 //! presses landing on the wrong row
 //! (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
 
-use lc_domain::pointer::{Click, Mark};
+use lc_domain::model::Key;
+use lc_domain::pointer::{Click, Mark, Pointer};
 use lc_domain::state::Panel;
 use ratatui::layout::{Position, Rect};
 
@@ -57,6 +58,22 @@ pub(crate) struct MarkAt {
 pub struct FrameMap {
     /// In [`Panel::ALL`] order.
     panels: [PanelHit; 4],
+    /// The modal standing over them, when it has buttons to press.
+    modal: Option<Modal>,
+}
+
+/// A modal's block and the buttons drawn in it, as a press sees them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Modal {
+    pub(crate) area: Rect,
+    pub(crate) buttons: Vec<ButtonAt>,
+}
+
+/// One button, and the key pressing it stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ButtonAt {
+    pub(crate) area: Rect,
+    pub(crate) key: Key,
 }
 
 /// One panel, as a press sees it.
@@ -111,7 +128,34 @@ pub(crate) enum RowStrip {
 
 impl FrameMap {
     pub(crate) const fn new(panels: [PanelHit; 4]) -> Self {
-        Self { panels }
+        Self {
+            panels,
+            modal: None,
+        }
+    }
+
+    pub(crate) fn with_modal(self, modal: Option<Modal>) -> Self {
+        Self { modal, ..self }
+    }
+
+    /// What a press at `column`, `row` means: a modal's button, the modal's
+    /// own block (which answers nothing), or else whatever [`Self::hit`] finds
+    /// beneath — which, with a modal up, the domain reads as the click outside
+    /// it that dismisses it.
+    pub(crate) fn press(&self, column: u16, row: u16) -> Option<Pointer> {
+        let position = Position::new(column, row);
+
+        if let Some(modal) = self.modal.as_ref().filter(|m| m.area.contains(position)) {
+            return Some(
+                modal
+                    .buttons
+                    .iter()
+                    .find(|button| button.area.contains(position))
+                    .map_or(Pointer::Modal, |button| Pointer::Button(button.key)),
+            );
+        }
+
+        self.hit(column, row).map(Pointer::Click)
     }
 
     /// What a press at `column`, `row` resolves to, or `None` when it landed
