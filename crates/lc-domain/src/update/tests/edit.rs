@@ -52,14 +52,13 @@ fn a_cell_inspector_edits_the_column_the_cursor_was_on() {
 }
 
 #[test]
-fn e_on_the_grid_is_refused_as_enter_then_e_is() {
+fn e_on_a_row_skips_the_key_columns_to_the_first_editable_field() {
     let mut state = editable_grid(1);
+
     press(&mut state, Key::Char('e'));
 
-    assert_eq!(
-        refusal(&state).as_deref(),
-        Some("id is part of the primary key. A key column cannot be updated.")
-    );
+    assert!(field_text(&state).is_some());
+    assert_eq!(refusal(&state), None);
 }
 
 #[test]

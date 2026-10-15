@@ -6,7 +6,9 @@ use crate::inspect::{Inspected, Inspector};
 use crate::model::{CqlValue, Key};
 use crate::state::{Overlay, Panel, State};
 
-use super::{Effect, copied, escape, field_key, open_insert_commit, quit, start_edit};
+use super::{
+    Effect, copied, editable_here, escape, field_key, open_insert_commit, quit, start_edit,
+};
 
 /// The inspector's wrapped line count and body height, as the last frame
 /// measured them.
@@ -90,9 +92,35 @@ pub(super) fn open_inspector(state: &mut State) {
 pub(super) fn edit_from_grid(state: &mut State) -> Vec<Effect> {
     open_inspector(state);
     if matches!(state.overlay, Some(Overlay::Inspect(_))) {
+        // A row block opens on its first column, which is the partition key
+        // nearly everywhere: `e` there would only ever refuse.
+        if state.contents.mode == SelectionMode::Row {
+            focus_first_editable(state);
+        }
         return start_edit(state);
     }
     Vec::new()
+}
+
+/// Moves the open inspector's cursor to the first field `e` would open, and
+/// leaves it on the first when there is none, so the refusal names that one.
+fn focus_first_editable(state: &mut State) {
+    let Some(Overlay::Inspect(inspector)) = &state.overlay else {
+        return;
+    };
+    let count = inspector.field_count();
+
+    for at in 0..count {
+        if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
+            inspector.focus_field(at);
+        }
+        if editable_here(state) {
+            return;
+        }
+    }
+    if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
+        inspector.focus_field(0);
+    }
 }
 
 /// Every key the inspector claims (cell inspector design §4). Anything else
