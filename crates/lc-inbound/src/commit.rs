@@ -74,7 +74,12 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
 
 /// Draws the block and answers with the lines its statement wrapped to and
 /// where its buttons landed.
-pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> (usize, Option<Modal>) {
+pub(crate) fn render(
+    frame: &mut Frame,
+    view: &CommitView,
+    pressed: Option<Key>,
+    theme: Theme,
+) -> (usize, Option<Modal>) {
     let Some(area) = rect(frame.area()) else {
         return (0, None);
     };
@@ -107,6 +112,7 @@ pub(crate) fn render(frame: &mut Frame, view: &CommitView, theme: Theme) -> (usi
             Button::new(Key::Char('y'), "Yes, write them", true),
             Button::new(Key::Char('n'), "Cancel", true),
         ],
+        pressed,
         theme,
     );
     frame.render_widget(Paragraph::new(buttons.line()), keys);
@@ -154,7 +160,12 @@ fn wrapped(view: &CommitView, width: usize, theme: Theme) -> Vec<Vec<(char, Styl
 ///
 /// Fixed height and no scrolling, unlike the confirmation above — there is
 /// nothing here to read past.
-pub(crate) fn render_discard(frame: &mut Frame, message: &str, theme: Theme) -> Option<Modal> {
+pub(crate) fn render_discard(
+    frame: &mut Frame,
+    message: &str,
+    pressed: Option<Key>,
+    theme: Theme,
+) -> Option<Modal> {
     let width = MIN_WIDTH.min(frame.area().width);
     let height = MIN_HEIGHT;
     if frame.area().width < width || frame.area().height < height {
@@ -192,6 +203,7 @@ pub(crate) fn render_discard(frame: &mut Frame, message: &str, theme: Theme) -> 
             Button::new(Key::Char('y'), "Quit and discard", true),
             Button::new(Key::Char('n'), "Stay", true),
         ],
+        pressed,
         theme,
     );
     let row = Rect::new(
@@ -251,7 +263,7 @@ mod tests {
         let mut lines = 0;
 
         terminal
-            .draw(|frame| lines = render(frame, &view, Theme::default()).0)
+            .draw(|frame| lines = render(frame, &view, None, Theme::default()).0)
             .expect("TestBackend always draws");
 
         (terminal.backend().buffer().clone(), lines)

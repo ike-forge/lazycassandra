@@ -151,11 +151,32 @@ impl FrameMap {
                     .buttons
                     .iter()
                     .find(|button| button.area.contains(position))
-                    .map_or(Pointer::Modal, |button| Pointer::Button(button.key)),
+                    .map_or(Pointer::Modal, |button| Pointer::Hold(button.key)),
             );
         }
 
         self.hit(column, row).map(Pointer::Click)
+    }
+
+    /// `gesture` over the modal button under `column`, `row` — or over none,
+    /// when it is off them. `None` outright with no modal up, where a release
+    /// or a drag means nothing.
+    pub(crate) fn over(
+        &self,
+        column: u16,
+        row: u16,
+        gesture: fn(Option<Key>) -> Pointer,
+    ) -> Option<Pointer> {
+        let position = Position::new(column, row);
+        let modal = self.modal.as_ref()?;
+
+        Some(gesture(
+            modal
+                .buttons
+                .iter()
+                .find(|button| button.area.contains(position))
+                .map(|button| button.key),
+        ))
     }
 
     /// What a press at `column`, `row` resolves to, or `None` when it landed

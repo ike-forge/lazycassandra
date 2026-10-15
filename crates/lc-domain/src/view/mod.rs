@@ -52,6 +52,9 @@ pub struct ViewModel {
     pub theme: ThemeChoice,
     /// Drawn in a corner over everything, until it expires.
     pub toast: Option<ToastLine>,
+    /// The modal button to draw lit: the one held down with the pointer still
+    /// over it.
+    pub pressed: Option<crate::model::Key>,
 }
 
 /// What a toast says, and how loudly.
@@ -783,6 +786,7 @@ pub fn view_model(state: &State) -> ViewModel {
         hints: hints::bar(state),
         overlay: overlay(state),
         theme: state.theme.clone(),
+        pressed: state.held.filter(|held| held.over).map(|held| held.key),
         toast: state.toast.as_ref().map(|toast| ToastLine {
             severity: toast.severity(),
             message: toast.message().to_owned(),

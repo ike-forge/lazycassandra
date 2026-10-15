@@ -122,7 +122,12 @@ fn prompt_line(typed: &TypedName) -> String {
     format!("Type {} to confirm:", typed.name)
 }
 
-pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) -> Option<Modal> {
+pub(crate) fn render(
+    frame: &mut Frame,
+    view: &DropView,
+    pressed: Option<Key>,
+    theme: Theme,
+) -> Option<Modal> {
     // Asked before the block is sized, so the two cannot disagree: [`width`]
     // clamps to the frame, which on a narrow one would otherwise draw a
     // block below the floor `fits` promised, and the height below varies with
@@ -165,6 +170,7 @@ pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) -> Option
                     Button::new(Key::Char('y'), yes(view), true),
                     Button::new(Key::Char('n'), "Cancel", true),
                 ],
+                pressed,
                 theme,
             )
         }
@@ -189,6 +195,7 @@ pub(crate) fn render(frame: &mut Frame, view: &DropView, theme: Theme) -> Option
                     ),
                     Button::new(Key::Escape, "Cancel", true),
                 ],
+                pressed,
                 theme,
             )
         }
@@ -307,8 +314,9 @@ impl Buttons {
 /// rests on. A key that would do nothing this frame recedes to `Faint` with
 /// its label, an inert hint rather than a live one — the promise the bar's
 /// greyed hints already keep (docs/shortcuts.md §2) — and is not pressable.
-/// The last button stops one column short of the border.
-pub(crate) fn keys(buttons: &[Button], theme: Theme) -> Buttons {
+/// `pressed` lights one as solid as the export form's focused button. The last
+/// button stops one column short of the border.
+pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Buttons {
     let band = theme.style(Token::Ranged);
     let mut spans = Vec::new();
     let mut hits = Vec::new();
@@ -325,6 +333,19 @@ pub(crate) fn keys(buttons: &[Button], theme: Theme) -> Buttons {
         } else {
             (Token::Faint, Token::Faint)
         };
+        let lit = button.live && pressed == Some(button.key);
+        let (pad, key_style, label_style) = if lit {
+            let solid = theme
+                .style(Token::HintAction)
+                .add_modifier(Modifier::REVERSED | Modifier::BOLD);
+            (solid, solid, solid)
+        } else {
+            (
+                band,
+                band.patch(theme.style(key_token)),
+                band.patch(theme.style(label_token)),
+            )
+        };
         let glyph = button.glyph();
         let label = format!(" {} ", button.label);
         let width = u16::try_from(
@@ -333,9 +354,9 @@ pub(crate) fn keys(buttons: &[Button], theme: Theme) -> Buttons {
         .unwrap_or(u16::MAX);
 
         // The pad is its own span: the key's underline must not run under it.
-        spans.push(Span::styled(" ", band));
-        spans.push(Span::styled(glyph, band.patch(theme.style(key_token))));
-        spans.push(Span::styled(label, band.patch(theme.style(label_token))));
+        spans.push(Span::styled(" ", pad));
+        spans.push(Span::styled(glyph, key_style));
+        spans.push(Span::styled(label, label_style));
         if button.live {
             hits.push((button.key, column, column + width));
         }
@@ -595,16 +616,16 @@ mod tests {
 
         assert_eq!(
             map.press(yes, row),
-            Some(Pointer::Button(Key::Char('y'))),
+            Some(Pointer::Hold(Key::Char('y'))),
             "the label is the button"
         );
         assert_eq!(
             map.press(cancel + 5, row),
-            Some(Pointer::Button(Key::Char('n')))
+            Some(Pointer::Hold(Key::Char('n')))
         );
         assert_eq!(
             map.press(cancel - 3, row),
-            Some(Pointer::Button(Key::Char('n'))),
+            Some(Pointer::Hold(Key::Char('n'))),
             "and so is the pad around it"
         );
         assert_eq!(
@@ -614,5 +635,36 @@ mod tests {
         );
         assert_eq!(map.press(title, title_row), Some(Pointer::Modal));
         assert!(matches!(map.press(0, 1), Some(Pointer::Click(_))));
+    }
+
+    #[test]
+    fn a_held_button_is_drawn_solid_and_its_neighbour_is_not() {
+        use lc_domain::model::Key;
+        use lc_domain::pointer::Held;
+        use ratatui::style::Modifier;
+
+        let mut state = State::default();
+        state.overlay = Some(Overlay::Drop(table()));
+        state.held = Some(Held {
+            key: Key::Char('y'),
+            over: true,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
+        terminal
+            .draw(|frame| {
+                crate::render::render(frame, &view_model(&state), Theme::default());
+            })
+            .expect("TestBackend always draws");
+        let buffer = terminal.backend().buffer();
+
+        let (yes, row) = find(buffer, "Yes, drop it");
+        let (cancel, _) = find(buffer, "Cancel");
+
+        assert!(
+            buffer[(yes, row)]
+                .modifier
+                .contains(Modifier::REVERSED | Modifier::BOLD)
+        );
+        assert!(!buffer[(cancel, row)].modifier.contains(Modifier::REVERSED));
     }
 }

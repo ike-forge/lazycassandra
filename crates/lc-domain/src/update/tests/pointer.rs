@@ -724,12 +724,18 @@ fn asked_to_drop_a_table() -> State {
 }
 
 #[test]
-fn a_pressed_button_answers_as_its_key_does() {
+fn a_button_answers_as_its_key_does_on_release() {
     let mut pressed = asked_to_drop_a_table();
     let mut typed = asked_to_drop_a_table();
+    let yes = Key::Char('y');
 
-    let by_pointer = point(&mut pressed, Pointer::Button(Key::Char('y')));
-    let by_key = press(&mut typed, Key::Char('y'));
+    let down = point(&mut pressed, Pointer::Hold(yes));
+    assert!(down.is_empty(), "going down answers nothing");
+    assert!(dropping(&pressed).is_some());
+    assert_eq!(crate::view_model(&pressed).pressed, Some(yes), "it is lit");
+
+    let up = point(&mut pressed, Pointer::Release(Some(yes)));
+    let by_key = press(&mut typed, yes);
 
     let drops = |effects: &[Effect]| {
         effects
@@ -737,9 +743,48 @@ fn a_pressed_button_answers_as_its_key_does() {
             .filter(|effect| matches!(effect, Effect::Execute { .. }))
             .count()
     };
-    assert_eq!(drops(&by_pointer), 1, "the drop is issued");
-    assert_eq!(drops(&by_pointer), drops(&by_key));
+    assert_eq!(drops(&up), 1, "the drop is issued");
+    assert_eq!(drops(&up), drops(&by_key));
     assert_eq!(pressed.overlay, typed.overlay);
+    assert_eq!(crate::view_model(&pressed).pressed, None);
+}
+
+#[test]
+fn dragging_off_a_button_unlights_it_and_releasing_elsewhere_cancels() {
+    let mut state = asked_to_drop_a_table();
+    let yes = Key::Char('y');
+
+    point(&mut state, Pointer::Hold(yes));
+    point(&mut state, Pointer::Drag(None));
+    assert_eq!(
+        crate::view_model(&state).pressed,
+        None,
+        "off the button, unlit"
+    );
+
+    point(&mut state, Pointer::Drag(Some(yes)));
+    assert_eq!(
+        crate::view_model(&state).pressed,
+        Some(yes),
+        "back on, lit again"
+    );
+
+    point(&mut state, Pointer::Drag(Some(Key::Char('n'))));
+    let effects = point(&mut state, Pointer::Release(Some(Key::Char('n'))));
+
+    assert!(effects.is_empty(), "released over another button: nothing");
+    assert!(dropping(&state).is_some());
+    assert_eq!(crate::view_model(&state).pressed, None);
+}
+
+#[test]
+fn a_release_without_a_press_on_the_button_answers_nothing() {
+    let mut state = asked_to_drop_a_table();
+
+    let effects = point(&mut state, Pointer::Release(Some(Key::Char('y'))));
+
+    assert!(effects.is_empty(), "the press began elsewhere");
+    assert!(dropping(&state).is_some());
 }
 
 #[test]

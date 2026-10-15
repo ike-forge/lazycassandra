@@ -62,6 +62,8 @@ pub struct State {
     /// What the last `y` copied, lit for as long as [`Flash`] lasts. `None`
     /// once it has faded or the next key has ended it.
     pub flash: Option<Flash>,
+    /// The modal button the pointer is holding down.
+    pub held: Option<crate::pointer::Held>,
     /// A one-line answer to a key that did nothing, for as long as [`Toast`]
     /// lasts.
     pub toast: Option<Toast>,

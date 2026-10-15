@@ -404,6 +404,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
         // same band (visual mode design §6.1).
         Msg::Input(press) => {
             state.flash = None;
+            state.held = None;
             handle_key(state, press)
         }
 

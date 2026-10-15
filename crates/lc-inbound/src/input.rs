@@ -61,6 +61,8 @@ pub fn is_bound(event: MouseEvent) -> bool {
         && matches!(
             event.kind,
             MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Up(MouseButton::Left)
+                | MouseEventKind::Drag(MouseButton::Left)
                 | MouseEventKind::ScrollUp
                 | MouseEventKind::ScrollDown
         )
@@ -84,6 +86,10 @@ pub fn to_pointer(event: MouseEvent, map: &FrameMap) -> Option<Pointer> {
 
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) => map.press(event.column, event.row),
+        MouseEventKind::Up(MouseButton::Left) => {
+            map.over(event.column, event.row, Pointer::Release)
+        }
+        MouseEventKind::Drag(MouseButton::Left) => map.over(event.column, event.row, Pointer::Drag),
         MouseEventKind::ScrollDown => notch(map, event, Wheel::Down),
         MouseEventKind::ScrollUp => notch(map, event, Wheel::Up),
         _ => None,

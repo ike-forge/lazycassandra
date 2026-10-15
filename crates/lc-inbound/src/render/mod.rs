@@ -321,9 +321,11 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
 /// The overlays that report something back about what they drew: how far
 /// their text wrapped, and where their buttons landed.
 fn render_measured(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Wrapped {
+    let pressed = view.pressed;
+
     match &view.overlay {
         Some(OverlayView::Drop(view)) => Wrapped {
-            modal: crate::drop::render(frame, view, theme),
+            modal: crate::drop::render(frame, view, pressed, theme),
             ..Wrapped::default()
         },
         Some(OverlayView::Inspect(view)) => {
@@ -336,7 +338,7 @@ fn render_measured(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Wrapped
             }
         }
         Some(OverlayView::Commit(view)) => {
-            let (commit_lines, modal) = crate::commit::render(frame, view, theme);
+            let (commit_lines, modal) = crate::commit::render(frame, view, pressed, theme);
 
             Wrapped {
                 commit_lines,
@@ -345,7 +347,7 @@ fn render_measured(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Wrapped
             }
         }
         Some(OverlayView::Discard { message }) => Wrapped {
-            modal: crate::commit::render_discard(frame, message, theme),
+            modal: crate::commit::render_discard(frame, message, pressed, theme),
             ..Wrapped::default()
         },
         _ => Wrapped::default(),

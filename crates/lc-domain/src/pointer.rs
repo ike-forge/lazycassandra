@@ -13,10 +13,18 @@ use crate::state::Panel;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pointer {
     Click(Click),
-    /// A press on a button a modal drew: the key that button names, answered
-    /// as if typed — the rule every gesture follows
+    /// The button went down on a modal's button. Lights it and answers
+    /// nothing: the press is only a press once it is released on the same
+    /// button.
+    Hold(Key),
+    /// The pointer moved with the button held, and is over `Some` modal
+    /// button or none.
+    Drag(Option<Key>),
+    /// The button came up over `Some` modal button or none. Over the one that
+    /// was held, it is that button's key, answered as if typed — the rule
+    /// every gesture follows
     /// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §1).
-    Button(Key),
+    Release(Option<Key>),
     /// A press on a modal's own block, off its buttons. Spent on nothing, so
     /// a slip of the pointer inside the question does not answer it.
     Modal,
@@ -27,6 +35,16 @@ pub enum Pointer {
         panel: Panel,
         direction: Wheel,
     },
+}
+
+/// A modal button the pointer went down on, and whether it is still over it.
+///
+/// Leaving the button unlights it and returning relights it, so a press
+/// dragged away before release is cancelled the way a GUI's is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Held {
+    pub key: Key,
+    pub over: bool,
 }
 
 /// Where a press landed.

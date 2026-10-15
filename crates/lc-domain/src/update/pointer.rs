@@ -2,7 +2,7 @@
 //! (docs/superpowers/specs/2026-08-09-mouse-input-design.md).
 
 use crate::model::Key;
-use crate::pointer::{Click, Mark, Pointer, Wheel};
+use crate::pointer::{Click, Held, Mark, Pointer, Wheel};
 use crate::state::{Overlay, Panel, State};
 
 use super::{
@@ -31,9 +31,24 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
     // overlay up, `escape` only dismisses it, so nothing else changes.
     if state.overlay.is_some() {
         match pointer {
-            Pointer::Click(_) => escape(state),
-            Pointer::Button(key) => return overlay_key(state, key).unwrap_or_default(),
-            Pointer::Modal => {}
+            Pointer::Click(_) => {
+                state.held = None;
+                escape(state);
+            }
+            Pointer::Hold(key) => state.held = Some(Held { key, over: true }),
+            Pointer::Drag(over) => {
+                if let Some(held) = &mut state.held {
+                    held.over = over == Some(held.key);
+                }
+            }
+            Pointer::Release(over) => {
+                if let Some(held) = state.held.take()
+                    && over == Some(held.key)
+                {
+                    return overlay_key(state, held.key).unwrap_or_default();
+                }
+            }
+            Pointer::Modal => state.held = None,
             // The modals that are a list or a document: wheeling one is
             // reading it, and a notch is the `j`/`k` the overlay already
             // answers (cell inspector design §4, design §1). The rest are
@@ -56,7 +71,10 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
     match pointer {
         Pointer::Click(click) => click_at(state, click),
         // Drawn only with a modal, so one arriving without is a stale frame's.
-        Pointer::Button(_) | Pointer::Modal => Vec::new(),
+        Pointer::Hold(_) | Pointer::Drag(_) | Pointer::Release(_) | Pointer::Modal => {
+            state.held = None;
+            Vec::new()
+        }
         Pointer::Wheel { panel, direction } => {
             wheel(state, panel, direction);
             Vec::new()
