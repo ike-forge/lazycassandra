@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 # Nothing here may pull in a terminal, a runtime, or a driver. That constraint
 # is architecture.md §2 and it is enforced by this list being short.
@@ -13,8 +15,7 @@ serde.workspace = true
 thiserror.workspace = true
 # A table of character display widths — no terminal, no runtime, no driver, so
 # architecture.md §2's rule holds. The grid's column widths are computed here
-# rather than in the renderer because the offsets they bound live here
-# (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
+# rather than in the renderer because the offsets they bound live here.
 unicode-width.workspace = true
 
 [lints]

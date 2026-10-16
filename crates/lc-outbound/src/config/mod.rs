@@ -349,7 +349,7 @@ mod tests {
             diagnostics[0]
                 .message
                 .contains("every setting in this file was skipped"),
-            "a wrong-typed scalar takes this same path (design §6), and the message must not \
+            "a wrong-typed scalar takes this same path, and the message must not \
              read as though only one entry were dropped: {}",
             diagnostics[0].message
         );

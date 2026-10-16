@@ -2,14 +2,12 @@
 #
 # The local layer of the two the tool reads: this file overrides
 # $XDG_CONFIG_HOME/lazycassandra/config.toml, key by key for the tables and
-# entry by entry for the lists
-# (docs/superpowers/specs/2026-08-14-configuration-design.md §5).
+# entry by entry for the lists.
 #
 # It exists so that running `lazycassandra` from a checkout reaches the docker
 # fixture without anyone having to configure one. Nothing is connected to
-# unless a file names it, and this is the file that names it here
-# (docs/superpowers/specs/2026-08-31-connection-picker-design.md §2). It
-# replaces the LC_CASSANDRA_HOST/LC_CASSANDRA_PORT scaffolding `main.rs`
+# unless a file names it, and this is the file that names it here. It replaces
+# the LC_CASSANDRA_HOST/LC_CASSANDRA_PORT scaffolding `main.rs`
 # used to read, which was never a configuration mechanism.
 
 # Exactly one connection is the default, because this names one rather than

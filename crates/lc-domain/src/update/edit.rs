@@ -1,4 +1,4 @@
-//! Editing a cell in place (cell editing design).
+//! Editing a cell in place.
 
 use crate::contents::{ContentsState, Subject};
 use crate::edit::Field;

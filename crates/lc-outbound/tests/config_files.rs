@@ -60,7 +60,7 @@ async fn a_project_file_written_after_the_source_was_built_still_wins() {
     assert_eq!(
         config.theme.slug(),
         "quill-dark",
-        "the project file wins whole (configuration design §3)"
+        "the project file wins whole"
     );
 }
 

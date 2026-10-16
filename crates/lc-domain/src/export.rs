@@ -1,4 +1,4 @@
-//! Exporting a result set: scope, destination, and encoding (export design).
+//! Exporting a result set: scope, destination, and encoding.
 
 use std::fmt::Write as _;
 use std::num::NonZeroUsize;

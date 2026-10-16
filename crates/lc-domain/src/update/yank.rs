@@ -1,4 +1,4 @@
-//! What `y` copies, by panel (yank design).
+//! What `y` copies, by panel.
 
 use crate::contents::{ContentsState, SelectionMode};
 use crate::feedback::Flash;

@@ -1,4 +1,4 @@
-//! The table health block (table health design).
+//! The table health block.
 
 use std::time::Duration;
 

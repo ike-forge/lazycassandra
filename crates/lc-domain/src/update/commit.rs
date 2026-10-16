@@ -1,4 +1,4 @@
-//! Committing or discarding cell edits (cell editing design).
+//! Committing or discarding cell edits.
 
 use crate::commit::CommitPrompt;
 use crate::contents::{ContentsState, Subject, TableRef};

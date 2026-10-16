@@ -53,9 +53,6 @@ If port 9042 is occupied, set `LC_CASSANDRA_PORT` for the fixture tasks and
 update the config's `hosts` entry to match. That variable configures the
 fixture and integration tests, not the application.
 
-See the [fixture design](superpowers/specs/2026-08-08-cassandra-test-fixture-design.md)
-for its schema and seeding details.
-
 ## Clipboard
 
 Copying uses both OSC 52 terminal escape sequences and an available platform

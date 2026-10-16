@@ -32,14 +32,14 @@ fn enter_toggles_a_keyspace() {
     assert_eq!(row_count(&state), 3, "⏎ did not unfold");
     assert!(
         effects.is_empty(),
-        "unfolding is a pure state change and must emit no effect (table-list design §2)"
+        "unfolding is a pure state change and must emit no effect"
     );
 
     let effects = press(&mut state, Key::Enter);
     assert_eq!(row_count(&state), 1, "⏎ did not fold");
     assert!(
         effects.is_empty(),
-        "folding is a pure state change and must emit no effect (table-list design §2)"
+        "folding is a pure state change and must emit no effect"
     );
 }
 
@@ -121,7 +121,7 @@ fn l_and_right_open_a_keyspace() {
         assert_eq!(row_count(&state), 2, "{key:?} did not open");
         assert!(
             effects.is_empty(),
-            "opening is a pure state change and must emit no effect (table-list design §2)"
+            "opening is a pure state change and must emit no effect"
         );
     }
 }
@@ -137,7 +137,7 @@ fn h_and_left_close_a_keyspace() {
         assert_eq!(row_count(&state), 1, "{key:?} did not close");
         assert!(
             effects.is_empty(),
-            "closing is a pure state change and must emit no effect (table-list design §2)"
+            "closing is a pure state change and must emit no effect"
         );
     }
 }

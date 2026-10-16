@@ -21,7 +21,7 @@ CREATE INDEX IF NOT EXISTS customers_by_id_country_code_idx
     ON customers_by_id (country_code);
 
 -- A collection index, so the Indexes tab has a `values(...)` target to read
--- and not only a bare column (ddl indexes design §3).
+-- and not only a bare column.
 CREATE INDEX IF NOT EXISTS customers_by_id_tags_idx
     ON customers_by_id (tags);
 

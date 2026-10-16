@@ -575,7 +575,7 @@ fn a_finished_export_records_the_exact_statement_and_where_it_went() {
         .expect("the export entry");
     assert!(
         !entry.subject().text().contains("LIMIT"),
-        "an export pages the unbounded statement (export design §6.2)"
+        "an export pages the unbounded statement"
     );
     let Outcome::Succeeded { detail, .. } = entry.outcome() else {
         panic!("the export succeeded");

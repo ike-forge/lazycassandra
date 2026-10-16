@@ -1,5 +1,5 @@
 //! The four Catppuccin flavours: one recipe over four colour tables, so they
-//! cannot drift apart.
+//! cannot drift apart. Upstream palette: <https://github.com/catppuccin/palette>.
 
 use ratatui::style::Color;
 

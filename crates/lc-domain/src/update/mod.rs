@@ -487,7 +487,7 @@ fn raise(state: &mut State, message: Message) {
     state.overlay = Some(Overlay::Message(message));
 }
 
-/// No way past it: the posture belongs to the connection (posture design §3).
+/// No way past it: the posture belongs to the connection.
 fn refuse_read_only(state: &mut State, what: &str) {
     raise(
         state,

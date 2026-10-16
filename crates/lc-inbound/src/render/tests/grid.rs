@@ -474,7 +474,7 @@ fn column_mode_lights_the_column_and_its_heading() {
     assert_eq!(
         bg(name, 1),
         selected,
-        "and its heading, which ratatui leaves to us (design §4)"
+        "and its heading, which ratatui leaves to us"
     );
     assert_ne!(
         bg(drawn_column(area, 0), grid_row_y(area, 0)),

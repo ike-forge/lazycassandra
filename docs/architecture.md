@@ -6,8 +6,7 @@ guessed at.
 
 **Status:** Phase 1 (Browse) built end to end; Phase 2 and 3 begun — table
 health (`H`), cell editing and row insert/delete, drops behind typed
-confirmation. What each slice decided is in its spec under
-[superpowers/specs/](superpowers/specs/); what is bound is in
+confirmation. The complete binding reference is in
 [shortcuts.md](shortcuts.md).
 **Last updated:** 2026-10-15
 
@@ -74,8 +73,7 @@ names rather than how long it is: no terminal, no runtime, no driver.
 `unicode-width` earns its place by that test — it is a table of character
 widths, and the domain needs one because it computes the Contents grid's column
 widths itself. Those widths are a pure function of the page and they have to be
-where the offsets are, for the reason §3 gives
-(specs/2026-08-10-table-display-design.md §6). A crate that measures a string
+where the offsets are, for the reason §3 gives. A crate that measures a string
 is not a crate that draws one.
 
 ## 3. The loop
@@ -105,8 +103,7 @@ frame geometry  ───┘         ▲                                        
 
 **Frame geometry is the one edge that runs backwards**, from the renderer into
 the domain as `Msg::Measured`: only the renderer knows how tall a panel is or
-how many lines a body wrapped to, and a scroll offset has to be bounded by both
-(specs/2026-08-09-panel-scrolling-design.md §3). Two guards keep it from
+how many lines a body wrapped to, and a scroll offset has to be bounded by both. Two guards keep it from
 looping: `lc-app` sends only when the geometry differs from the last one sent,
 and `update` marks dirty only when the clamp actually moved the offset — so a
 measurement that changes nothing draws no frame and produces no further
@@ -118,13 +115,11 @@ Measuring anything that varies with an offset closes the loop.
 and that is the invariant holding rather than bending. A width is a function of
 the terminal size; *how many columns fit starting at offset N* is not, and it is
 never measured — the renderer sends the width back, `update` owns the widths and
-does the fitting itself, and nothing offset-dependent crosses into the domain
-(specs/2026-08-10-table-display-design.md §6). One scalar also leaves `Geometry`
+does the fitting itself, and nothing offset-dependent crosses into the domain. One scalar also leaves `Geometry`
 `Copy`, which a `Vec<u16>` of column widths would have cost.
 
 The renderer now reports a second thing, and it is worth not confusing the two:
-a hit map, which resolves a pointer position to a panel and a row
-(specs/2026-08-09-mouse-input-design.md §4). It stops at `lc-app` and re-enters
+a hit map, which resolves a pointer position to a panel and a row. It stops at `lc-app` and re-enters
 the domain never, so it needs no guard and is free to depend on the offsets
 `Geometry` may not. Only what crosses back into `update` can close a loop.
 
@@ -274,8 +269,7 @@ own identifies nothing the driver can resume — it names a position, not the
 query that produced it. `execute_paged` carries both. Every read into the
 Contents panel pages at `grid.page_rows`, one page per `p` and until a stop
 for `P`; export pages at `driver.page_size` to the end. `execute` stays
-`query_unpaged` for mutations and DDL, which return no rows to page
-(export design §6.2, specs/2026-09-17-grid-paging-design.md).
+`query_unpaged` for mutations and DDL, which return no rows to page.
 
 ## 6. Theme plumbing
 
@@ -331,8 +325,7 @@ alike.
 
 Practical consequence: nothing in the domain has to change to add a
 built-in theme, and no theme can invent a meaning the domain didn't define.
-See specs/2026-08-13-colour-palettes-design.md for the roles, all twelve
-built-in themes, and the runtime picker (`ctrl-t`).
+The twelve built-in themes are available from the runtime picker (`ctrl-t`).
 
 ## 7. Configuration
 
@@ -353,12 +346,9 @@ and every drop is reported in a modal at startup.
 Credentials are `Literal`, `Env` or `File`. There is no `Command` variant,
 so nothing in the configuration path executes anything.
 
-Full design: specs/2026-08-14-configuration-design.md.
-
 ## 8. Driver — decided
 
-`scylla` 1.7.0, default features. The spike is written up in
-[specs/2026-08-08-keyspace-list-design.md](superpowers/specs/2026-08-08-keyspace-list-design.md) §2.
+`scylla` 1.7.0, default features.
 
 | Candidate | Outcome |
 |---|---|
@@ -372,8 +362,8 @@ Wiring it in cost ten `deny.toml` skip entries — `darling`, `darling_core`,
 `windows-sys` 0.52.0 — plus one licence, `BSD-3-Clause`, added to the
 allow-list for `snap` 1.1.2, the Snappy codec `scylla-cql` pulls in. Each skip
 entry names whose transitive choice it is, so the tree converging is visible
-rather than silently tolerated. The pre-implementation comparison in the spec
-found `cdrs-tokio` would have cost one skip entry against seven for
+rather than silently tolerated. The pre-implementation comparison found
+`cdrs-tokio` would have cost one skip entry against seven for
 `scylla` — the estimate that decided the trade, not the final count.
 
 ## 9. On the headless core
@@ -425,8 +415,8 @@ in VISION §8.
   module of its own. `DdlPanel` took it third, the same `Cursor`-and-`Scroll`
   shape, and has since earned its own module too. `Log` is a further one —
   the Logs tab's cursor, viewport and search, built the same way for the same
-  reason: a vocabulary of its own rather than another few fields on `State`
-  (docs/superpowers/specs/2026-08-19-query-log-design.md §3). `editor.rs` is
+  reason: a vocabulary of its own rather than another few fields on `State`.
+  `editor.rs` is
   a module of a different kind, a *buffer* rather than a list, now wrapped by
   `queries.rs`'s `QueriesPanel` alongside the tab that switches between it and
   the Logs list — `State.queries` is a `QueriesPanel`, not an `Editor`

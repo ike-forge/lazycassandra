@@ -1,4 +1,4 @@
-//! Mouse wheel and clicks (mouse input design).
+//! Mouse wheel and clicks.
 
 use crate::model::Key;
 use crate::overlay::Overlay;

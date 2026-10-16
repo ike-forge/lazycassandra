@@ -25,7 +25,7 @@ partition from clustering columns structurally rather than by convention
 absence is itself meaningful — a password, a `default_connection` — and
 everywhere else lives in `lc-outbound`'s wire structs, resolved to a value
 before it reaches the domain, so most of `Config` never makes the caller ask
-whether a setting was stated (specs/2026-08-14-configuration-design.md §7).
+whether a setting was stated.
 `PanelRatios` is one type rather than three newtypes, because the three
 shares are only valid together.
 

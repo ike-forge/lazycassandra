@@ -12,6 +12,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 publish = false
+license = "0BSD"
+repository = "https://github.com/ike-forge/lazycassandra"
 
 [workspace.dependencies]
 lc-domain = { path = "crates/lc-domain" }
@@ -22,8 +24,7 @@ anyhow = "1.0.104"
 async-trait = "0.1.91"
 # `osc52` is what puts `crossterm::clipboard::CopyToClipboard` in reach: a
 # yank is an escape sequence written to the terminal, so the terminal owns the
-# clipboard and no display server is needed
-# (docs/superpowers/specs/2026-08-13-yank-design.md §3).
+# clipboard and no display server is needed.
 crossterm = { version = "0.29.0", features = ["osc52"] }
 ratatui = "0.30.2"
 # `bigdecimal-04` and `num-bigint-04` buy `From<CqlDecimal>` and
@@ -39,7 +40,7 @@ rustls-native-certs = "0.8.4"
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
 num-bigint = "0.4.6"
 # Already in the tree as a non-optional dependency of scylla; direct here
-# because the adapter formats timestamps and dates (design §5).
+# because the adapter formats timestamps and dates.
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.19"
@@ -49,7 +50,7 @@ thiserror = "2.0.19"
 unicode-width = "0.2.2"
 # `process` and `io-util` are the clipboard helper: a child that owns an X or
 # Wayland selection outlives the yank that spawned it, so it is reaped by the
-# runtime rather than waited for (yank design §3, amended).
+# runtime rather than waited for.
 tokio = { version = "1.53.1", features = [
     "fs",
     "io-util",
@@ -59,7 +60,7 @@ tokio = { version = "1.53.1", features = [
     "sync",
     "time",
 ] }
-# Config files (docs/superpowers/specs/2026-08-14-configuration-design.md §2.1).
+# Config files.
 # `display` is off: we read TOML and never write it, and dropping it drops
 # `toml_writer` from the tree.
 toml = { version = "1.1.4", default-features = false, features = [

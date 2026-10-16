@@ -1,4 +1,4 @@
-//! The command palette (command palette design).
+//! The command palette.
 
 use crate::commands::{CommandsPanel, Run};
 use crate::model::Key;

@@ -566,10 +566,7 @@ fn the_config_the_tool_started_on_is_kept_rather_than_consumed() {
     };
     let (state, _) = init(config.clone(), Vec::new(), Stamp::default());
 
-    assert_eq!(
-        state.config, config,
-        "the follow-ups in design §11 read this"
-    );
+    assert_eq!(state.config, config, "later state transitions read this");
 }
 
 #[test]

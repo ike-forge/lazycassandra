@@ -653,7 +653,7 @@ fn y_over_two_groups_yanks_their_rows_in_drawn_order() {
 
     assert_eq!(
         payload, "shop\nshop.products",
-        "row order, not insertion order (design §5)"
+        "row order, not insertion order"
     );
 }
 

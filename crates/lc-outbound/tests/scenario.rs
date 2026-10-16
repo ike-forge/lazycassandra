@@ -86,7 +86,7 @@ async fn pressing_l_unfolds_a_keyspace_and_the_view_model_shows_its_tables() {
     let effects = update(&mut state, Msg::Input(KeyPress::new(Key::Char('l'))));
     assert!(
         effects.is_empty(),
-        "unfolding is a pure state change and must emit no effect (table-list design §2)"
+        "unfolding is a pure state change and must emit no effect"
     );
 
     let PanelBody::Tree { rows, selected, .. } = &view_model(&state).panels[0].body else {
@@ -125,7 +125,7 @@ async fn pressing_h_from_a_table_lands_on_its_parent_keyspace() {
     let effects = update(&mut state, Msg::Input(KeyPress::new(Key::Char('h'))));
     assert!(
         effects.is_empty(),
-        "stepping out to the parent is a pure state change and must emit no effect (table-list design §2)"
+        "stepping out to the parent is a pure state change and must emit no effect"
     );
 
     let PanelBody::Tree { rows, selected, .. } = &view_model(&state).panels[0].body else {

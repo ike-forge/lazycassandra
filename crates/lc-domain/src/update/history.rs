@@ -1,4 +1,4 @@
-//! The query history picker (query history design).
+//! The query history picker.
 
 use crate::history::one_line;
 use crate::model::Key;

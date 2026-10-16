@@ -44,10 +44,34 @@ themes with `Ctrl-t`, preview them live, or define your own.
 
 ## Get started
 
-Homebrew packaging is coming soon. For now, install from a checkout with the
-Rust version pinned in [mise.toml](mise.toml):
+### Compatibility
+
+LazyCassandra supports Apache Cassandra 4.x and 5.x. The integration suite
+currently runs against Cassandra 5.0.8; coverage of 4.x is planned.
+
+Linux and macOS are supported. Windows users can build and run LazyCassandra
+under WSL. A terminal with true-colour support works best. Icons use a Nerd
+Font; set `icons = false` if you prefer a regular font.
+
+### Install from source
+
+Homebrew packaging is coming soon. For now, building requires Git, a C/C++
+compiler, and Rust 1.97.1. Clone the repository and install the locked source:
 
 ```sh
+git clone https://github.com/ike-forge/lazycassandra.git
+cd LazyCassandra
+rustup toolchain install 1.97.1
+cargo +1.97.1 install --path crates/lc-app --locked
+```
+
+If you use [mise](https://mise.jdx.dev/), it can install the pinned toolchain
+instead:
+
+```sh
+git clone https://github.com/ike-forge/lazycassandra.git
+cd LazyCassandra
+mise install
 cargo install --path crates/lc-app --locked
 ```
 
@@ -60,9 +84,6 @@ lazycassandra --connection dev
 
 `Enter` expands a keyspace or opens a table. `4` opens CQL; `Ctrl-r` runs the
 current statement. `?` opens the searchable command palette.
-
-A terminal with true-color support works best. Icons use a Nerd Font;
-set `icons = false` if you prefer a regular font.
 
 ## Shortcuts
 
@@ -144,3 +165,7 @@ Found a bug or have an idea? [Open an issue](https://github.com/ike-forge/lazyca
 
 For local development and the sample Cassandra cluster, see the
 [development guide](docs/development.md) and [architecture](docs/architecture.md).
+
+LazyCassandra is released under the [0BSD license](LICENSE). The built-in
+Catppuccin themes use the [Catppuccin palette](https://github.com/catppuccin/palette);
+see the [third-party notices](THIRD-PARTY-NOTICES.md).

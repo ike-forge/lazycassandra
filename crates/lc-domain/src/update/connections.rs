@@ -1,4 +1,4 @@
-//! The connection picker and connecting (connection picker design).
+//! The connection picker and connecting.
 
 use std::time::Duration;
 

@@ -1,4 +1,4 @@
-//! Inserting a row (row insert design).
+//! Inserting a row.
 
 use crate::commit::CommitPrompt;
 use crate::contents::{ContentsState, Subject};

@@ -66,10 +66,7 @@ async fn aborting_removes_the_partial_file() {
 
     sink.abort().await;
 
-    assert!(
-        !path.exists(),
-        "a truncated array is not a document (design §4)"
-    );
+    assert!(!path.exists(), "a truncated array is not a document");
 }
 
 #[tokio::test]

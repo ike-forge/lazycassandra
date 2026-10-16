@@ -1,4 +1,4 @@
-//! The export form, its confirmation, and the running job (export design).
+//! The export form, its confirmation, and the running job.
 
 use crate::connection::ConnectionState;
 use crate::contents::{ContentsState, Subject};

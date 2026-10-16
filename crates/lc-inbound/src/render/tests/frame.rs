@@ -96,8 +96,7 @@ fn the_default_theme_paints_the_field_too() {
             .content()
             .iter()
             .all(|cell| cell.bg != Color::Reset),
-        "the default theme declares its own base, corners included \
-         (docs/superpowers/specs/2026-08-13-colour-palettes-design.md §1)"
+        "the default theme declares its own base, corners included"
     );
 }
 

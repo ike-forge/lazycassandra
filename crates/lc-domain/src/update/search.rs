@@ -1,4 +1,4 @@
-//! Panel search: the `/` prompt and `n`/`N` (panel search design).
+//! Panel search: the `/` prompt and `n`/`N`.
 
 use crate::model::Key;
 use crate::overlay::Overlay;

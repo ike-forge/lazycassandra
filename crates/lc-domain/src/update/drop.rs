@@ -1,4 +1,4 @@
-//! Dropping a keyspace or table, or deleting rows (drop design).
+//! Dropping a keyspace or table, or deleting rows.
 
 use crate::contents::{ContentsState, Subject, TableRef};
 use crate::drop::{DropPrompt, Target};

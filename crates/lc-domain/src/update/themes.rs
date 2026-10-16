@@ -1,4 +1,4 @@
-//! The theme picker (themes design).
+//! The theme picker.
 
 use crate::config::Config;
 use crate::log::Outcome;

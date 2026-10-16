@@ -164,8 +164,7 @@ Users who run a translucent, blurred or image background can declare it:
 contrast guarantee of *our* palettes, whose ratios are measured against the
 theme's own declared `base` — override the ground and the measurement no
 longer describes what is on screen. That is the user's call to make and
-theirs to tune around, not a degraded mode. See architecture.md §6 and
-[the palettes spec](superpowers/specs/2026-08-13-colour-palettes-design.md).
+theirs to tune around, not a degraded mode. See architecture.md §6.
 
 **6. Destructive things are obvious, reversible, or confirmed — pick two.**
 Read-only is the default posture on any connection not explicitly marked
@@ -307,8 +306,7 @@ users, not in a document.
   Answered: the editor is modeless, entered with `⏎`/`i` and left with `Esc`,
   like any other drill-in. Vim keys move around the application, never inside
   the buffer; `ctrl-e` hands the buffer to `$EDITOR` for anyone who wants their
-  own editor's keys
-  ([cql edit mode design](superpowers/specs/2026-09-17-cql-edit-mode-design.md)).
+  own editor's keys.
 
 ### Prior art to study properly
 

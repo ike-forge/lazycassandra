@@ -1,4 +1,4 @@
-//! The cell inspector (cell inspector design).
+//! The cell inspector.
 
 use crate::contents::{ContentsState, SelectionMode};
 use crate::inspect::{Inspected, Inspector};
