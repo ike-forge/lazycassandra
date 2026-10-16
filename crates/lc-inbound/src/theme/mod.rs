@@ -128,9 +128,10 @@ impl Theme {
     /// `Custom` falls back to the default here; [`Themes::get`] is where it
     /// resolves. Keeps `Theme::of` total for callers without a `Themes` table.
     #[must_use]
-    // `Custom` borrows the default's body: `validate` refuses dangling names
-    // before they reach `State`.
-    #[allow(clippy::match_same_arms)]
+    #[allow(
+        clippy::match_same_arms,
+        reason = "`Custom` borrows the default: `validate` refuses dangling names before `State`"
+    )]
     pub fn of(choice: &ThemeChoice) -> Self {
         Self {
             palette: match choice {
