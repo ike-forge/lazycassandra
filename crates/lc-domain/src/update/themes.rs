@@ -2,14 +2,16 @@
 //! (docs/superpowers/specs/2026-08-10-themes-design.md).
 
 use crate::config::Config;
+use crate::log::Outcome;
 use crate::model::Key;
-use crate::overlay::Overlay;
+use crate::overlay::{Message, Overlay};
 use crate::search::Sift;
 use crate::state::State;
+use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
 use crate::viewport::Cursor;
 
-use super::{Effect, escape, picker_matches, quit};
+use super::{Effect, escape, logged, picker_matches, quit, raise, sentence};
 
 /// Puts back the theme a live picker opened on, if the overlay is that
 /// picker. Otherwise a no-op. Three sites unwind a preview: [`escape`], which
@@ -249,5 +251,31 @@ fn themes_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     preview_theme(state);
 
+    Vec::new()
+}
+
+/// Not silent, unlike the first-run example write: that one is ambient and
+/// repeats on every launch, so a warning would fire forever on a machine where
+/// nothing is wrong. This one happens because a key was pressed, once per
+/// press (theme persistence design §6).
+pub(super) fn theme_save_failed(state: &mut State, reason: String) -> Vec<Effect> {
+    logged(
+        state,
+        sentence("Saving the theme"),
+        Outcome::Failed {
+            detail: reason.clone(),
+        },
+    );
+    // The theme stays applied. A save that failed is not a reason to take back
+    // the theme the user chose.
+    raise(
+        state,
+        Message {
+            title: "Theme".to_owned(),
+            message: reason,
+            severity: Severity::Warning,
+        },
+    );
+    state.mark_dirty();
     Vec::new()
 }

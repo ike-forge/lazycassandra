@@ -1,16 +1,20 @@
 //! The connection picker and connecting
 //! (docs/superpowers/specs/2026-08-31-connection-picker-design.md).
 
+use std::time::Duration;
+
 use crate::config::{Config, ConnectionConfig};
-use crate::connection::ConnectionState;
+use crate::connection::{Connection, ConnectionState, SchemaState};
 use crate::log::{Entry, Outcome, Trace};
-use crate::model::{ConnId, Key};
-use crate::overlay::Overlay;
+use crate::model::{ConnId, DbError, Key, Schema};
+use crate::overlay::{Message, Overlay};
+use crate::posture::Posture;
 use crate::search::Sift;
 use crate::state::State;
+use crate::style::Severity;
 use crate::viewport::Cursor;
 
-use super::{Effect, escape, picker_matches, quit, sentence};
+use super::{Effect, escape, logged, picker_matches, quit, sentence, tree_rows};
 
 /// The picker's rows in picker order, which is the order the merge defined:
 /// global entries first, then local-only ones (configuration design §5).
@@ -255,5 +259,137 @@ pub(super) fn offer_connections(state: &mut State) {
 
     if state.overlay.is_some() {
         state.mark_dirty();
+    }
+}
+
+pub(super) fn connected(
+    state: &mut State,
+    conn: ConnId,
+    posture: Posture,
+    took: Duration,
+) -> Vec<Effect> {
+    // Matched rather than asked through `is_current`: the name the connection
+    // arrives under is the one the outstanding attempt was begun with, and
+    // only `Connecting` holds it.
+    let ConnectionState::Connecting {
+        conn: outstanding,
+        name,
+    } = &state.connection
+    else {
+        return Vec::new();
+    };
+    if *outstanding != conn {
+        return Vec::new();
+    }
+    let name = name.clone();
+    state.notify(Severity::Info, format!("connected to {}", name.as_str()));
+
+    state.connection = ConnectionState::Connected(Connection {
+        id: conn,
+        name,
+        posture,
+        schema: SchemaState::Loading,
+    });
+    state.log.complete(
+        Trace::Connect(conn),
+        Outcome::Succeeded {
+            detail: format!("connected, {}", posture_label(posture)),
+            took,
+        },
+    );
+    logged(
+        state,
+        sentence("Reading schema"),
+        Outcome::Pending {
+            trace: Trace::Schema(conn),
+        },
+    );
+    state.mark_dirty();
+    vec![Effect::LoadSchema(conn)]
+}
+
+pub(super) fn connect_failed(state: &mut State, conn: ConnId, error: DbError) -> Vec<Effect> {
+    if !state.connection.is_current(conn) {
+        return Vec::new();
+    }
+    state.log.complete(
+        Trace::Connect(conn),
+        Outcome::Failed {
+            detail: error.to_string(),
+        },
+    );
+    state.overlay = Some(Overlay::Fatal(Message {
+        title: "Connection failed".to_owned(),
+        message: error.to_string(),
+        severity: Severity::Danger,
+    }));
+    state.connection = ConnectionState::Failed(error);
+    state.mark_dirty();
+    Vec::new()
+}
+
+pub(super) fn schema_failed(state: &mut State, conn: ConnId, error: &DbError) -> Vec<Effect> {
+    let applied = match &mut state.connection {
+        ConnectionState::Connected(connection) if connection.id == conn => {
+            connection.schema = SchemaState::Failed(error.clone());
+            true
+        }
+        _ => false,
+    };
+    if applied {
+        state.log.complete(
+            Trace::Schema(conn),
+            Outcome::Failed {
+                detail: error.to_string(),
+            },
+        );
+        state.overlay = Some(Overlay::Fatal(Message {
+            title: "Schema unavailable".to_owned(),
+            message: error.to_string(),
+            severity: Severity::Danger,
+        }));
+        state.mark_dirty();
+    }
+    Vec::new()
+}
+
+pub(super) fn schema_loaded(
+    state: &mut State,
+    conn: ConnId,
+    schema: Schema,
+    took: Duration,
+) -> Vec<Effect> {
+    let detail = format!(
+        "{} keyspaces, {} tables",
+        schema.keyspaces.len(),
+        schema
+            .keyspaces
+            .values()
+            .map(|ks| ks.tables.len())
+            .sum::<usize>(),
+    );
+    let applied = match &mut state.connection {
+        ConnectionState::Connected(connection) if connection.id == conn => {
+            connection.schema = SchemaState::Loaded(schema);
+            true
+        }
+        _ => false,
+    };
+    if applied {
+        state
+            .log
+            .complete(Trace::Schema(conn), Outcome::Succeeded { detail, took });
+        let rows = tree_rows(state);
+        state.tables.cursor.clamp_to(rows);
+        state.mark_dirty();
+    }
+    Vec::new()
+}
+
+fn posture_label(posture: Posture) -> &'static str {
+    match posture {
+        Posture::ReadOnly => "read-only",
+        Posture::Writable => "writable",
+        Posture::Protected => "protected",
     }
 }

@@ -4,7 +4,7 @@
 binding has to satisfy — not a wishlist.
 
 Every keystroke in LazyCassandra passes through one function: `handle_key` in
-[`crates/lc-domain/src/update/mod.rs`](../crates/lc-domain/src/update/mod.rs). There is
+[`crates/lc-domain/src/update/keys.rs`](../crates/lc-domain/src/update/keys.rs). There is
 no second key table, no per-panel handler, and no binding in the renderer. If a
 key does something, it does it there.
 

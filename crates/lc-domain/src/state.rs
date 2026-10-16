@@ -219,7 +219,7 @@ impl State {
     /// The keyspace the tree cursor is on, which is the one on screen.
     ///
     /// The single answer to "which keyspace is the user looking at": the
-    /// editor completes an unqualified name against it (`update::complete`)
+    /// editor completes an unqualified name against it (`update::keys::complete`)
     /// and the grid reads a typed statement's unqualified table against it
     /// (`view::contents`), and two derivations of one rule would be two
     /// things to keep in step (cql semantics design §7).
