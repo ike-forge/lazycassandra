@@ -13,7 +13,7 @@ fn j_and_k_move_the_grid_once_contents_has_focus() {
             took: Duration::ZERO,
         },
     );
-    let tree_row = state.tables.cursor.index();
+    let tree_row = state.tables.cursor().index();
 
     state.focus_on(Panel::Contents);
     press(&mut state, Key::Char('j'));
@@ -21,7 +21,7 @@ fn j_and_k_move_the_grid_once_contents_has_focus() {
 
     assert_eq!(state.contents.cursor.index(), 2);
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         tree_row,
         "the tree must not move while another panel has focus"
     );
@@ -52,12 +52,12 @@ fn the_grid_cursor_cannot_run_off_a_page() {
 #[test]
 fn motion_in_one_panel_never_reaches_another() {
     let mut state = read_shop_orders();
-    let tree_row = state.tables.cursor.index();
+    let tree_row = state.tables.cursor().index();
 
     state.focus_on(Panel::Ddl);
     press(&mut state, Key::Char('j'));
 
-    assert_eq!(state.tables.cursor.index(), tree_row);
+    assert_eq!(state.tables.cursor().index(), tree_row);
     assert_eq!(state.contents.cursor.index(), 0);
 }
 
@@ -195,7 +195,7 @@ fn a_reload_that_shrinks_the_tree_pulls_the_selection_inside_it() {
     for _ in 0..3 {
         press(&mut state, Key::Char('j'));
     }
-    assert_eq!(state.tables.cursor.index(), 3);
+    assert_eq!(state.tables.cursor().index(), 3);
 
     update(
         &mut state,
@@ -207,7 +207,7 @@ fn a_reload_that_shrinks_the_tree_pulls_the_selection_inside_it() {
     );
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         1,
         "the clamp must count tree rows, not keyspaces"
     );
@@ -220,11 +220,11 @@ fn page_down_moves_the_tree_by_one_panel_height() {
 
     press(&mut state, Key::PageDown);
 
-    assert_eq!(state.tables.cursor.index(), 3);
+    assert_eq!(state.tables.cursor().index(), 3);
 
     press(&mut state, Key::PageUp);
 
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
 }
 
 #[test]
@@ -234,11 +234,11 @@ fn home_and_end_reach_the_ends_of_the_tree_in_one_key() {
 
     press(&mut state, Key::End);
 
-    assert_eq!(state.tables.cursor.index(), 3);
+    assert_eq!(state.tables.cursor().index(), 3);
 
     press(&mut state, Key::Home);
 
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
 }
 
 #[test]
@@ -247,10 +247,10 @@ fn g_and_shift_g_reach_the_ends_of_the_tree() {
     sized(&mut state, [3, 0, 0, 0], 0);
 
     press(&mut state, Key::Char('G'));
-    assert_eq!(state.tables.cursor.index(), 3);
+    assert_eq!(state.tables.cursor().index(), 3);
 
     press(&mut state, Key::Char('g'));
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
 }
 
 #[test]
@@ -359,7 +359,7 @@ fn motion_in_the_ddl_panel_moves_its_cursor_not_its_focus() {
     let mut state = browsing(&["a", "b", "c"]);
     state.focus_on(Panel::Ddl);
     sized(&mut state, [0, 6, 0, 0], 20);
-    let tree_row = state.tables.cursor.index();
+    let tree_row = state.tables.cursor().index();
     let rows = crate::view::ddl_rows(&state);
 
     press(&mut state, Key::Char('j'));
@@ -367,7 +367,7 @@ fn motion_in_the_ddl_panel_moves_its_cursor_not_its_focus() {
 
     assert_eq!(state.ddl.cursor.index(), 2.min(rows - 1));
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         tree_row,
         "the tree must not move while another panel has focus"
     );

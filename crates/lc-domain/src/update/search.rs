@@ -6,13 +6,13 @@ use crate::overlay::Overlay;
 use crate::search::{Direction, Origin, Prompt, Searched};
 use crate::state::State;
 
-use super::{Effect, escape, tree_rows};
+use super::{Effect, escape};
 
 /// Where `target`'s cursor is now.
 fn origin_of(state: &State, target: Searched) -> Origin {
     match target {
         Searched::Tables => Origin {
-            row: state.tables.cursor.index(),
+            row: state.tables.cursor().index(),
             column: 0,
         },
         Searched::Ddl => Origin {
@@ -33,10 +33,7 @@ fn origin_of(state: &State, target: Searched) -> Origin {
 /// Puts `target`'s cursor back where it was.
 pub(super) fn restore_origin(state: &mut State, target: Searched, origin: Origin) {
     match target {
-        Searched::Tables => {
-            let len = tree_rows(state);
-            state.tables.cursor.go_to(origin.row, len);
-        }
+        Searched::Tables => state.move_tree_cursor(origin.row),
         Searched::Ddl => {
             let len = crate::view::ddl_rows(state);
             state.ddl.cursor.go_to(origin.row, len);
@@ -65,10 +62,7 @@ fn jump_to_match(state: &mut State, target: Searched, from: Origin, direction: D
                 .schema()
                 .and_then(|schema| state.tables.next_match(schema, from.row, direction));
             match row {
-                Some(row) => {
-                    let len = tree_rows(state);
-                    state.tables.cursor.go_to(row, len);
-                }
+                Some(row) => state.move_tree_cursor(row),
                 None => restore_origin(state, target, from),
             }
         }

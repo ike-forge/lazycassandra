@@ -47,14 +47,17 @@ pub(super) fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
     let contents = &mut state.contents;
 
     match panel {
-        Panel::Tables => [
-            Some(Axis {
-                selection: &mut state.tables.selection,
-                cursor: &mut state.tables.cursor,
-                len: rows,
-            }),
-            None,
-        ],
+        Panel::Tables => {
+            let (selection, cursor) = state.tables.selection_and_cursor();
+            [
+                Some(Axis {
+                    selection,
+                    cursor,
+                    len: rows,
+                }),
+                None,
+            ]
+        }
         Panel::Ddl => [
             Some(Axis {
                 selection: &mut state.ddl.selection,

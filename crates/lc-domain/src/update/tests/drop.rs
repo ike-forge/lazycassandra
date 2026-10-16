@@ -162,14 +162,14 @@ fn n_is_text_on_a_typed_confirmation() {
 fn a_typed_confirmation_takes_text_rather_than_quitting_or_moving() {
     let mut state = on_keyspace();
     press(&mut state, Key::Char('d'));
-    let before = state.tables.cursor.index();
+    let before = state.tables.cursor().index();
 
     for key in ['q', 'j', 'G', 'y', '1'] {
         press(&mut state, Key::Char(key));
     }
 
     assert!(!state.should_quit, "`q` is a character here");
-    assert_eq!(state.tables.cursor.index(), before);
+    assert_eq!(state.tables.cursor().index(), before);
     assert_eq!(state.focus(), Panel::Tables);
     assert_eq!(
         dropping(&state).and_then(DropPrompt::typed).map(Line::text),

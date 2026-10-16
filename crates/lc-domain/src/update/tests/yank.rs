@@ -258,7 +258,7 @@ fn the_tree_collapses_its_selection_on_y_too() {
     press(&mut state, Key::Char('y'));
 
     assert_eq!(state.tables.selection, Selection::default());
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
 }
 
 /// Nothing yanked is nothing said, and a `y` that said nothing must not
@@ -692,11 +692,11 @@ fn y_sends_the_cursor_home_to_the_last_v_and_spends_every_group() {
     state.tables.selection.stop(1);
     state.tables.selection.start(3);
     state.tables.selection.stop(3);
-    state.tables.cursor.go_to(3, 4);
+    state.move_tree_cursor(3);
 
     let _ = press(&mut state, Key::Char('y'));
 
-    assert_eq!(state.tables.cursor.index(), 3, "home is the last v");
+    assert_eq!(state.tables.cursor().index(), 3, "home is the last v");
     assert!(
         !state.tables.selection.is_active(),
         "a yank spends every group, not just the last"
@@ -714,14 +714,14 @@ fn y_over_a_selection_whose_anchor_was_dropped_moves_no_cursor() {
     state.tables.selection.toggle(3);
     state.tables.selection.toggle(3);
     state.tables.selection.toggle(3);
-    state.tables.cursor.go_to(1, 4);
+    state.move_tree_cursor(1);
 
     assert_eq!(state.tables.selection.anchor(), None);
 
     let _ = press(&mut state, Key::Char('y'));
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         1,
         "there is no row the anchor could send it to that the user chose"
     );

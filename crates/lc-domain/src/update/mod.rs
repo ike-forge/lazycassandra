@@ -62,7 +62,7 @@ use insert::open_insert_commit;
 use keys::{Decision, edit_line, escape, handle_key, open_filter, overlay_key};
 use motion::{
     Motion, Side, clamp_lists, cursor_indices, follow_grid_columns, follow_moved_cursors, measured,
-    panel_scroll, row_count, scroll, scroll_len, step_column, tree_rows,
+    panel_scroll, row_count, scroll, scroll_len, step_column,
 };
 use navigation::{Step, focus_by_number, go_left, go_right, show_tab, walk_landing, walk_tab};
 use pointer::handle_pointer;

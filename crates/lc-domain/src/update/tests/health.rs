@@ -160,12 +160,12 @@ fn motion_inside_the_block_moves_its_cursor_not_the_tree() {
     let mut state = on_table();
     let request = request(&press(&mut state, Key::Char('H')));
     land(&mut state, request, Ok(one_node()));
-    let tree = state.tables.cursor.index();
+    let tree = state.tables.cursor().index();
 
     press(&mut state, Key::Char('j'));
     press(&mut state, Key::Char('G'));
 
-    assert_eq!(state.tables.cursor.index(), tree);
+    assert_eq!(state.tables.cursor().index(), tree);
     let panel = block(&state).expect("still up");
     assert_eq!(panel.selected(), panel.rows().len() - 1);
 }

@@ -215,7 +215,7 @@ pub(super) fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
 
     match panel {
         Panel::Tables => {
-            state.tables.cursor.go_to(row, len);
+            state.move_tree_cursor(row);
             activate(state)
         }
         Panel::Contents => {

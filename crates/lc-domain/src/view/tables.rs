@@ -130,10 +130,10 @@ fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<&Flash>) -> PanelBo
 
     PanelBody::Tree {
         rows,
-        selected: tables.cursor.index(),
+        selected: tables.cursor().index(),
         offset: tables.scroll.offset(),
         ranges: flash.map_or_else(
-            || tables.selection.ranges(tables.cursor.index()),
+            || tables.selection.ranges(tables.cursor().index()),
             |flash| flash.rows().clone(),
         ),
         flash: flash.is_some(),
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn the_selection_is_projected_from_the_cursor() {
         let mut state = loaded(&["shop", "typezoo"]);
-        state.tables.cursor.down(2);
+        state.move_tree_cursor(1);
 
         let PanelBody::Tree { selected, .. } = tables_body(&state) else {
             panic!("a loaded schema lists its keyspaces");

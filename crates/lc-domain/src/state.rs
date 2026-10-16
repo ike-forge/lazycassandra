@@ -247,6 +247,14 @@ impl State {
         }
     }
 
+    /// Moves the tree cursor to `row`, bounded by the tree as it is drawn.
+    /// Does nothing before the schema has loaded.
+    pub fn move_tree_cursor(&mut self, row: usize) {
+        if let Some((tables, schema)) = self.tables_and_schema() {
+            tables.go_to(row, schema);
+        }
+    }
+
     pub const fn mark_dirty(&mut self) {
         self.dirty = true;
     }
@@ -333,9 +341,8 @@ impl State {
         match target {
             Searched::Tables => {
                 self.tables.set_search(search);
-                let rows = self.schema().map(|schema| self.tables.rows(schema).len());
-                if let Some(rows) = rows {
-                    self.tables.cursor.clamp_to(rows);
+                if let Some((tables, schema)) = self.tables_and_schema() {
+                    tables.clamp(schema);
                 }
                 self.tables.selection.clear();
             }

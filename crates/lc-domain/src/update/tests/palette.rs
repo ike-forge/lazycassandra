@@ -138,7 +138,7 @@ fn an_open_palette_takes_the_motion_the_panel_would_have() {
     press(&mut state, Key::Char('j'));
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         0,
         "the tree did not move behind the palette"
     );

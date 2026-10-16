@@ -1512,10 +1512,9 @@ mod tests {
         let mut state = tabled(&[("shop", &["orders", "users"])]);
         let schema = state.schema().expect("just loaded").clone();
         state.tables.toggle(&schema);
-        let len = state.tables.rows(&schema).len();
 
-        state.tables.selection.start(state.tables.cursor.index());
-        state.tables.cursor.down(len);
+        state.tables.selection.start(state.tables.cursor().index());
+        state.move_tree_cursor(state.tables.cursor().index() + 1);
 
         assert!(
             of(&state).is_none(),

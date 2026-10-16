@@ -106,7 +106,7 @@ pub(super) fn row_count(state: &State, panel: Panel) -> usize {
 /// practice and kept for exhaustiveness.
 pub(super) fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Cursor> {
     match panel {
-        Panel::Tables => Some(&mut state.tables.cursor),
+        Panel::Tables => Some(state.tables.cursor_mut()),
         Panel::Ddl => Some(&mut state.ddl.cursor),
         Panel::Contents => Some(&mut state.contents.cursor),
         Panel::Queries => match state.queries.tab() {
@@ -322,7 +322,7 @@ pub(super) fn scroll_len(state: &State, panel: Panel) -> usize {
 /// `panel`'s selected row, or zero for a panel with no selection.
 pub(super) fn cursor_index(state: &State, panel: Panel) -> usize {
     match panel {
-        Panel::Tables => state.tables.cursor.index(),
+        Panel::Tables => state.tables.cursor().index(),
         Panel::Ddl => state.ddl.cursor.index(),
         Panel::Contents => state.contents.cursor.index(),
         Panel::Queries => match state.queries.tab() {

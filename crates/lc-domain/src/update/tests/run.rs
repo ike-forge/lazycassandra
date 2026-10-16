@@ -422,7 +422,7 @@ fn an_unbound_ctrl_key_does_nothing() {
     ctrl(&mut state, Key::Char('j'));
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         0,
         "ctrl-j is a binding of its own that does not exist yet, not a slower j"
     );
@@ -445,7 +445,7 @@ fn an_alt_modified_key_is_not_a_binding() {
     );
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         0,
         "alt-j is refused rather than reinterpreted as a slower j"
     );

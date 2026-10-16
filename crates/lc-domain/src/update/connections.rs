@@ -14,7 +14,7 @@ use crate::state::State;
 use crate::style::Severity;
 use crate::viewport::Cursor;
 
-use super::{Effect, escape, logged, picker_matches, quit, sentence, tree_rows};
+use super::{Effect, escape, logged, picker_matches, quit, sentence};
 
 /// The picker's rows in picker order, which is the order the merge defined:
 /// global entries first, then local-only ones (configuration design §5).
@@ -379,8 +379,9 @@ pub(super) fn schema_loaded(
         state
             .log
             .complete(Trace::Schema(conn), Outcome::Succeeded { detail, took });
-        let rows = tree_rows(state);
-        state.tables.cursor.clamp_to(rows);
+        if let Some((tables, schema)) = state.tables_and_schema() {
+            tables.clamp(schema);
+        }
         state.mark_dirty();
     }
     Vec::new()

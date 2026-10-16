@@ -14,7 +14,9 @@ use crate::viewport::{Cursor, Scroll};
 /// The Tables panel's own state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TablesPanel {
-    pub cursor: Cursor,
+    /// Private so every motion is bounded by [`Self::rows`] rather than by a
+    /// row count a caller supplies.
+    cursor: Cursor,
     /// The first row drawn. Moved by a wheel on its own, and pulled after a
     /// cursor motion (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
@@ -163,6 +165,33 @@ impl TablesPanel {
             })
     }
 
+    #[must_use]
+    pub const fn cursor(&self) -> Cursor {
+        self.cursor
+    }
+
+    /// For the motion and selection paths shared by every list panel, which
+    /// bound the cursor by `update`'s `row_count`.
+    pub(crate) const fn cursor_mut(&mut self) -> &mut Cursor {
+        &mut self.cursor
+    }
+
+    /// The selection and the cursor it extends from, borrowed together for
+    /// the visual-mode paths shared by every list panel.
+    pub(crate) const fn selection_and_cursor(&mut self) -> (&mut Selection, &mut Cursor) {
+        (&mut self.selection, &mut self.cursor)
+    }
+
+    /// Moves to `row`, or to the last row when the tree is shorter.
+    pub fn go_to(&mut self, row: usize, schema: &Schema) {
+        self.cursor.go_to(row, self.rows(schema).len());
+    }
+
+    /// Pulls the cursor back inside a tree that shrank.
+    pub fn clamp(&mut self, schema: &Schema) {
+        self.cursor.clamp_to(self.rows(schema).len());
+    }
+
     /// The node the cursor is on.
     #[must_use]
     pub fn selected<'a>(&self, schema: &'a Schema) -> Option<Node<'a>> {
@@ -252,7 +281,7 @@ impl TablesPanel {
 
     fn fold(&mut self, name: &str, schema: &Schema) {
         self.unfolded.remove(name);
-        self.cursor.clamp_to(self.rows(schema).len());
+        self.clamp(schema);
     }
 
     fn select_keyspace(&mut self, name: &str, schema: &Schema) {

@@ -67,7 +67,7 @@ pub(super) fn lit(state: &State) -> Flash {
     let (rows, columns) = match state.focus() {
         Panel::Contents => grid_extent(state),
         Panel::Tables => (
-            spanned(&state.tables.selection, state.tables.cursor.index()),
+            spanned(&state.tables.selection, state.tables.cursor().index()),
             Ranges::default(),
         ),
         Panel::Ddl => (
@@ -144,7 +144,7 @@ pub(super) fn contents(state: &State) -> Option<String> {
 pub(super) fn tree_nodes(state: &State) -> Option<String> {
     let schema = state.schema()?;
     let rows = state.tables.rows(schema);
-    let selected = spanned(&state.tables.selection, state.tables.cursor.index());
+    let selected = spanned(&state.tables.selection, state.tables.cursor().index());
 
     Some(crate::yank::lines(
         selected

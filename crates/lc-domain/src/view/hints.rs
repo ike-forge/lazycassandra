@@ -1008,7 +1008,7 @@ fn next_match_is_live(state: &State, target: Searched) -> bool {
         Searched::Tables => state.schema().is_some_and(|schema| {
             state
                 .tables
-                .next_match(schema, state.tables.cursor.index(), Direction::Forwards)
+                .next_match(schema, state.tables.cursor().index(), Direction::Forwards)
                 .is_some()
         }),
         Searched::Ddl => {
@@ -2095,7 +2095,7 @@ mod tests {
         state.geometry = state.geometry.with_health_rows(10);
         assert_eq!(hint(&state, "health"), Liveness::Live);
 
-        state.tables.cursor.up();
+        state.tables.cursor_mut().up();
         assert_eq!(
             hint(&state, "health"),
             Liveness::Inert,

@@ -28,11 +28,11 @@ fn j_and_k_walk_the_keyspace_list() {
     press(&mut state, Key::Char('j'));
     press(&mut state, Key::Char('j'));
 
-    assert_eq!(state.tables.cursor.index(), 2);
+    assert_eq!(state.tables.cursor().index(), 2);
 
     press(&mut state, Key::Char('k'));
 
-    assert_eq!(state.tables.cursor.index(), 1);
+    assert_eq!(state.tables.cursor().index(), 1);
 }
 
 #[test]
@@ -41,11 +41,11 @@ fn the_arrow_keys_do_what_j_and_k_do() {
 
     press(&mut state, Key::Down);
 
-    assert_eq!(state.tables.cursor.index(), 1);
+    assert_eq!(state.tables.cursor().index(), 1);
 
     press(&mut state, Key::Up);
 
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn the_selection_cannot_run_off_a_list_it_has_not_loaded() {
     press(&mut state, Key::Char('j'));
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         0,
         "there are no rows to move onto"
     );
@@ -68,7 +68,7 @@ fn motion_belongs_to_the_focused_panel_only() {
 
     press(&mut state, Key::Char('j'));
 
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
 }
 
 #[test]
@@ -205,13 +205,19 @@ fn ctrl_d_and_ctrl_u_page_the_focused_panel() {
     press(&mut paged, Key::PageDown);
     ctrl(&mut chorded, Key::Char('d'));
 
-    assert_eq!(chorded.tables.cursor.index(), paged.tables.cursor.index());
-    assert!(chorded.tables.cursor.index() > 0, "a page was available");
+    assert_eq!(
+        chorded.tables.cursor().index(),
+        paged.tables.cursor().index()
+    );
+    assert!(chorded.tables.cursor().index() > 0, "a page was available");
 
     press(&mut paged, Key::PageUp);
     ctrl(&mut chorded, Key::Char('u'));
 
-    assert_eq!(chorded.tables.cursor.index(), paged.tables.cursor.index());
+    assert_eq!(
+        chorded.tables.cursor().index(),
+        paged.tables.cursor().index()
+    );
 }
 
 #[test]
@@ -226,7 +232,7 @@ fn ctrl_d_pages_an_open_palette_rather_than_the_panel_underneath() {
         15,
         "ctrl-d is pgdn by another name, and pgdn pages the palette"
     );
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
 }
 
 #[test]
@@ -565,7 +571,7 @@ fn a_number_moves_focus_and_does_nothing_else() {
     for panel in Panel::ALL {
         let mut state = browsing(&["a", "b", "c"]);
         press(&mut state, Key::Char('j'));
-        let cursor = state.tables.cursor;
+        let cursor = state.tables.cursor();
 
         let effects = press(&mut state, Key::Char(panel.number()));
 
@@ -577,7 +583,7 @@ fn a_number_moves_focus_and_does_nothing_else() {
         );
         assert!(!state.should_quit, "'{}' quit the app", panel.number());
         assert_eq!(
-            state.tables.cursor,
+            state.tables.cursor(),
             cursor,
             "'{}' disturbed the tree",
             panel.number()

@@ -279,11 +279,11 @@ fn reading_a_table_leaves_the_tree_selection_where_it_was() {
     state.focus_on(Panel::Tables);
     press(&mut state, Key::Char('l'));
     press(&mut state, Key::Char('j'));
-    let selected = state.tables.cursor.index();
+    let selected = state.tables.cursor().index();
 
     press(&mut state, Key::Enter);
 
-    assert_eq!(state.tables.cursor.index(), selected);
+    assert_eq!(state.tables.cursor().index(), selected);
 }
 
 #[test]

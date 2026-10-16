@@ -5,7 +5,7 @@ fn a_loaded_schema_pulls_the_selection_back_inside_it() {
     let mut state = connected(Posture::ReadOnly);
     let conn = current_conn(&state);
     for _ in 0..5 {
-        state.tables.cursor.down(6);
+        state.tables.cursor_mut().down(6);
     }
 
     update(
@@ -18,7 +18,7 @@ fn a_loaded_schema_pulls_the_selection_back_inside_it() {
     );
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         1,
         "a selection past the end of a smaller schema must be pulled in"
     );
@@ -98,7 +98,7 @@ fn a_click_clears_the_range_it_lands_beside() {
         !state.tables.selection.is_active(),
         "pointing at one row is saying: this one"
     );
-    assert_eq!(state.tables.cursor.index(), 2);
+    assert_eq!(state.tables.cursor().index(), 2);
 }
 
 /// One key for one action: `Space` was `Enter`'s synonym and is now free
@@ -170,7 +170,7 @@ fn l_reads_a_table_under_a_search_the_way_enter_does() {
     let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
     state.apply_search(Searched::Tables, Search::new("orders"));
 
-    state.tables.cursor.go_to(1, row_count(&state));
+    state.move_tree_cursor(1);
     let effects = press(&mut state, Key::Char('l'));
 
     assert!(
@@ -200,11 +200,11 @@ fn h_from_a_table_steps_out_to_its_keyspace_before_folding() {
     let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
     press(&mut state, Key::Char('l'));
     press(&mut state, Key::Char('l'));
-    assert_eq!(state.tables.cursor.index(), 1);
+    assert_eq!(state.tables.cursor().index(), 1);
 
     press(&mut state, Key::Char('h'));
 
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
     assert_eq!(row_count(&state), 3, "stepping out must not fold");
 }
 
@@ -233,7 +233,7 @@ fn j_walks_into_an_unfolded_keyspaces_tables() {
     }
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         3,
         "motion counts tree rows, not keyspaces"
     );
@@ -342,7 +342,7 @@ fn enter_still_reads_a_table_under_a_search() {
         "the keyspace and the one table the term reaches"
     );
 
-    state.tables.cursor.go_to(1, row_count(&state));
+    state.move_tree_cursor(1);
     let effects = press(&mut state, Key::Enter);
 
     assert!(

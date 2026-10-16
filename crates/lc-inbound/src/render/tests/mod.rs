@@ -135,7 +135,7 @@ fn browsing(names: &[&str], selected: usize) -> State {
         posture: Posture::ReadOnly,
         schema: SchemaState::Loaded(schema_of(names)),
     });
-    state.tables.cursor.go_to(selected, names.len());
+    state.move_tree_cursor(selected);
     // Set with the cursor for the reason `select_contents` sets it: half a
     // state is not a state (list viewport design §6).
     state.tables.scroll.follow(selected, TABLES_ROWS);

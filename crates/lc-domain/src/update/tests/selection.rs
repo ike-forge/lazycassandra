@@ -148,7 +148,7 @@ fn re_focusing_the_focused_panel_keeps_its_selection() {
     let _ = press(&mut state, Key::Char('1'));
 
     assert_eq!(
-        state.tables.selection.ranges(state.tables.cursor.index()),
+        state.tables.selection.ranges(state.tables.cursor().index()),
         Ranges::of(Range::new(0, 1)),
         "`1` on Tables is not a panel switch"
     );
@@ -190,7 +190,7 @@ fn enter_on_a_table_leaves_no_selection_behind_in_tables() {
     // leaves must not stay lit behind it.
     let mut state = tables_state();
     state.focus_on(Panel::Tables);
-    state.tables.cursor.go_to(1, 4);
+    state.move_tree_cursor(1);
     state.tables.selection.start(1);
     state.tables.selection.stop(1);
 
@@ -224,7 +224,7 @@ fn v_starts_a_range_at_the_cursor_and_motion_extends_it() {
     press(&mut state, Key::Char('j'));
 
     assert_eq!(
-        state.tables.selection.ranges(state.tables.cursor.index()),
+        state.tables.selection.ranges(state.tables.cursor().index()),
         Ranges::of(Range::new(1, 3))
     );
 }
@@ -238,9 +238,9 @@ fn a_second_v_freezes_the_range_and_the_cursor_walks_out_of_it() {
     press(&mut state, Key::Char('v'));
     press(&mut state, Key::Char('j'));
 
-    assert_eq!(state.tables.cursor.index(), 2);
+    assert_eq!(state.tables.cursor().index(), 2);
     assert_eq!(
-        state.tables.selection.ranges(state.tables.cursor.index()),
+        state.tables.selection.ranges(state.tables.cursor().index()),
         Ranges::of(Range::new(0, 1)),
         "a frozen range does not follow the cursor"
     );
@@ -254,7 +254,7 @@ fn escape_freezes_a_live_range_before_it_clears_one() {
 
     press(&mut state, Key::Escape);
     assert_eq!(
-        state.tables.selection.ranges(state.tables.cursor.index()),
+        state.tables.selection.ranges(state.tables.cursor().index()),
         Ranges::of(Range::new(0, 1)),
         "the first press leaves visual mode and keeps the range"
     );
@@ -315,7 +315,7 @@ fn v_builds_two_groups_and_esc_takes_both() {
     let _ = press(&mut state, Key::Char('v'));
     let _ = press(&mut state, Key::Char('v'));
 
-    let selected = state.tables.selection.ranges(state.tables.cursor.index());
+    let selected = state.tables.selection.ranges(state.tables.cursor().index());
     assert_eq!(selected.groups().count(), 2, "the gap kept them apart");
     assert_eq!(selected.indices().collect::<Vec<_>>(), vec![0, 1, 3]);
 
@@ -335,7 +335,7 @@ fn v_on_a_selected_row_drops_that_group_only() {
     state.tables.selection.stop(1);
     state.tables.selection.start(3);
     state.tables.selection.stop(3);
-    state.tables.cursor.go_to(0, 4);
+    state.move_tree_cursor(0);
 
     let _ = press(&mut state, Key::Char('v'));
 
@@ -343,7 +343,7 @@ fn v_on_a_selected_row_drops_that_group_only() {
         state
             .tables
             .selection
-            .ranges(state.tables.cursor.index())
+            .ranges(state.tables.cursor().index())
             .indices()
             .collect::<Vec<_>>(),
         vec![3]
@@ -370,7 +370,7 @@ fn a_range_over_a_list_that_shrank_is_pulled_back() {
     press(&mut state, Key::End);
     press(&mut state, Key::Char('v'));
     assert_eq!(
-        state.tables.selection.ranges(state.tables.cursor.index()),
+        state.tables.selection.ranges(state.tables.cursor().index()),
         Ranges::of(Range::new(0, 2))
     );
 
@@ -378,7 +378,7 @@ fn a_range_over_a_list_that_shrank_is_pulled_back() {
     press(&mut state, Key::Char('h'));
 
     assert_eq!(
-        state.tables.selection.ranges(state.tables.cursor.index()),
+        state.tables.selection.ranges(state.tables.cursor().index()),
         Ranges::of(Range::new(0, 0)),
         "folding the keyspace took the two table rows with it"
     );

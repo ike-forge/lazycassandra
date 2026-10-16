@@ -99,7 +99,7 @@ fn a_click_on_a_table_reads_it() {
         "got {effects:?}"
     );
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         1,
         "on the row that was clicked"
     );
@@ -319,7 +319,7 @@ fn a_click_on_a_row_that_has_gone_is_dropped_rather_than_clamped() {
     let effects = click_row(&mut state, Panel::Tables, 2);
 
     assert!(effects.is_empty(), "a stale row reads nothing");
-    assert_eq!(state.tables.cursor.index(), 0, "and moves nothing");
+    assert_eq!(state.tables.cursor().index(), 0, "and moves nothing");
 }
 
 #[test]
@@ -426,7 +426,7 @@ fn a_wheel_over_a_panel_with_nothing_to_scroll_is_inert() {
     );
 
     assert!(effects.is_empty());
-    assert_eq!(state.tables.cursor.index(), 0, "no other panel moved");
+    assert_eq!(state.tables.cursor().index(), 0, "no other panel moved");
     assert_eq!(state.focus(), Panel::Tables);
     assert_eq!(
         state.queries.cursor(),
@@ -463,7 +463,11 @@ fn a_wheel_over_tables_moves_the_viewport_rather_than_the_selection() {
 
     assert!(effects.is_empty(), "a scroll alone asks for nothing");
     assert_eq!(state.tables.scroll.offset(), 1, "four rows, three visible");
-    assert_eq!(state.tables.cursor.index(), 0, "the selection did not move");
+    assert_eq!(
+        state.tables.cursor().index(),
+        0,
+        "the selection did not move"
+    );
     assert_eq!(
         state.focus(),
         Panel::Queries,

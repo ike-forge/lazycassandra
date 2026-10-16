@@ -164,12 +164,12 @@ fn extending_a_term_does_not_walk_the_cursor_forward() {
     press(&mut state, Key::Char('/'));
 
     press(&mut state, Key::Char('o'));
-    let after_one = state.tables.cursor.index();
+    let after_one = state.tables.cursor().index();
     press(&mut state, Key::Backspace);
     press(&mut state, Key::Char('o'));
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         after_one,
         "every keystroke searches from where / was pressed, not from the last landing"
     );
@@ -179,7 +179,7 @@ fn extending_a_term_does_not_walk_the_cursor_forward() {
 fn a_term_that_matches_nothing_leaves_the_cursor_on_the_empty_tree() {
     let mut state = loaded();
     state.focus_on(Panel::Tables);
-    state.tables.cursor.go_to(1, tree_rows(&state));
+    state.move_tree_cursor(1);
     press(&mut state, Key::Char('/'));
 
     for character in "zzz".chars() {
@@ -188,7 +188,7 @@ fn a_term_that_matches_nothing_leaves_the_cursor_on_the_empty_tree() {
 
     assert_eq!(tree_rows(&state), 0, "no keyspace survives the term");
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         0,
         "there is no row 1 left to sit on; Esc is what puts the cursor back"
     );
@@ -198,7 +198,7 @@ fn a_term_that_matches_nothing_leaves_the_cursor_on_the_empty_tree() {
 fn escape_puts_the_cursor_back_on_the_row_a_matchless_term_emptied_out() {
     let mut state = loaded();
     state.focus_on(Panel::Tables);
-    state.tables.cursor.go_to(1, tree_rows(&state));
+    state.move_tree_cursor(1);
     press(&mut state, Key::Char('/'));
     for character in "zzz".chars() {
         press(&mut state, Key::Char(character));
@@ -206,7 +206,7 @@ fn escape_puts_the_cursor_back_on_the_row_a_matchless_term_emptied_out() {
 
     press(&mut state, Key::Escape);
 
-    assert_eq!(state.tables.cursor.index(), 1);
+    assert_eq!(state.tables.cursor().index(), 1);
 }
 
 #[test]
@@ -222,14 +222,14 @@ fn a_term_extended_past_its_last_match_restores_the_cursor_to_origin() {
         ("orders_ks", &[]),
     ]);
     state.focus_on(Panel::Tables);
-    state.tables.cursor.go_to(1, tree_rows(&state));
+    state.move_tree_cursor(1);
     press(&mut state, Key::Char('/'));
 
     for character in "orders".chars() {
         press(&mut state, Key::Char(character));
     }
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         0,
         "orders_ks is the one keyspace the term keeps, so it is the only row"
     );
@@ -237,12 +237,12 @@ fn a_term_extended_past_its_last_match_restores_the_cursor_to_origin() {
     press(&mut state, Key::Char('x'));
 
     assert_eq!(tree_rows(&state), 0, "ordersx keeps nothing");
-    assert_eq!(state.tables.cursor.index(), 0);
+    assert_eq!(state.tables.cursor().index(), 0);
 
     press(&mut state, Key::Escape);
 
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         1,
         "the abandoned prompt leaves the panel on the row it opened on"
     );
@@ -258,7 +258,7 @@ fn backspace_to_empty_restores_the_cursor_to_origin() {
         ("orders_ks", &[]),
     ]);
     state.focus_on(Panel::Tables);
-    state.tables.cursor.go_to(1, tree_rows(&state));
+    state.move_tree_cursor(1);
     press(&mut state, Key::Char('/'));
 
     for character in "ordersx".chars() {
@@ -272,7 +272,7 @@ fn backspace_to_empty_restores_the_cursor_to_origin() {
 
     assert_eq!(state.search(Searched::Tables), None);
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         1,
         "the buffer is empty, but origin is still where the cursor belongs"
     );
@@ -282,7 +282,7 @@ fn backspace_to_empty_restores_the_cursor_to_origin() {
 fn escape_restores_the_search_and_the_cursor_together() {
     let mut state = loaded();
     state.focus_on(Panel::Tables);
-    state.tables.cursor.go_to(1, tree_rows(&state));
+    state.move_tree_cursor(1);
     press(&mut state, Key::Char('/'));
     for character in "orders".chars() {
         press(&mut state, Key::Char(character));
@@ -290,7 +290,7 @@ fn escape_restores_the_search_and_the_cursor_together() {
 
     press(&mut state, Key::Escape);
 
-    assert_eq!(state.tables.cursor.index(), 1, "the cursor goes back too");
+    assert_eq!(state.tables.cursor().index(), 1, "the cursor goes back too");
     assert_eq!(state.search(Searched::Tables), None);
 }
 
@@ -302,11 +302,11 @@ fn enter_keeps_where_the_cursor_landed() {
     for character in "orders".chars() {
         press(&mut state, Key::Char(character));
     }
-    let landed = state.tables.cursor.index();
+    let landed = state.tables.cursor().index();
 
     press(&mut state, Key::Enter);
 
-    assert_eq!(state.tables.cursor.index(), landed);
+    assert_eq!(state.tables.cursor().index(), landed);
 }
 
 #[test]
@@ -322,14 +322,14 @@ fn n_walks_to_the_next_match_and_wraps() {
 
     press(&mut state, Key::Char('n'));
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         1,
         "\"orders\" is the first match after row 0"
     );
 
     press(&mut state, Key::Char('n'));
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         0,
         "the last match wraps back to \"shop\""
     );
@@ -350,19 +350,19 @@ fn shift_n_walks_backwards() {
     state.apply_search(Searched::Tables, Search::new("o"));
     // Rows, alphabetical: "box" (0), "shop" (1, forced open by its own
     // match), "orders" (2) — every one of the three matches "o".
-    state.tables.cursor.go_to(1, tree_rows(&state));
+    state.move_tree_cursor(1);
 
     press(&mut state, Key::Char('n'));
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         2,
         "n from the middle row is the match after it"
     );
 
-    state.tables.cursor.go_to(1, tree_rows(&state));
+    state.move_tree_cursor(1);
     press(&mut state, Key::Char('N'));
     assert_eq!(
-        state.tables.cursor.index(),
+        state.tables.cursor().index(),
         0,
         "N from the same row is the match before it, not a synonym for n"
     );
@@ -372,11 +372,11 @@ fn shift_n_walks_backwards() {
 fn n_is_inert_where_no_search_is_applied() {
     let mut state = loaded();
     state.focus_on(Panel::Tables);
-    let before = state.tables.cursor.index();
+    let before = state.tables.cursor().index();
 
     press(&mut state, Key::Char('n'));
 
-    assert_eq!(state.tables.cursor.index(), before);
+    assert_eq!(state.tables.cursor().index(), before);
 }
 
 #[test]
@@ -402,14 +402,18 @@ fn a_live_range_follows_an_n() {
     let mut state = browsing_tables(&[("box", &[]), ("shop", &["orders"])]);
     state.focus_on(Panel::Tables);
     state.apply_search(Searched::Tables, Search::new("o"));
-    state.tables.cursor.go_to(1, tree_rows(&state));
+    state.move_tree_cursor(1);
 
     press(&mut state, Key::Char('v'));
     press(&mut state, Key::Char('n'));
 
-    assert_eq!(state.tables.cursor.index(), 2, "n landed on the next match");
     assert_eq!(
-        state.tables.selection.ranges(state.tables.cursor.index()),
+        state.tables.cursor().index(),
+        2,
+        "n landed on the next match"
+    );
+    assert_eq!(
+        state.tables.selection.ranges(state.tables.cursor().index()),
         Ranges::of(Range::new(1, 2)),
         "the range runs from the anchor n was pressed on to where it landed"
     );

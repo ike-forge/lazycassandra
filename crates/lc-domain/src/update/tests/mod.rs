@@ -1,5 +1,5 @@
 use super::connections::open_connections;
-use super::motion::grid_columns;
+use super::motion::{grid_columns, tree_rows};
 use super::navigation::Landing;
 use super::pointer::WHEEL_ROWS;
 use super::*;
@@ -387,7 +387,7 @@ fn sized(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
 /// find nothing to scroll up over.
 fn populated(focus: Panel) -> State {
     let mut state = browsing_tables(&[("alpha", &["a1"]), ("shop", &["orders", "users"])]);
-    state.tables.cursor.go_to(1, 2);
+    state.move_tree_cursor(1);
     press(&mut state, Key::Char('l'));
 
     // Tables keeps its cursor on the keyspace, where `l` steps in and `h`
