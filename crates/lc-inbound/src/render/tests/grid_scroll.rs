@@ -1,12 +1,10 @@
 use super::*;
 
-/// A `width`-wide frame showing a page of `columns` columns and `rows`
-/// rows, with the cursor on its first cell.
+/// Cursor on the first cell.
 fn frame_showing_grid(columns: usize, width: u16, rows: usize) -> Buffer {
     draw_state(width, 12, &showing(sized_page(columns, rows)))
 }
 
-/// The same, one column wide, scrolled so that `offset` is the top row.
 fn frame_showing_scrolled_grid(rows: usize, offset: usize) -> Buffer {
     let mut state = showing(sized_page(1, rows));
     state.contents.scroll.follow(offset, 1);
@@ -44,7 +42,6 @@ fn the_selected_cell_is_marked_apart_from_the_rest_of_its_row() {
             .modifier
             .contains(Modifier::UNDERLINED)
     };
-    // The first row — the one the cursor is on, at its first column.
     let first = drawn_column(area, 0);
     let selected = grid_row_y(area, 0);
 
@@ -60,8 +57,6 @@ fn the_selected_cell_is_marked_apart_from_the_rest_of_its_row() {
     );
 }
 
-/// The crosshair is a locator and the range is a selection, so where the
-/// two cross the range is what the cell has to say (design §6).
 #[test]
 fn a_ranged_cell_keeps_its_band_where_the_crosshair_crosses_it() {
     let mut state = showing(sized_page(4, 3));
@@ -98,11 +93,8 @@ fn a_ranged_cell_keeps_its_band_where_the_crosshair_crosses_it() {
 
 #[test]
 fn the_row_and_the_cell_are_marked_in_an_unfocused_panel_too() {
-    // `body::grid` ignores the `focused` flag, which is design §3's
-    // deliberate decision rather than an oversight: every other selection
-    // in the program is drawn unfocused, and the border says which panel
-    // is live. True by construction today, so only a fixture drawn with
-    // focus elsewhere would notice a future `if focused`.
+    // The grid ignores `focused` by design; this fixture draws with focus
+    // elsewhere to catch a future `if focused`.
     let mut state = showing(sized_page(4, 3));
     state.contents.mode = SelectionMode::Cell;
     state.focus_on(Panel::Tables);
@@ -160,21 +152,15 @@ fn the_gutter_is_muted_and_the_values_beside_it_are_not() {
     );
 }
 
-/// The same over the panel a 60-wide frame gives Contents, which is five
-/// columns rather than two once each heading carries its marks — the
-/// window the scrolling tests need to tell a drawn position from a page
-/// index.
+/// A 60-wide frame gives Contents five columns.
 fn walked_wide(path: &[usize]) -> State {
     walked(42, path)
 }
 
 #[test]
 fn the_grid_is_drawn_from_the_column_the_viewport_names() {
-    // Out to c8, which forces the scroll, and back to c5 — which the
-    // viewport already shows, so it stays where it is. The cursor then
-    // sits in the middle of the drawn window rather than against its
-    // right edge, where an index that ignored the offset would land on
-    // the same cell and be indistinguishable.
+    // Out to c8 and back to c5, which stays in view, so the cursor sits
+    // mid-window.
     let state = walked_wide(&[8, 5]);
     assert!(
         state.contents.column_scroll.first() > 0,
@@ -201,7 +187,7 @@ fn the_grid_is_drawn_from_the_column_the_viewport_names() {
         first.starts_with('▌'),
         "the bar is pinned and never scrolls off, got {first:?}"
     );
-    // c4 is drawn first, so the cursor's c5 is the second column drawn.
+    // c4 is drawn first, so c5 is second.
     assert!(
         underlined(drawn_column(area, 1)) && underlined(drawn_column(area, 1) + 1),
         "the cell cursor is on c5, counted from the drawn window rather \
@@ -218,8 +204,7 @@ fn the_grid_is_drawn_from_the_column_the_viewport_names() {
     );
 }
 
-/// A grid whose second column is sorted descending and whose first is
-/// filtered, so every state a mark can be in is on screen at once.
+/// Second column sorted descending, first filtered.
 fn marked_grid() -> State {
     let mut state = showing(page_of(
         &["id", "name"],
@@ -279,9 +264,7 @@ fn a_mark_in_force_reads_apart_from_the_ones_that_are_not() {
         .fg
         .expect("faint spends a colour");
 
-    // `id` is six columns wide — two for the name, a blank, the sort
-    // mark, a blank, the funnel — so its sort mark sits third and its
-    // filter mark fifth.
+    // `id` is six wide: name, blank, sort mark, blank, funnel.
     let id = first_cell(area, 1);
     assert_eq!(fg(id + 3), faint, "id is not sorted");
     assert_eq!(fg(id + 5), marker, "and it is filtered");
@@ -307,18 +290,11 @@ fn a_filter_that_hides_rows_draws_only_the_ones_it_left() {
 
 #[test]
 fn the_title_says_how_much_of_the_page_a_filter_left() {
-    // `top_border` panics unless some block's title says so, which is the
-    // assertion: a grid titled "1 row" would claim the cluster returned
-    // one.
-    // `top_border` panics unless some block's title says so, which is the
-    // assertion: a grid titled "1 row" would claim the cluster returned
-    // one. Widened past 60, where the title is cut before the count.
+    // `top_border` panics unless a title says so. Wider than 60, where the
+    // title is cut before the count.
     top_border(&draw_state(80, 12, &marked_grid()), "(1 of 2 rows)");
 }
 
-/// The prompt is a modal of its own, so a search prompt on the bar row and
-/// a filter cannot be mistaken for each other (grid sort and filter
-/// design §3).
 #[test]
 fn the_filter_prompt_draws_over_the_panels_naming_its_column() {
     let mut state = marked_grid();
@@ -335,11 +311,9 @@ fn the_filter_prompt_draws_over_the_panels_naming_its_column() {
 
     let buffer = draw_state(60, 12, &state);
 
-    // The modal says which column it will narrow, and `top_border` finds
-    // no block titled this unless it does.
+    // `top_border` panics unless the modal names its column.
     top_border(&buffer, "Filter name");
-    // And it draws in the smallest frame the shell draws panels in, which
-    // is why `f` needs no measurement to gate it (design §3).
+    // It fits the smallest shell frame, so `f` needs no measurement gate.
     top_border(
         &draw_state(crate::layout::MIN_W, crate::layout::MIN_H, &state),
         "Filter",
@@ -350,9 +324,6 @@ fn the_filter_prompt_draws_over_the_panels_naming_its_column() {
     );
 }
 
-/// The trap `body.rs::grid` documents around `selected_column`: a range
-/// held over the *page*'s column indices must be tested against the page
-/// column a drawn cell names, not the position it happens to draw at.
 #[test]
 fn a_scrolled_grids_column_range_bands_the_page_column_not_the_drawn_position() {
     let mut state = walked_wide(&[8, 5]);
@@ -362,17 +333,12 @@ fn a_scrolled_grids_column_range_bands_the_page_column_not_the_drawn_position() 
         "the fixture must scroll to c4 or this test proves nothing about \
          page indices"
     );
-    // Page column 6 — drawn third in this window (c4, c5, c6, …). A check
-    // keyed on the drawn position rather than the page column would either
-    // band the wrong cell or, since no drawn position is 6, band nothing
-    // at all in a window this size.
+    // Page column 6 is drawn third; no drawn position is 6.
     state.contents.columns = held(6, 6);
 
     let buffer = draw_state(60, 12, &state);
     let area = block_area(&buffer, "Table contents");
-    // Row 1, not the cursor's row 0: the cursor's own row carries the
-    // crosshair under the band, and a row that is washed either way proves
-    // nothing about the range here.
+    // Off the cursor row, which the crosshair washes anyway.
     let bg = |index: u16| {
         buffer
             .cell((drawn_column(area, index), grid_row_y(area, 1)))
@@ -388,7 +354,7 @@ fn a_scrolled_grids_column_range_bands_the_page_column_not_the_drawn_position() 
     );
 }
 
-/// The horizontal track: past the footer, short of the loader's cells.
+/// Past the footer, short of the loader.
 fn contents_track(buffer: &Buffer) -> String {
     let area = block_area(buffer, "Table contents");
     let limit = crate::loader::placement(area).expect("room for a loader").x - crate::loader::INSET;
@@ -436,7 +402,7 @@ fn rows_are_numbered_from_one() {
 
 #[test]
 fn the_row_number_is_the_pages_own_index_after_a_scroll() {
-    // A twelve-row page scrolled to put its fourth row at the top.
+    // Twelve rows scrolled to start at the fourth.
     let buffer = frame_showing_scrolled_grid(12, 3);
     let text = block_row(&buffer, "Table contents", 2);
 
@@ -448,12 +414,8 @@ fn the_row_number_is_the_pages_own_index_after_a_scroll() {
 
 #[test]
 fn a_column_wider_than_the_panel_is_ellipsised_rather_than_squeezed() {
-    // `lc_domain::grid::widths` caps a column at 30 and not at the panel,
-    // so the natural width outruns the 19 columns of body left once the
-    // merged bar+gutter block and its spacing column are taken. `drawn_widths`
-    // caps each width against what is left, so ratatui is never
-    // overcommitted and the bar keeps its own cells; the value is cut by
-    // `styled_cell`, which is where the ellipsis below comes from.
+    // The cap is 30 and the body 19 wide; `drawn_widths` caps it so the bar
+    // keeps its cells.
     let state = showing(page_of(
         &["id"],
         &[&[text("8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01")]],
@@ -505,10 +467,7 @@ fn a_truncated_column_widens_to_fill_the_panel() {
     assert_eq!(Some(bg(1)), selected, "and its heading");
 }
 
-/// Whether the block titled `title` has a horizontal scrollbar drawn over
-/// its bottom border. The corners stay `╰` and `╯` whether or not one is
-/// drawn, so the cells between them are what to look at: an untouched
-/// bottom border is all `─`.
+/// The corners never change; the cells between them do.
 fn has_horizontal_scrollbar(buffer: &Buffer, title: &str) -> bool {
     let area = block_area(buffer, title);
     let y = area.bottom() - 1;

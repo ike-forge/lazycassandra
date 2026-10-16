@@ -1,7 +1,5 @@
-//! Vivid and high-contrast, terminal-native. Maximum scannability, and the
-//! loudest of the four. `focus` and `shortcut` are the same amber here, which
-//! is why a hot key is underlined and not merely coloured (design §3.1, rule
-//! 5).
+//! Vivid, high-contrast and the loudest. `focus` and `shortcut` share an amber,
+//! hence underlined hot keys.
 
 use crate::theme::{Palette, rgb};
 

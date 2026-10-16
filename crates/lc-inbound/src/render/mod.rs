@@ -18,29 +18,18 @@ use crate::hit::{Band, FrameMap, Modal, PanelHit};
 use crate::layout::{Shell, layout, queries_height};
 use crate::theme::Theme;
 
-/// Half a cell, flush with the panel's outer edge: the thumb marks a position
-/// without reading as a bar of its own beside the border it sits on.
+/// Half a cell flush with the edge, so the thumb is not a second border.
 const THUMB: &str = "▐";
 
-/// What the frame just drawn turned out to be.
-///
-/// `geometry` travels into the domain as `Msg::Measured`, so it is guarded
-/// against closing a redraw–measure–redraw loop (architecture.md §3). `map`
-/// re-enters nothing — nobody reads it until a human moves a mouse — so it is
-/// free to depend on the offsets `Geometry` may not
-/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
+/// `geometry` re-enters the domain, so it must not close a redraw-measure loop
+/// (architecture.md §3). `map` re-enters nothing, so it may depend on offsets.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Rendered {
     pub geometry: Geometry,
     pub map: FrameMap,
 }
 
-/// Draw one titled block per panel, and report what the frame turned out to
-/// be.
-///
-/// The return value is the domain's only way to learn how tall a panel is and
-/// how many lines the Ddl body wrapped to
-/// (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md §3).
+/// The domain's only way to learn panel heights and how Ddl wrapped.
 pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     let ground = theme.ground();
     if ground != Style::new() {
@@ -56,8 +45,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
             return Rendered::default();
         }
     };
-    // The panels are context while a modal is up, not a place a key would
-    // land, so they are drawn without the marks that say otherwise.
+    // Under a modal the panels are context, drawn without focus marks.
     let dimmed = dims_the_panels(view.overlay.as_ref());
     let beneath = if dimmed { theme.dimmed() } else { theme };
     let mut heights = [0; 4];
@@ -71,27 +59,20 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     for (index, panel) in view.panels.iter().enumerate() {
         let area = rects.get(panel.panel);
 
-        // Not "the focused panel, drawn quietly": while a modal is up there
-        // is no focused panel at all, and this one reads exactly as the other
-        // three do. A style that merely muted the accent drew the title in
-        // the border's colour, one step *below* the unfocused panels beside
-        // it — the panel the user had just been in became the faintest thing
-        // on screen.
+        // No focused panel under a modal; muting only the accent made the last
+        // panel the faintest on screen.
         let is_focused_panel = panel.panel == view.focus && !dimmed;
         let (block, border, tabs) = panel_block(panel, area, is_focused_panel, beneath);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        // Every body kind, not only a grid: it is the panel's width, which is
-        // what the domain needs in order to decide what would fit once a page
-        // arrives (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
+        // Every body kind: the domain needs the width before a page arrives.
         if panel.panel == Panel::Contents {
             grid_width = usize::from(inner.width);
         }
 
-        // An overlay owns the frame: nothing beneath it shows a cursor, or it
-        // blinks over the modal at a position that means nothing there.
+        // Under an overlay no panel shows a cursor.
         let focused = panel.panel == view.focus && view.overlay.is_none();
 
         let chrome = crate::body::Chrome {
@@ -127,14 +108,11 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
                     scrollbar(frame, area, &drawn.extent, border, beneath);
                 }
             }
-            // `Blank` and `Notice` do not scroll, so what such a panel can
-            // show is simply the room it was given.
+            // `Blank` and `Notice` do not scroll.
             None => heights[index] = usize::from(inner.height),
         }
 
-        // After the scrollbars, which run the length of the borders the
-        // loader sits on: a panel waiting on a page it is still scrolled
-        // across would otherwise have its scanner cut into by the track.
+        // After the scrollbars, which share the border with the loader.
         if let Some(line) = crate::loader::line(panel.activity, beneath)
             && let Some(place) = crate::loader::placement(area)
         {
@@ -145,9 +123,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 
     let hint_bar = rects.bar();
-    // The bar goes quiet with the panels: while a modal is up it is naming
-    // keys the modal has already claimed, and the modal is listing them
-    // itself.
+    // Under a modal the bar names keys the modal has claimed.
     frame.render_widget(
         crate::hints::line(&view.hints, hint_bar.width, beneath),
         hint_bar,
@@ -180,12 +156,7 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 }
 
-/// What each overlay's own block would have room for in this frame.
-///
-/// A function of the terminal size alone, every field of it — which is the
-/// invariant `Geometry` rests on (architecture.md §3). Gathered in one place
-/// because each block is measured by the module that draws it, and there are
-/// now seven of them.
+/// Every field a function of terminal size alone (architecture.md §3).
 struct Room {
     command_rows: usize,
     theme_rows: usize,
@@ -214,11 +185,7 @@ impl Room {
     }
 }
 
-/// The one overlay this frame is showing, if any — the modal over the
-/// panels, and, for the two that carry a live search, the prompt on the hint
-/// bar row after it (overlay search design §7). Answers with what each
-/// wrapping overlay measured, all of it zero for the overlays that wrap
-/// nothing.
+/// Zero for the overlays that wrap nothing.
 #[derive(Default)]
 struct Wrapped {
     inspector_lines: usize,
@@ -247,8 +214,7 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
             );
             render_sift(frame, hint_bar, sift.as_ref(), view, theme);
         }
-        // Drawn on the hint bar row, not here: a prompt is a text field, not
-        // a modal over the panels (design §5.2).
+        // A prompt is a text field on the hint bar row, not a modal.
         Some(OverlayView::Search { query }) => {
             render_prompt(frame, hint_bar, query, view, theme);
         }
@@ -320,8 +286,6 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
     Wrapped::default()
 }
 
-/// The overlays that report something back about what they drew: how far
-/// their text wrapped, and where their buttons landed.
 fn render_measured(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Wrapped {
     let pressed = view.pressed;
 
@@ -364,9 +328,7 @@ fn render_measured(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Wrapped
     }
 }
 
-/// `rect` split at `taken` columns from its left edge, clamped to what `rect`
-/// actually has, so a query wider than the bar cannot push the split past the
-/// rect it is dividing.
+/// Clamped, so a wide query cannot split past the rect.
 fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
     let taken = taken.min(rect.width);
 
@@ -383,15 +345,8 @@ fn split_left(rect: Rect, taken: u16) -> (Rect, Rect) {
     )
 }
 
-/// The bordered block a panel is drawn in, the border style the scrollbars
-/// that hang off it share, and where each tab of its title landed.
-/// Draws a rule across `block` at `y`, meeting both of its borders.
-///
-/// `block` is the bordered rect, not its inside: a rule that stops short of
-/// the frame it divides reads as a row of content. Painted straight onto the
-/// buffer because that is the only way to reach the border columns a widget
-/// is clipped out of, and before any scrollbar, which owns the right border
-/// where the two meet.
+/// Spans `block`'s borders: a rule short of the frame reads as content. Painted
+/// to the buffer to reach the border columns, before any scrollbar.
 pub(crate) fn rule(frame: &mut Frame, block: Rect, y: u16, style: Style) {
     for x in block.x..block.right() {
         let symbol = if x == block.x {
@@ -408,13 +363,8 @@ pub(crate) fn rule(frame: &mut Frame, block: Rect, y: u16, style: Style) {
     }
 }
 
-/// Whether `overlay` is a modal that owns the frame outright.
-///
-/// The search prompt is not one: it is drawn on the hint bar row and reads
-/// against the panel it filters, which has to keep saying which rows it is
-/// filtering. The export form is not one either — it exports what the grid
-/// beneath it has selected, and a form that dimmed its own subject would be
-/// asking the user to confirm a selection it had stopped drawing.
+/// Not the search prompt, export form or filter: each refers to the panel
+/// beneath, which must keep drawing what it is about.
 fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
     match overlay {
         Some(
@@ -426,22 +376,14 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             | OverlayView::History { .. }
             | OverlayView::Diagnostics { .. }
             | OverlayView::Health(_)
-            // A modal that owns the frame. Unlike the export form, which is
-            // asking about the grid beneath it, a drop is asking about one
-            // row its own title already names (drop design §2).
+            // A drop names its own subject.
             | OverlayView::Drop(_)
-            // The value it shows is copied out of the grid, and the title
-            // names where from (cell inspector design §3).
+            // Copied out of the grid; the title says where from.
             | OverlayView::Inspect(_)
-            // Both ask about edits their own border counts, not about the
-            // grid beneath (cell editing design §5, §6).
+            // Both count their own edits.
             | OverlayView::Commit(_)
             | OverlayView::Discard { .. },
         ) => true,
-        // The filter modal is not one either, for the export form's reason:
-        // it narrows the grid beneath it, and a modal that dimmed its own
-        // subject would ask the user to filter something it had stopped
-        // drawing (grid sort and filter design §3).
         Some(OverlayView::Search { .. } | OverlayView::Export(_) | OverlayView::Filter { .. })
         | None => false,
     }
@@ -459,11 +401,8 @@ fn panel_block(
         theme.border_style()
     };
     let prefix = panel.title.prefix();
-    // Right-aligned on the top border, and dropped whole when the border
-    // cannot hold both: a truncated term is a lie about what is applied
-    // (design §5.1). Drawn on every panel that has one, focused or not — the
-    // marker is the only place a search that survives a focus change still
-    // says so.
+    // Dropped whole when it does not fit: a truncated term lies about what is
+    // applied. On every panel that has one, focused or not.
     let marker = panel
         .search
         .as_ref()
@@ -503,16 +442,8 @@ fn panel_block(
     (block, border, tab_bands(&prefix, &tabs, form, lead, area))
 }
 
-/// Where each tab of a title strip landed on the top border.
-///
-/// Walked in step with [`panel_title`], off the same `tabs`, `form` and `lead`
-/// — the strip is measured where it is built, rather than measured a second
-/// time from the panel's state, for the reason the row map is
-/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
-///
-/// Clipped at the right corner: a strip too wide for its border is drawn short
-/// by `ratatui`, and a band running past what was drawn would claim border the
-/// user can see is blank.
+/// Measured where the strip is built. Clipped at the corner: ratatui draws an
+/// over-wide strip short.
 fn tab_bands(
     prefix: &str,
     tabs: &[&Tab],
@@ -552,39 +483,21 @@ fn tab_bands(
     bands
 }
 
-/// A count of characters as a count of terminal columns. Every tab name is
-/// ASCII, and one wider than a `u16` cannot have been drawn.
+/// Tab names are ASCII; one wider than `u16` cannot have been drawn.
 fn columns(characters: usize) -> u16 {
     u16::try_from(characters).unwrap_or(u16::MAX)
 }
 
-/// The blank column between a title and the border either side of it.
-///
-/// `ratatui` gives a title none, so a name grows out of the corner it touches.
+/// ratatui gives a title no padding.
 const TITLE_PAD: &str = " ";
 
-/// The columns of drawn border a title is pushed along by, where the border
-/// has them to spare.
-///
-/// Border glyphs rather than blanks: the gap is meant to read as the panel's
-/// frame running on, not as a margin cut out of it
-/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §2). It is a ceiling
-/// and not a cost, because the names come first — a sidebar on its 16-column
-/// floor spends what it has left over on the inset and no more, rather than
-/// shortening a tab to buy one.
+/// Border glyphs, so the gap reads as frame. A ceiling: names come first.
 const TITLE_INSET: usize = 2;
 
-/// The horizontal glyph of the border the panels are drawn with — `ratatui`
-/// puts it under a title, and a title that pads with it puts it back.
+/// ratatui draws it under a title; padding with it puts it back.
 const BORDER_LINE: char = '─';
 
-/// What each end of a `width`-column border has spare for an inset once the
-/// title strip, a marker if one is drawn, their padding and the corners are
-/// paid for.
-///
-/// The left end is served first: a title pushed off its corner while the
-/// marker still sat on its own would read as two different alignments on one
-/// border.
+/// The left end first, so the title and the marker keep one alignment.
 fn insets(width: u16, title: &str, marker: Option<&str>) -> (usize, usize) {
     let spare = usize::from(width).saturating_sub(spent(title, marker));
     let lead = TITLE_INSET.min(spare);
@@ -592,18 +505,12 @@ fn insets(width: u16, title: &str, marker: Option<&str>) -> (usize, usize) {
     (lead, TITLE_INSET.min(spare - lead))
 }
 
-/// `columns` of border, in the style the block draws its own with.
 fn inset(columns: usize, border: Style) -> Span<'static> {
     Span::styled(BORDER_LINE.to_string().repeat(columns), border)
 }
 
-/// The `[1]-` prefix takes the same style as the active tab: it names the
-/// panel, and the panel is what the active tab names too. The active tab takes
-/// `Token::Focused`'s colour when its panel is focused, matching the border,
-/// and drops one tier to `Token::Muted` when it is not — an unfocused panel's
-/// active tab still names what it is showing, but not as loudly as body text.
-/// An inactive tab sits a further tier down at `Token::Faint`, whether or not
-/// its panel has focus: it names something the panel is not showing.
+/// The prefix shares the active tab's style. Active is `Focused` when focused,
+/// else `Muted`; inactive tabs are `Faint`.
 fn panel_title<'a>(
     prefix: &str,
     tabs: &[&'a Tab],
@@ -651,48 +558,27 @@ fn panel_title<'a>(
     Line::from(spans)
 }
 
-/// A title run that carries its own token, drawn on a border whose style it
-/// inherits. The bold comes from [`Theme::focus_border`] and belongs to the
-/// border and the panel's own name — a schema name is not emphasis, and a
-/// title that bolds it says the name matters more than the row it came from
-/// (vision.md §2).
+/// Schema names drop the border's bold: a name is not emphasis.
 fn schema_run(style: Style) -> Style {
     style.remove_modifier(Modifier::BOLD)
 }
 
-/// What a `width`-column border turned out to hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Drawn {
     strip: Strip,
-    /// Whether the search marker survived beside the strip.
     marker: bool,
 }
 
-/// How much of a panel's title strip its border turned out to hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Strip {
-    /// Every tab, under its full name.
     Full,
-    /// Every tab, under the short names.
     Short,
-    /// The tab being drawn, alone and whole.
     Active,
 }
 
-/// The tabs a `width`-column border can hold, and the names to draw them
-/// under.
-///
-/// Three rungs, each giving up less than clipping would: a clipped strip says
-/// the panel has a tab named `Table col`, which is a name no key reaches
-/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4). Every tab stays
-/// visible for as long as it can, because a tab nobody can see is one nobody
-/// presses `2` for.
-///
-/// The whole ladder is walked with the marker before it is walked without
-/// one, so a short name buys a border that still says it is filtered: a tree
-/// drawn as if it were the cluster's is a claim about the cluster, where a
-/// panel drawn under its short name has only given up standing context
-/// (design §5.1).
+/// Each rung gives up less than clipping, which would name a tab no key
+/// reaches. The ladder is walked with the marker first: losing standing context
+/// beats hiding a filter.
 fn drawn_tabs<'a>(
     title: &'a PanelTitle,
     width: u16,
@@ -724,8 +610,6 @@ fn drawn_tabs<'a>(
     )
 }
 
-/// What the title reads as on the border: the panel's number, then `tabs`
-/// with their separators.
 fn strip(prefix: &str, tabs: &[&Tab], form: Strip) -> String {
     let joined = tabs
         .iter()
@@ -739,9 +623,7 @@ fn strip(prefix: &str, tabs: &[&Tab], form: Strip) -> String {
     format!("{prefix}{joined}")
 }
 
-/// What `title`, a `marker` if one is drawn, the padding either side of each
-/// and the two corners cost. The inset is not counted: it is decoration, and
-/// both names say what the panel is actually showing.
+/// The inset is decoration and not counted.
 fn spent(title: &str, marker: Option<&str>) -> usize {
     let marker = marker.map_or(0, |marker| {
         marker.chars().count() + 2 * TITLE_PAD.chars().count()
@@ -750,7 +632,6 @@ fn spent(title: &str, marker: Option<&str>) -> usize {
     title.chars().count() + 2 * TITLE_PAD.chars().count() + marker + 2
 }
 
-/// The prompt of a live sift over an overlay's list, if one is up.
 fn render_sift(
     frame: &mut Frame,
     hint_bar: Rect,
@@ -763,9 +644,7 @@ fn render_sift(
     }
 }
 
-/// The query at the left of the bar row, `⏎ apply` / `esc cancel` at the
-/// right of what it leaves — composed rather than drawn over the hints, which
-/// `render` already put on `hint_bar` before this runs.
+/// Composed beside the hints already on `hint_bar`.
 fn render_prompt(frame: &mut Frame, hint_bar: Rect, query: &str, view: &ViewModel, theme: Theme) {
     let line = Line::styled(format!(" /{query}"), theme.style(Token::HintAction));
     let taken = u16::try_from(line.width()).unwrap_or(hint_bar.width);
@@ -773,37 +652,15 @@ fn render_prompt(frame: &mut Frame, hint_bar: Rect, query: &str, view: &ViewMode
 
     frame.render_widget(line, left);
     frame.render_widget(crate::hints::line(&view.hints, right.width, theme), right);
-    // `split_left` already clamps `left` to the bar's own bounds; a query
-    // wide enough to fill it would otherwise place the cursor one column
-    // past the frame's right edge.
+    // Otherwise a full-width query puts the cursor past the edge.
     let cursor_x = (left.x + left.width).min(hint_bar.right().saturating_sub(1));
     frame.set_cursor_position((cursor_x, left.y));
 }
 
-/// Over the block's right border, so it spends no content width — and only
-/// when something is hidden, so its absence says nothing is.
-///
-/// The track is the border glyph at `Token::Faint`, so it reads as part of the
-/// border
-/// rather than a second bar beside it; the thumb takes the border's own
-/// (possibly focus-patched) style, so the scroll position — not the
-/// unscrolled rest of the column — carries the stronger colour
-/// (2026-08-11-panel-focus-contrast-design.md). `Scrollbar`'s default set is
-/// `DOUBLE_VERTICAL`, whose `║` is what makes an unstyled scrollbar read as a
-/// second border beside the first (design §3).
-///
-/// `ScrollbarState` normalises the thumb against `content_length - 1 +
-/// viewport_length`, a model whose `position` is a selection index running over
-/// `0..content_length`. Ours is a top-of-viewport offset, which stops at
-/// `total - visible` — so that is the content length it is given, and
-/// `viewport_content_length` is left alone: it is for a viewport item spanning
-/// several track rows, not for this. Handing it `total` instead leaves the
-/// thumb short of the bottom when the last row is already on screen.
-///
-/// Only called when the extent overflows, so the length below is at least one.
-///
-/// `pub(crate)` for the palette, which scrolls the same way and must not grow
-/// a second copy of the arithmetic above.
+/// Over the right border, only when something is hidden. Track is the faint
+/// border glyph; the thumb takes the border's style. `ScrollbarState` models a
+/// selection index, so it gets `total - visible` as content length, or the
+/// thumb stops short of the bottom. `pub(crate)` for the palette.
 pub(crate) fn scrollbar(
     frame: &mut Frame,
     area: Rect,
@@ -821,8 +678,6 @@ pub(crate) fn scrollbar(
     );
 }
 
-/// The footer, and the horizontal track in what it leaves of the border left
-/// of the loader (grid paging design §5).
 fn bottom_border(
     frame: &mut Frame,
     area: Rect,
@@ -852,10 +707,7 @@ fn bottom_border(
     }
 }
 
-/// Over `track`, the bottom border between the footer and the loader,
-/// mirroring [`scrollbar`] on the right one, and only when a column is off
-/// screen — so its absence says nothing is hidden
-/// (docs/superpowers/specs/2026-08-10-table-display-design.md §9).
+/// Only when a column is off screen.
 fn horizontal_scrollbar(
     frame: &mut Frame,
     track: Rect,
@@ -881,9 +733,7 @@ fn bar(
     border: Style,
     theme: Theme,
 ) {
-    // The thumb is parameterised with the track: `▐` is a full-height glyph,
-    // which beside a `─` sitting at mid-height reads as a row of vertical bars
-    // rather than as a thicker stretch of the same line.
+    // `▐` beside a mid-height `─` reads as vertical bars.
     let (track, thumb, margin) = match orientation {
         // The caller has already cut the track off the border.
         ScrollbarOrientation::HorizontalBottom | ScrollbarOrientation::HorizontalTop => (

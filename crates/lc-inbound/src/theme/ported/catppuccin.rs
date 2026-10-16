@@ -1,25 +1,18 @@
-//! The four Catppuccin flavours.
-//!
-//! One recipe, four ingredient sets: [`Flavour`] names the upstream colours and
-//! [`Flavour::palette`] spends them, so the flavours cannot drift apart and a
-//! fifth costs one table of hex values
-//! (docs/superpowers/specs/2026-08-13-colour-palettes-design.md §3.3).
+//! The four Catppuccin flavours: one recipe over four colour tables, so they
+//! cannot drift apart.
 
 use ratatui::style::Color;
 
 use crate::theme::{Palette, rgb};
 
-/// The subset of an upstream flavour a role is spent on. Not the whole
-/// twenty-six: a colour no role names would be a constant nothing reads.
+/// Only the upstream colours some role spends.
 struct Flavour {
     base: Color,
     surface1: Color,
-    /// `base` a fifth of the way to `surface1`. The one colour here that is not
-    /// upstream's: the ramp starts at `surface0` and has no role for a wash this
-    /// subtle.
+    /// Not upstream's: a fifth of the way from `base` to `surface1`, a wash
+    /// upstream has no role for.
     crosshair: Color,
-    /// The per-channel midpoint of `crosshair` and `surface1`: not upstream's
-    /// either, for the same reason `crosshair` is not.
+    /// Not upstream's: the midpoint of `crosshair` and `surface1`.
     ranged: Color,
     overlay1: Color,
     subtext1: Color,
@@ -38,9 +31,8 @@ struct Flavour {
 }
 
 impl Flavour {
-    /// `selection_fg` is `text` and never spent by `Token::Selected`: each
-    /// flavour knows its own `base`, so the cursor row is a bar of `surface1`
-    /// and the partition key on it stays the partition key's colour.
+    /// `selection_fg` equals `text` and is never spent, so key colours survive
+    /// on the cursor row.
     const fn palette(&self) -> Palette {
         Palette {
             base: self.base,
@@ -65,9 +57,8 @@ impl Flavour {
             accent: self.peach,
             match_: self.flamingo,
             success: self.green,
-            // The same yellow as `partition` and `shortcut`. None of the
-            // three share a surface — a grid column, a panel title's letter,
-            // a status message.
+            // Same yellow as `partition` and `shortcut`; the three never share
+            // a surface.
             warning: self.yellow,
             danger: self.red,
             info: self.sky,
@@ -79,9 +70,7 @@ impl Flavour {
     }
 }
 
-// Grouping upstream's hex codes into digit pairs would not clarify a
-// magnitude — these are colours, not counts — and would make them harder to
-// diff against upstream's own six-digit form.
+// Kept in upstream's six-digit form, to diff against it.
 #[expect(
     clippy::unreadable_literal,
     reason = "colour codes transcribed verbatim from upstream Catppuccin, not magnitudes"
@@ -201,13 +190,8 @@ mod tests {
         ]
     }
 
-    /// 2.3 is where upstream Catppuccin sits, not a standard: Latte's own
-    /// accents run from 2.31 (yellow) to 2.96 (green) against Latte's own
-    /// base, and the three dark flavours clear every role comfortably. The
-    /// floor catches a mistyped hex; the palettes in `ours` are where a
-    /// strict contrast rule lives. `comment` keeps its own lower floor — it
-    /// is supposed to recede, and holding it to `danger`'s floor would mean
-    /// it had stopped.
+    /// 2.3 is upstream's own floor (Latte's accents run 2.31–2.96); it catches
+    /// a mistyped hex. `comment` is meant to recede, so it has a lower floor.
     #[test]
     fn every_flavour_reads_against_its_own_base() {
         for (name, palette) in flavours() {
@@ -222,9 +206,8 @@ mod tests {
         }
     }
 
-    /// Not a per-role check against `selection_bg`: Latte's own blue on its
-    /// own surface1 is about 2.4, and a test that failed upstream Catppuccin
-    /// would be testing our taste rather than our transcription (design §8).
+    /// Not per role: upstream Latte's blue on surface1 is about 2.4, and this
+    /// tests transcription, not taste.
     #[test]
     fn a_highlight_bar_is_distinct_from_its_field() {
         for (name, palette) in flavours() {

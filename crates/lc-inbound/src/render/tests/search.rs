@@ -15,11 +15,8 @@ fn a_panel_wears_the_search_applied_to_it() {
 
 #[test]
 fn the_marker_is_drawn_muted() {
-    // On an unfocused panel: `Block` patches `border_style` under every
-    // title span, focused Tables included (its own shortcut span already
-    // reads BOLD from that, ambiently). Filtering Ddl instead, with the
-    // default focus on Tables, isolates the marker's own style from that
-    // ambient one.
+    // Unfocused, to isolate the marker's own style from the focused border's
+    // bold.
     let mut state = browsing(&["shop"], 0);
     state.apply_search(Searched::Ddl, Search::new("ord"));
 
@@ -56,11 +53,8 @@ fn the_marker_is_dropped_rather_than_truncated() {
 
 #[test]
 fn the_marker_fits_flush_against_the_corner_it_is_tuned_for() {
-    // At 80 columns Tables gets 20: 1 (`╭`) + 10 (`[1]-Tables`) + 4
-    // (`/ord`) + 1 (`╮`) leaves exactly 4 columns, which is what
-    // `TITLE_PAD` spends either side of each — so the two sit flush with a
-    // gap and no dash between them, nothing is left over for an inset, and
-    // one column narrower drops the marker.
+    // At 80 columns Tables is 20 wide, leaving exactly the 4 `TITLE_PAD`
+    // columns; one narrower drops the marker.
     let mut state = browsing(&["shop"], 0);
     state.apply_search(Searched::Tables, Search::new("ord"));
 
@@ -75,9 +69,6 @@ fn the_marker_fits_flush_against_the_corner_it_is_tuned_for() {
 
 #[test]
 fn an_unfocused_panel_still_wears_its_marker() {
-    // The marker's whole point: a search that survives a focus change
-    // has to say so from the panel it is applied to, not from the bar,
-    // which only ever describes the focused panel (design §5.1).
     let mut state = browsing(&["shop"], 0);
     state.focus_on(Panel::Contents);
     state.apply_search(Searched::Tables, Search::new("ord"));
@@ -122,9 +113,8 @@ fn the_prompts_cursor_sits_after_the_query() {
 
     let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
-    // The bar row is 23 at this size, and the bar owns it from column 0:
-    // the query's leading space, its `/` and its two characters put the
-    // cursor at column 4.
+    // The bar is row 23 from column 0: space, `/` and two characters put the
+    // cursor at 4.
     assert_eq!(
         cursor,
         Some(ratatui::layout::Position::new(4, 23)),
@@ -159,8 +149,7 @@ fn the_prompts_query_carries_a_theme_token() {
     state.overlay = Some(Overlay::Search(prompt));
 
     let buffer = draw_state(80, 24, &state);
-    // Column 9: one past the loader and `bar_split`'s gap, landing on
-    // the query's leading space.
+    // Column 9: past the loader and `bar_split`'s gap.
     let cell = buffer.cell((9, 23)).expect("inside the bar row");
     let muted = Theme::default()
         .style(Token::HintAction)

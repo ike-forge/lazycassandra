@@ -53,10 +53,8 @@ fn focus_wins_over_a_flavours_own_panel_border() {
 
 #[test]
 fn a_flavour_paints_the_field_even_when_the_frame_is_too_small_for_a_panel() {
-    // Below layout::MIN_W x MIN_H (40x7), `render` takes the `TooSmall`
-    // arm and returns before the panel loop — the path the ground paint
-    // must cover too, or a flavour leaves a hole exactly where the notice
-    // is drawn.
+    // Below 40x7 `render` returns before the panel loop, which must paint the
+    // ground too.
     let mut terminal =
         Terminal::new(TestBackend::new(30, 6)).expect("TestBackend always initialises");
     let state = State::default();
@@ -105,19 +103,17 @@ fn the_default_theme_paints_the_field_too() {
 
 #[test]
 fn the_four_panels_are_drawn_where_the_draft_puts_them() {
-    // At 40x12 the sidebar sits on its 16-column floor, Tables takes 5
-    // rows to Ddl's 6, and Queries — unfocused and empty — is closed to
-    // its two borders.
+    // At 40x12 the sidebar is on its floor, Tables 5 rows to Ddl's 6, Queries
+    // closed.
     let buffer = draw(40, 12);
 
     assert_eq!(row(&buffer, 0), "╭── [1]-Tables ╮╭── [3]-Table contents ╮");
     assert_eq!(row(&buffer, 1), "│Not connected ││Press Enter on a table│");
     assert_eq!(row(&buffer, 4), "╰──────────────╯│                      │");
-    // Nothing is selected, so the panel offers no Columns tab and the
-    // strip is the one name.
+    // No Columns tab: nothing is selected.
     assert_eq!(row(&buffer, 5), "╭── [2]-DDL ───╮│                      │");
     assert_eq!(row(&buffer, 8), "│              │╰──────────────────────╯");
-    // `[5]-Logs` does not fit beside it, so the strip keeps the active tab.
+    // `[5]-Logs` does not fit, so only the active tab shows.
     assert_eq!(row(&buffer, 9), "│              │╭── [4]-Queries ───────╮");
     assert_eq!(row(&buffer, 10), "╰──────────────╯╰──────────────────────╯");
 }
@@ -137,8 +133,6 @@ fn the_hint_bar_sits_on_the_bottom_row() {
     );
 }
 
-/// The bottom border of `panel`'s rect at 80x24, where its loader is
-/// drawn.
 fn bottom_border(buffer: &Buffer, panel: Panel) -> String {
     let area = match layout(Rect::new(0, 0, 80, 24), QueriesHeight::Closed) {
         Shell::Panels(rects) => rects.get(panel),
@@ -290,9 +284,6 @@ fn nothing_is_drawn_over_the_notice() {
     );
 }
 
-/// `OverlayView::Fatal` and `OverlayView::Message` share the same draw
-/// arm (query log design §7): the two differ in what dismisses them, not
-/// in how they look.
 #[test]
 fn a_fatal_failure_is_drawn_like_any_other_message() {
     let mut state = State::default();

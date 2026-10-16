@@ -1,5 +1,4 @@
-//! The drop confirmation, drawn over the panels
-//! (docs/superpowers/specs/2026-08-31-drop-design.md §2).
+//! The drop confirmation, drawn over the panels.
 
 use lc_domain::model::Key;
 use lc_domain::style::{Segment, Severity, Token};
@@ -13,36 +12,20 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 use crate::hit::{ButtonAt, Modal};
 use crate::theme::Theme;
 
-/// A floor, not a cap: [`width`] widens the block to fit the statement rather
-/// than clip it. A statement the user cannot read whole is one they are
-/// confirming blind, and unlike the export form's path field there is no
-/// cursor here to scroll it around.
+/// A floor: [`width`] widens to show the whole statement, which has no cursor
+/// to scroll.
 const MIN_WIDTH: u16 = 44;
-/// Statement lines drawn before the rest are summarised away.
-///
-/// A batch of forty deletes is forty lines, which is a block taller than the
-/// frame and a wall of near-identical text nobody reads. What answers the
-/// question at that size is the count in the border, and the head of the
-/// batch is what says the shape of it.
+/// Past this the head is kept and the rest summarised: the border's count
+/// answers the question.
 const MAX_CQL_LINES: usize = 8;
-/// Everything the block draws that is not the statement: the two border
-/// rows, a blank line above the statement and one below it, the warning or
-/// the prompt, a blank line, and the keys.
+/// Borders, a blank above and below the statement, the warning or prompt, a
+/// blank, the keys.
 const CHROME_HEIGHT: u16 = 7;
-/// Two more rows on the typed spelling: the field, and the blank above it.
+/// The field and the blank above it.
 const TYPED_EXTRA: u16 = 2;
 
-/// Whether `area` can hold the block at all.
-///
-/// The domain's gate on `d` and on closing a confirmation the frame shrank
-/// past reads this rather than a size of its own, for the reason
-/// `export::fits` gives: the dimensions are named once, beside the block they
-/// measure.
-///
-/// Measured against the *largest* block either spelling can grow to, so the
-/// gate cannot open a question that then fails to draw — a statement's line
-/// count is not known until the target is, and the gate is asked before
-/// there is one.
+/// Measured against the largest block either spelling can reach: the gate is
+/// asked before the statement is known.
 pub(crate) fn fits(area: Rect) -> bool {
     let tallest =
         CHROME_HEIGHT + TYPED_EXTRA + u16::try_from(MAX_CQL_LINES + 1).unwrap_or(u16::MAX);
@@ -63,8 +46,6 @@ fn centred(area: Rect, width: u16, height: u16) -> Option<Rect> {
     ))
 }
 
-/// Wide enough for the widest line the block draws, plus the border and a
-/// column of padding each side, and never wider than the frame.
 fn width(view: &DropView, frame_width: u16) -> u16 {
     let longest = view
         .typed
@@ -78,14 +59,8 @@ fn width(view: &DropView, frame_width: u16) -> u16 {
     needed.max(MIN_WIDTH).min(frame_width)
 }
 
-/// The statement as the block draws it: whole where it fits in
-/// [`MAX_CQL_LINES`], and otherwise its head, a line counting what was left
-/// out, and its last line.
-///
-/// The last line is kept rather than cut off with the rest: a batch that
-/// stops before `APPLY BATCH` is not a statement, and a preview that is not
-/// one teaches the reader the wrong shape. Only `DELETE` lines are ever
-/// elided, which is why the count reads as rows.
+/// The last line is kept: a batch without `APPLY BATCH` is not a statement.
+/// Only `DELETE` lines are elided, so the count reads as rows.
 fn statement(view: &DropView) -> Vec<String> {
     if view.cql.len() <= MAX_CQL_LINES {
         return view.cql.clone();
@@ -99,10 +74,7 @@ fn statement(view: &DropView) -> Vec<String> {
     lines
 }
 
-/// The block's border text. A run with no token of its own keeps the block's
-/// own style; the names carry the schema colours the domain gave them. Bold
-/// is dropped for `export::title`'s reason: the border is bold already, and a
-/// schema name is not emphasis.
+/// A schema name is not emphasis.
 pub(crate) fn title(segments: &[Segment], theme: Theme) -> TextLine<'static> {
     TextLine::from(
         segments
@@ -128,10 +100,8 @@ pub(crate) fn render(
     pressed: Option<Key>,
     theme: Theme,
 ) -> Option<Modal> {
-    // Asked before the block is sized, so the two cannot disagree: [`width`]
-    // clamps to the frame, which on a narrow one would otherwise draw a
-    // block below the floor `fits` promised, and the height below varies with
-    // the statement while the gate does not (drop design §1).
+    // Before sizing: [`width`] clamps to the frame and could draw below the
+    // floor `fits` promised.
     if !fits(frame.area()) {
         return None;
     }
@@ -142,8 +112,7 @@ pub(crate) fn render(
         + if view.typed.is_some() { TYPED_EXTRA } else { 0 };
     let area = centred(frame.area(), width(view, frame.area().width), height)?;
 
-    // The severity replaces the theme's border style, the one other place a
-    // border says how bad the thing behind it is (`overlay.rs`).
+    // The severity replaces the border style.
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(theme.style(Token::Severity(Severity::Danger)))
@@ -217,9 +186,7 @@ pub(crate) fn render(
     Some(Modal::new(area, buttons.at(row)))
 }
 
-/// The `y` key's label. It names the verb, because the two verbs take
-/// different things away and the border is the only other place that says
-/// which.
+/// Names the verb: the two take different things away.
 const fn yes(view: &DropView) -> &'static str {
     match view.rows {
         Some(1) => "Yes, delete it",
@@ -228,8 +195,7 @@ const fn yes(view: &DropView) -> &'static str {
     }
 }
 
-/// What the yes/no block says under the statement. The count is already in
-/// the border; this is the line that says what answering costs.
+/// The count is in the border.
 fn warning(view: &DropView) -> String {
     match view.rows {
         Some(1) => "This row cannot be brought back.".to_owned(),
@@ -238,24 +204,18 @@ fn warning(view: &DropView) -> String {
     }
 }
 
-/// Positions the caret in the name field, measuring the way
-/// `export::set_caret` does: the cursor is a character offset, converted to a
-/// column through `Line::width()` so a multi-byte or double-width character
-/// before it is not counted as one column.
-///
-/// The row is counted rather than a constant: the statement above it is as
-/// many lines as it is written on.
+/// Converted through `Line::width()`. The row depends on the statement's
+/// height.
 fn set_caret(frame: &mut Frame, inner: Rect, view: &DropView, typed: &TypedName) {
     let prefix: String = typed.text.chars().take(typed.cursor).collect();
     let taken = u16::try_from(TextLine::raw(prefix).width()).unwrap_or(inner.width);
     let cursor_x = (inner.x + taken).min(inner.right().saturating_sub(1));
-    // A blank line, the statement, a blank line, the prompt, a blank line.
+    // A blank, the statement, a blank, the prompt, a blank.
     let row = 4 + u16::try_from(statement(view).len()).unwrap_or(u16::MAX);
 
     frame.set_cursor_position((cursor_x, inner.y + row));
 }
 
-/// One button of a modal: the key that presses it, by click as by keyboard.
 pub(crate) struct Button<'a> {
     pub(crate) key: Key,
     pub(crate) label: &'a str,
@@ -277,22 +237,19 @@ impl<'a> Button<'a> {
     }
 }
 
-/// A row of [`Button`]s, drawn and measured from the same spans so a press
-/// lands on what was painted.
+/// Drawn and measured from the same spans, so a press lands on what was
+/// painted.
 pub(crate) struct Buttons {
     line: TextLine<'static>,
-    /// Each live button's columns, from the left edge of the line.
     spans: Vec<(Key, u16, u16)>,
     width: u16,
 }
 
 impl Buttons {
-    /// The row, right-aligned.
     pub(crate) fn line(&self) -> TextLine<'static> {
         self.line.clone().right_aligned()
     }
 
-    /// Where each live button sits when the line is drawn across `row`.
     pub(crate) fn at(&self, row: Rect) -> Vec<ButtonAt> {
         let left = row.right().saturating_sub(self.width).max(row.x);
 
@@ -306,13 +263,8 @@ impl Buttons {
     }
 }
 
-/// The block's own keys as buttons: the key in the colour a shortcut always
-/// wears and its label beside it, on the quiet band the export form's button
-/// rests on. A key that would do nothing this frame recedes to `Faint` with
-/// its label, an inert hint rather than a live one — the promise the bar's
-/// greyed hints already keep (docs/shortcuts.md §2) — and is not pressable.
-/// `pressed` lights one as solid as the export form's focused button. The last
-/// button stops one column short of the border.
+/// An inert key recedes to `Faint` and is not pressable. The last button stops
+/// one column short of the border.
 pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Buttons {
     let band = theme.style(Token::Ranged);
     let mut spans = Vec::new();
@@ -350,7 +302,7 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Bu
         )
         .unwrap_or(u16::MAX);
 
-        // The pad is its own span: the key's underline must not run under it.
+        // Its own span, so the key's underline does not run under it.
         spans.push(Span::styled(" ", pad));
         spans.push(Span::styled(glyph, key_style));
         spans.push(Span::styled(label, label_style));
@@ -468,8 +420,6 @@ mod tests {
         assert!(!text(&drawn(40, 8, table())).contains("Drop table"));
     }
 
-    /// `fits` is what the domain gates `d` on, so it has to agree with what
-    /// `render` actually draws — the contract `export::fits` carries.
     #[test]
     fn fits_agrees_with_what_the_block_actually_draws() {
         for (width, height) in [(40, 24), (80, 8), (44, 10), (80, 24)] {
@@ -565,9 +515,6 @@ mod tests {
         ));
     }
 
-    /// A batch too tall to draw whole keeps its head and its last line: one
-    /// that stops before `APPLY BATCH` is not a statement, and a preview that
-    /// is not one teaches the wrong shape.
     #[test]
     fn a_long_batch_is_elided_in_the_middle_and_says_how_much() {
         let drawn = text(&drawn(120, 30, deleting(9)));
@@ -577,7 +524,6 @@ mod tests {
         assert!(drawn.contains("APPLY BATCH"));
     }
 
-    /// Where `needle` starts on the frame, as a column and a row.
     fn find(buffer: &Buffer, needle: &str) -> (u16, u16) {
         let width = usize::from(buffer.area.width);
         let cells: Vec<&str> = buffer.content().iter().map(Cell::symbol).collect();

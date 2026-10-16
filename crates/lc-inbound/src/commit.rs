@@ -1,11 +1,5 @@
-//! The commit confirmation and the quit warning, drawn over the panels
-//! (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5, §6).
-//!
-//! Unlike the drop confirmation, which elides a long batch down to its head,
-//! this block *scrolls*: thirty edited rows is thirty-plus lines of CQL, and
-//! a summary of what a write will do is not a preview of it. Wrapping is the
-//! renderer's, so the line count goes back to the domain through `Geometry`,
-//! the way the inspector's does.
+//! The commit confirmation and the quit warning. Unlike the drop confirmation
+//! this scrolls: a summary of a write is not a preview of it.
 
 use lc_domain::model::Key;
 use lc_domain::style::{Severity, Token};
@@ -21,22 +15,19 @@ use crate::drop::Button;
 use crate::hit::Modal;
 use crate::theme::Theme;
 
-/// Past this an `UPDATE` is longer than an eye tracks back from, and it wraps
-/// instead — `inspect::MAX_WIDTH`'s reason.
+/// Past this a line is longer than the eye tracks back from.
 const MAX_WIDTH: u16 = 100;
-/// Two columns of frame each side, and two rows above and below.
+/// Two columns each side, two rows above and below.
 const MARGIN: u16 = 4;
 const MIN_WIDTH: u16 = 44;
-/// Both borders, a blank line, one line of statement, a blank line, and the
-/// keys.
+/// Borders, a blank, one statement line, a blank, the keys.
 const MIN_HEIGHT: u16 = 7;
-/// Between each border and the text.
 const PAD: u16 = 1;
-/// A blank line above the body and, below it, a blank line and the keys row.
+/// A blank above the body; a blank and the keys row below.
 const CHROME: u16 = 3;
 
-/// The block's size is a function of the frame's alone, so the height the
-/// domain bounds an offset by never moves with the statement (design §5).
+/// Sized from the frame alone, so the height bounding the offset never moves
+/// with the statement.
 fn rect(area: Rect) -> Option<Rect> {
     let width = area.width.saturating_sub(MARGIN).min(MAX_WIDTH);
     let height = area.height.saturating_sub(MARGIN);
@@ -66,14 +57,11 @@ fn body(block: Rect) -> Rect {
     }
 }
 
-/// Rows of statement the block would show in `area`; zero where it does not
-/// fit, which is what makes `ctrl-s` inert there.
+/// Zero makes `ctrl-s` inert.
 pub(crate) fn visible_rows(area: Rect) -> usize {
     rect(area).map_or(0, |block| usize::from(body(block).height))
 }
 
-/// Draws the block and answers with the lines its statement wrapped to and
-/// where its buttons landed.
 pub(crate) fn render(
     frame: &mut Frame,
     view: &CommitView,
@@ -130,8 +118,7 @@ pub(crate) fn render(
     (wrapped.len(), Some(modal))
 }
 
-/// Every statement line wrapped to `width`, a continuation keeping the
-/// indent the formatter laid the line out with, plus one step.
+/// A continuation keeps the formatter's indent plus one step.
 fn wrapped(view: &CommitView, width: usize, theme: Theme) -> Vec<Vec<(char, Style)>> {
     view.lines
         .iter()
@@ -153,10 +140,7 @@ fn wrapped(view: &CommitView, width: usize, theme: Theme) -> Vec<Vec<(char, Styl
         .collect()
 }
 
-/// The quit warning: one sentence and one question, in a block sized to them.
-///
-/// Fixed height and no scrolling, unlike the confirmation above — there is
-/// nothing here to read past.
+/// Fixed height: nothing to read past.
 pub(crate) fn render_discard(
     frame: &mut Frame,
     message: &str,
@@ -305,8 +289,7 @@ mod tests {
 
     #[test]
     fn a_batch_longer_than_the_body_scrolls_rather_than_eliding() {
-        // The whole difference from the drop confirmation: every statement a
-        // commit would run is readable, not just its head (design §5).
+        // Every statement line is readable, unlike a drop's elided batch.
         let (buffer, lines) = drawn(80, 14, prompt(30));
 
         assert_eq!(lines, 92, "three clauses a verb, and both brackets");

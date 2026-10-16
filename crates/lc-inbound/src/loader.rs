@@ -1,9 +1,5 @@
-//! A panel's loader: whether that panel is waiting on the cluster.
-//!
-//! The phase lives in the domain and reaches here as a frame number. That keeps
-//! the renderer a pure function of the [`ViewModel`](lc_domain::ViewModel) and
-//! the render tier deterministic — no clock is read on this side of the
-//! boundary (docs/superpowers/specs/2026-08-09-visual-polish-design.md §4.3).
+//! A panel's loader. The phase arrives from the domain as a frame number, so no
+//! clock is read here and the render tier stays deterministic.
 
 use crate::theme::Theme;
 use lc_domain::style::Token;
@@ -11,26 +7,19 @@ use lc_domain::view::Activity;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 
-/// Cells the scanner occupies, and the border it keeps between itself and the
-/// corner it is drawn beside.
+/// Cells the scanner occupies, and its gap from the corner.
 pub(crate) const WIDTH: u16 = 8;
 pub(crate) const INSET: u16 = 1;
 
-/// Cells lit behind and including the head; the trail dissolves into the
-/// border during each hold.
+/// Cells lit behind and including the head; the trail dissolves during each
+/// hold.
 const TRAIL: usize = 3;
 const HOLD_START: usize = 4;
 const HOLD_END: usize = 4;
 const PERIOD: usize = 2 * WIDTH as usize - 1 + HOLD_START + HOLD_END;
 
-/// Where the scanner is drawn on `block`, the panel's bordered rect: the
-/// bottom border, `INSET` columns short of the corner, mirroring the search
-/// marker's alignment on the top one.
-///
-/// `None` when the border cannot hold the scanner, its inset and both
-/// corners. A panel too narrow to say *how* it is waiting says nothing rather
-/// than drawing half a scanner — the rule the title marker already follows
-/// (design §5.1).
+/// On the bottom border, mirroring the search marker on the top. `None` where
+/// it does not fit whole.
 pub(crate) fn placement(block: Rect) -> Option<Rect> {
     let spent = WIDTH + 2 * (1 + INSET);
 
@@ -42,16 +31,8 @@ pub(crate) fn placement(block: Rect) -> Option<Rect> {
     })
 }
 
-/// The scanner at `activity`'s phase, `WIDTH` cells wide, or nothing at all
-/// when the panel is not waiting on anything.
-///
-/// A resting panel draws no loader rather than a still one: an animation
-/// frozen on a border reads as chrome the panel always has, and the whole
-/// point of moving it off the bar is that it names *which* panel is waiting.
-///
-/// Spends `Muted` and `Faint` rather than a hue, and leaves idle cells
-/// unstyled so they take the border's own colour, focused or not: the
-/// scanner is a pulse along the frame, not a mark competing with the content.
+/// A resting panel draws no loader: a frozen one reads as permanent chrome.
+/// Idle cells stay unstyled and take the border's colour.
 pub(crate) fn line(activity: Activity, theme: Theme) -> Option<Line<'static>> {
     let frame = match activity {
         Activity::Resting => return None,
@@ -86,13 +67,9 @@ pub(crate) fn line(activity: Activity, theme: Theme) -> Option<Line<'static>> {
     Some(spans.collect())
 }
 
-/// The glyphs a pending entry's outcome spins through in the Logs trail, one
-/// per frame — the same "an integer frame becomes a drawn thing, statelessly"
-/// idiom [`line`]'s scanner already turns `Activity::Working` into, applied
-/// to a single inline glyph rather than a bar (query log design §6).
+/// One glyph per frame for a pending Logs entry.
 const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-/// The glyph a pending row draws at `frame`.
 pub(crate) fn spin(frame: usize) -> char {
     SPIN[frame % SPIN.len()]
 }
@@ -144,8 +121,7 @@ mod tests {
         }
     }
 
-    /// Where the head is, if it is on screen at all: the holds dissolve the
-    /// trail entirely.
+    /// The holds dissolve the trail entirely.
     fn head(activity: Activity) -> Option<usize> {
         let muted = Theme::default().style(Token::Muted);
 

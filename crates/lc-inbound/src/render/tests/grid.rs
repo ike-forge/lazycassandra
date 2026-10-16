@@ -6,8 +6,7 @@ fn a_stored_offset_decides_which_rows_are_drawn() {
     let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
     let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
     let mut state = showing(page_of(&["id"], &rows));
-    // The selection stays on row 0; only the viewport moves, which is what
-    // no test could express before the offset was state.
+    // The selection stays on row 0; only the viewport moves.
     state.contents.scroll.follow(12, 1);
 
     let buffer = draw_state(60, 12, &state);
@@ -49,9 +48,7 @@ fn a_selection_scrolled_out_of_view_is_not_highlighted() {
         );
     }
 
-    // A control: the same panel, drawn with the selection inside the
-    // viewport, does highlight it — so the absence above is the rule at
-    // work rather than a fixture that stopped drawing rows.
+    // Control: in view, it is highlighted.
     let mut on_screen = showing(page_of(&["id"], &rows));
     on_screen.contents.mode = SelectionMode::Cell;
     on_screen.contents.cursor.go_to(12, 20);
@@ -69,11 +66,8 @@ fn a_selection_scrolled_out_of_view_is_not_highlighted() {
 
 #[test]
 fn a_tree_selection_scrolled_out_of_view_is_not_highlighted() {
-    // The tree's half of the rule in `a_selection_scrolled_out_of_view_is_
-    // not_highlighted`. Without it, handing ratatui a `Some(selected)` it
-    // cannot see would walk the offset back to the selection and the wheel
-    // would scroll Tables nowhere, with every other test still green
-    // (list viewport design §4).
+    // A `Some(selected)` ratatui cannot see would walk the offset back and the
+    // wheel would do nothing.
     let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut state = browsing(&refs, 0);
@@ -99,16 +93,13 @@ fn a_tree_selection_scrolled_out_of_view_is_not_highlighted() {
     }
 }
 
-/// The title is the only thing on screen naming the table this panel is
-/// showing, and it names it in the tree's colours.
 #[test]
 fn a_contents_title_draws_its_table_in_the_schemas_colours() {
     let state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
     let buffer = draw_state(60, 12, &state);
     let theme = Theme::default();
     let border = row(&buffer, 0);
-    // Characters, not bytes: the border is drawn out of box-drawing glyphs
-    // and an em dash, and a byte offset into it is not a column.
+    // Characters, not bytes: the border is multi-byte glyphs.
     let at = |text: &str| {
         let byte = border.find(text).expect("the title names the table");
         let column = border[..byte].chars().count();
@@ -122,8 +113,6 @@ fn a_contents_title_draws_its_table_in_the_schemas_colours() {
     assert_eq!(fg(at("shop") + 4), theme.style(Token::Faint).fg, "the dot");
 }
 
-/// The focused panel's border is bold, and the title inherits it. A schema
-/// name is not emphasis, so it does not keep it.
 #[test]
 fn a_titles_table_is_not_bold_under_the_focused_borders_own_weight() {
     let state = showing(page_of(&["id"], &[&[CqlValue::Int(1)]]));
@@ -175,9 +164,8 @@ fn a_page_is_drawn_as_a_header_over_its_rows() {
         "│              │├──────────────────────────────────────────┤",
         "a rule under the headings keeps them from reading as a row"
     );
-    // The id column is as wide as its heading and marks, not as its
-    // one-digit values, so the email column starts four further right
-    // than the values alone would put it.
+    // `id` is as wide as its heading and marks, so `email` starts four further
+    // right.
     assert_eq!(
         row(&buffer, 3),
         "│              ││▌1  1       ada@example.com               │"
@@ -207,10 +195,8 @@ fn a_column_wider_than_the_cap_is_ellipsised_rather_than_clipped() {
 
 #[test]
 fn a_table_too_wide_for_the_panel_drops_columns_rather_than_squeezing_them() {
-    // Four uuid-wide columns want 4×30 + spacing = 126 in a 66-column
-    // panel. `Constraint::Length` is a request, not a floor: handed all
-    // four, ratatui shrinks every one to fit and truncates each value with
-    // no ellipsis to say it did.
+    // 4×30 plus spacing in a 66-column panel: ratatui would shrink all four
+    // with no ellipsis.
     let wide = "8f14e45f-ceea-467a-9c2b-8c4d2a1e9f01";
     let state = showing(page_of(
         &["a", "b", "c", "d"],
@@ -237,10 +223,8 @@ fn the_key_columns_are_drawn_in_the_styles_that_carry_the_physical_shape() {
         &["id", "email", "note"],
         &[&[CqlValue::Int(1), text("a"), text("b")]],
     ));
-    // A third column for the cursor to sit on: in the default cell mode
-    // the crosshair washes the heading of the column the cursor is in, and
-    // the terminal-default theme flattens the text under its wash — so the
-    // two headings under test have to be ones the cursor is not on.
+    // The crosshair's wash flattens its heading's text under the default theme,
+    // so the cursor sits on a third column.
     state.contents.column.go_to(2, 3);
 
     let buffer = draw_state(60, 12, &state);
@@ -266,11 +250,8 @@ fn the_key_columns_are_drawn_in_the_styles_that_carry_the_physical_shape() {
 
 #[test]
 fn a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row() {
-    // Row 0 (not selected) and row 1 (the cursor's row) each hold one
-    // cell the search matches and one it does not — the composed case
-    // is row 1, where `Token::Match` is drawn under `Token::Selected`'s
-    // background bar and still has to be tellable apart from the id
-    // beside it.
+    // Row 1 is the cursor's: `Match` under `Selected`'s background must still
+    // read apart.
     let mut state = showing(page_of(
         &["id", "email"],
         &[
@@ -288,8 +269,7 @@ fn a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row(
         let cell = buffer.cell((x, y)).expect("inside the panel");
         (cell.fg, cell.bg, cell.modifier)
     };
-    // `id` is two wide and holds the cursor's cell; `email`, the matched
-    // one, is the column after it.
+    // `id` holds the cursor's cell; `email`, the matched one, follows.
     let unmatched_id = drawn_column(area, 0);
     let matched_email = drawn_column(area, 1);
 
@@ -318,8 +298,7 @@ fn a_matched_cell_reads_apart_from_an_unmatched_one_on_and_off_the_selected_row(
 
 #[test]
 fn a_null_is_faint_so_it_reads_apart_from_the_word() {
-    // Row 1 (not the cursor's row) so the row's own colours are not
-    // flattened under `Token::Selected`'s highlight text.
+    // Off the cursor row, so its colours are not flattened.
     let mut state = showing(page_of(
         &["id", "email"],
         &[
@@ -361,13 +340,8 @@ fn a_null_is_faint_so_it_reads_apart_from_the_word() {
 
 #[test]
 fn a_matched_null_still_carries_the_match_colour() {
-    // The ramp carries the tier now, not a modifier (design §4.1), so a
-    // null's own token (`Token::Faint`) has no modifier for
-    // `Style::patch` to carry through `Token::Match` overwriting `fg`. A
-    // matched null and a matched word both end up drawn as a plain
-    // match, indistinguishable from each other; telling a matched null
-    // apart from a matched word again is future work, not this token's
-    // job.
+    // A matched null and a matched word draw alike: the null's token has no
+    // modifier to survive `Match`'s `fg`.
     let mut state = showing(page_of(
         &["id", "value", "note"],
         &[&[CqlValue::Int(1), CqlValue::Null, text("null")]],
@@ -375,18 +349,14 @@ fn a_matched_null_still_carries_the_match_colour() {
     state.apply_search(Searched::Contents, Search::new("null"));
 
     let buffer = draw_state(70, 12, &state);
-    // Shifted right by the bar, the row-number gutter and their spacing:
-    // one digit for a one-row page, plus one column each (table display
-    // design §4, design §4.2).
+    // Shifted right by the bar, a one-digit gutter and the spacing.
     let area = block_area(&buffer, "Table contents");
     let cell = |x: u16| {
         buffer
             .cell((x, grid_row_y(area, 0)))
             .expect("inside the panel")
     };
-    // `id` is five columns (its name and marks outrun a one-digit value),
-    // `value` eight (`value` plus marks), each followed by the spacing —
-    // so the null draws seven columns in and the word seventeen.
+    // `id` is five columns, `value` eight, each plus spacing.
     let null_cell = cell(first_cell(area, 1) + 7);
     let word_cell = cell(first_cell(area, 1) + 17);
 
@@ -433,8 +403,8 @@ fn row_mode_lights_the_whole_row_and_no_column() {
     ));
     state.contents.mode = SelectionMode::Row;
     state.contents.cursor.down(2);
-    // The column cursor is still somewhere, so "no column" is a claim about
-    // what row mode draws rather than about where the cursor happens to be.
+    // The column cursor is somewhere, so "no column" is about what row mode
+    // draws.
     state.contents.column.go_to(1, 2);
 
     let theme = Theme::default();
@@ -513,11 +483,6 @@ fn column_mode_lights_the_column_and_its_heading() {
     );
 }
 
-/// A yank spends the selection that named the rows, so the flash is the
-/// only thing left saying what was copied — and the three bands are one
-/// ramp apart, so no colour among them reads as a change against the band
-/// standing there a frame ago. The afterglow inverts instead (visual mode
-/// design §6.1).
 #[test]
 fn a_yanks_afterglow_inverts_the_rows_it_took() {
     let mut ranged = showing(sized_page(2, 4));
@@ -564,9 +529,6 @@ fn a_yanks_afterglow_inverts_the_rows_it_took() {
     );
 }
 
-/// §5.1's inversion is a projection of every group a multi-group `y` took,
-/// not just the one range the single-group test above pins
-/// (multi-group selection design §8).
 #[test]
 fn a_multi_group_yanks_afterglow_inverts_every_group_it_took() {
     let mut ranges = Ranges::default();
@@ -596,9 +558,6 @@ fn a_multi_group_yanks_afterglow_inverts_every_group_it_took() {
     assert!(reversed(&flashed, 2), "the second group inverts too");
 }
 
-/// Cell mode's cursor cell is inverted at rest, so an afterglow adding the
-/// same inversion left the cell a `y` had just taken looking untouched.
-/// The flash un-inverts it instead (visual mode design §6.1).
 #[test]
 fn a_cell_mode_yanks_afterglow_reads_on_the_cursors_own_cell() {
     let at = |flash: Option<Flash>| {
@@ -637,7 +596,6 @@ fn a_cell_mode_yanks_afterglow_reads_on_the_cursors_own_cell() {
     );
 }
 
-/// The flash reaches the panel whose `y` lit it and no other.
 #[test]
 fn a_yank_in_the_tree_lights_the_tree_alone() {
     let mut state = showing(sized_page(2, 4));
@@ -659,9 +617,7 @@ fn a_yank_in_the_tree_lights_the_tree_alone() {
     };
 
     assert!(inverted(tree.x + 2, tree.y + 1));
-    // Row 2, not the grid's own row 0: cell mode inverts the cursor's own
-    // cell whether or not anything flashed, and row 0 would pass this
-    // assertion for the wrong reason.
+    // Row 2: cell mode inverts the cursor's own cell regardless.
     assert!(
         !inverted(grid.x + 4, grid.y + 4),
         "a flash lit over the tree reaches no other panel"
@@ -700,8 +656,6 @@ fn every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them() {
     );
 }
 
-/// A band drawn cell by cell breaks at every column spacing, so a held
-/// range reads as one stripe per column instead of one selection.
 #[test]
 fn a_row_range_bands_the_spacing_between_its_columns_too() {
     let mut state = showing(sized_page(2, 4));
@@ -718,8 +672,7 @@ fn a_row_range_bands_the_spacing_between_its_columns_too() {
             .bg
     };
 
-    // The row number in the gutter and the blank ahead of the second
-    // column: neither is a cell of the row, and both are inside it.
+    // The gutter's row number and the blank before the second column.
     for x in [area.x + 1 + BAR, drawn_column(area, 1) - 1] {
         assert_eq!(
             bg(0, x),
@@ -733,8 +686,7 @@ fn a_row_range_bands_the_spacing_between_its_columns_too() {
 #[test]
 fn a_cell_block_bands_the_rectangle_and_nothing_outside_it() {
     let mut state = showing(sized_page(3, 3));
-    // The grid opens in row mode, and only cell mode has a rectangle: the
-    // projection gives a column range on no other (visual mode design §3).
+    // Only cell mode has a rectangle.
     state.contents.mode = SelectionMode::Cell;
     state.contents.rows = held(0, 1);
     state.contents.columns = held(0, 1);
@@ -753,9 +705,7 @@ fn a_cell_block_bands_the_rectangle_and_nothing_outside_it() {
         bg(1, 2),
         "the block ends at the column range's edge"
     );
-    // Columns 1 and 2 rather than 0 and 2: the cursor's own column is 0,
-    // and cell mode washes it down every row regardless of the range —
-    // reading it here would prove nothing about the range.
+    // Columns 1 and 2: the cursor's column 0 is washed regardless.
     assert_eq!(
         bg(2, 1),
         bg(2, 2),
@@ -781,8 +731,7 @@ fn a_column_range_bands_its_columns_and_lights_no_gutter_bar() {
         "the range is columns; a bar down every row would claim the rows were selected"
     );
 
-    // Row 2 (index 1), off the cursor row: column 0 is inside the range,
-    // column 2 is not.
+    // Row 2, off the cursor row: column 0 is inside the range, column 2 is not.
     let bg = |column: u16| {
         buffer
             .cell((drawn_column(area, column), grid_row_y(area, 1)))
@@ -796,11 +745,6 @@ fn a_column_range_bands_its_columns_and_lights_no_gutter_bar() {
     );
 }
 
-/// `follow_grid_columns` pulls the viewport over the column cursor against
-/// the geometry of the frame *before* this one, so a resize that narrows
-/// the panel draws one frame whose cursor is off the right of what fits.
-/// ratatui clamps `selected_column` to the last column it drew, which would
-/// band a column the heading gate does not agree with.
 #[test]
 fn column_mode_lights_nothing_when_its_cursor_is_off_the_columns_drawn() {
     let mut state = showing(sized_page(12, 3));
@@ -830,9 +774,6 @@ fn column_mode_lights_nothing_when_its_cursor_is_off_the_columns_drawn() {
     }
 }
 
-/// The heading's wash is the crosshair's, and a row cursor scrolled out of
-/// view leaves the widget painting no crosshair at all — so the heading
-/// cannot stay lit on its own (design §4).
 #[test]
 fn a_heading_is_unwashed_once_the_crosshair_scrolls_out_of_view() {
     let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
@@ -870,9 +811,6 @@ fn a_heading_is_unwashed_once_the_crosshair_scrolls_out_of_view() {
     );
 }
 
-/// The wash is composed onto the heading's own token rather than replacing
-/// it, so a key column still says which key it is under the crosshair
-/// wherever the theme keeps its colours (design §4).
 #[test]
 fn a_key_columns_heading_keeps_its_colour_under_the_wash() {
     let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
@@ -900,12 +838,7 @@ fn a_key_columns_heading_keeps_its_colour_under_the_wash() {
     );
 }
 
-/// The wash is a background alone wherever the theme keeps its colours, so
-/// a null under the crosshair is still drawn as a null (design §4).
-///
-/// The null sits off the cursor row on purpose: on it, the row arm of the
-/// crosshair would paint the same background, and dropping the column arm
-/// entirely would go unnoticed.
+/// Off the cursor row, where the row arm would paint the same background.
 #[test]
 fn the_crosshair_leaves_a_flavours_column_colours_alone() {
     let theme = Theme::of(&ThemeChoice::Ported(Ported::CatppuccinMocha));
@@ -947,9 +880,7 @@ fn the_crosshair_leaves_a_flavours_column_colours_alone() {
 
 #[test]
 fn the_grid_scrolls_to_keep_the_selection_on_screen() {
-    // The Contents panel holds a two-row header and four rows at this
-    // size, so a twenty-row page forces the scroll a plain `Table` would
-    // not perform.
+    // Two header rows and four body rows, so twenty rows force a scroll.
     let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
     let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
     let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();

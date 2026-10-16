@@ -1,11 +1,5 @@
-//! Drawing a [`PanelBody::Log`](lc_domain::view::PanelBody::Log) body: the
-//! trail's own renderer, structured like [`crate::details`] — the DDL body's
-//! — because both are panels whose rows stand one to several wrapped lines
-//! rather than one to a `List`/`Table` row of their own.
-//!
-//! An entry occupies two lines: the subject beside its time, then the
-//! outcome indented to the column the subject starts in (query log design
-//! §6).
+//! Drawing the trail: two lines per entry, the subject beside its time, then
+//! the outcome indented under the subject.
 
 use lc_domain::grid::BAR;
 use lc_domain::search::Search;
@@ -21,27 +15,19 @@ use ratatui::widgets::Paragraph;
 use crate::body::{Marked, barred, patched};
 use crate::theme::Theme;
 
-/// `"HH:MM:SS"` and the space after it. Fixed because every stamp is the
-/// same width — a ragged left edge would cost the scannability the trail is
-/// for.
+/// Fixed: every stamp is the same width, and a ragged edge costs scannability.
 const STAMP_W: u16 = 9;
 
-/// A body's lines, and where the selected row landed among them.
 pub(crate) struct Laid {
     pub(crate) lines: Vec<Line<'static>>,
     pub(crate) selection: Span,
-    /// The row each line was wrapped from, in step with `lines`. Every line
-    /// in this panel belongs to a row — unlike Ddl there are no headings or
-    /// group blanks — but the type stays `Option` to match what
-    /// [`crate::body::Unit::Lines`] carries.
+    /// Every line here belongs to a row; `Option` matches
+    /// [`crate::body::Unit::Lines`].
     pub(crate) rows: Vec<Option<usize>>,
 }
 
-/// The view model's Log body, as the renderer reads it.
-///
-/// `activity` is the Queries panel's own — never a frame the domain carries
-/// on a `LogRow`, which stays a plain projection (design §6) — so a pending
-/// entry's outcome can spin without the domain ever counting a frame.
+/// `activity` is the panel's, so a pending entry spins without the domain
+/// counting frames.
 #[derive(Clone, Copy)]
 pub(crate) struct LogsView<'a> {
     pub(crate) rows: &'a [LogRow],
@@ -92,13 +78,7 @@ pub(crate) fn render(
     )
 }
 
-/// Every line the body occupies at `width`, with the selected row highlighted
-/// across all of its own.
-///
-/// The span is what the frame reports back as `Geometry::log_selection`, so
-/// the domain can bound an offset over text it cannot wrap itself
-/// (architecture.md §3) — measured against every line this function
-/// produces, never against the ones a caller happens to scroll into view.
+/// Measured over every line, never only those in view (architecture.md §3).
 pub(crate) fn lay_out(
     rows: &[LogRow],
     selected: usize,
@@ -145,12 +125,8 @@ pub(crate) fn lay_out(
     }
 }
 
-/// One entry's lines: its subject wrapped from [`STAMP_W`], its time
-/// overwriting the blank the wrap opened with, then its outcome wrapped the
-/// same way — skipped entirely where `outcome` is empty, which is the
-/// dropped-count row (query log design §6). The outcome's leading glyph
-/// spins first, while it is still segments — wrapping afterwards would have
-/// to find it again inside already-split characters.
+/// Empty `outcome` is the dropped-count row. The glyph spins before wrapping,
+/// while it is still a segment.
 fn entry_lines(
     row: &LogRow,
     width: usize,
@@ -177,13 +153,7 @@ fn entry_lines(
         .collect()
 }
 
-/// `outcome`, unless it is the trail's pending sentinel ([`RUNNING`]) and
-/// `activity` says the panel is still waiting — in which case its leading
-/// glyph is swapped for [`crate::loader::spin`]'s glyph at the current
-/// frame, the one thing about a pending row this renderer draws
-/// differently frame to frame (query log design §6). A resting or finished
-/// panel — including a pending row left over from a frame the completion
-/// has not yet reached — draws the sentinel exactly as the domain wrote it.
+/// Only a still-pending sentinel spins; anything else draws as written.
 fn animated_outcome(outcome: &[Segment], activity: Activity) -> Vec<Segment> {
     if let Activity::Working { frame } = activity
         && let [segment] = outcome
@@ -198,13 +168,8 @@ fn animated_outcome(outcome: &[Segment], activity: Activity) -> Vec<Segment> {
     outcome.to_vec()
 }
 
-/// [`RUNNING`] past its first character — the part the spinner glyph
-/// overwrites, and the part it never replaces. Derived rather than a second
-/// `" running"` literal: once the animated string is actually drawn, its
-/// char count matching `RUNNING`'s is what keeps `Geometry::log_lines` a
-/// function of the terminal size and the view model alone, never of the
-/// frame (architecture.md §3) — a second literal could drift from `RUNNING`
-/// and nothing would catch it until the wrap count started oscillating.
+/// Derived from `RUNNING`: the animated string must keep its char count, or
+/// `log_lines` would vary per frame.
 fn running_tail() -> &'static str {
     match RUNNING.char_indices().nth(1) {
         Some((at, _)) => &RUNNING[at..],
@@ -212,10 +177,7 @@ fn running_tail() -> &'static str {
     }
 }
 
-/// `line`'s leading [`STAMP_W`] characters replaced with `at`, faint —
-/// overwriting the blank indent [`crate::wrap::wrap`] always opens a line
-/// with, since the indent and the stamp column are the same width by
-/// construction.
+/// The wrap indent and the stamp column are the same width.
 fn stamped(line: Vec<(char, Style)>, at: &str, theme: Theme) -> Vec<(char, Style)> {
     let stamp = theme.style(Token::Faint);
     let width = usize::from(STAMP_W);
@@ -300,8 +262,7 @@ mod tests {
         assert!(drawn.contains("200 rows, 41ms"), "{drawn}");
     }
 
-    // A long statement wraps rather than being cut off: the trail exists to
-    // show what ran, and half of it is not what ran.
+    // A statement wraps rather than truncating: half of it is not what ran.
     #[test]
     fn a_statement_wider_than_the_panel_wraps_rather_than_truncating() {
         let long = format!("SELECT {} FROM store.orders", "column_name, ".repeat(12));
@@ -329,9 +290,7 @@ mod tests {
         assert!(drawn.contains("running"), "{drawn}");
     }
 
-    // Design §6: the pending outcome animates from the panel's own
-    // `Activity`, not a static glyph — a hung query and a fast one must not
-    // look identical.
+    // A hung query and a fast one must not look identical.
     #[test]
     fn a_pending_entrys_glyph_spins_with_the_frame() {
         let pending = [row("14:02:14", "Reading schema", RUNNING, Severity::Info)];
@@ -359,12 +318,8 @@ mod tests {
         assert!(first.contains(RUNNING), "{first}");
     }
 
-    // Geometry::log_lines is a function of the terminal size and the view
-    // model alone (architecture.md §3): if the animated string's width
-    // varied per frame, the wrap count would too, and a frame-dependent
-    // value would cross into `Geometry`. `spin()` returning one char is what
-    // keeps this true — verify it holds across the whole cycle, not just
-    // frame 0.
+    // A frame-dependent width would make the wrap count, and so `Geometry`,
+    // vary per frame.
     #[test]
     fn the_animated_pending_outcome_is_always_the_same_char_count_as_the_sentinel() {
         let pending = Segment::styled(RUNNING, Token::Severity(Severity::Info));

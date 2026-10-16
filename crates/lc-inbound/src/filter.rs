@@ -1,9 +1,4 @@
-//! The filter prompt, drawn over the panels
-//! (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
-//!
-//! A modal rather than a bar-row prompt, which is what tells it apart from
-//! `/`: a search marks cells and keeps every row, and this drops the rows it
-//! does not match. Two things that differ that much may not read alike.
+//! The filter prompt: a modal, so it cannot be mistaken for the `/` bar prompt.
 
 use lc_domain::style::Token;
 use ratatui::Frame;
@@ -14,21 +9,12 @@ use unicode_width::UnicodeWidthStr as _;
 
 use crate::theme::Theme;
 
-/// As wide as the box wants to be, and no wider than the frame it sits in.
-///
-/// Narrowing rather than refusing, unlike the palette and the export form:
-/// those two are gated on a measurement that crosses back into the domain
-/// because a form nothing draws would be a mode with nothing on screen saying
-/// so. This box needs no such gate — it fits inside the smallest frame the
-/// shell draws panels in at all (`layout::MIN_W` × `MIN_H`), so `f` can never
-/// open a prompt the frame cannot show
-/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
+/// Narrows rather than refusing: it fits the smallest shell frame, so `f` needs
+/// no domain-side gate.
 const MAX_W: u16 = 44;
-/// Two columns of margin on each side, between the frame edge and the block.
+/// Two columns each side.
 const MARGIN_W: u16 = 4;
-/// Two borders and one field. Nothing else belongs in a box that collects one
-/// word — the two keys that leave it are named on the bar, where every other
-/// mode's keys are named too.
+/// The keys are named on the bar, as every other mode's are.
 const HEIGHT: u16 = 3;
 
 fn centred(area: Rect, height: u16) -> Option<Rect> {
@@ -46,8 +32,6 @@ fn centred(area: Rect, height: u16) -> Option<Rect> {
     ))
 }
 
-/// The block, titled with the column it will narrow, holding the term typed
-/// so far and a caret after it.
 pub(crate) fn render(frame: &mut Frame, column: &str, query: &str, theme: Theme) {
     let Some(area) = centred(frame.area(), HEIGHT) else {
         return;
@@ -66,10 +50,7 @@ pub(crate) fn render(frame: &mut Frame, column: &str, query: &str, theme: Theme)
     frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
-    // The tail rather than the head: the caret sits after the last character
-    // typed, and a term longer than the field has to keep that end on screen
-    // — the window the export form's path field maintains, for one line that
-    // never scrolls back (export design §2).
+    // The tail stays on screen, where the caret is.
     let visible = tail(query, usize::from(inner.width).saturating_sub(1));
 
     frame.render_widget(
@@ -87,7 +68,7 @@ pub(crate) fn render(frame: &mut Frame, column: &str, query: &str, theme: Theme)
     ));
 }
 
-/// The last `width` columns of `query`, cut at a character boundary.
+/// Cut at a character boundary.
 fn tail(query: &str, width: usize) -> String {
     let mut taken: Vec<char> = Vec::new();
     let mut used = 0;

@@ -1,11 +1,5 @@
-//! The TUI adapter: computes panel geometry, draws the frame, turns terminal
-//! input into messages.
-//!
-//! Knows nothing about CQL. Its largest job is laying out and drawing the
-//! panels described by [`lc_domain::ViewModel`]; it also translates in both
-//! directions at the boundary — crossterm events into
-//! [`lc_domain::model::KeyPress`], and [`lc_domain::style::Token`] into a
-//! concrete `ratatui` style.
+//! The TUI adapter: lays out and draws [`lc_domain::ViewModel`], and translates
+//! crossterm events in and style tokens out. Knows nothing about CQL.
 
 mod body;
 mod commit;

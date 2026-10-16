@@ -13,9 +13,7 @@ pub(crate) fn render(frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // The rect never needs more rows than `lines` produced; `unwrap_or`
-    // covers only line counts that could never fit `area.height` in the
-    // first place.
+    // `unwrap_or` covers only counts that could never fit anyway.
     let height = u16::try_from(lines.len())
         .unwrap_or(area.height)
         .min(area.height);
@@ -26,9 +24,8 @@ pub(crate) fn render(frame: &mut Frame, area: Rect) {
     );
 }
 
-/// Short lines rather than a sentence: a sentence explaining that the terminal
-/// is too narrow does not fit in a terminal that is too narrow. They drop least
-/// actionable first, so what the user must do survives longest.
+/// Short lines, not a sentence that would not fit either. The least actionable
+/// drop first.
 fn lines(area: Rect) -> Vec<Line<'static>> {
     let need = Line::from(format!("need {MIN_W}×{MIN_H}"));
     let have = Line::from(format!("have {}×{}", area.width, area.height));

@@ -1,6 +1,5 @@
 use super::*;
 
-/// The Contents panel's bottom border, between its corners.
 fn contents_bottom(buffer: &Buffer) -> String {
     let area = block_area(buffer, "Table contents");
 
@@ -10,7 +9,6 @@ fn contents_bottom(buffer: &Buffer) -> String {
         .collect()
 }
 
-/// `state`'s frame, with the Contents footer replaced by `footer`.
 fn drawn_with_footer(width: u16, state: &State, footer: Footer) -> Buffer {
     let mut view = view_model(state);
     view.panels[2].footer = Some(footer);
@@ -136,8 +134,6 @@ fn a_narrow_border_drops_the_hint_then_the_estimate_then_the_footer() {
     assert!(!narrow.contains("rows"), "{narrow:?}");
 }
 
-// Editing (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7)
-
 #[test]
 fn the_footer_counts_the_uncommitted_cells_in_the_warning_colour() {
     let state = showing(sized_page(1, 3));
@@ -157,9 +153,7 @@ fn the_footer_counts_the_uncommitted_cells_in_the_warning_colour() {
     assert!(border.contains("3 rows · 2 uncommitted"), "{border:?}");
 }
 
-/// On the cursor row, which is where an edit has just been made: ratatui
-/// paints `row_highlight_style` over the row after its cells, so this is
-/// the case a background alone would lose (cell editing design §7).
+/// On the cursor row, whose highlight would bury a background.
 #[test]
 fn a_dirty_cell_is_drawn_in_the_uncommitted_colour() {
     let mut view = view_model(&showing(sized_page(1, 3)));

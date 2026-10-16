@@ -1,7 +1,5 @@
 use super::*;
 
-/// A state focused on `focus`, with `text` in the Queries buffer.
-/// `text` typed into the buffer, left open when `focus` is Queries.
 fn with_query(text: &str, focus: Panel) -> State {
     let mut state = State::default();
     state.focus_on(focus);
@@ -20,11 +18,8 @@ fn with_query(text: &str, focus: Panel) -> State {
     state
 }
 
-/// A focused Queries panel at 80x24 is `Rect { x: 20, y: 10, w: 60,
-/// h: 13 }`: borders on rows 10 and 22, content rows 11 to 21, and its
-/// inner left edge at column 21. Row 23 is split between the loader and
-/// the hint bar (`bar_split`), which does not matter here: the loader
-/// sits at the left and Queries starts at column 20.
+/// At 80x24 focused Queries is `Rect { x: 20, y: 10, w: 60, h: 13 }`: content
+/// rows 11 to 21, inner left edge 21.
 const CONTENT_ROW: u16 = 11;
 const LAST_CONTENT_ROW: u16 = 21;
 const INNER_LEFT: u16 = 21;
@@ -76,8 +71,6 @@ fn the_banded_statement_is_the_one_the_cursor_is_in() {
     );
 }
 
-/// The band is the run's extent, not the line's: two statements on one
-/// line are two bands, and `ctrl-r` sends the one under the cursor.
 #[test]
 fn a_band_stops_where_its_statement_does() {
     let mut state = with_query("SELECT 1; SELECT 2", Panel::Queries);
@@ -110,8 +103,6 @@ fn an_empty_buffer_draws_no_band() {
     );
 }
 
-/// `text` typed into a focused Queries panel, with the offers standing
-/// against whatever word it ends on.
 fn completing(text: &str) -> State {
     let mut state = with_query(text, Panel::Queries);
     let completion = lc_domain::cql::suggest(state.queries.buffer(), None, None);
@@ -147,9 +138,6 @@ fn the_completion_popup_hangs_off_the_cursor() {
     );
 }
 
-/// A shape is told from the keyword it opens with by the holes its label
-/// draws, so the label has to survive the crossing into the popup
-/// (completion ranking design §3).
 #[test]
 fn the_completion_popup_draws_a_statement_shape_with_its_holes() {
     let (buffer, _) = drawn_with_cursor(80, 24, &completing("sel"));
@@ -164,8 +152,7 @@ fn the_completion_popup_draws_a_statement_shape_with_its_holes() {
 
 #[test]
 fn the_completion_popup_opens_upwards_off_the_bottom_of_the_frame() {
-    // Eleven lines put the cursor on the panel's last content row, which
-    // is the frame's last row but the bar's.
+    // Eleven lines put the cursor on the last content row.
     let state = completing(&format!("{}se", "\n".repeat(11)));
 
     let (buffer, cursor) = drawn_with_cursor(80, 24, &state);
@@ -180,7 +167,6 @@ fn the_completion_popup_opens_upwards_off_the_bottom_of_the_frame() {
     );
 }
 
-/// The row the popup drew its first offer on.
 fn offered_row(buffer: &Buffer) -> usize {
     (0..usize::from(buffer.area.height))
         .find(|&y| {
@@ -242,7 +228,7 @@ fn a_long_line_scrolls_sideways_and_keeps_the_cursor_on_screen() {
 
 #[test]
 fn a_tall_buffer_scrolls_and_says_so() {
-    // Fifteen lines to the focused panel's eleven content rows.
+    // Fifteen lines into eleven rows.
     let lines: Vec<String> = (0..15).map(|line| format!("line{line}")).collect();
     let state = with_query(&lines.join("\n"), Panel::Queries);
 
@@ -266,9 +252,7 @@ fn a_tall_buffer_scrolls_and_says_so() {
 
 #[test]
 fn a_double_width_character_does_not_desync_the_cursor_from_the_scroll() {
-    // Thirty two-column characters force a horizontal scroll whose
-    // arithmetic offset lands inside one of them, not on a boundary
-    // between characters.
+    // Thirty double-width characters put the scroll offset mid-character.
     let long = format!("{}SELECT", "永".repeat(30));
     let state = with_query(&long, Panel::Queries);
 
@@ -323,11 +307,7 @@ fn an_overlay_hides_the_cursor_even_when_the_editor_is_focused() {
 
 #[test]
 fn an_open_prompts_own_cursor_replaces_the_editors() {
-    // Renamed and its expectation updated by Task 9: a prompt used to
-    // draw nothing of its own, so the editor's cursor being suppressed
-    // meant no cursor showed at all. Now the prompt is a text field with
-    // a cursor of its own, on the bar row — still not the editor's, for
-    // the same reason as before (design §5.2).
+    // The prompt has its own cursor on the bar row; the editor's stays hidden.
     let mut state = with_query("SELECT", Panel::Queries);
     state.overlay = Some(Overlay::Search(Prompt::opened(
         Searched::Tables,
@@ -337,8 +317,7 @@ fn an_open_prompts_own_cursor_replaces_the_editors() {
 
     let (_, cursor) = drawn_with_cursor(80, 24, &state);
 
-    // Row 23 is the bar, which starts at column 0; column 2 is the two
-    // cells of the prompt's empty query, `" /"`.
+    // Row 23 is the bar; column 2 is after `" /"`.
     assert_eq!(
         cursor,
         Some(ratatui::layout::Position::new(2, 23)),

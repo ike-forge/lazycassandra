@@ -1,10 +1,6 @@
-//! Splitting a drawn string at the matches inside it.
-//!
-//! The ranges are computed against the string about to be drawn, not carried
-//! from the domain: the DDL panel wraps and truncates here, so an offset
-//! measured against the source would name the wrong byte by the time it is
-//! painted. A match a wrap broke in half is therefore painted on neither half
-//! (search highlight design §3.1).
+//! Splitting a drawn string at its matches. Computed against the drawn string:
+//! DDL wraps and truncates here, so source offsets would be wrong. A match
+//! split by a wrap is painted on neither half.
 
 use lc_domain::search::Search;
 use lc_domain::style::Token;
@@ -13,11 +9,7 @@ use ratatui::text::Span as TextSpan;
 
 use crate::theme::Theme;
 
-/// `text` as spans, with the matched runs patched with [`Token::Match`] over
-/// `base`.
-///
-/// `Token::Match` is foreground-only, so patching composes with whatever the
-/// segment already wore — the idiom `body.rs` uses for a matched null.
+/// `Match` is foreground-only, so it composes with the segment's style.
 pub(crate) fn spans(
     text: &str,
     search: Option<&Search>,

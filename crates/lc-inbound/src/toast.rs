@@ -9,7 +9,6 @@ use lc_domain::style::{Severity, Token};
 
 use crate::theme::Theme;
 
-/// Cells a toast keeps clear of the frame's edge.
 const MARGIN: u16 = 1;
 
 fn rect(area: Rect, message: &str) -> Option<Rect> {

@@ -11,7 +11,7 @@ fn only_the_focused_panel_is_bold() {
             .contains(Modifier::BOLD)
     };
 
-    // Top-left corner of each panel; Tables is focused by default.
+    // Top-left corners; Tables is focused by default.
     assert!(bold(0, 0), "Tables is focused");
     assert!(!bold(16, 0), "Contents is not");
     assert!(!bold(0, 5), "Ddl is not");
@@ -24,7 +24,7 @@ fn only_the_focused_panel_wears_the_focus_colour() {
     let focus_fg = |x, y| buffer.cell((x, y)).expect("corner is in bounds").fg;
     let focus = Theme::default().palette().focus;
 
-    // Top-left corner of each panel; Tables is focused by default.
+    // Top-left corners; Tables is focused by default.
     assert_eq!(focus_fg(0, 0), focus, "Tables' border is focus-coloured");
     assert_ne!(focus_fg(16, 0), focus, "Contents' is not");
     assert_ne!(focus_fg(0, 7), focus, "Ddl's is not");
@@ -33,8 +33,7 @@ fn only_the_focused_panel_wears_the_focus_colour() {
 
 #[test]
 fn the_focused_panels_plain_title_text_wears_the_focus_colour() {
-    // Row 0 is "╭── [1]-Tables ╮╭── [3]-Table contents ╮": x=2 is inside
-    // Tables' inset and x=18 inside Contents', which is not focused.
+    // x=2 is in Tables' inset, x=18 in Contents'.
     let buffer = draw(40, 12);
     let fg = |x, y| buffer.cell((x, y)).expect("cell is in bounds").fg;
     let focus = Theme::default().palette().focus;
@@ -49,7 +48,7 @@ fn the_focused_panels_plain_title_text_wears_the_focus_colour() {
 
 #[test]
 fn focus_follows_the_state_rather_than_the_draw_order() {
-    // Contents is drawn third, so bolding it cannot be positional luck.
+    // Contents is drawn third, so this is not positional luck.
     let buffer = draw_focused(40, 12, Panel::Contents);
     let bold = |x, y| {
         buffer
@@ -87,8 +86,6 @@ fn each_panel_opens_its_title_with_the_key_that_focuses_it() {
     }
 }
 
-/// The hint bar's keys are the only thing left wearing it: a title that
-/// coloured one of its own characters is what `[1]-` replaced.
 #[test]
 fn no_title_wears_the_shortcut_colour() {
     let buffer = draw(40, 12);

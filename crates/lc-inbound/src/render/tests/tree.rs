@@ -44,8 +44,7 @@ fn a_tree_row_wears_the_icon_of_what_it_names() {
 
 #[test]
 fn the_ddl_identity_rows_wear_the_tree_icons_and_each_heading_its_own() {
-    // Wide enough that every label has room for its icon; the panel that
-    // has not is the subject of its own test.
+    // Wide enough for every icon.
     let buffer = draw_state(160, 41, &describing(orders()));
     let rows = ddl_rows(&buffer);
 
@@ -73,14 +72,13 @@ fn the_ddl_identity_rows_wear_the_tree_icons_and_each_heading_its_own() {
 
 #[test]
 fn a_name_with_no_room_beside_its_label_wraps_rather_than_abbreviating() {
-    // The Ddl body is 23 columns at this width, and the label spends ten
-    // of them, so the table's name cannot share the line it labels.
+    // 23 columns, ten spent on the label, so the name wraps.
     let buffer = draw_state(104, 41, &listing(orders()));
 
     assert_eq!(
         ddl_rows(&buffer)[..3],
         [
-            // The cursor opens on the first row, which is where the bar is.
+            // The cursor opens on this row.
             format!("▌  {}Keyspace       shop", crate::icons::KEYSPACE),
             format!("   {}Table", crate::icons::TABLE),
             "     orders_by_customer".to_owned(),
@@ -105,8 +103,7 @@ fn an_unfolded_keyspaces_tables_are_indented_beneath_it() {
 
     let buffer = draw_state(40, 12, &state);
 
-    // Four rows of tree in three rows of panel, so the border carries the
-    // scrollbar and `typezoo` is below the fold.
+    // Four rows in three, so `typezoo` is below the fold.
     assert_eq!(
         row(&buffer, 1),
         "│▌\u{f084} shop       ▐│Press Enter on a table│"
@@ -123,8 +120,7 @@ fn an_unfolded_keyspaces_tables_are_indented_beneath_it() {
 
 #[test]
 fn a_match_is_painted_where_it_sits() {
-    // A search forces the keyspace holding the match open (§4.1), so no
-    // explicit unfold is needed for `orders` to draw.
+    // A search forces the matching keyspace open.
     let mut state = State::default();
     state.connection = ConnectionState::Connected(Connection {
         id: ConnId::next(),
@@ -150,8 +146,7 @@ fn a_match_is_painted_where_it_sits() {
         .expect("a match spends a colour");
     let fg = |x: u16| buffer.cell((x, 2)).expect("inside the panel").fg;
 
-    // "orders", starting at column 7: "or" unmatched, "der" matched, "s"
-    // unmatched.
+    // "orders" from column 7: "or" unmatched, "der" matched, "s" unmatched.
     assert_eq!(fg(7), table, "'o' is unmatched");
     assert_eq!(fg(8), table, "'r' is unmatched");
     assert_eq!(fg(9), matched, "'d' wears the match colour");
@@ -193,9 +188,7 @@ fn a_search_drops_the_tables_it_does_not_reach() {
 #[test]
 fn the_clusters_own_keyspaces_are_dimmed() {
     let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-    // Column 4: the name, past the border, the gutter bar and the icon it
-    // opens with. The icon carries its own colour (design §8), which is
-    // not what this is about.
+    // Column 4, past the border, bar and icon.
     let fg = |y: u16| buffer.cell((4, y)).expect("inside the panel").fg;
     let faint = Theme::default()
         .style(Token::Faint)
@@ -209,8 +202,7 @@ fn the_clusters_own_keyspaces_are_dimmed() {
 #[test]
 fn a_dimmed_rows_icon_keeps_the_colour_of_what_it_names() {
     let buffer = draw_state(40, 12, &browsing(&["shop", "system"], 0));
-    // Column 2: a keyspace opens right after the border and the gutter
-    // bar.
+    // Column 2, past the border and bar.
     let icon = |y: u16| buffer.cell((2, y)).expect("inside the panel").fg;
     let theme = Theme::default();
     let faint = theme.style(Token::Faint).fg.expect("faint spends a colour");
@@ -265,12 +257,8 @@ fn a_ranged_tree_row_carries_the_bar_and_the_band() {
     );
 }
 
-/// A tree body drawn with `ranges` in place of whatever the cursor's own
-/// selection would project — the cursor sits on a fourth row, neither
-/// group nor the gap under test, so its own highlight can never be
-/// mistaken for (or hide the absence of) a band. Drawn at a height tall
-/// enough to show all four rows unscrolled, with `offset` forced to `0`
-/// rather than `browsing`'s own follow (tuned for a three-row viewport).
+/// The cursor sits on a fourth row so its highlight cannot stand in for a band.
+/// Offset forced to 0.
 fn render_tree_with(ranges: Ranges) -> Buffer {
     let state = browsing(&["a", "b", "c", "d"], 3);
     let mut view = view_model(&state);
@@ -296,9 +284,7 @@ fn render_tree_with(ranges: Ranges) -> Buffer {
 
 #[test]
 fn two_groups_band_separately_with_the_gap_left_unpainted() {
-    // A gap is the absence of a band. Giving it one would make a selection of
-    // two groups louder than the same rows selected as one
-    // (multi-group selection design §6).
+    // A gap stays unbanded.
     let mut ranges = Ranges::default();
     ranges.insert(Range::new(0, 0));
     ranges.insert(Range::new(2, 2));
@@ -326,10 +312,8 @@ fn a_panel_with_nothing_to_list_says_what_it_is_waiting_for() {
 #[test]
 fn a_failure_notice_is_drawn_in_the_danger_style_rather_than_dimmed() {
     let mut state = State::default();
-    // A startup failure (`ConnectionState`/`SchemaState::Failed`) is
-    // `Overlay::Fatal` now, and the panel behind it goes muted (query log
-    // design §7) — a table read refused after the app has started is
-    // what still owns a danger notice.
+    // Startup failures are `Fatal`; a refused read is what still shows a danger
+    // notice.
     state.contents.refused(
         Subject::Table(TableRef::new("shop", "orders")),
         &lc_domain::model::DbError::Invalid("undefined column name total".to_owned()),

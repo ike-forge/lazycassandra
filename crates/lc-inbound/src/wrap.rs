@@ -1,13 +1,6 @@
-//! Word-wrap shared by every panel that lays text out at a fixed width:
-//! greedy, breaking on whitespace, and breaking mid-word only when a word
-//! alone has no room to fit — `compaction`'s class name is one unbreakable
-//! 60-character token.
-//!
-//! Carries a [`Style`] per character rather than working on a bare `&str`,
-//! so the Logs trail can wrap a statement's syntax-highlighted
-//! [`Segment`](lc_domain::style::Segment)s without losing which token each
-//! character belongs to (query log design §6). [`plain`] is the degenerate
-//! case a uniformly-styled value uses, `details.rs`'s original shape.
+//! Greedy word wrap on whitespace, breaking a word only when it cannot fit
+//! alone (`compaction`'s class name is 60 characters). Styled per character, so
+//! highlighted statements wrap without losing tokens.
 
 use lc_domain::search::Search;
 use lc_domain::style::Segment;
@@ -16,11 +9,8 @@ use ratatui::text::{Line, Span};
 
 use crate::theme::Theme;
 
-/// `chars`, wrapped to lines of at most `width` columns. Every line, the
-/// first included, opens with `indent` blank columns — so a caller meaning
-/// to draw something other than blank there (a label, a timestamp)
-/// overwrites the leading `indent` characters afterwards rather than the
-/// wrap never reserving them.
+/// Every line opens with `indent` blanks, which callers overwrite with a label
+/// or timestamp.
 pub(crate) fn wrap(
     chars: &[(char, Style)],
     width: usize,
@@ -56,9 +46,7 @@ pub(crate) fn wrap(
     lines
 }
 
-/// `text`, wrapped the same way, with no style to carry — `details.rs`'s
-/// values, which colour the whole wrapped line uniformly rather than
-/// per-character.
+/// For uniformly styled text.
 pub(crate) fn plain(text: &str, width: usize, indent: usize) -> Vec<String> {
     let chars: Vec<(char, Style)> = text
         .chars()
@@ -71,9 +59,6 @@ pub(crate) fn plain(text: &str, width: usize, indent: usize) -> Vec<String> {
         .collect()
 }
 
-/// `segments`, flattened to one character per element, each carrying the
-/// style its own segment's [`Token`](lc_domain::style::Token) resolves to —
-/// the form [`wrap`] takes.
 pub(crate) fn chars_of(segments: &[Segment], theme: Theme) -> Vec<(char, Style)> {
     segments
         .iter()
@@ -89,10 +74,7 @@ pub(crate) fn chars_of(segments: &[Segment], theme: Theme) -> Vec<(char, Style)>
         .collect()
 }
 
-/// `chars` as a [`Line`], grouped into spans wherever the style changes and
-/// split further at whatever `search` matches inside each run — the same
-/// split [`crate::highlight::spans`] does for a uniformly-styled value,
-/// applied once per run rather than once per line.
+/// Split at style changes and at `search` matches within each run.
 pub(crate) fn line(
     chars: Vec<(char, Style)>,
     search: Option<&Search>,

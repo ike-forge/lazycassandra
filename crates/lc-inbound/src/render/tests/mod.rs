@@ -124,7 +124,7 @@ fn tabled_schema(keyspaces: &[(&str, &[&str])]) -> Schema {
     }
 }
 
-/// Rows of body the Tables panel has at 40x12, where these tests draw it.
+/// Tables' body rows at 40x12.
 const TABLES_ROWS: usize = 3;
 
 fn browsing(names: &[&str], selected: usize) -> State {
@@ -136,8 +136,7 @@ fn browsing(names: &[&str], selected: usize) -> State {
         schema: SchemaState::Loaded(schema_of(names)),
     });
     state.move_tree_cursor(selected);
-    // Set with the cursor for the reason `select_contents` sets it: half a
-    // state is not a state (list viewport design §6).
+    // Cursor and viewport together, as `update` keeps them.
     state.tables.scroll.follow(selected, TABLES_ROWS);
     state
 }
@@ -181,7 +180,7 @@ fn banded(buffer: &Buffer, row: u16) -> bool {
     buffer.cell((1, 1 + row)).expect("inside the panel").bg == band
 }
 
-/// A state showing `page` for `shop.orders`, whose partition key is `id`.
+/// Partition key `id`.
 fn showing(page: Page) -> State {
     let mut state = State::default();
     state.connection = ConnectionState::Connected(Connection {
@@ -223,18 +222,13 @@ fn text(value: &str) -> CqlValue {
     CqlValue::Text(value.to_owned())
 }
 
-/// Places the cursor and the viewport that belongs with it, as `update`
-/// does — a fixture that sets one without the other describes a state the
-/// application cannot be in
-/// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §6).
+/// Sets the cursor and its viewport together, as `update` does.
 fn select_contents(state: &mut State, index: usize, height: usize) {
     let len = state.contents.row_count();
     state.contents.cursor.go_to(index, len);
     state.contents.scroll.follow(index, height);
 }
 
-/// A page of `columns` columns and `rows` rows, every value as wide as its
-/// heading.
 fn sized_page(columns: usize, rows: usize) -> Page {
     Page {
         columns: (0..columns).map(|index| format!("c{index}")).collect(),
@@ -247,20 +241,13 @@ fn sized_page(columns: usize, rows: usize) -> Page {
     }
 }
 
-/// A twelve-column page whose column cursor visited `path` in order, with
-/// the horizontal viewport following it the way `update` does.
-///
-/// Twelve two-wide columns in the 22-column body a 40x12 frame gives the
-/// Contents panel, less the merged bar+gutter block and its one spacing
-/// column: six fit, so anything past the sixth has to be reached by
+/// Twelve two-wide columns in a 22-column body: six fit, so later ones need
 /// scrolling.
 fn showing_column_path(path: &[usize]) -> State {
     walked(22, path)
 }
 
-/// The state the cursor reaches by visiting `path` in a Contents panel
-/// `inner` columns wide. The width is the fixture's own, because the
-/// viewport it walks has to be the one the frame it is drawn in draws.
+/// `inner` must match the frame it is drawn in.
 fn walked(inner: u16, path: &[usize]) -> State {
     let page = sized_page(12, 3);
     let widths = lc_domain::grid::widths(&page, lc_domain::config::MaxColumnWidth::default());
@@ -279,35 +266,25 @@ fn walked(inner: u16, path: &[usize]) -> State {
     state
 }
 
-/// The y the `row`th row of a grid's body lands on: the panel's own
-/// border, then the heading and the blank line under it.
+/// Below the border, the heading and its rule.
 const fn grid_row_y(area: Rect, row: u16) -> u16 {
     area.y + 1 + crate::body::HEADER_ROWS + row
 }
 
-/// The x of the first drawn column's first cell: the panel's own border,
-/// the merged bar+gutter block, and the spacing that follows it.
-/// `gutter` is what `lc_domain::grid::gutter` gives the page — the digits
-/// of its last row number.
+/// Past the border, the bar-and-gutter block and its spacing.
 const fn first_cell(area: Rect, gutter: u16) -> u16 {
     area.x + 1 + BAR + gutter + COLUMN_SPACING
 }
 
-/// The same for the `index`th drawn column, where every column before it
-/// is `width` wide.
 const fn nth_cell(area: Rect, gutter: u16, width: u16, index: u16) -> u16 {
     first_cell(area, gutter) + index * (width + COLUMN_SPACING)
 }
 
-/// [`nth_cell`] for the fixtures `sized_page` builds: two-character names
-/// and two-character values over a page of fewer than ten rows, so the
-/// heading's own marks are what set the width
-/// (`lc_domain::grid::MARKS`).
+/// Heading marks set the width of `sized_page`'s columns.
 const fn drawn_column(area: Rect, index: u16) -> u16 {
     nth_cell(area, 1, 2 + lc_domain::grid::MARKS, index)
 }
 
-/// `shop.orders_by_customer` as the fixture declares it.
 fn orders() -> Table {
     Table {
         name: "orders_by_customer".to_owned(),
@@ -340,7 +317,6 @@ fn orders() -> Table {
     }
 }
 
-/// A state with `shop` unfolded and the cursor on its one table.
 fn describing(table: Table) -> State {
     let schema = Schema {
         keyspaces: BTreeMap::from([(
@@ -364,16 +340,12 @@ fn describing(table: Table) -> State {
     state
 }
 
-/// The Ddl panel's top border at 104x41; its body opens on the row below.
+/// At 104x41; the body opens on the next row.
 const DDL_BORDER: u16 = 16;
 const DDL_BODY: u16 = DDL_BORDER + 1;
-/// One past the body's last row: the panel's bottom border.
 const DDL_END: u16 = 39;
 
-/// Inside the Ddl panel's border at 104x41: twenty-two rows of 23 columns.
-/// The body's lines, the selection bar's column included — so a row opens
-/// with the blank it reserves for the bar and a heading, which is no cursor
-/// stop, opens at the margin.
+/// Twenty-two rows of 23 columns at 104x41, bar column included.
 fn ddl_rows(buffer: &Buffer) -> Vec<String> {
     (DDL_BODY..DDL_END)
         .map(|y| {
@@ -387,14 +359,12 @@ fn ddl_rows(buffer: &Buffer) -> Vec<String> {
         .collect()
 }
 
-/// `describing`, moved to the panel's second tab.
 fn listing(table: Table) -> State {
     let mut state = describing(table);
     state.ddl.show(DdlTab::Columns);
     state
 }
 
-/// The `Details` the Ddl panel would draw for `state`.
 fn ddl_details(state: &State) -> lc_domain::view::Details {
     let PanelBody::Details { details, .. } = view_model(state).panels[1].body.clone() else {
         panic!("a selected row has something to describe");
@@ -430,7 +400,6 @@ fn draw_mapped(width: u16, height: u16, state: &State) -> (Buffer, FrameMap) {
     (terminal.backend().buffer().clone(), map)
 }
 
-/// The drawn frame and where the terminal cursor ended up, if it is shown.
 fn drawn_with_cursor(
     width: u16,
     height: u16,
@@ -451,19 +420,13 @@ fn drawn_with_cursor(
     (backend.buffer().clone(), cursor)
 }
 
-/// The colour, background and modifier of the first cell whose row
-/// contains `needle` — compared field by field rather than as a whole
-/// `Style`, because a `Cell` has no way to say a colour was never set
-/// versus set to the terminal's default, so a `Style` rebuilt from one
-/// cannot be asserted equal to the `Style` a `Theme` hands out.
+/// Field by field: a `Cell` cannot tell an unset colour from the terminal
+/// default.
 fn style_of_first(buffer: &Buffer, needle: &str) -> (Color, Color, Modifier) {
     for y in 0..buffer.area.height {
         let text = row(buffer, y);
         if let Some(byte_at) = text.find(needle) {
-            // `str::find` returns a byte offset; the border glyphs before
-            // it (`╭`, `─`, …) are multi-byte in UTF-8 but one column
-            // each, so the column is the count of `char`s before it, not
-            // the byte offset itself.
+            // Border glyphs are multi-byte but one column each.
             let column = text[..byte_at].chars().count();
             let x = u16::try_from(column).expect("a drawn row's width fits u16");
             let cell = buffer.cell((x, y)).expect("a found position is in bounds");
@@ -488,11 +451,7 @@ fn with_palette(width: u16, height: u16) -> Buffer {
     terminal.backend().buffer().clone()
 }
 
-/// The row a bordered block's top edge sits on, found by its left corner.
-///
-/// The scan stops at the block's own right corner: panels sit side by
-/// side, so a row read to the frame's edge carries the titles of every
-/// block to the right of this one as well.
+/// Stops at the block's own right corner: panels sit side by side.
 fn top_border(buffer: &Buffer, expect: &str) -> (u16, u16) {
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
@@ -529,7 +488,6 @@ fn block_width(buffer: &Buffer, expect: &str) -> u16 {
         + 1
 }
 
-/// The whole block titled `title`, borders included.
 fn block_area(buffer: &Buffer, title: &str) -> Rect {
     let (x, y) = top_border(buffer, title);
     let bottom = (y + 1..buffer.area.height)
@@ -543,10 +501,7 @@ fn block_area(buffer: &Buffer, title: &str) -> Rect {
     Rect::new(x, y, block_width(buffer, title), bottom - y + 1)
 }
 
-/// The `line`th row of the block titled `title`, inside its borders.
-///
-/// Distinct from [`row_text`], which reads an absolute buffer row at the
-/// Ddl panel's fixed coordinates.
+/// Unlike [`row_text`], relative to the block.
 fn block_row(buffer: &Buffer, title: &str, line: u16) -> String {
     let area = block_area(buffer, title);
 
@@ -555,10 +510,6 @@ fn block_row(buffer: &Buffer, title: &str, line: u16) -> String {
         .map(Cell::symbol)
         .collect()
 }
-
-// ------------------------------------------------------------------
-// The footer (docs/superpowers/specs/2026-09-17-grid-paging-design.md §5)
-// ------------------------------------------------------------------
 
 fn footer(rows: &str, size: Option<(&str, Token)>, status: Option<&str>) -> Footer {
     let (status, hint) = status.map_or((None, None), |status| match status.split_once(" — ") {

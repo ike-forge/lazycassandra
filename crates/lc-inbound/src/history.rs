@@ -1,9 +1,5 @@
-//! The query history: the statements a connection has been asked, one line
-//! each, drawn over the panels.
-//!
-//! Unlike the pickers it scrolls: up to `history.limit` rows is far more than
-//! a frame holds, so the block is as tall as the frame allows and the list
-//! follows the cursor inside it.
+//! The query history picker. Unlike the other pickers it scrolls: the history
+//! can outgrow any frame.
 
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
@@ -19,11 +15,9 @@ use crate::theme::Theme;
 const MIN_WIDTH: u16 = 30;
 const MAX_WIDTH: u16 = 100;
 const PAD: u16 = 1;
-/// What a row cut short ends in.
 const ELLIPSIS: char = '…';
 
-/// Rows the block could show in `area`. Zero means not even its borders fit,
-/// which is what gates `ctrl-g` in the domain.
+/// Zero gates `ctrl-g`.
 pub(crate) fn visible_rows(area: Rect) -> usize {
     if area.width < MIN_WIDTH || area.height < 3 {
         return 0;
@@ -32,8 +26,6 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
     usize::from(area.height - 2)
 }
 
-/// Where a block listing `rows` goes in `area`: as wide as the frame allows up
-/// to [`MAX_WIDTH`], as tall as the list wants up to the frame.
 fn rect(area: Rect, rows: usize) -> Option<Rect> {
     let visible = visible_rows(area);
 
@@ -52,8 +44,7 @@ fn rect(area: Rect, rows: usize) -> Option<Rect> {
     ))
 }
 
-/// `label` cut to `width` cells, so a long statement shows its start and a
-/// wrapped row never takes two lines.
+/// One line per row, showing the statement's start.
 fn clipped(label: &str, width: usize) -> String {
     if label.chars().count() <= width {
         return label.to_owned();
@@ -64,7 +55,7 @@ fn clipped(label: &str, width: usize) -> String {
     cut
 }
 
-/// `labels` is what a live sift left, newest first; `selected` counts in it.
+/// `labels` is what a sift left; `selected` counts in it.
 pub(crate) fn render(
     frame: &mut Frame,
     labels: &[String],

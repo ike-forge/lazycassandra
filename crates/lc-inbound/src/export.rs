@@ -1,5 +1,4 @@
-//! The export form, drawn over the panels
-//! (docs/superpowers/specs/2026-08-14-export-design.md §2).
+//! The export form, drawn over the panels.
 
 use lc_domain::export::{Confirm, Field, Format, Scope, Stop};
 use lc_domain::model::Key;
@@ -16,40 +15,26 @@ use crate::hit::{ButtonAt, FieldAt, Modal, Target, TextAt};
 use crate::theme::Theme;
 
 const WIDTH: u16 = 84;
-/// What [`fits`] demands: the form narrows to the frame down to here rather
-/// than vanish on a terminal a little under [`WIDTH`].
+/// The form narrows to here before giving up.
 const MIN_WIDTH: u16 = 56;
-/// Ten content rows, none spare, so `Export` sits on the last one: path,
-/// two formats, three scopes, the gaps between, the button.
+/// Ten content rows, none spare, so `Export` sits on the last.
 const HEIGHT: u16 = 12;
-/// A floor, not a cap: [`confirm_width`] widens the dialog to fit the whole
-/// path on its own line rather than clip it. Unlike the form's path field,
-/// this line has no cursor to scroll around, so cutting it would just hide
-/// the rest of the path with no way to see it.
+/// A floor: [`confirm_width`] widens to show the whole path, which has no
+/// cursor to scroll.
 const CONFIRM_WIDTH: u16 = 44;
 const CONFIRM_HEIGHT: u16 = 7;
 
-/// The path field's row inside the block: first.
 const PATH_ROW: u16 = 0;
-/// The field's caption, and the column the field starts at.
 const PATH_LABEL: &str = "Path ";
-/// The first-N scope's row: path, gap, two formats, gap, two scopes.
+/// Path, gap, two formats, gap, two scopes.
 const ROWS_ROW: u16 = 7;
-/// Columns the count's field is drawn across.
 const ROWS_WIDTH: usize = 8;
 
-/// Whether `area` can hold the form at all.
-///
-/// The domain's gate on `ctrl-e` and on closing a form the frame shrank past
-/// reads this rather than a size of its own: [`WIDTH`] and [`HEIGHT`] are
-/// named once, here, beside the block they measure, so the check and the draw
-/// cannot disagree about what fits (export design §2).
+/// The domain's gate reads this, so the check and the draw cannot disagree.
 pub(crate) fn fits(area: Rect) -> bool {
     form_area(area).is_some()
 }
 
-/// [`WIDTH`] where the frame has it, narrowing to [`MIN_WIDTH`] before the
-/// form gives up.
 fn form_area(area: Rect) -> Option<Rect> {
     if area.width < MIN_WIDTH {
         return None;
@@ -71,15 +56,12 @@ fn centred(area: Rect, width: u16, height: u16) -> Option<Rect> {
     ))
 }
 
-/// The form's border text. A run with no token of its own keeps the block's
-/// own style; the table's name carries the schema colours the domain gave it.
 fn title(segments: &[Segment], theme: Theme) -> TextLine<'static> {
     TextLine::from(
         segments
             .iter()
             .map(|segment| match segment.token {
-                // Bold dropped for the reason `render::schema_run` gives: the
-                // form's border is bold, and a schema name is not emphasis.
+                // A schema name is not emphasis.
                 Some(token) => Span::styled(
                     segment.text.clone(),
                     theme.style(token).remove_modifier(Modifier::BOLD),
@@ -203,7 +185,6 @@ pub(crate) fn render(
     Some(Modal::new(area, buttons).with_fields(fields))
 }
 
-/// The columns a radio's mark and label cover on `line`, `row` rows down.
 fn radio_at(inner: Rect, row: usize, line: &TextLine, field: Field) -> FieldAt {
     FieldAt {
         area: Rect::new(
@@ -216,8 +197,6 @@ fn radio_at(inner: Rect, row: usize, line: &TextLine, field: Field) -> FieldAt {
     }
 }
 
-/// The first-N scope's two places to press: its radio, and the count typed
-/// into it.
 fn first_rows_at(inner: Rect, row: usize, view: &ExportView) -> [FieldAt; 2] {
     let before =
         u16::try_from(TextLine::raw(format!("{MARK_ON}{} ", view.scope_labels[2])).width())
@@ -246,8 +225,6 @@ fn first_rows_at(inner: Rect, row: usize, view: &ExportView) -> [FieldAt; 2] {
     ]
 }
 
-/// The third scope, with its count typed in place: `◉ Export the first
-/// [ 1000 ] rows`.
 fn first_rows(view: &ExportView, focused: bool, theme: Theme) -> TextLine<'static> {
     let style = theme.style(if focused {
         Token::Selected
@@ -267,7 +244,6 @@ fn first_rows(view: &ExportView, focused: bool, theme: Theme) -> TextLine<'stati
     ])
 }
 
-/// A field's ground: the quieter band at rest, the selection's under `Tab`.
 fn backdrop(focused: bool, theme: Theme) -> ratatui::style::Style {
     theme.style(if focused {
         Token::Selected
@@ -276,9 +252,7 @@ fn backdrop(focused: bool, theme: Theme) -> ratatui::style::Style {
     })
 }
 
-/// The radio glyphs. A filled and a hollow circle rather than a parenthesised
-/// dot: the mark reads as one character wide in the cell grid, so the label
-/// column is the same for both states without padding the empty one.
+/// Both one column wide, so labels align without padding.
 const MARK_ON: &str = "◉ ";
 const MARK_OFF: &str = "○ ";
 
@@ -286,7 +260,6 @@ fn mark(selected: bool) -> &'static str {
     if selected { MARK_ON } else { MARK_OFF }
 }
 
-/// [`MARK_ON`] or [`MARK_OFF`], the label, and whether `Tab` is on its group.
 fn radio(label: &str, selected: bool, focused: bool, theme: Theme) -> TextLine<'_> {
     let style = theme.style(if focused {
         Token::Selected
@@ -319,8 +292,7 @@ fn formats(view: &ExportView, theme: Theme) -> Vec<TextLine<'static>> {
         .collect()
 }
 
-/// On a backdrop always: the wash at rest, the selection ground under `Tab`.
-/// Padded to `width` so the backdrop is the whole field, not the text.
+/// Padded so the backdrop is the whole field.
 fn path(visible: &str, width: usize, focused: bool, theme: Theme) -> TextLine<'static> {
     let style = backdrop(focused, theme);
     let padding = width.saturating_sub(TextLine::raw(visible).width());
@@ -331,31 +303,15 @@ fn path(visible: &str, width: usize, focused: bool, theme: Theme) -> TextLine<'s
     ])
 }
 
-/// The slice of `path` a field `width` columns wide shows, and the caret's
-/// column within it.
-///
-/// The window follows the cursor the way [`lc_domain::grid::ColumnScroll`]
-/// follows a column, computed per frame rather than kept: the field's width is
-/// a constant of this module and the caret is the only thing the window has to
-/// contain, so there is no offset for the domain to remember. It earns its
-/// place on the first frame — the path is prefilled with `cwd` joined to a
-/// filename, which on any real working directory is longer than the 54 columns
-/// inside the block, and the field used to draw the head of it with the caret
-/// pinned to the right edge and the filename off screen (final review I5).
-///
-/// `first` is a character index, as the cursor is, but it is chosen by
-/// accumulated display width rather than by subtracting a character count:
-/// counting characters made a 40-character CJK path an 80-column line, which
-/// `Paragraph` then cut at the field's 54 columns, putting the end of the path
-/// off screen and the caret back on the right edge — the very failure the
-/// window exists to prevent (re-review of final review I5).
+/// Follows the cursor, recomputed per frame. Chosen by display width, not
+/// character count: a CJK path would otherwise overflow the field and hide its
+/// tail.
 fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
     let width = width.max(1);
     let characters: Vec<char> = path.chars().collect();
     let cursor = cursor.min(characters.len());
 
-    // One past the last character is a caret position too, and costs the one
-    // column the caret is drawn in.
+    // The caret past the end costs one column.
     let mut used = characters.get(cursor).and_then(|c| c.width()).unwrap_or(1);
     let mut first = cursor;
     for (index, character) in characters[..cursor].iter().enumerate().rev() {
@@ -381,9 +337,7 @@ fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
     (visible, cursor - first)
 }
 
-/// A band at rest, filled solid while `tab` is on it: focus is the louder
-/// state, as it is for every other stop. The key that presses it is the bar's
-/// to name, not the button's.
+/// Focus fills it solid.
 fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
     let style = if focused {
         theme
@@ -396,12 +350,8 @@ fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
     TextLine::from(Span::styled(format!("  {label}  "), style))
 }
 
-/// Positions the caret over the path field, measuring the way
-/// `render::render_prompt` measures its query: `caret` is a character offset
-/// into the drawn window, converted to a column through `Line::width()` rather
-/// than added straight to `x`, so a multi-byte or double-width character
-/// before it is not counted as one column. Clamped to the inner rect, which a
-/// window of double-width characters can still reach the end of.
+/// Converted through `Line::width()`, so wide characters count right. Clamped
+/// to the inner rect.
 fn set_caret(frame: &mut Frame, inner: Rect, row: u16, offset: u16, visible: &str, caret: usize) {
     let prefix: String = visible.chars().take(caret).collect();
     let taken = u16::try_from(TextLine::raw(prefix).width()).unwrap_or(inner.width);
@@ -410,8 +360,6 @@ fn set_caret(frame: &mut Frame, inner: Rect, row: u16, offset: u16, visible: &st
     frame.set_cursor_position((cursor_x, inner.y + row));
 }
 
-/// Wide enough for `path` plus the block's border and padding, never wider
-/// than the frame itself.
 fn confirm_width(path: &str, frame_width: u16) -> u16 {
     let needed = u16::try_from(TextLine::raw(path).width() + 4).unwrap_or(u16::MAX);
 
@@ -490,8 +438,8 @@ mod tests {
         (backend.buffer().clone(), (position.x, position.y))
     }
 
-    /// The form with `path` typed into its path field, `left` characters back
-    /// from the end, and `Tab` on the field so the caret is drawn.
+    /// `left` characters back from the end, with `Tab` on the field so the
+    /// caret is drawn.
     fn on_path(path: &str, left: usize) -> ExportForm {
         let mut form = form(Fetched::Some(200));
 
@@ -509,8 +457,7 @@ mod tests {
         form
     }
 
-    /// The row's text, without the blank cell ratatui parks behind every
-    /// double-width symbol.
+    /// Skips the blank cell ratatui parks behind a double-width symbol.
     fn row(buffer: &Buffer, y: u16) -> String {
         let mut text = String::new();
         let mut x = 0;
@@ -525,8 +472,7 @@ mod tests {
         text
     }
 
-    /// A frame wider than the form, so it is centred with room either side:
-    /// [`super::WIDTH`] wide, its border one column, its caption another five.
+    /// Centred: [`super::WIDTH`] wide, border one column, caption five.
     const FRAME_WIDTH: u16 = 100;
     const FIELD_X: u16 = (FRAME_WIDTH - super::WIDTH) / 2 + 1 + 5;
 
@@ -625,9 +571,6 @@ mod tests {
         );
     }
 
-    /// The block reserves no row past `Export`: `inner.height - 1` (the last
-    /// row `block.inner` hands back) is where the button lands, not one row
-    /// above it (final review, 2026-08-31 feedback).
     #[test]
     fn the_export_button_sits_on_the_form_s_last_row() {
         let buffer = drawn(80, 24, form(Fetched::Some(200)));
@@ -668,9 +611,6 @@ mod tests {
         assert!(drawn.contains("Yes, overwrite"));
     }
 
-    /// [`CONFIRM_WIDTH`] is a floor sized for a short path; a longer one used
-    /// to run past the fixed 44-column dialog and lose its tail with no way
-    /// to see it (2026-08-31 feedback).
     #[test]
     fn the_confirmation_widens_to_fit_a_long_path() {
         let mut form = form(Fetched::Some(200));
@@ -705,10 +645,6 @@ mod tests {
         assert!(!drawn.contains("Export the whole table"));
     }
 
-    /// The prefill is `cwd` joined with a filename, which outgrows the field
-    /// on any real working directory — so on the first frame the user could
-    /// not see the name they were about to write, and the caret sat pinned to
-    /// the right edge wherever the cursor was (final review I5).
     #[test]
     fn a_path_too_long_for_the_field_is_drawn_around_its_cursor() {
         let long = std::path::PathBuf::from(format!("/home/ike/{}", "deep/".repeat(20)));
@@ -725,9 +661,6 @@ mod tests {
         );
     }
 
-    /// Counting characters made this path 80 columns of window for a 54-column
-    /// field: `Paragraph` cut it at 54, hiding the end of the path, and the
-    /// caret snapped to the right edge (re-review of final review I5).
     #[test]
     fn a_double_width_path_is_drawn_from_its_tail_with_the_caret_on_the_cursor() {
         let path = format!("{}終", "東".repeat(60));
@@ -791,17 +724,11 @@ mod tests {
         assert_eq!(caret, 1);
     }
 
-    /// Windowing by character, as the cursor counts: slicing a path by bytes
-    /// panics on the ones a filesystem accepts.
     #[test]
     fn a_window_counts_characters_rather_than_bytes() {
         assert_eq!(super::window("aéb", 3, 10), ("aéb".to_owned(), 3));
     }
 
-    /// What the domain gates `ctrl-e` on is this function, so it has to agree
-    /// with the draw at every size — a frame `fits` calls big enough and the
-    /// form declines to draw in is an invisible modal capturing every key
-    /// (final review I1).
     #[test]
     fn fits_agrees_with_what_the_form_actually_draws() {
         for (width, height) in [(20, 6), (55, 24), (80, 10), (56, 11), (80, 24)] {

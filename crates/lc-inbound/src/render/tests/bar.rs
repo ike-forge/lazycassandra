@@ -2,9 +2,6 @@ use super::*;
 
 #[test]
 fn the_bar_describes_the_open_palette_rather_than_the_panel_under_it() {
-    // The sample design §7 shows, checked against what the renderer
-    // actually draws rather than being correct by construction.
-    //
     let buffer = with_palette(80, 24);
 
     assert_eq!(
@@ -34,8 +31,6 @@ fn the_bar_says_what_the_focused_panel_does() {
     );
 }
 
-/// Overlay search design §7: an overlay's prompt draws where a panel's
-/// prompt draws — on the hint bar row.
 #[test]
 fn an_overlay_sift_draws_its_prompt_on_the_hint_bar() {
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");

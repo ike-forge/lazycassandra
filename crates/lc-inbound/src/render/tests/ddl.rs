@@ -1,7 +1,5 @@
 use super::*;
 
-/// The text a Ddl body row drew, at the same coordinates [`ddl_rows`]
-/// reads.
 fn row_text(buffer: &Buffer, row: u16) -> String {
     (1..25)
         .filter_map(|x| buffer.cell((x, row)))
@@ -26,7 +24,7 @@ fn the_columns_tab_draws_every_column_with_its_kind_and_type() {
     assert_eq!(
         ddl_rows(&buffer)[..9],
         [
-            // The cursor opens on this row, which is where the bar is.
+            // The cursor opens on this row.
             "▌  \u{f084} Keyspace       shop",
             "   \u{f0ce} Table",
             "     orders_by_customer",
@@ -35,15 +33,12 @@ fn the_columns_tab_draws_every_column_with_its_kind_and_type() {
             " \u{f030b} customer_id      uuid",
             " \u{f030b} order_date       date",
             " \u{f030b} order_id     timeuuid",
-            // No glyph outside the primary key: the row's colour is what
-            // says a column is static.
+            // No glyph outside the primary key: colour says static.
             "   region           text",
         ]
     );
 }
 
-/// The Indexes tab of a table carrying one index per shape an index has:
-/// a plain column, a collection modality, and a custom implementation.
 fn indexed() -> Table {
     Table {
         regular_columns: vec![column("status", "text"), column("tags", "set<text>")],
@@ -92,20 +87,17 @@ fn the_indexes_tab_draws_the_primary_key_and_a_block_per_index() {
             "\u{f030b} Clustering Key",
             "   order_date ↓     date",
             "   order_id ↑   timeuuid",
-            // The indexes are what was built on the key, so they open a
-            // group of their own.
+            // Indexes open a group of their own.
             "",
             "\u{f002} orders_by_status",
             "   status           text",
             "\u{f002} orders_by_tag",
-            // The type does not fit beside a target this wide, so it
-            // wraps under it the way a long option's value does.
+            // Too wide beside the target, so the type wraps.
             "   values(tags)",
             "     set<text>",
             "\u{f002} orders_sasi",
             "   status           text",
-            // A custom index names the class implementing it, which is
-            // the one thing its target cannot say.
+            // A custom index names its class.
             "   class",
             "     org.apache.cassandr",
         ]
@@ -134,9 +126,6 @@ fn a_title_is_pushed_off_its_corner_by_border_and_not_by_blanks() {
     );
 }
 
-/// The badge is the only thing on screen naming the cluster a `d` or a
-/// typed `INSERT` would reach, so it is on the border for the whole
-/// session rather than only in the refusal (posture design, opening).
 #[test]
 fn a_sidebar_wide_enough_names_the_connection_on_the_border() {
     let buffer = draw_state(140, 12, &browsing(&["shop"], 0));
@@ -178,9 +167,6 @@ fn a_writable_posture_wears_its_own_colour_on_the_border() {
     );
 }
 
-/// The badge grows the title past what a 16-column sidebar can hold, and
-/// half a posture reads as a different posture — so a narrow border drops
-/// it whole, the way the marker is dropped whole (design §5.1).
 #[test]
 fn a_sidebar_too_narrow_for_the_badge_keeps_the_panels_name_alone() {
     let buffer = draw_state(80, 12, &browsing(&["shop"], 0));
@@ -195,8 +181,8 @@ fn a_border_holding_both_puts_the_badge_at_the_name_and_the_marker_at_the_corner
     let mut state = browsing(&["shop"], 0);
     state.apply_search(Searched::Tables, Search::new("or"));
 
-    // 160 columns leaves the sidebar 40: the badge, the marker, their
-    // padding and the corners need 38.
+    // 160 columns leaves a 40-column sidebar; badge, marker, padding and
+    // corners need 38.
     let buffer = draw_state(160, 12, &state);
     let border = row(&buffer, 0);
     let (tables, _) = border.split_once('╮').expect("the sidebar's corner");
@@ -208,15 +194,12 @@ fn a_border_holding_both_puts_the_badge_at_the_name_and_the_marker_at_the_corner
     assert!(tables.ends_with(" /or "), "got {tables:?}");
 }
 
-/// A tree drawn as if it were the whole cluster is a claim about the
-/// cluster; a border under the panel's short name has only given up
-/// standing context the picker can be reopened for (design §5.1).
 #[test]
 fn a_border_that_cannot_hold_both_keeps_the_marker_and_drops_the_badge() {
     let mut state = browsing(&["shop"], 0);
     state.apply_search(Searched::Tables, Search::new("or"));
 
-    // 140 columns leaves the sidebar 35, two short of the 38 both need.
+    // 140 columns leaves 35, two short.
     let buffer = draw_state(140, 12, &state);
     let border = row(&buffer, 0);
     let (tables, _) = border.split_once('\u{256e}').expect("the sidebar's corner");
@@ -231,10 +214,8 @@ fn a_border_that_cannot_hold_both_keeps_the_marker_and_drops_the_badge() {
 
 #[test]
 fn a_border_with_one_column_to_spare_gives_it_to_the_title_and_not_the_marker() {
-    // Tables on a 20-column sidebar wearing `/or`: ten columns of title —
-    // `[1]-` included — three of marker, four of padding and two of corner
-    // leave one. The title takes it, so the border does not read as two
-    // alignments at once.
+    // A 20-column sidebar with `/or` leaves one spare column, which goes to the
+    // title.
     let mut state = browsing(&["shop"], 0);
     state.apply_search(Searched::Tables, Search::new("or"));
 
@@ -244,11 +225,6 @@ fn a_border_with_one_column_to_spare_gives_it_to_the_title_and_not_the_marker() 
     assert!(border.starts_with("╭─ [1]-Tables  /or ╮"), "got {border:?}");
 }
 
-/// The `[1]-` costs four columns every title used to spend on its name, so
-/// the sidebar's 16-column floor no longer holds a name *and* a marker.
-/// The name wins: a panel that cannot say which one it is is worse than
-/// one that cannot say it is searched, and every row is on screen either
-/// way (design §5.1).
 #[test]
 fn the_narrowest_sidebar_gives_its_border_to_the_title_alone() {
     let mut state = browsing(&["shop"], 0);
@@ -263,14 +239,13 @@ fn the_narrowest_sidebar_gives_its_border_to_the_title_alone() {
 
 #[test]
 fn a_border_wide_enough_names_every_tab_and_fades_the_ones_not_drawn() {
-    // 132 columns puts the sidebar at 33, which holds the whole strip —
-    // three full names, their separators and the panel number.
+    // 132 columns: a 33-column sidebar holds all three full names.
     let buffer = draw_state(132, 41, &describing(orders()));
     let border = row(&buffer, top_border(&buffer, "DDL").1);
 
     assert!(border.contains("DDL - Columns - Indexes"), "got {border:?}");
 
-    // Past its 'C', which the separator before it also holds.
+    // Past its 'C', which the separator also holds.
     let (fg, _, modifier) = style_of_first(&buffer, "olumns");
     let faint = Theme::default().style(Token::Faint);
 
@@ -280,9 +255,7 @@ fn a_border_wide_enough_names_every_tab_and_fades_the_ones_not_drawn() {
 
 #[test]
 fn a_sidebar_on_its_usual_width_still_names_every_tab() {
-    // At 104 columns the sidebar is 26, which the three full names no
-    // longer fit — so the strip steps down to the short ones rather than
-    // dropping two tabs for the one being drawn (ddl tabs design §4).
+    // A 26-column sidebar: short names, not two dropped tabs.
     let buffer = draw_state(104, 41, &listing(orders()));
     let border = row(&buffer, top_border(&buffer, "DDL").1);
 
@@ -291,8 +264,7 @@ fn a_sidebar_on_its_usual_width_still_names_every_tab() {
 
 #[test]
 fn a_border_too_narrow_for_either_strip_keeps_the_tab_it_is_drawing_whole() {
-    // At 40 columns the sidebar is on its 16-column floor, which the
-    // strip does not fit. A clipped one would name a tab that does not
+    // The 16-column floor: a clipped strip would name a tab that does not
     // exist.
     let buffer = draw_state(40, 12, &listing(orders()));
     let border = row(&buffer, top_border(&buffer, "Columns").1);
@@ -308,26 +280,23 @@ fn a_selected_tables_shape_is_drawn_above_its_options() {
     assert_eq!(
         ddl_rows(&buffer)[..16],
         [
-            // The cursor opens on this row, which is where the bar is.
+            // The cursor opens on this row.
             "▌  \u{f084} Keyspace       shop",
             "   \u{f0ce} Table",
             "     orders_by_customer",
-            // The blank row between what the panel is about and the shape
-            // of what it is about.
+            // Between what the panel is about and its shape.
             "",
-            // A heading opens at the margin: it is no cursor stop, so it
-            // keeps the column every row spends on the bar.
+            // A heading is no cursor stop, so it keeps the bar's column.
             "\u{f030b} Partition Key",
             "   customer_id      uuid",
             "\u{f030b} Clustering Key",
             "   order_date ↓     date",
             "   order_id ↑   timeuuid",
-            // And the one splitting what the table is from what it is
-            // configured to do.
+            // Between what the table is and its configuration.
             "",
             "\u{f013} Options",
-            // Two columns in from the heading, `gc_grace_seconds` and its
-            // value need 24 of the body's 23, so it wraps too.
+            // `gc_grace_seconds` and its value need 24 of 23 columns, so it
+            // wraps.
             "   gc_grace_seconds",
             "     864000",
             "   bloom_filter_fp_chan…",
@@ -341,8 +310,8 @@ fn a_selected_tables_shape_is_drawn_above_its_options() {
     );
 }
 
-/// Every row inside the Ddl body (104x41, see [`ddl_rows`]) whose first
-/// content cell carries the background `Token::Selected` gives.
+/// Rows of the 104x41 Ddl body whose first content cell has `Selected`'s
+/// background.
 fn highlighted_rows(buffer: &Buffer) -> Vec<u16> {
     let highlight = Theme::default()
         .style(Token::Selected)
@@ -358,10 +327,8 @@ fn highlighted_rows(buffer: &Buffer) -> Vec<u16> {
 fn every_line_of_a_selected_property_is_highlighted() {
     let mut state = describing(orders());
     state.focus_on(Panel::Ddl);
-    // `bloom_filter_fp_chance` and its value need 26 of the body's 23
-    // columns, so this row is one cursor stop drawn across two lines. Six
-    // rows in: the keyspace, the table, one partition and two clustering
-    // columns, then `gc_grace_seconds`.
+    // `bloom_filter_fp_chance` needs 26 of 23 columns: one row on two lines.
+    // Six rows in.
     state.ddl.cursor.go_to(6, lc_domain::view::ddl_rows(&state));
 
     let buffer = draw_state(104, 41, &state);
@@ -389,15 +356,11 @@ fn a_one_line_property_has_exactly_its_own_line_reversed() {
     );
 }
 
-/// The Tables tree's mark and the Contents grid's, in the third panel that
-/// carries a cursor: a wrapped row wears it on every line it wrapped to,
-/// since the highlight covers every one.
 #[test]
 fn the_ddl_body_reserves_a_column_for_the_selection_bar() {
     let mut state = describing(orders());
     state.focus_on(Panel::Ddl);
-    // `bloom_filter_fp_chance` and its value need more than the body's 23
-    // columns, so this row is one cursor stop drawn across two lines.
+    // `bloom_filter_fp_chance` wraps: one cursor stop on two lines.
     state.ddl.cursor.go_to(6, lc_domain::view::ddl_rows(&state));
 
     let buffer = draw_state(104, 41, &state);
@@ -410,10 +373,8 @@ fn the_ddl_body_reserves_a_column_for_the_selection_bar() {
     );
     assert_eq!(bar(30), "▌");
     assert_eq!(bar(31), "▌");
-    // The rows of the shape and the one option above the cursor's: each
-    // pays the column and marks nothing. 20 and 26 are the blanks between
-    // the groups, and 21, 23 and 27 are headings — no cursor stop among
-    // them, so none of them pays it.
+    // 20 and 26 are group blanks; 21, 23 and 27 headings; none pays the bar
+    // column.
     for y in [17, 18, 19, 22, 24, 25, 28, 29] {
         assert_eq!(bar(y), " ", "row {y} is a row the cursor is not on");
     }
@@ -451,9 +412,8 @@ fn a_ranged_ddl_row_carries_the_bar_and_the_band() {
     let mut state = describing(orders());
     state.focus_on(Panel::Ddl);
     state.ddl.cursor.to_start();
-    // Row 1 is the table identity row, which wraps to two lines
-    // (`a_selected_tables_shape_is_drawn_above_its_options`); row 2 is
-    // `customer_id`, outside the range.
+    // Row 1 is the table identity, wrapped to two lines; row 2 is outside the
+    // range.
     state.ddl.selection = held(0, 1);
 
     let buffer = draw_state(100, 41, &state);
@@ -476,17 +436,13 @@ fn a_ranged_ddl_row_carries_the_bar_and_the_band() {
 
 #[test]
 fn a_selected_block_scrolled_fully_out_of_view_is_not_highlighted() {
-    // The Ddl half of `a_selection_scrolled_out_of_view_is_not_highlighted`
-    // and its tree counterpart: `details.rs` argues in prose that
-    // `Paragraph` needs no such guard because it only ever draws the lines
-    // it is scrolled to. This is what checks that argument.
+    // Checks `details.rs`'s claim that `Paragraph` needs no visibility guard.
     let mut state = describing(orders());
     state.focus_on(Panel::Ddl);
     let details = ddl_details(&state);
     state.ddl.cursor.go_to(0, details.row_count());
 
-    // 40x20: a fourteen-column, nine-row Ddl body — narrow enough that
-    // `orders()` wraps well past it.
+    // A 14-by-9 Ddl body, which `orders()` overflows.
     let total = crate::details::lay_out(&details, 0, &Marked::none(), 14, None, Theme::default())
         .lines
         .len();
@@ -517,9 +473,7 @@ fn a_selected_block_scrolled_partly_out_of_view_keeps_its_visible_lines_highligh
     let last = details.row_count() - 1;
     state.ddl.cursor.go_to(last, details.row_count());
 
-    // `comment` is the last row and wraps to three lines at this width.
-    // Scrolled until its first line is the eighth of the nine visible, two
-    // of them are in view and the third is below the fold.
+    // `comment` wraps to three lines; scrolled so its third is below the fold.
     let laid = crate::details::lay_out(&details, last, &Marked::none(), 14, None, Theme::default());
     let total = laid.lines.len();
     assert_eq!(laid.selection.lines, 3, "comment wraps to three lines");
@@ -549,9 +503,7 @@ fn a_selected_block_scrolled_partly_out_of_view_keeps_its_visible_lines_highligh
 
 #[test]
 fn the_key_columns_are_drawn_in_the_tokens_that_mark_them_as_the_key() {
-    // The cursor sits on the last row, off the key columns entirely: the
-    // rows under test must read their own token colour, not
-    // `Token::Selected`'s flattened highlight text.
+    // The cursor is off the key rows, so they show their own colours.
     let mut state = describing(orders());
     let details = ddl_details(&state);
     state
@@ -560,8 +512,7 @@ fn the_key_columns_are_drawn_in_the_tokens_that_mark_them_as_the_key() {
         .go_to(details.row_count() - 1, details.row_count());
 
     let buffer = draw_state(104, 40, &state);
-    // Past the bar's column: a property line carries its colour on its
-    // spans rather than on the line, and the bar's own span is a blank.
+    // Past the bar column: property lines colour their spans.
     let colour = |y: u16| buffer.cell((2, y)).expect("inside the panel").fg;
     let theme = Theme::default();
     let partition = theme
@@ -577,7 +528,7 @@ fn the_key_columns_are_drawn_in_the_tokens_that_mark_them_as_the_key() {
     assert_eq!(colour(22), partition, "its column");
     assert_eq!(colour(23), clustering, "Clustering Key");
     assert_eq!(colour(24), clustering, "its column");
-    // 26 is the blank row the settings group opens with.
+    // 26 is the settings group's opening blank.
     assert_eq!(
         colour(27),
         theme

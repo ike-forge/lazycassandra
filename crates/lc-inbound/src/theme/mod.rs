@@ -1,9 +1,6 @@
-//! Semantic tokens into concrete styles.
-//!
-//! A theme is a [`Palette`] — a table of named colour roles — and one mapping
-//! from [`Token`] to a style, shared by every theme. Adding a theme is adding
-//! a `const Palette`, not a match arm per token
-//! (docs/superpowers/specs/2026-08-13-colour-palettes-design.md §2).
+//! Semantic tokens into concrete styles. A theme is a [`Palette`] plus one
+//! shared token mapping, so adding a theme adds a `const Palette`, not match
+//! arms.
 
 mod ours;
 mod ported;
@@ -28,60 +25,41 @@ pub(super) const fn rgb(value: u32) -> Color {
     )
 }
 
-/// One theme's colours, by the meaning each is spent on.
-///
-/// Every role is a colour. A palette that declined one could not be measured
-/// against the ground it is drawn on, and the contrast invariant would become
-/// unfalsifiable (design §1).
+/// Every role is a colour, so every one can be measured against its ground.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Palette {
-    /// The terminal background this theme assumes, painted before anything else.
+    /// Painted before anything else.
     pub(crate) base: Color,
-    /// Primary text: column values, table names in focus.
     pub(crate) text: Color,
-    /// Secondary text: option names, column headers, footer labels.
     pub(crate) dim: Color,
-    /// De-emphasis: system keyspaces, nulls, separators, counts.
+    /// System keyspaces, nulls, separators, counts.
     pub(crate) faint: Color,
-    /// An unfocused panel's frame, and a scrollbar's track.
+    /// Also a scrollbar's track.
     pub(crate) border: Color,
-    /// The focused panel's accent: its border, its title, its active tab.
     pub(crate) focus: Color,
-    /// The cursor row's background.
     pub(crate) selection_bg: Color,
-    /// The background wash under the cursor's row *and* column in
-    /// cell-selection mode: one step off `base`, so it says where the cursor is
-    /// without shouting over the bar row mode draws (selection modes design
-    /// §5). A ground rather than text — which is why it is swept as one: a
-    /// colour under text whose contrast nobody measures is how the palette this
-    /// replaces became unreadable (design §1).
+    /// One step off `base`. Swept as a ground: an unmeasured colour under text
+    /// is how the previous palette became unreadable.
     pub(crate) crosshair: Color,
-    /// A row inside a selection the cursor is not on: the per-channel
-    /// midpoint of `crosshair` and `selection_bg`, so a range outreads the
-    /// wash without drowning out the cursor row itself.
+    /// The per-channel midpoint of `crosshair` and `selection_bg`.
     pub(crate) ranged: Color,
-    /// The cursor row's text, where a cell spends no colour of its own.
+    /// Where a cell spends no colour of its own.
     pub(crate) selection_fg: Color,
-    /// The one-cell gutter mark on the cursor row.
     pub(crate) selection_bar: Color,
-    /// Hot key letters, in panel titles and the footer. Always underlined.
+    /// Always underlined.
     pub(crate) shortcut: Color,
     pub(crate) keyspace: Color,
     pub(crate) table: Color,
     pub(crate) partition: Color,
     pub(crate) clustering: Color,
     pub(crate) column: Color,
-    /// Field labels in the DDL pane.
     pub(crate) label: Color,
-    /// Section headers naming no schema concept (Options, Indexes).
     pub(crate) section: Color,
-    /// CQL types, secondary emphasis.
     pub(crate) accent: Color,
     pub(crate) match_: Color,
     pub(crate) success: Color,
     pub(crate) warning: Color,
     pub(crate) danger: Color,
-    /// Neutral notice, hints.
     pub(crate) info: Color,
     pub(crate) keyword: Color,
     pub(crate) reference: Color,
@@ -90,11 +68,7 @@ pub(crate) struct Palette {
 }
 
 impl Palette {
-    /// Overwrites one role, for a palette a config file supplied.
-    ///
-    /// Exhaustive, so a [`Role`] this does not handle fails to compile. The
-    /// reverse — a field here that `Role` does not name — is not caught, the
-    /// same limit `Ours::ALL` carries (design §8).
+    /// Exhaustive over [`Role`]; a field here that `Role` lacks is not caught.
     pub(crate) const fn set(&mut self, role: Role, color: Color) {
         match role {
             Role::Base => self.base = color,
@@ -130,14 +104,8 @@ impl Palette {
     }
 }
 
-/// Whether a theme still draws the marks that say where the cursor and the
-/// focus are.
-///
-/// A modal overlay owns the frame, and the panels beneath it are context
-/// rather than a place a key would land. Drawn `Dimmed`, they keep their
-/// colours and lose their focus border, their cursor row, their cell and the
-/// washes around it — the emphasis reads as the overlay's, which is where the
-/// next press goes.
+/// Under a modal the panels are context: they keep their colours and lose
+/// focus, cursor and wash marks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Emphasis {
     Lit,
@@ -157,20 +125,11 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// The palette `choice` names. The one place a theme name becomes a
-    /// colour (architecture.md §6).
-    ///
-    /// `Custom` falls back to the default palette: this lookup has no config
-    /// to resolve a custom theme's declared roles against. [`Themes::get`] is
-    /// where a `Custom` name actually resolves; this arm exists so `Theme::of`
-    /// stays total for callers — tests among them — that have no `Themes`
-    /// table.
+    /// `Custom` falls back to the default here; [`Themes::get`] is where it
+    /// resolves. Keeps `Theme::of` total for callers without a `Themes` table.
     #[must_use]
-    // `DefaultDark` and `Custom` share a body: the latter never resolves here
-    // in practice (`Themes::get` is where a `Custom` name is actually
-    // resolved, and `validate` refuses a dangling one before it can reach
-    // `State`), so there is no real palette to give it and it borrows the
-    // default's rather than invent one.
+    // `Custom` borrows the default's body: `validate` refuses dangling names
+    // before they reach `State`.
     #[allow(clippy::match_same_arms)]
     pub fn of(choice: &ThemeChoice) -> Self {
         Self {
@@ -197,7 +156,6 @@ impl Theme {
         self.palette
     }
 
-    /// The same palette, drawing no focus or selection marks.
     pub(crate) const fn dimmed(self) -> Self {
         Self {
             emphasis: Emphasis::Dimmed,
@@ -205,24 +163,18 @@ impl Theme {
         }
     }
 
-    /// The whole frame's ground. Painted before anything else, so a widget
-    /// that sets no colour of its own inherits the theme's rather than the
-    /// terminal's. Overlays repaint it over what `Clear` reset: they sit on
-    /// the same field as the panels, and their border is what sets them apart.
+    /// Painted first, so a widget setting no colour inherits the theme's.
+    /// Overlays repaint it over what `Clear` reset.
     pub(crate) fn ground(self) -> Style {
         Style::new().bg(self.palette.base).fg(self.palette.text)
     }
 
-    /// A frame around the thing taking keys: the focused panel, or the modal
-    /// that has taken focus from every panel at once
-    /// (`render::dims_the_panels`).
+    /// The focused panel, or a modal that took focus from all of them.
     pub(crate) fn focus_border(self) -> Style {
         self.border_style().patch(self.style(Token::Focused))
     }
 
-    /// A panel's border. `Token::Focused` is patched on top of this rather
-    /// than replacing it, so a focused panel's border becomes the theme's
-    /// `focus` colour on top of `border`.
+    /// `Token::Focused` patches over this.
     pub(crate) fn border_style(self) -> Style {
         Style::new().fg(self.palette.border)
     }
@@ -235,11 +187,7 @@ impl Theme {
             if is_emphasis(token) {
                 return Style::new();
             }
-            // A hint the modal has taken over is inert, and `Faint` is what an
-            // inert hint already wears (`hints::Segment::spans`) — the bar
-            // recedes in the vocabulary it already has rather than in a new
-            // one. The overlays draw their own keys through a lit theme, so
-            // this reaches the bar alone.
+            // A hint under a modal is inert, and inert hints are already faint.
             if matches!(token, Token::HintKey | Token::HintAction) {
                 return fg(self.palette.faint);
             }
@@ -253,20 +201,14 @@ impl Theme {
             Token::Keyspace => fg(palette.keyspace),
             Token::Table => fg(palette.table),
             Token::RegularColumn => fg(palette.text),
-            // Only a connection that can be written to is lit: the other two
-            // postures recede as `Muted`, so the badge is noticed when it matters.
+            // Only a writable connection is lit, so the badge is noticed when
+            // it matters.
             Token::Posture(Posture::Writable) => fg(palette.warning).add_modifier(Modifier::BOLD),
             Token::Severity(Severity::Danger) => fg(palette.danger).add_modifier(Modifier::BOLD),
             Token::Severity(Severity::Warning) => fg(palette.warning),
-            // The warning colour as a ground rather than as text: an
-            // uncommitted cell has to be findable in a full grid, and a
-            // foreground alone is one colour among the twenty the columns
-            // already spend. Reversed rather than `bg(warning)`, for
-            // `Token::Flash`'s reason and one more: ratatui paints
-            // `row_highlight_style` over the whole cursor row after its
-            // cells, so a background stated here is the one background the
-            // grid can lose — and the cursor row is where an edit was just
-            // made. A modifier survives it (cell editing design §7).
+            // Reversed rather than `bg(warning)`: ratatui paints the cursor
+            // row's highlight over cell backgrounds, and that is where an edit
+            // just happened. A modifier survives.
             Token::Dirty => fg(palette.warning).add_modifier(Modifier::REVERSED),
             Token::Severity(Severity::Info) => fg(palette.info),
             Token::PropertyName => fg(palette.label),
@@ -277,17 +219,10 @@ impl Theme {
             Token::Section => fg(palette.section).add_modifier(Modifier::BOLD),
             Token::SelectionBar => fg(palette.selection_bar),
             Token::Comment => fg(palette.comment),
-            // A colour of its own now (2026-08-11-panel-focus-contrast-design.md
-            // §2 withdraws the earlier "bold only" decision): it still reads on
-            // a panel border the theme may have coloured already, because
-            // `Style::patch` lets this `fg` overwrite `border`'s.
+            // `Style::patch` lets this `fg` overwrite the border's.
             Token::Focused => fg(palette.focus).add_modifier(Modifier::BOLD),
-            // Underlined as well as coloured, in every state: the key sits in
-            // a bar whose colour changes with focus, `focus` and `shortcut`
-            // are one hex in Beacon, and colour is the channel a user may have
-            // remapped or be unable to see. This withdraws
-            // 2026-08-11-panel-focus-contrast-design.md §2's "a colour rather
-            // than an underline" (design §3.1, rule 5).
+            // Underlined as well: `focus` and `shortcut` are one hex in Beacon,
+            // and colour may be remapped or unseen.
             Token::HintKey => fg(palette.shortcut)
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(Modifier::UNDERLINED),
@@ -295,23 +230,15 @@ impl Theme {
             Token::Crosshair => crosshair(&palette),
             Token::Ranged => ranged(&palette),
             Token::Match => fg(palette.match_).add_modifier(Modifier::BOLD),
-            // `focus`, the colour the frame already spends on the thing that
-            // is answering: a sorted or filtered column is the one the grid is
-            // being read through. Unbolded, unlike `Token::Focused` — a mark
-            // is a glyph rather than a word, and weight on one cell reads as
-            // a different glyph rather than as emphasis. Not swept as
-            // emphasis either: an arrangement is a fact about the page rather
-            // than a mark saying where the cursor is, so it keeps its colour
-            // under a modal for `Token::Match`'s reason.
+            // Unbolded: weight on one glyph reads as a different glyph. Not
+            // emphasis: it survives under a modal.
             Token::Marker => fg(palette.focus),
-            // A modifier rather than a colour, because it has to read
-            // *against* the highlighted row whatever colour that row is.
+            // A modifier, so it reads against any row colour.
             Token::SelectedCell => Style::new()
                 .add_modifier(Modifier::REVERSED)
                 .add_modifier(Modifier::UNDERLINED),
-            // No underline beside the reverse: the cursor cell spends that one
-            // to read apart from the row it sits on, and a flash covering
-            // whole rows would leave it nothing to spend.
+            // No underline: the cursor cell spends that to stand apart from a
+            // flashed row.
             Token::Flash => Style::new().add_modifier(Modifier::REVERSED),
             Token::Keyword => fg(palette.keyword),
             Token::Reference => fg(palette.reference),
@@ -320,15 +247,8 @@ impl Theme {
     }
 }
 
-/// Whether `token` is a mark saying where the cursor or the focus is, rather
-/// than a colour that means something about the content under it.
-///
-/// A dimmed theme draws these as nothing at all. `Token::Match` is not one of
-/// them: a filter is applied whether or not an overlay is up, and a panel that
-/// stopped marking its hits while the palette was open would be answering a
-/// different question than the one on screen. Neither is `Token::Focused`:
-/// under a modal no panel *is* focused, and `render` stops asking for the
-/// token rather than asking for a hollowed-out version of it.
+/// A dimmed theme draws these as nothing. Not `Match`: a filter still applies
+/// under an overlay. Not `Focused`: under a modal `render` stops asking for it.
 const fn is_emphasis(token: Token) -> bool {
     matches!(
         token,
@@ -341,11 +261,7 @@ const fn is_emphasis(token: Token) -> bool {
     )
 }
 
-/// Every palette a name can resolve to, built once at startup.
-///
-/// Resolution happens here rather than per frame: a custom palette is
-/// `extends`' palette with the stated roles overwritten, and that is a fixed
-/// computation over data that does not change while the tool runs (design §8).
+/// Resolved once at startup: a custom palette is fixed data.
 #[derive(Debug, Clone, Default)]
 pub struct Themes {
     custom: BTreeMap<ThemeName, Palette>,
@@ -371,11 +287,7 @@ impl Themes {
         Self { custom, background }
     }
 
-    /// The palette `choice` names.
-    ///
-    /// A name no theme claims falls back to the default. `validate` resolves
-    /// dangling names before one can reach `State`, so this is defence rather
-    /// than a path anything takes.
+    /// Falls back to the default; `validate` makes that unreachable.
     #[must_use]
     pub fn get(&self, choice: &ThemeChoice) -> Theme {
         let palette = match choice {
@@ -392,16 +304,12 @@ impl Themes {
         }
     }
 
-    /// Overrides `base` and nothing else.
-    ///
-    /// `selection_bg` and `crosshair` stay the palette's, so the cursor row
-    /// keeps the contrast it was measured for even when the field behind it is
-    /// the user's (design §4).
+    /// `selection_bg` and `crosshair` stay the palette's, keeping their
+    /// measured contrast.
     fn grounded(&self, mut palette: Palette) -> Palette {
         match self.background {
             Background::Theme => {}
-            // Not a colour: paint nothing, which is the only mechanism that
-            // lets a translucent or blurred terminal show through.
+            // Paints nothing, letting a translucent terminal show through.
             Background::Terminal => palette.base = Color::Reset,
             Background::Fixed(rgb) => palette.base = Color::Rgb(rgb.red, rgb.green, rgb.blue),
         }
@@ -410,30 +318,18 @@ impl Themes {
     }
 }
 
-/// The cursor row.
-///
-/// `selection_fg` is the ground text on that row and is not spent by
-/// `Token::Selected`: patching a foreground there would overwrite every role
-/// colour on the row (`Style::patch`'s `other.fg.or`), flattening
-/// `partition`, `table` and the rest. It exists so the contrast sweep
-/// measures the row's text, and every palette sets it equal to `text`.
+/// No foreground: `Style::patch` would overwrite every role colour on the row.
+/// `selection_fg` exists only for the contrast sweep and equals `text`.
 fn selected(palette: &Palette) -> Style {
     Style::new().bg(palette.selection_bg)
 }
 
-/// The cursor row and column in cell mode.
-///
-/// Spends no foreground, for the reason [`selected`] spends none: the wash's
-/// whole purpose is to leave the column colouring readable under it, and a
-/// foreground here would overwrite every one of them through `Style::patch`
-/// (selection modes design §4).
+/// No foreground, for [`selected`]'s reason.
 fn crosshair(palette: &Palette) -> Style {
     Style::new().bg(palette.crosshair)
 }
 
-/// The rows a range holds, other than the cursor's own.
-///
-/// Spends no foreground, for the reason [`crosshair`] spends none.
+/// No foreground, for [`crosshair`]'s reason.
 fn ranged(palette: &Palette) -> Style {
     Style::new().bg(palette.ranged)
 }
@@ -452,16 +348,10 @@ pub(crate) mod tests {
     use super::*;
     use crate::theme::contrast::{luminance, ratio};
 
-    /// Text is unreadable below this against the ground it sits on.
     const FLOOR: f64 = 4.5;
 
-    /// Every role a palette of ours spends on text.
-    ///
-    /// Destructured with every field named and no `..`, so a new role cannot
-    /// enter the palette without the compiler asking here whether it is text.
-    /// `base`, `selection_bg` and `crosshair` are what text is drawn
-    /// *on*, and `border` is not text — each is answered by the test that knows
-    /// what to ask of it rather than swept in here.
+    /// Destructured without `..`, so a new role must be classified here.
+    /// Grounds and `border` are tested elsewhere.
     pub(super) fn foregrounds(palette: &Palette) -> Vec<(&'static str, Color)> {
         let Palette {
             base: _,
@@ -523,11 +413,7 @@ pub(crate) mod tests {
         ]
     }
 
-    /// Rule 1: no colour that carries text drops below 4.5:1 on any ground it
-    /// can land on. `Ours::ALL` and not `ThemeChoice::ALL` — a ported palette
-    /// is unreachable from here by type, which is how "we impose nothing on
-    /// Catppuccin" is stated in the type system rather than in a comment
-    /// (design §2).
+    /// `Ours::ALL`, not every theme: ported palettes are out of reach by type.
     #[test]
     fn every_palette_of_ours_reads_on_every_ground_it_declares() {
         for choice in Ours::ALL {
@@ -551,8 +437,6 @@ pub(crate) mod tests {
         }
     }
 
-    /// Rule 2: the ramp has to read as a staircase, not as three shades of one
-    /// grey.
     #[test]
     fn the_neutral_ramp_of_ours_is_a_staircase() {
         for choice in Ours::ALL {
@@ -571,9 +455,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// A border is not text: it only has to be seen. Both the colours a frame
-    /// can wear — `border` unfocused, `focus` patched over it by
-    /// `Token::Focused` when the panel has focus.
+    /// A border only has to be seen, focused or not.
     #[test]
     fn every_border_of_ours_is_perceptible() {
         for choice in Ours::ALL {
@@ -586,10 +468,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The three tokens that paint a field, and no others. `Ranged` joins the
-    /// two: a range is a band like the cursor row, and spends no foreground for
-    /// the same reason — a foreground would flatten every role colour under it
-    /// (visual mode design §6).
+    /// A foreground on a band would flatten the role colours under it.
     #[test]
     fn the_bands_paint_a_background_and_spend_no_foreground() {
         for choice in BuiltIn::ALL {
@@ -614,8 +493,6 @@ pub(crate) mod tests {
         }
     }
 
-    /// The range sits between the wash and the cursor row: on the far side of
-    /// either it would make one of the three unreadable as a rank.
     #[test]
     fn the_range_is_louder_than_the_crosshair_and_quieter_than_the_cursor_row() {
         for choice in BuiltIn::ALL {
@@ -640,18 +517,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// The wash sits between the field and the cursor bar, in luminance and not
-    /// merely in intent: on the far side of `selection_bg` it would be the
-    /// louder of the two bands and cell mode would shout over row mode, and on
-    /// `base` it would not be visible at all.
-    ///
-    /// The ordering runs upwards for a dark palette and downwards for a light
-    /// one, so what is asserted is that `crosshair` lies strictly between the
-    /// two — `base`'s side of `selection_bg`, by a margin. The margin is a
-    /// contrast ratio, the currency the rest of this module measures grounds in,
-    /// and 1.04 is where the narrowest of the twelve sits: the wash is one step
-    /// off its own `base` by construction, a tint of the ground rather than a
-    /// colour of its own.
+    /// Strictly between `base` and `selection_bg` by a contrast margin; 1.04 is
+    /// where the narrowest palette sits.
     #[test]
     fn the_crosshair_is_fainter_than_the_cursor_row() {
         const FLOOR: f64 = 1.04;
@@ -737,13 +604,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// Rule 5: colour alone cannot carry the hot key. The key sits in a bar
-    /// whose colour changes with focus, and in Beacon `focus` and `shortcut`
-    /// are the same amber — underline is the channel that survives both, and
-    /// nothing else in the UI spends it (design §3.1).
-    /// A dimmed theme is the palettes' colours without the marks that say
-    /// where the cursor is. Content colours stay: a keyspace under an
-    /// open palette is still a keyspace.
+    /// Underline is what survives `focus` and `shortcut` sharing a colour.
+    /// Dimmed keeps content colours.
     #[test]
     fn a_dimmed_theme_draws_no_focus_and_no_cursor() {
         let theme = Theme::default().dimmed();
@@ -798,8 +660,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// Every token, so a new one cannot be added without deciding what the
-    /// tests above have to say about it.
+    /// Every token, so a new one must be decided here.
     pub(super) const EVERY_TOKEN: [Token; 32] = [
         Token::PartitionKey,
         Token::PartitionKeyValue,
@@ -835,10 +696,7 @@ pub(crate) mod tests {
         Token::Literal,
     ];
 
-    /// The palette ranks by lightness, so nothing needs a modifier to recede.
-    /// `DIM` is a terminal-dependent multiplier and would invalidate every
-    /// ratio `every_palette_of_ours_reads_on_every_ground_it_declares`
-    /// measures (design §4.1).
+    /// `DIM` is terminal-dependent and would invalidate every measured ratio.
     #[test]
     fn no_token_recedes_with_a_modifier() {
         for choice in BuiltIn::ALL {
@@ -853,9 +711,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// Two tiers below `text`, and they are distinct: a call site that meant
-    /// "recede one step" and one that meant "recede two" must not draw the
-    /// same.
+    /// Receding one step and two must not draw alike.
     #[test]
     fn the_two_de_emphasis_tokens_are_different_colours() {
         for choice in BuiltIn::ALL {
@@ -994,10 +850,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// Totality alone would pass if two arms aliased the same field — both
-    /// roles would still differ from the default. Pairwise distinctness is
-    /// what catches that, the same shape
-    /// `every_choice_maps_to_a_palette_of_its_own` checks palettes with.
+    /// Totality alone misses two arms aliasing one field.
     #[test]
     fn every_role_reaches_a_distinct_field_of_the_palette() {
         let marker = Color::Rgb(1, 2, 3);

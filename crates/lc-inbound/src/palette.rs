@@ -15,23 +15,16 @@ use crate::theme::Theme;
 
 const WIDTH_PERCENT: u16 = 50;
 const HEIGHT_PERCENT: u16 = 70;
-/// The widest row the catalogue can produce, plus both borders and both pad
-/// columns — `Margin { horizontal: PAD }` spends one on each side. Derived
-/// from the catalogue rather than chosen — `commands::tests` is what stops a
-/// longer action being written
-/// (docs/superpowers/specs/2026-08-09-command-palette-design.md §5).
+/// The widest catalogue row plus borders and pads; `commands::tests` stops a
+/// longer action.
 const MIN_W: u16 = 39;
 /// Past this every row is trailing space.
 const MAX_W: u16 = 60;
 /// Two borders, a heading, and enough commands to be worth opening.
 const MIN_H: u16 = 8;
-/// Between the left border and the keys column.
 const PAD: u16 = 1;
-/// Between the action column and the keys column.
 const GAP: &str = "  ";
 
-/// Where a palette listing `rows` rows goes in `area`, or `None` when it does
-/// not fit.
 fn rect(area: Rect, rows: usize) -> Option<Rect> {
     let width = percent(area.width, WIDTH_PERCENT).min(MAX_W);
     let wanted = u16::try_from(rows.saturating_add(2)).unwrap_or(u16::MAX);
@@ -49,21 +42,17 @@ fn rect(area: Rect, rows: usize) -> Option<Rect> {
     ))
 }
 
-/// Rows a palette would show in `area`, whether or not one is open. Zero means
-/// it does not fit, and is what gates `?` in the domain.
+/// Zero gates `?` in the domain.
 pub(crate) fn visible_rows(area: Rect, rows: usize) -> usize {
     rect(area, rows).map_or(0, |rect| usize::from(rect.height.saturating_sub(2)))
 }
 
-/// Widened to `u32` first: at a terminal width near `u16::MAX` the product
-/// would overflow, which panics in debug rather than clamping.
+/// Through `u32`: the product overflows near `u16::MAX`.
 fn percent(value: u16, share: u16) -> u16 {
     u16::try_from(u32::from(value) * u32::from(share) / 100).unwrap_or(u16::MAX)
 }
 
-/// `total` is the unfiltered catalogue's row count, and what the block is
-/// sized from: a filter narrows the list inside a block that does not move
-/// (docs/superpowers/specs/2026-08-31-overlay-filter-design.md §2).
+/// Sized from the unfiltered `total`, so a filter moves no border.
 pub(crate) fn render(
     frame: &mut Frame,
     rows: &[CommandRow],
@@ -95,9 +84,7 @@ pub(crate) fn render(
         .enumerate()
         .map(|(index, row)| item(row, gutter, index == selected, search, theme))
         .collect();
-    // A cursor on nothing is not a cursor: the empty line a term that matched
-    // nothing leaves is not a row `⏎` can run, and does not wear the ground
-    // that says it is (overlay filter design §3).
+    // The empty line a failed term leaves is not a runnable row.
     let landed = matches!(rows.get(selected), Some(CommandRow::Command { .. }));
     let mut state = ListState::default().with_selected(landed.then_some(selected));
 
@@ -120,7 +107,6 @@ pub(crate) fn render(
     }
 }
 
-/// Draws every visible group rule, `crate::render::rule` doing the reaching.
 fn rules(
     frame: &mut Frame,
     area: Rect,
@@ -138,13 +124,8 @@ fn rules(
     }
 }
 
-/// The palette says in a column what the bar says in a row, so it says it with
-/// the bar's tokens — a `CommandKey` token would be a second name for one
-/// meaning (architecture.md §6).
-///
-/// The action leads and the keys follow, the order a search-actions dialogue
-/// uses: a reader of the open palette is looking for a thing to do and wants
-/// the key it costs, not scanning a column of keys for one they already know.
+/// The bar's tokens, not a new one. Action first: a reader is looking for a
+/// thing to do.
 fn item(
     row: &CommandRow,
     gutter: usize,
@@ -153,8 +134,7 @@ fn item(
     theme: Theme,
 ) -> ListItem<'static> {
     match row {
-        // Blank: `rules` paints the line itself, across the borders a
-        // `ListItem` cannot reach.
+        // `rules` paints the line across the borders.
         CommandRow::Separator => ListItem::new(Line::default()),
         CommandRow::Empty => ListItem::new(Line::from(Span::styled(
             "no command matches".to_owned(),
@@ -164,27 +144,15 @@ fn item(
             (*heading).to_owned(),
             theme.style(Token::Section),
         ))),
-        // The bar's key colour without the bar's underline: that modifier is
-        // there because a hint sits on a row whose colour changes with focus
-        // (theme.rs, `Token::HintKey`). A palette row sits on the overlay's
-        // own ground, where the colour is the whole signal and an underline
-        // under every row is a texture rather than a mark.
-        //
-        // A row that cannot be run recedes the way a dead hint does
-        // (`inbound/hints.rs`), rather than being dropped: the binding is
-        // still real, and a list that is complete does not hide a row for
-        // being unreachable this frame.
+        // No underline: on the overlay's own ground the colour is the signal.
+        // An inert row recedes rather than vanishing.
         CommandRow::Command {
             keys,
             action,
             liveness,
             refused,
         } => {
-            // The cursor still lands on an inert row, and it still reads at
-            // full contrast there — a row you cannot run is still a row you
-            // are reading
-            // (docs/superpowers/specs/2026-08-15-palette-execution-design.md
-            // §8).
+            // An inert row under the cursor still reads at full contrast.
             let (key, text) = match (liveness, selected) {
                 (Liveness::Live, _) | (Liveness::Inert, true) => {
                     (Token::HintKey, Token::HintAction)
@@ -214,8 +182,7 @@ fn item(
     }
 }
 
-/// Columns, on the same single-width assumption the hint bar makes of the
-/// labels `hints::name` produces.
+/// Assumes single-width labels, as the hint bar does.
 fn action_width(row: &CommandRow) -> usize {
     match row {
         CommandRow::Heading(_) | CommandRow::Separator | CommandRow::Empty => 0,
@@ -276,8 +243,6 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
-    /// Overlay search design §7: the matched span is painted where it sits,
-    /// the rest of the row untouched.
     #[test]
     fn a_matched_span_is_marked_in_the_action() {
         let rows = [
@@ -310,9 +275,6 @@ mod tests {
         );
     }
 
-    /// The row is still readable and still lands under the cursor; what it
-    /// stops claiming is that `⏎` would do something
-    /// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §8).
     #[test]
     fn a_row_that_cannot_be_run_recedes() {
         let rows = [
@@ -323,15 +285,11 @@ mod tests {
             row("close the form", Liveness::Live),
             row("previous field", Liveness::Live),
         ];
-        // MIN_H demands enough rows for a palette to open at all
-        // (commands::tests::the_catalogue_is_taller_than_the_palettes_floor
-        // holds the same floor on the real catalogue); pad past a bare
-        // heading-plus-two so `rect` does not refuse the frame.
+        // MIN_H needs enough rows to open.
         let area = rect(Rect::new(0, 0, WIDTH, HEIGHT), rows.len()).expect("fits this frame");
         let buffer = drawn(&rows, 0);
         let theme = Theme::default();
-        // One column for the border, one for the palette's own PAD; one row
-        // for the border, one for the heading.
+        // Border and PAD across; border and heading down.
         let x = area.x + 1 + PAD;
         let y0 = area.y + 2;
         let at = |line: u16| buffer.cell((x, y0 + line)).expect("inside the block").fg;
@@ -365,7 +323,7 @@ mod tests {
             row("close the form", Liveness::Live),
             row("previous field", Liveness::Live),
         ];
-        // Wide enough that the palette reaches MAX_W and clips nothing.
+        // Wide enough to reach MAX_W.
         let wide = 2 * MAX_W;
         let area = rect(Rect::new(0, 0, wide, HEIGHT), rows.len()).expect("fits this frame");
         let mut terminal =
@@ -405,8 +363,6 @@ mod tests {
         );
     }
 
-    /// Overlay filter design §2: the block is sized from the whole catalogue,
-    /// so narrowing the list moves no border.
     #[test]
     fn a_filtered_palette_keeps_the_block_the_catalogue_gives_it() {
         let total = 40;
@@ -438,8 +394,6 @@ mod tests {
         );
     }
 
-    /// Overlay filter design §3: a term that matched nothing says so, on a row
-    /// that wears neither the selection ground nor a promise that `⏎` runs it.
     #[test]
     fn a_term_that_matches_nothing_draws_a_line_saying_so() {
         let total = 40;
@@ -489,8 +443,6 @@ mod tests {
         );
     }
 
-    /// Design §8: "it still reads at full contrast when selected — a row you
-    /// cannot run is still a row you are reading."
     #[test]
     fn a_selected_inert_row_reads_at_full_contrast() {
         let rows = [
@@ -502,7 +454,7 @@ mod tests {
             row("previous field", Liveness::Live),
         ];
         let area = rect(Rect::new(0, 0, WIDTH, HEIGHT), rows.len()).expect("fits this frame");
-        // Index 1 in `rows` is the inert row; the cursor seats on it.
+        // Index 1 is the inert row.
         let buffer = drawn(&rows, 1);
         let theme = Theme::default();
         let x = area.x + 1 + PAD;

@@ -1,15 +1,6 @@
-//! Panel geometry.
-//!
-//! Proportions come from docs/ui-draft.png, except the sidebar's own split:
-//! Ddl takes 60% of it to the draft's 40, because the tabs beneath it — the
-//! table's shape and its column list — outgrow a tree of keyspaces. The floors
-//! and the collapse rule are from
-//! docs/superpowers/specs/2026-08-08-four-panel-layout-design.md §3.
-//!
-//! Queries is the exception to the draft's fixed share: it opens to
-//! [`QUERIES_FOCUS_PERCENT`] on focus and, off it, shrinks to the buffer it
-//! holds — closed to its borders when that buffer is empty. Contents, which
-//! it shares the column with, takes whatever it leaves.
+//! Panel geometry, from docs/ui-draft.png, except that Ddl takes 60% of the
+//! sidebar for its tabs. Queries opens to [`QUERIES_FOCUS_PERCENT`] when
+//! focused and otherwise hugs its buffer; Contents takes the rest.
 
 use lc_domain::panel::Panel;
 use lc_domain::view::{PanelBody, ViewModel};
@@ -17,42 +8,29 @@ use ratatui::layout::Rect;
 
 const SIDEBAR_PERCENT: u16 = 25;
 const DDL_PERCENT: u16 = 60;
-/// What the focused Queries panel takes of the main column.
 const QUERIES_FOCUS_PERCENT: u16 = 60;
-/// Buffer lines an unfocused Queries panel will grow to hold. Past this the
-/// editor scrolls rather than eat the results it was run to produce.
+/// Past this the editor scrolls rather than eat the results.
 const QUERIES_HUG_MAX_LINES: u16 = 10;
-/// A closed Queries panel: its two borders, and nothing between them.
 const QUERIES_CLOSED_H: u16 = 2;
 
-/// Two borders and one line of content. Below this a block shows nothing.
+/// Below this a block shows nothing.
 const PANEL_MIN_H: u16 = 3;
 const SIDEBAR_MIN_W: u16 = 16;
-/// `split`'s `major_floor` for the root split: how much the main column must
-/// be able to keep before the sidebar is allowed to exist at all.
+/// What the main column must keep before the sidebar may exist.
 const MAIN_RESERVE_W: u16 = 24;
-/// The hint bar's row, off the bottom of the frame.
 const BAR_H: u16 = 1;
 
-/// The smallest frame the shell is drawn into: both columns on their width
-/// floors, one panel above another on its height floor in each, and the hint
-/// bar's row.
+/// Both columns and both rows on their floors, plus the hint bar.
 pub(crate) const MIN_W: u16 = SIDEBAR_MIN_W + MAIN_RESERVE_W;
 pub(crate) const MIN_H: u16 = 2 * PANEL_MIN_H + BAR_H;
 
-/// What a frame is big enough to be.
-///
-/// An enum rather than a `PanelRects` plus a separate `fits` predicate, so
-/// there is no path on which a caller draws a panel into a frame too small to
-/// hold one (conventions.md §1).
+/// An enum, so no path draws panels into a frame too small for them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shell {
     Panels(PanelRects),
-    /// The frame, which fell short of `MIN_W` × `MIN_H`.
     TooSmall(Rect),
 }
 
-/// Where each panel is drawn this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanelRects {
     tables: Rect,
@@ -63,7 +41,7 @@ pub struct PanelRects {
 }
 
 impl PanelRects {
-    /// The area assigned to `panel`, which always clears that panel's floor.
+    /// Always clears the panel's floor.
     #[must_use]
     pub const fn get(&self, panel: Panel) -> Rect {
         match panel {
@@ -74,36 +52,23 @@ impl PanelRects {
         }
     }
 
-    /// The bottom row, which belongs to the hint bar.
-    ///
-    /// Produced with the panels rather than derived by the caller, so no
-    /// caller can lay the panels out against the whole frame and then draw
-    /// the bar over one of their rows.
+    /// Produced with the panels, so nobody draws the bar over one of their
+    /// rows.
     #[must_use]
     pub const fn bar(&self) -> Rect {
         self.bar
     }
 }
 
-/// How tall the Queries panel wants to be, before the frame has its say.
-///
-/// The panel is the only one whose height is a function of state rather than
-/// of the frame alone: it opens on focus and hugs its buffer off it.
+/// The one panel whose height depends on state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueriesHeight {
-    /// Focused: a fixed share of the column, whatever the buffer holds.
     Expanded,
-    /// Unfocused with a buffer: as many rows as it has lines.
     Hug(u16),
-    /// Unfocused and empty: borders and title only.
     Closed,
 }
 
-/// What `view` asks of the Queries panel this frame.
-///
-/// Buffer lines, not wrapped lines: the editor scrolls sideways rather than
-/// wrap (query editor design §3), so one line is one row and the height needs
-/// no width to be known.
+/// Buffer lines: the editor does not wrap, so no width is needed.
 #[must_use]
 pub fn queries_height(view: &ViewModel) -> QueriesHeight {
     if view.focus == Panel::Queries {
@@ -127,7 +92,6 @@ pub fn queries_height(view: &ViewModel) -> QueriesHeight {
     QueriesHeight::Hug(u16::try_from(lines.len()).unwrap_or(u16::MAX))
 }
 
-/// Divide `area` into the four panels of docs/ui-draft.png, or refuse it.
 #[must_use]
 pub fn layout(area: Rect, queries: QueriesHeight) -> Shell {
     if area.width < MIN_W || area.height < MIN_H {
@@ -151,11 +115,7 @@ pub fn layout(area: Rect, queries: QueriesHeight) -> Shell {
     })
 }
 
-/// Resolve what the Queries panel asked for against the rows there are.
-///
-/// The ceiling, not the floor, is what the panel is held to: it never takes
-/// so much that Contents drops below its own floor, and `layout` refuses any
-/// frame too short to give both of them one.
+/// Never so much that Contents drops below its floor.
 fn queries_rows(queries: QueriesHeight, panels_h: u16) -> u16 {
     let want = match queries {
         QueriesHeight::Expanded => percent(panels_h, QUERIES_FOCUS_PERCENT).max(PANEL_MIN_H),
@@ -166,16 +126,12 @@ fn queries_rows(queries: QueriesHeight, panels_h: u16) -> u16 {
     want.min(panels_h - PANEL_MIN_H)
 }
 
-/// Split `total` into a major and a minor part, in that order.
-///
-/// The minor part takes `minor_percent`, lifted to `minor_floor` when the
-/// percentage falls short of it, and dropped to zero when honouring it would
-/// push the major part below `major_floor`.
+/// The minor part is lifted to its floor, or dropped to zero to keep the major
+/// above its own.
 fn split(total: u16, minor_percent: u16, major_floor: u16, minor_floor: u16) -> (u16, u16) {
     let share = percent(total, minor_percent);
     let cap = total.saturating_sub(major_floor);
-    // Not defensive: `clamp` panics on crossed bounds, and this branch is what
-    // guarantees `minor_floor <= cap` below.
+    // `clamp` panics on crossed bounds; this branch prevents them.
     let minor = if cap < minor_floor {
         0
     } else {
@@ -185,10 +141,8 @@ fn split(total: u16, minor_percent: u16, major_floor: u16, minor_floor: u16) -> 
     (total - minor, minor)
 }
 
-/// `percent` of `total`, rounded down.
 fn percent(total: u16, percent: u16) -> u16 {
-    // u16 arithmetic overflows here at terminal sizes that cannot exist but
-    // that the parameter type admits.
+    // The `u16` product can overflow at sizes the type admits.
     let share = u32::from(total) * u32::from(percent) / 100;
     u16::try_from(share).unwrap_or(u16::MAX)
 }
@@ -244,9 +198,7 @@ mod tests {
         assert_eq!(r.get(Panel::Queries), Rect::new(20, 21, 60, 2));
     }
 
-    /// The unfocused, non-empty panel — the one state `queries_height` reads
-    /// the buffer for. Without this, returning `Closed` for every unfocused
-    /// panel would pass the whole suite.
+    /// Returning `Closed` for every unfocused panel would otherwise pass.
     #[test]
     fn an_unfocused_queries_panel_hugs_the_buffer_it_holds() {
         let mut state = State::default();
@@ -274,7 +226,7 @@ mod tests {
 
     #[test]
     fn a_hugging_queries_panel_wraps_its_lines_exactly() {
-        // Four lines and the two borders around them.
+        // Four lines and two borders.
         assert_eq!(queries(80, 24, QueriesHeight::Hug(4)).height, 6);
         assert_eq!(queries(80, 24, QueriesHeight::Hug(1)).height, 3);
     }
@@ -290,7 +242,7 @@ mod tests {
 
     #[test]
     fn a_focused_queries_panel_takes_its_share_whatever_the_buffer_holds() {
-        // 60% of the 23 rows left after the bar is 13.
+        // 60% of 23 rows is 13.
         assert_eq!(queries(80, 24, QueriesHeight::Expanded).height, 13);
         assert_eq!(queries(100, 100, QueriesHeight::Expanded).height, 59);
     }
@@ -335,7 +287,7 @@ mod tests {
 
     #[test]
     fn the_sidebar_is_lifted_to_its_floor_on_a_narrow_terminal() {
-        // 25% of 40 columns is 10.
+        // 25% of 40 is 10.
         let r = rects(40, 24);
 
         assert_eq!(r.get(Panel::Tables).width, 16);
@@ -352,9 +304,7 @@ mod tests {
 
     #[test]
     fn split_collapses_the_minor_part_rather_than_shrink_it_below_its_floor() {
-        // Unreachable through `layout`, which now refuses these sizes. `split`
-        // stays total over them, so it is tested where it is total
-        // (minimum terminal size design §5).
+        // Unreachable through `layout`, but `split` stays total.
         assert_eq!(
             split(4, DDL_PERCENT, PANEL_MIN_H, PANEL_MIN_H),
             (4, 0),

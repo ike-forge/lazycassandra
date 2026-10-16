@@ -9,13 +9,10 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 use crate::theme::Theme;
 
 const MAX_W: u16 = 60;
-/// Below this the block cannot hold a sentence, and the panel underneath is
-/// already saying the same thing — so nothing is drawn rather than a truncated
-/// box. Same rule the panels follow in `layout`.
+/// Below this nothing is drawn: the panel underneath says the same thing.
 const MIN_W: u16 = 20;
 const MIN_H: u16 = 5;
-/// Two columns of outer margin on each side, between the frame edge and the
-/// block. The border itself is accounted for separately, by `Block::inner`.
+/// Outer margin; `Block::inner` accounts for the border.
 const MARGIN_W: u16 = 4;
 
 pub(crate) fn render(frame: &mut Frame, overlay: &Message, theme: Theme) {
@@ -24,9 +21,8 @@ pub(crate) fn render(frame: &mut Frame, overlay: &Message, theme: Theme) {
         return;
     };
 
-    // The severity replaces `theme.border_style()` rather than composing with
-    // it. This border is where the message says how bad it is, and that is
-    // the one border on screen that must not read like the others.
+    // The severity replaces the border style: this border must not read like
+    // the others.
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(overlay.title.as_str())
@@ -59,16 +55,9 @@ fn centred(area: Rect, overlay: &Message) -> Option<Rect> {
     ))
 }
 
-/// Greedy word wrap, matching `Wrap { trim: true }` closely enough for
-/// sizing: a word joins the current line if it (plus a separating space)
-/// fits, otherwise it starts a new one. A word longer than `width` occupies
-/// `ceil(len / width)` lines by itself. Counts characters, not bytes, since a
-/// CQL error can carry non-ASCII.
-///
-/// Diverges on an embedded `\n`: `split_whitespace` treats it as ordinary
-/// whitespace rather than a forced break, so a multi-line message
-/// under-counts its lines and the block is sized too short, truncating
-/// rather than overflowing.
+/// Close enough to `Wrap { trim: true }` for sizing. Counts characters. Treats
+/// an embedded `\n` as a space, so multi-line messages are sized too short and
+/// truncate.
 fn wrapped_line_count(message: &str, width: u16) -> u16 {
     let width = usize::from(width.max(1));
     let mut lines: usize = 0;
@@ -180,9 +169,7 @@ mod tests {
 
     #[test]
     fn the_overlay_is_centred() {
-        // At 60x20 the block is 56 wide (the frame less two columns of margin
-        // each side, under the 60-column cap) and 5 tall (its floor, since the
-        // message wraps to one line). That centres it at (2, 7).
+        // At 60x20 the block is 56 by 5, centred at (2, 7).
         let buffer = draw(60, 20, Some(failure()));
         let symbol = |x, y| buffer.cell((x, y)).expect("in bounds").symbol().to_owned();
 
@@ -218,14 +205,13 @@ mod tests {
 
     #[test]
     fn a_message_that_wraps_evenly_is_exactly_two_lines() {
-        // "aaaaa bbbbb" is 11 characters, exactly the width; "ccccc" cannot
-        // join it and starts a second line.
+        // 11 characters, exactly the width.
         assert_eq!(wrapped_line_count("aaaaa bbbbb ccccc", 11), 2);
     }
 
     #[test]
     fn a_single_word_longer_than_the_width_spans_ceil_of_its_length_over_the_width() {
-        // 34 characters at a width of 10 needs ceil(34 / 10) = 4 lines.
+        // 34 at width 10 needs four lines.
         assert_eq!(
             wrapped_line_count("supercalifragilisticexpialidocious", 10),
             4

@@ -1,8 +1,5 @@
-//! The cell inspector, drawn over the panels
-//! (docs/superpowers/specs/2026-09-17-cell-inspector-design.md §3, §5).
-//!
-//! Wrapped here, because wrapping needs a width; the line count goes back to
-//! the domain through `Geometry`, the way the Logs tab's does.
+//! The cell inspector, drawn over the panels. Wrapped here, where the width is;
+//! the line count returns through `Geometry`.
 
 use lc_domain::style::Token;
 use lc_domain::view::{EditView, InspectBody, InspectValue, InspectView};
@@ -17,21 +14,18 @@ use unicode_width::UnicodeWidthStr as _;
 use crate::body::{Extent, patched};
 use crate::theme::Theme;
 
-/// A wide block reads worse than a tall one: past this a line of prose is
-/// longer than an eye tracks back from.
+/// Past this a line is longer than the eye tracks back from.
 const MAX_WIDTH: u16 = 100;
-/// Two columns of frame each side, and two rows above and below.
+/// Two columns each side, two rows above and below.
 const MARGIN: u16 = 4;
 const MIN_WIDTH: u16 = 20;
 /// The border and three rows of body.
 const MIN_HEIGHT: u16 = 5;
-/// Between each border and the text.
 const PAD: u16 = 1;
-/// Between a row's name column and its values.
 const GAP: usize = 2;
 
-/// The block's size is a function of the frame's alone, so the height the
-/// domain bounds an offset by never moves with the value (design §5).
+/// Sized from the frame alone, so the height bounding the offset never moves
+/// with the value.
 fn rect(area: Rect) -> Option<Rect> {
     let width = area.width.saturating_sub(MARGIN).min(MAX_WIDTH);
     let height = area.height.saturating_sub(MARGIN);
@@ -55,14 +49,11 @@ fn body(block: Rect) -> Rect {
     })
 }
 
-/// Rows of body the block would show in `area`; zero where it does not fit,
-/// which is what makes `Enter` inert there.
+/// Zero makes `Enter` inert.
 pub(crate) fn visible_rows(area: Rect) -> usize {
     rect(area).map_or(0, |block| usize::from(body(block).height))
 }
 
-/// Draws the block and answers with the lines its value wrapped to, and the
-/// span the cursor's line landed at.
 pub(crate) fn render(frame: &mut Frame, view: &InspectView, theme: Theme) -> (usize, Span) {
     let Some(area) = rect(frame.area()) else {
         return (0, Span::default());
@@ -107,8 +98,7 @@ pub(crate) fn render(frame: &mut Frame, view: &InspectView, theme: Theme) -> (us
 fn lay_out(view: &InspectView, width: usize, theme: Theme) -> (Vec<Line<'static>>, Span) {
     let (body, cursor) = (&view.body, view.cursor);
     let mut laid = Laid::default();
-    // The field is drawn in place of the value it is typing over, so the
-    // block does not say two things about one cell (design §3).
+    // Drawn in place of the value, so the block says one thing per cell.
     let typing = |at: usize| view.editing.as_ref().filter(|edit| edit.field == at);
 
     match body {
@@ -185,7 +175,6 @@ fn lay_out(view: &InspectView, width: usize, theme: Theme) -> (Vec<Line<'static>
     (laid.lines, laid.selection)
 }
 
-/// The block's body as it accumulates, one laid-out line at a time.
 #[derive(Default)]
 struct Laid {
     lines: Vec<Line<'static>>,
@@ -193,9 +182,7 @@ struct Laid {
 }
 
 impl Laid {
-    /// The open field, drawn where its value would be: the text on the
-    /// selection band with a caret after it, and the reason it does not parse
-    /// on the line below (design §3).
+    /// The text on the selection band with a caret; the parse error below it.
     fn field(&mut self, edit: &EditView, hang: usize, width: usize, theme: Theme) {
         self.field_under(
             edit,
@@ -217,9 +204,7 @@ impl Laid {
         theme: Theme,
     ) {
         let room = width.saturating_sub(hang).max(1);
-        // The tail rather than the head: a caret typing past the right edge
-        // has to stay on screen, and what was typed last is what is being
-        // looked at.
+        // The tail: the caret and the latest typing stay on screen.
         let shown: String = edit
             .text
             .chars()
@@ -248,9 +233,7 @@ impl Laid {
         }
     }
 
-    /// One laid-out line's wrapped rows, banded across the body where the
-    /// cursor is on it — every row of it, the way a wrapped Logs entry is
-    /// banded whole.
+    /// Every wrapped row of the cursor's line is banded.
     fn push(&mut self, rows: Vec<Line<'static>>, selected: bool, theme: Theme) {
         if selected {
             self.selection = Span {
@@ -266,9 +249,7 @@ impl Laid {
     }
 }
 
-/// A dirty value carries [`Token::Dirty`] over whatever token the grid gives
-/// it: an uncommitted cell is the one thing about it worth saying first
-/// (design §7).
+/// Dirty outranks the grid's token.
 fn value_style(value: &InspectValue, theme: Theme) -> Style {
     if value.dirty {
         return theme.style(Token::Dirty);
@@ -279,12 +260,8 @@ fn value_style(value: &InspectValue, theme: Theme) -> Style {
         .map_or_else(Style::default, |token| theme.style(token))
 }
 
-/// Every line of `value` wrapped to `width`, grouped by the line it came
-/// from — what the cursor counts in — each opening with `hang` blanks and
-/// then its own indent, which a continuation keeps.
-///
-/// A blank line still takes a row: an empty text value is a field, and a
-/// field with no row would lose its name.
+/// Grouped by source line, which the cursor counts. A blank line still takes a
+/// row, or the field would lose its name.
 fn wrapped(value: &InspectValue, width: usize, hang: usize) -> Vec<Vec<String>> {
     value
         .lines
@@ -323,7 +300,6 @@ mod tests {
         (buffer, lines)
     }
 
-    /// The block as it draws with the cursor `cursor` lines down.
     fn drawn_at(
         width: u16,
         height: u16,
@@ -353,7 +329,6 @@ mod tests {
         (terminal.backend().buffer().clone(), drawn.0, drawn.1)
     }
 
-    /// The rows of `buffer` the selection band was patched onto.
     fn banded(buffer: &Buffer) -> Vec<u16> {
         let band = Theme::default().style(Token::Selected);
 

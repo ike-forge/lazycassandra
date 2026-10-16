@@ -1,5 +1,4 @@
-//! The table health block: four fifths of the frame, the metric tree inside
-//! (docs/superpowers/specs/2026-10-13-table-health-design.md §3).
+//! The table health block: four fifths of the frame, the metric tree inside.
 
 use lc_domain::health::{Fold, Indent, Place, Row, Section};
 use lc_domain::style::{Segment, Severity, Token};
@@ -17,13 +16,11 @@ const MIN_WIDTH: u16 = 40;
 /// The border and three rows of body.
 const MIN_HEIGHT: u16 = 5;
 const PAD: u16 = 1;
-/// Wide enough for `1023.9 MB` and `12345/s`, right-aligned so magnitudes line
-/// up down the column.
+/// Fits `1023.9 MB` and `12345/s`, right-aligned so magnitudes line up.
 const VALUE_WIDTH: usize = 10;
 const GAP: &str = "  ";
 
-/// Four fifths of the frame each way, centred. A function of the frame alone,
-/// so the rows the domain pages by never move with the content.
+/// Sized from the frame alone, so the rows the domain pages by never move.
 fn rect(area: Rect) -> Option<Rect> {
     let width = area.width.saturating_mul(4) / 5;
     let height = area.height.saturating_mul(4) / 5;
@@ -47,14 +44,12 @@ fn body(block: Rect) -> Rect {
     })
 }
 
-/// Rows of body the block would show in `area`; zero where it does not fit,
-/// which is what makes `H` inert there.
+/// Zero makes `H` inert.
 pub(crate) fn visible_rows(area: Rect) -> usize {
     rect(area).map_or(0, |block| usize::from(body(block).height))
 }
 
-/// Draws the block, and answers where it and its rows landed: a press inside
-/// it is the block's, never the click outside that dismisses it.
+/// A press inside belongs to the block, not to a dismissing click.
 pub(crate) fn render(frame: &mut Frame, view: &HealthView, theme: Theme) -> Option<Modal> {
     let area = rect(frame.area())?;
 
@@ -133,8 +128,7 @@ pub(crate) fn render(frame: &mut Frame, view: &HealthView, theme: Theme) -> Opti
     Some(Modal::new(area, Vec::new()).with_list(list))
 }
 
-/// A warning, or a node's status: prose rather than a name, so it sets no
-/// width for the name column and runs on instead.
+/// Prose, so it sets no width for the name column.
 fn is_sentence(row: &Row) -> bool {
     matches!(
         row.place,
@@ -142,7 +136,6 @@ fn is_sentence(row: &Row) -> bool {
     )
 }
 
-/// The limbs and the fold marker in front of a row's label.
 fn lead(row: &Row) -> String {
     let limbs = match row.indent {
         Indent::Root => String::new(),
@@ -334,7 +327,6 @@ mod tests {
         assert!(frame.contains('■'), "the scanner is on the border");
     }
 
-    /// `view` drawn in a `width`×`height` frame, as the presses it answers.
     fn pressed(width: u16, height: u16, view: &HealthView) -> crate::hit::FrameMap {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("a backend");
         let mut modal = None;
@@ -349,7 +341,7 @@ mod tests {
     fn a_press_on_a_row_names_it_and_the_rest_of_the_block_answers_nothing() {
         use lc_domain::pointer::Pointer;
 
-        // The block's body starts at (12, 4) in a 100×30 frame.
+        // The body starts at (12, 4) in 100×30.
         let map = pressed(100, 30, &loaded());
 
         assert_eq!(map.press(12, 4), Some(Pointer::Entry(0)));
@@ -370,7 +362,7 @@ mod tests {
         *selected = rows.len() - 1;
         let last = *selected;
 
-        // Six rows of body, at y=2..8 in a 100×10 frame.
+        // Six body rows at y=2..8 in 100×10.
         let map = pressed(100, 10, &view);
 
         assert_eq!(map.press(12, 7), Some(Pointer::Entry(last)));

@@ -7,21 +7,12 @@ use ratatui::text::{Line, Span};
 use crate::theme::Theme;
 
 const INDENT: &str = " ";
-/// Every join in the bar, panel-to-panel and panel-to-global alike. Narrow
-/// margins on purpose: the bar is the densest row on screen and a wide gutter
-/// around a separator costs a hint.
+/// Narrow: the bar is the densest row on screen.
 const SEPARATOR: &str = " | ";
 
-/// The bar as it fits in `width`.
-///
-/// A running export's count is the first thing given up, dropped whole
-/// before any hint is: it says what is already happening, not what a key
-/// would do, and a bar with no room to spare is not the place to say it.
-/// Once it is gone the rest keeps its own order — panel hints right to left,
-/// then `tab panel`, then the first panel hint with the separator. `q quit`
-/// goes last, because a user who can read one hint needs the way out
-/// (design §6) — except in Queries, whose global tail has no `q quit` to
-/// keep, `q` being text there rather than a binding.
+/// The export count goes first, then panel hints right to left, then `tab
+/// panel`; `q quit` goes last, since a user who reads one hint needs the way
+/// out.
 pub(crate) fn line(bar: &HintBar, width: u16, theme: Theme) -> Line<'static> {
     let panel: Vec<Segment> = bar.panel.iter().map(Segment::new).collect();
     let global: Vec<Segment> = bar.global.iter().map(Segment::new).collect();
@@ -45,17 +36,14 @@ impl Segment {
         }
     }
 
-    /// Columns, on the assumption every label is single-width — true of the
-    /// ASCII names and of the single-codepoint glyphs `name` produces (`⏎`,
-    /// `↑`, `↓`, `←`, `→`), each one column wide.
+    /// Assumes single-width labels, true of ASCII and of the arrow and `⏎`
+    /// glyphs.
     fn width(&self) -> usize {
         self.keys.chars().count() + 1 + self.action.chars().count()
     }
 
-    /// An inert hint keeps its width — `fit` drops hints whole and must not
-    /// see a different bar — and gives up the bold that says the key is live:
-    /// both halves go to `Faint`, so the whole segment recedes together
-    /// whatever `HintAction` is later drawn as.
+    /// An inert hint keeps its width, since `fit` drops whole hints, and both
+    /// halves go `Faint`.
     fn spans(&self, theme: Theme) -> Vec<Span<'static>> {
         let (keys, action) = match self.liveness {
             Liveness::Live => (Token::HintKey, Token::HintAction),
@@ -202,20 +190,14 @@ mod tests {
 
     #[test]
     fn hints_are_dropped_whole_and_lowest_value_first() {
-        // The thresholds are the widths at which the previous bar stops
-        // fitting (design §6). `?` never joins this fixture's bar — these
-        // states never carry a geometry a palette would fit (design §5.1) —
-        // so the thresholds are exactly what they were before `?` existed.
+        // No geometry here fits a palette, so `?` never joins the bar.
         assert_eq!(drawn(Panel::Tables, 36), " ⏎ open | tab panel | q quit");
         assert_eq!(drawn(Panel::Tables, 25), " ⏎ open | q quit");
         assert_eq!(drawn(Panel::Tables, 15), " q quit");
         assert_eq!(drawn(Panel::Tables, 6), "");
     }
 
-    /// The `Geometry` a real 100x24 frame produces — the same frame
-    /// `render::tests::the_frame_reports_how_many_rows_a_palette_would_show`
-    /// pins at `command_rows() == 14` — rather than a width/height
-    /// combination no terminal actually produces (design §5.1).
+    /// A real 100x24 frame's geometry, not an impossible size.
     fn fitting_geometry() -> Geometry {
         let mut terminal =
             Terminal::new(TestBackend::new(100, 24)).expect("TestBackend always initialises");
@@ -268,8 +250,7 @@ mod tests {
 
     #[test]
     fn the_widest_bar_still_fits_the_narrowest_legal_frame() {
-        // Tables, now that no bar teaches motion: two panel hints and the
-        // global tail a 40-column frame carries (`?` needs a taller one).
+        // Two panel hints and the global tail a 40-column frame holds.
         assert_eq!(
             drawn(Panel::Tables, 40),
             " ⏎ open | / search | tab panel | q quit"
@@ -371,8 +352,6 @@ mod tests {
         assert_eq!(inert.spans[1].style, Theme::default().style(Token::Faint));
     }
 
-    /// One join for every pair of hints. The panel/global boundary is no longer
-    /// drawn differently from any other gap (design §4.2).
     #[test]
     fn every_pair_of_hints_is_joined_the_same_way() {
         let bar = bar_of(Panel::Tables);
@@ -406,9 +385,7 @@ mod tests {
         assert_eq!(keys.style, Theme::default().style(Token::HintKey));
     }
 
-    /// One panel hint and one global hint — small enough that `composed`'s
-    /// arithmetic is checkable by hand, which is what the widths below are
-    /// chosen from rather than by trial.
+    /// Small enough to check `composed`'s arithmetic by hand.
     fn export_bar(export: Option<String>) -> HintBar {
         HintBar {
             panel: vec![Hint {
@@ -425,14 +402,10 @@ mod tests {
         }
     }
 
-    /// `composed`'s own arithmetic for [`export_bar`]'s hints with no export
-    /// text at all: `INDENT` (1) + `⏎ open` (6) + `SEPARATOR` (3) + `q quit`
-    /// (6).
+    /// `INDENT` (1) + `⏎ open` (6) + `SEPARATOR` (3) + `q quit` (6).
     const HINTS_ONLY: u16 = 16;
     const EXPORT_TEXT: &str = "exporting 41203 rows…";
-    /// [`HINTS_ONLY`] plus what `composed` adds for the export text once
-    /// hints are present: `SEPARATOR` (3) + `EXPORT_TEXT`'s own 21
-    /// characters.
+    /// Plus `SEPARATOR` (3) and the 21-character export text.
     const WITH_EXPORT: u16 = HINTS_ONLY + 3 + 21;
 
     fn text_of(bar: &HintBar, width: u16) -> String {

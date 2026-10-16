@@ -1,8 +1,5 @@
-//! The original `LazyCassandra` identity, corrected.
-//!
-//! Hue angles are unchanged from the palette this replaces — amber partition,
-//! teal clustering, mauve keyspace, blue table. Only lightness and chroma
-//! moved, and `base` is the same `#282a36` the old theme implicitly assumed.
+//! The original identity with only lightness and chroma corrected; `base` is
+//! the `#282a36` the old theme assumed.
 
 use crate::theme::{Palette, rgb};
 

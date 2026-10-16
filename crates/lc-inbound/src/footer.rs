@@ -1,5 +1,4 @@
-//! Table contents' bottom border: how much of a result is loaded
-//! (docs/superpowers/specs/2026-09-17-grid-paging-design.md §5).
+//! Table contents' bottom border: how much of a result is loaded.
 
 use lc_domain::style::{Severity, Token};
 use lc_domain::view::Footer;
@@ -11,9 +10,8 @@ use crate::theme::Theme;
 
 const SEPARATOR: &str = " · ";
 
-/// Draws `footer` from the left corner of `block`'s bottom border, short of
-/// `limit`, and answers with the first column it left free. Where the border
-/// cannot hold it all, the hint goes first, the estimate next, then the footer.
+/// Returns the first free column. Short on room, the hint goes first, then the
+/// estimate, then the rest.
 pub(crate) fn render(
     frame: &mut Frame,
     block: Rect,
@@ -56,10 +54,8 @@ fn line(footer: &Footer, sized: bool, hinted: bool, theme: Theme) -> Line<'stati
             size.token.map_or(muted, |token| theme.style(token)),
         )
     });
-    // The warning colour the dirty cells are grounded in, so the border and
-    // the grid say the same thing about them. As text, not as a ground: a
-    // count in the border names cells elsewhere rather than being one
-    // (cell editing design §7).
+    // The dirty cells' warning colour, as text: the count names cells rather
+    // than being one.
     let dirty = footer
         .dirty
         .clone()

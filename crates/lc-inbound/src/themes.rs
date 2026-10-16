@@ -1,9 +1,5 @@
-//! The theme picker: every theme, drawn over the panels.
-//!
-//! Narrower than the command palette but not necessarily shorter: the list is
-//! every built-in plus every theme a config defines, which config themes made
-//! unbounded. `update::open_themes` gates on [`visible_rows`], this block's
-//! own measurement, rather than the palette's.
+//! The theme picker. Config themes make its list unbounded, so it gates on its
+//! own [`visible_rows`], not the palette's.
 
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
@@ -19,8 +15,6 @@ use crate::theme::Theme;
 const WIDTH: u16 = 28;
 const PAD: u16 = 1;
 
-/// Where a picker listing `rows` themes goes in `area`, or `None` when it does
-/// not fit.
 fn rect(area: Rect, rows: usize) -> Option<Rect> {
     let height = u16::try_from(rows.saturating_add(2)).unwrap_or(u16::MAX);
 
@@ -36,10 +30,8 @@ fn rect(area: Rect, rows: usize) -> Option<Rect> {
     ))
 }
 
-/// Rows a picker would show in `area` before it stops fitting entirely — this
-/// block does not scroll, so a list longer than this is refused rather than
-/// opened dead. Zero means even an empty picker's borders do not fit, which is
-/// what gates `ctrl-t` in the domain.
+/// Does not scroll: a longer list is refused rather than opened dead. Zero
+/// gates `ctrl-t`.
 pub(crate) fn visible_rows(area: Rect) -> usize {
     if area.width < WIDTH || area.height < 2 {
         return 0;
@@ -48,9 +40,7 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
     usize::from(area.height - 2)
 }
 
-/// `total` is every theme there is, and what the block is sized from: a live
-/// sift narrows the list inside a block that does not move
-/// (docs/superpowers/specs/2026-08-31-overlay-filter-design.md §2).
+/// Sized from `total`, so a sift moves no border.
 pub(crate) fn render(
     frame: &mut Frame,
     labels: &[String],
@@ -76,9 +66,7 @@ pub(crate) fn render(
     frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
-    // A term that matched nothing leaves no row to hold, so the picker says so
-    // rather than drawing an empty box, and nothing wears the cursor's ground
-    // — there is no theme under it to preview (overlay filter design §3, §4).
+    // Says so rather than drawing an empty box; no row wears the cursor ground.
     if labels.is_empty() {
         frame.render_widget(
             List::new([ListItem::new(Line::from(Span::styled(
@@ -188,13 +176,8 @@ mod tests {
             .collect()
     }
 
-    /// Design §7: the picker marks the matched span in a label. Pinned to the
-    /// matched label's own cell, the way `palette.rs`'s equivalent test does
-    /// — asserting that some cell somewhere carries the mark would still pass
-    /// if an unrelated glyph happened to share `Token::Match`'s colour.
-    ///
-    /// Overlay filter design §1: the rows drawn are the ones the term kept, in a block
-    /// the whole list still sizes, so the first of them sits on the first row.
+    /// Pinned to the matched label's own cell: an unrelated glyph could share
+    /// the colour.
     #[test]
     fn a_matched_span_is_marked_in_a_label() {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
@@ -238,8 +221,6 @@ mod tests {
         );
     }
 
-    /// Overlay filter design §4: a term that matched nothing says so, on a row wearing
-    /// neither the cursor's ground nor a theme to preview.
     #[test]
     fn a_term_that_matches_nothing_draws_a_line_saying_so() {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");

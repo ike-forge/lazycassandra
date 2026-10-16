@@ -1,6 +1,5 @@
 use super::*;
 
-/// Every cell of `buffer`, with where it sits.
 fn cells(buffer: &Buffer) -> impl Iterator<Item = (Position, &Cell)> {
     buffer.content().iter().enumerate().map(|(index, cell)| {
         let index = u16::try_from(index).unwrap_or(u16::MAX);
@@ -14,31 +13,24 @@ fn cells(buffer: &Buffer) -> impl Iterator<Item = (Position, &Cell)> {
     })
 }
 
-/// `text` above already names the `CqlValue` constructor the grid tests
-/// use; this is the same buffer-flattening helper `overlay::tests` keeps
-/// under that name, renamed to fit beside it.
+/// Named apart from the `text` the grid tests use.
 fn buffer_text(buffer: &Buffer) -> String {
     buffer.content().iter().map(Cell::symbol).collect()
 }
 
-/// A frame height at which the whole catalogue fits inside the palette,
-/// derived rather than pinned: the block takes `HEIGHT_PERCENT` of the
-/// frame, so a catalogue that grows by one command would otherwise rot
-/// every test that hard-codes a "tall enough" number.
+/// Derived from the catalogue so growth does not rot the tests.
 fn tall_enough_for_the_catalogue() -> u16 {
     let needed = u16::try_from(lc_domain::commands::row_count(None) + 2).expect("small");
 
     needed.div_ceil(7).saturating_mul(10)
 }
 
-/// The palette's first heading, its keys column, and the rule under the
-/// first group, read as styled cells rather than as text.
 #[test]
 fn the_palette_marks_a_group_the_way_a_section_heading_is_marked() {
     let buffer = with_palette(100, 40);
     let (x, y) = top_border(&buffer, "Commands");
     let theme = Theme::default();
-    // One column for the border, one for the palette's own padding.
+    // Border and pad.
     let first = x + 2;
     let cell = |at: u16| buffer.cell((first, at)).expect("inside the block");
 
@@ -84,13 +76,9 @@ fn a_rule_separates_one_group_from_the_next() {
     );
 }
 
-/// A rule joins the block it divides: it reaches both borders and turns
-/// them into junctions, rather than stopping at the pad columns and
-/// reading as a row of content.
 #[test]
 fn a_rule_meets_the_block_it_divides() {
-    // Tall enough that the whole catalogue fits, so no scrollbar owns the
-    // right border where the rule lands.
+    // Tall enough that no scrollbar owns the right border.
     let buffer = with_palette(100, tall_enough_for_the_catalogue());
     let area = block_area(&buffer, "Commands");
     let symbol = |x: u16, y: u16| {
@@ -109,8 +97,6 @@ fn a_rule_meets_the_block_it_divides() {
     assert_eq!(symbol(area.right() - 2, rule), symbols::line::HORIZONTAL);
 }
 
-/// The action leads, the keys follow — the shape a search-actions dialogue
-/// has, and the reason `MIN_W`'s two columns swapped places.
 #[test]
 fn a_command_row_names_what_it_does_before_the_key_it_costs() {
     let buffer = with_palette(100, 40);
@@ -145,14 +131,12 @@ fn the_palette_wears_the_focus_the_panels_gave_up() {
     );
 }
 
-/// Not focused, and not fainter than the panels that were never focused
-/// either: the title reads as any unfocused title does.
 #[test]
 fn the_panel_the_palette_covers_reads_as_an_unfocused_one() {
     let buffer = with_palette(100, 40);
     let theme = Theme::default();
     let (x, y) = top_border(&buffer, "Tables");
-    // Past the corner, the two border dashes and the pad, onto the title.
+    // Past the corner, two dashes and the pad.
     let title = buffer.cell((x + 4, y)).expect("the title is drawn");
 
     assert_eq!(
@@ -226,9 +210,7 @@ fn the_palette_lists_the_catalogue() {
     let drawn = buffer_text(&with_palette(100, 40));
 
     assert!(drawn.contains("Commands"), "the block is titled");
-    // Strings only the palette can produce: the hint bar already draws
-    // "q quit" along the bottom row, so asserting on "quit" would pass
-    // with no palette at all.
+    // Only the palette draws these; "quit" is on the bar too.
     assert!(drawn.contains("Global"));
     assert!(drawn.contains("back out one step"));
     assert!(drawn.contains("focus Table contents"));
@@ -240,8 +222,7 @@ fn the_selected_command_is_highlighted() {
     let buffer = with_palette(100, 40);
     let (x, y) = top_border(&buffer, "Commands");
 
-    // Row 0 of the list is the `Global` heading, so the opened cursor sits
-    // on row 1: one down for the border, one for the heading.
+    // Below the border and the `Global` heading.
     let selected = y + 2;
     let highlight = Theme::default()
         .style(Token::Selected)
@@ -253,11 +234,8 @@ fn the_selected_command_is_highlighted() {
     assert!(!styled(selected + 1), "and only the cursor's row is");
 }
 
-/// Whether the block titled `title` has a scrollbar drawn over its right
-/// border. The track scan stops above the bottom border row: that row's
-/// corner is `┘`, which is `!= "│"` whether or not a scrollbar was drawn,
-/// and including it would make the scan true unconditionally. The palette's
-/// group rules meet the same border and are skipped for the same reason.
+/// Stops above the bottom corner and skips group rules, either of which would
+/// make the scan always true.
 fn has_scrollbar(buffer: &Buffer, title: &str) -> bool {
     let area = block_area(buffer, title);
     let x = area.right() - 1;
@@ -274,14 +252,13 @@ fn has_scrollbar(buffer: &Buffer, title: &str) -> bool {
 
 #[test]
 fn a_palette_that_overflows_says_so() {
-    // 70% of 24 rows leaves 14 for a catalogue in the low twenties.
+    // 70% of 24 rows leaves 14.
     assert!(
         has_scrollbar(&with_palette(100, 24), "Commands"),
         "a catalogue taller than the box gets a scrollbar"
     );
 
-    // Given a frame that holds the whole catalogue (design §10) there is
-    // no scrollbar — and its absence is what says nothing is hidden.
+    // The whole catalogue fits, so no scrollbar.
     assert!(
         !has_scrollbar(
             &with_palette(100, tall_enough_for_the_catalogue()),
@@ -336,8 +313,7 @@ fn a_frame_too_small_for_a_palette_does_not_get_one() {
 
 #[test]
 fn the_narrowest_palette_still_fits_its_widest_row() {
-    // 50% of 78 columns lands exactly on MIN_W, the floor a wider action
-    // would clip against if the margin were counted on one side only.
+    // 50% of 78 columns is exactly MIN_W.
     let drawn = buffer_text(&with_palette(78, 40));
 
     assert!(
@@ -348,9 +324,7 @@ fn the_narrowest_palette_still_fits_its_widest_row() {
 
 #[test]
 fn a_frame_that_would_clip_the_widest_row_gets_no_palette() {
-    // 50% of 76 columns is 38, one under MIN_W. A gate that let this
-    // through would draw a palette whose widest row is clipped by one
-    // character rather than refusing it outright.
+    // 50% of 76 is 38, one under MIN_W.
     let drawn = buffer_text(&with_palette(76, 40));
 
     assert!(!drawn.contains("Commands"), "the block must not be titled");
@@ -373,8 +347,7 @@ fn the_frame_reports_how_many_rows_a_palette_would_show() {
         })
         .expect("TestBackend always draws");
 
-    // 70% of 24 rows is 16, less two borders — reported with no palette
-    // open, because it is what gates `?` (design §5.1).
+    // 70% of 24 is 16, less two borders.
     assert_eq!(geometry.command_rows(), 14);
 }
 

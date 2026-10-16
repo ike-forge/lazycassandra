@@ -1,11 +1,7 @@
 //! WCAG relative luminance and contrast, for the palette tests.
-//!
-//! Test-only: a palette is a table of constants, and the thing worth asserting
-//! about a table of constants is that someone can read it.
 
 use ratatui::style::Color;
 
-/// WCAG 2.x relative luminance.
 pub(crate) fn luminance(color: Color) -> f64 {
     let Color::Rgb(red, green, blue) = color else {
         panic!("every palette role is a Color::Rgb, got {color:?}");
@@ -24,8 +20,7 @@ fn channel(value: u8) -> f64 {
     }
 }
 
-/// WCAG 2.x contrast ratio, `1.0` for identical colours and `21.0` for black
-/// against white.
+/// `1.0` for identical colours, `21.0` for black on white.
 pub(crate) fn ratio(a: Color, b: Color) -> f64 {
     let (a, b) = (luminance(a), luminance(b));
     let (lighter, darker) = if a > b { (a, b) } else { (b, a) };
@@ -58,9 +53,8 @@ mod tests {
         assert!((ratio(grey, WHITE) - ratio(WHITE, grey)).abs() < 0.001);
     }
 
-    /// The mid-grey web accessibility guidance names as the 4.5:1 boundary
-    /// against white. Pins the transfer function rather than the arithmetic
-    /// around it — a linear channel would put this near 3.
+    /// The 4.5:1 boundary grey pins the sRGB transfer function; a linear one
+    /// would give about 3.
     #[test]
     fn the_transfer_function_is_srgb_rather_than_linear() {
         let ratio = ratio(Color::Rgb(0x76, 0x76, 0x76), WHITE);

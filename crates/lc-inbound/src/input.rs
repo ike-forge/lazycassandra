@@ -8,10 +8,9 @@ use lc_domain::pointer::{Pointer, Wheel};
 
 use crate::hit::FrameMap;
 
-/// Returns `None` for events the domain has no vocabulary for.
-///
-/// Key *release* events are among them: Windows and the kitty protocol report
-/// them, and treating one as a press double-fires every binding.
+/// `None` for events the domain has no words for, including releases: Windows
+/// and the kitty protocol report them, and treating one as a press
+/// double-fires.
 #[must_use]
 pub fn to_key_press(event: KeyEvent) -> Option<KeyPress> {
     if event.kind == KeyEventKind::Release {
@@ -49,12 +48,8 @@ pub fn to_key_press(event: KeyEvent) -> Option<KeyPress> {
     })
 }
 
-/// Whether a pointer event is one of the gestures anything binds.
-///
-/// The reader thread refuses the rest before they cost a channel send:
-/// `EnableMouseCapture` turns on any-event tracking, so a pointer crossing
-/// the window reports one event per cell
-/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §2).
+/// Filtered on the reader thread: any-event tracking reports every cell the
+/// pointer crosses.
 #[must_use]
 pub fn is_bound(event: MouseEvent) -> bool {
     event.modifiers.is_empty()
@@ -68,18 +63,11 @@ pub fn is_bound(event: MouseEvent) -> bool {
         )
 }
 
-/// Resolves a pointer event against the frame it happened in.
-///
-/// Returns `None` for a gesture the design does not bind, and for one that
-/// landed outside every panel
-/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §2).
+/// `None` for unbound gestures and presses outside every panel.
 #[must_use]
 pub fn to_pointer(event: MouseEvent, map: &FrameMap) -> Option<Pointer> {
-    // ctrl and alt make a gesture of their own, refused here rather than
-    // folded into the plain one, exactly as `handle_key` refuses them. shift
-    // is refused too, for a different reason: under mouse capture, shift-drag
-    // is the terminal's own text-selection escape hatch, so a shifted press is
-    // a user selecting text rather than clicking a row (design §6).
+    // ctrl and alt are refused as `handle_key` refuses them. Shift is refused
+    // because shift-drag is the terminal's text-selection escape.
     if !is_bound(event) {
         return None;
     }
@@ -110,8 +98,7 @@ mod tests {
     use lc_domain::pointer::Click;
     use ratatui::layout::Rect;
 
-    /// Tables at the top-left of a 40×12 frame, drawing three rows from the
-    /// first row inside its border.
+    /// Tables top-left of 40×12, three rows from the first inside its border.
     fn map() -> FrameMap {
         FrameMap::new([
             PanelHit {
@@ -229,10 +216,7 @@ mod tests {
         }
     }
 
-    /// The reader thread's filter and `to_pointer`'s refusal must never
-    /// disagree in the direction that drops something the domain would have
-    /// accepted — a filter that is merely stricter is safe, one that is looser
-    /// is a silent behaviour change.
+    /// The filter may be stricter than `to_pointer`, never looser.
     #[test]
     fn is_bound_accepts_everything_to_pointer_would() {
         let kinds = [

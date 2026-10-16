@@ -1,10 +1,5 @@
-//! Resolving a pointer position against the frame it happened in.
-//!
-//! Assembled from the values that did the drawing — the `Rect` a panel was
-//! given and the `Extent` its body returned — rather than computed a second
-//! time. A second description of the layout drifts, and drift here is silent:
-//! presses landing on the wrong row
-//! (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
+//! Resolving a pointer position against the frame it happened in, assembled
+//! from what did the drawing: a second layout description drifts silently.
 
 use lc_domain::export::Field;
 use lc_domain::model::Key;
@@ -15,11 +10,7 @@ use unicode_width::UnicodeWidthChar as _;
 
 use crate::body::{Body, Unit};
 
-/// A run of screen columns, and what was drawn across it.
-///
-/// Half-open — `start..end`, in absolute frame coordinates — and generic in
-/// what it names, because a grid's columns are named by index and a title
-/// strip's tabs by their place in the strip.
+/// Half-open, in frame coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Band<T> {
     pub(crate) start: u16,
@@ -32,7 +23,6 @@ impl<T: Copy> Band<T> {
         x >= self.start && x < self.end
     }
 
-    /// What the band holding `x` names, if one does.
     fn at(bands: &[Self], x: u16) -> Option<T> {
         bands
             .iter()
@@ -41,35 +31,25 @@ impl<T: Copy> Band<T> {
     }
 }
 
-/// One of a heading's marks, and the page column it belongs to.
-///
-/// What a [`Band`] over the two mark cells names, so resolving a press there
-/// needs no second description of which column it sat over
-/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MarkAt {
     pub(crate) column: usize,
     pub(crate) mark: Mark,
 }
 
-/// Where each panel's content ended up in the frame just drawn.
-///
-/// The default is a frame with nothing in it, which nothing can be clicked in
-/// — what a frame below the minimum size reports.
+/// The default is an empty frame, which nothing can be clicked in.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FrameMap {
     /// In [`Panel::ALL`] order.
     panels: [PanelHit; 4],
-    /// The modal standing over them, when it answers presses of its own.
+    /// Only when it answers presses of its own.
     modal: Option<Modal>,
 }
 
-/// A modal's block and what is drawn in it, as a press sees them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Modal {
     pub(crate) area: Rect,
     pub(crate) buttons: Vec<ButtonAt>,
-    /// What a press takes effect on, off the buttons: a form's fields.
     pub(crate) fields: Vec<FieldAt>,
     pub(crate) list: Option<Listed>,
 }
@@ -93,7 +73,6 @@ impl Modal {
     }
 }
 
-/// A form field's columns, and what a press in them chooses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FieldAt {
     pub(crate) area: Rect,
@@ -103,12 +82,10 @@ pub(crate) struct FieldAt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Target {
     Fixed(Field),
-    /// A text field, which a press also places the caret in.
     Text(TextAt),
 }
 
-/// The text a field drew, and where its window began: enough to say which
-/// character a column was over without asking the renderer again.
+/// Enough to name the character under a column without asking the renderer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TextAt {
     pub(crate) text: String,
@@ -118,7 +95,6 @@ pub(crate) struct TextAt {
 }
 
 impl Target {
-    /// The field a press `offset` columns into the area chose.
     fn at(&self, offset: u16) -> Field {
         match self {
             Self::Fixed(field) => *field,
@@ -136,8 +112,7 @@ impl Target {
 }
 
 impl TextAt {
-    /// The caret goes before the character under the column, or at the end
-    /// of the text when the press is past it.
+    /// Before the character under the column, or at the end past it.
     fn cursor_at(&self, offset: u16) -> usize {
         let mut used = 0u16;
 
@@ -153,7 +128,6 @@ impl TextAt {
     }
 }
 
-/// A list drawn one row to a line down `area`, `first` at its top.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Listed {
     pub(crate) area: Rect,
@@ -172,59 +146,38 @@ impl Listed {
     }
 }
 
-/// One button, and the key pressing it stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ButtonAt {
     pub(crate) area: Rect,
     pub(crate) key: Key,
 }
 
-/// One panel, as a press sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct PanelHit {
     pub(crate) panel: Panel,
-    /// The whole block, borders included.
     pub(crate) area: Rect,
-    /// The body, inside the borders.
     pub(crate) inner: Rect,
-    /// The tabs on the top border, each naming its place in the strip.
     pub(crate) tabs: Vec<Band<usize>>,
-    /// The columns of a grid body, each naming its index in the page.
     pub(crate) columns: Vec<Band<usize>>,
-    /// The two marks each drawn heading carries, inside those columns.
     pub(crate) marks: Vec<Band<MarkAt>>,
     pub(crate) rows: Option<RowStrip>,
 }
 
-/// The band of a body that drew rows, and how to name the one at a given
-/// screen row.
-///
-/// Two variants because the two regimes cannot be told apart by a count: a
-/// list stands one row to a line, and the Ddl body wraps one row across
-/// several. A `header` beside a line map would let a caller ask a body that
-/// wraps how many lines its chrome takes, which is not a question it has an
-/// answer to (conventions.md §1).
+/// A list is one row per line; Ddl wraps one row over several, and has no
+/// `header` to ask about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RowStrip {
-    /// One screen row per row.
     Rows {
-        /// Screen row of the first row drawn — below whatever chrome the body
-        /// spends above it, such as a grid's header.
+        /// Below the body's own chrome, such as a grid's header.
         top: u16,
-        /// The row index drawn at `top`.
         first: usize,
-        /// How many rows exist, which is what makes the blank space below a
-        /// short list chrome rather than a row.
+        /// Makes the blank below a short list chrome.
         len: usize,
     },
-    /// Wrapped lines, each naming the row it came from.
     Lines {
-        /// Screen row of the first line drawn.
         top: u16,
-        /// The line index drawn at `top`.
         first: usize,
-        /// The row each line belongs to, over the whole body — not only the
-        /// lines scrolled into view.
+        /// Over the whole body, not only what is in view.
         rows: Vec<Option<usize>>,
     },
 }
@@ -241,10 +194,8 @@ impl FrameMap {
         Self { modal, ..self }
     }
 
-    /// What a press at `column`, `row` means: a modal's button, a row of its
-    /// list, the rest of its block (which answers nothing), or else whatever [`Self::hit`] finds
-    /// beneath — which, with a modal up, the domain reads as the click outside
-    /// it that dismisses it.
+    /// With a modal up, a miss on it falls through to [`Self::hit`], which the
+    /// domain reads as a dismissing click.
     pub(crate) fn press(&self, column: u16, row: u16) -> Option<Pointer> {
         let position = Position::new(column, row);
 
@@ -275,9 +226,7 @@ impl FrameMap {
         self.hit(column, row).map(Pointer::Click)
     }
 
-    /// `gesture` over the modal button under `column`, `row` — or over none,
-    /// when it is off them. `None` outright with no modal up, where a release
-    /// or a drag means nothing.
+    /// `None` with no modal up.
     pub(crate) fn over(
         &self,
         column: u16,
@@ -296,13 +245,8 @@ impl FrameMap {
         ))
     }
 
-    /// What a press at `column`, `row` resolves to, or `None` when it landed
-    /// outside every panel — the hint bar, or a frame too small to draw panels
-    /// in.
-    ///
-    /// `pub(crate)`: `to_pointer` is the only caller outside this module's own
-    /// tests, and keeping resolution behind it is what makes "`lc-inbound`
-    /// resolves" (design §3) a single route rather than a convention.
+    /// `None` outside every panel. `pub(crate)` so `to_pointer` is the single
+    /// route.
     #[must_use]
     pub(crate) fn hit(&self, column: u16, row: u16) -> Option<Click> {
         let position = Position::new(column, row);
@@ -336,9 +280,8 @@ impl PanelHit {
     fn click_at(&self, position: Position) -> Click {
         let chrome = Click::Panel(self.panel);
 
-        // The strip sits on the top border, which is chrome everywhere else
-        // along its length — so the tabs are asked before the fall-through, not
-        // after it.
+        // Tabs sit on the top border, so they are asked before the chrome
+        // fall-through.
         if position.y == self.area.y
             && let Some(tab) = Band::at(&self.tabs, position.x)
         {
@@ -356,16 +299,10 @@ impl PanelHit {
 
         match &self.rows {
             Some(RowStrip::Rows { top, first, len }) => {
-                // Above the first row and still inside the body is a grid's
-                // heading: it names a column and no row, which is the `h`/`l`
-                // binding rather than a sort nobody asked for (design §1).
+                // A grid heading names a column and no row.
                 if position.y < *top {
-                    // The marks are asked before the column they sit inside,
-                    // the same order the tab strip is asked before the border
-                    // it sits on: a press on a mark is the `s`/`f` binding,
-                    // and a press anywhere else in the heading is still the
-                    // `h`/`l` one
-                    // (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+                    // Marks first: a press on one is `s`/`f`; elsewhere in the
+                    // heading it is `h`/`l`.
                     if let Some(at) = Band::at(&self.marks, position.x) {
                         return Click::Mark {
                             panel: self.panel,
@@ -408,8 +345,7 @@ impl PanelHit {
                         row,
                         column: None,
                     },
-                    // A blank between two groups, a section heading, or a line
-                    // past the end of a body shorter than its panel.
+                    // A blank between groups, a heading, or past a short body.
                     None => chrome,
                 }
             }
@@ -419,8 +355,7 @@ impl PanelHit {
 }
 
 impl RowStrip {
-    /// `None` when the body drew nothing a press can land on: a blank panel, a
-    /// notice, or the Queries editor.
+    /// `None` for a blank panel, a notice, or the editor.
     fn of(inner: Rect, body: Option<&Body>) -> Option<Self> {
         let body = body?;
 
@@ -452,8 +387,6 @@ mod tests {
         })
     }
 
-    /// A bordered panel at `area` drawing `len` rows from `first`, with
-    /// `header` rows of its own chrome above the first one.
     fn listed(panel: Panel, area: Rect, header: u16, first: usize, len: usize) -> PanelHit {
         let inner = inner(area);
 
@@ -472,8 +405,6 @@ mod tests {
         }
     }
 
-    /// A bordered panel at `area` whose body wraps its rows over `rows` lines,
-    /// drawn from line `first`.
     fn wrapped(panel: Panel, area: Rect, first: usize, rows: &[Option<usize>]) -> PanelHit {
         let inner = inner(area);
 
@@ -492,7 +423,6 @@ mod tests {
         }
     }
 
-    /// A bordered panel at `area` whose body no press can address.
     fn plain(panel: Panel, area: Rect) -> PanelHit {
         PanelHit {
             panel,
@@ -505,8 +435,6 @@ mod tests {
         }
     }
 
-    /// `panel` as a grid: `header` above the rows, and `widths` columns laid
-    /// out from `x` with one spacing column between them.
     fn gridded(panel: Panel, area: Rect, len: usize, x: u16, widths: &[u16]) -> PanelHit {
         let inner = inner(area);
         let mut start = x;
@@ -541,8 +469,8 @@ mod tests {
         }
     }
 
-    /// Tables down the left, Contents down the right, in a 40×12 frame whose
-    /// bottom row belongs to the hint bar.
+    /// Tables down the left, Contents down the right, 40×12 with the hint bar
+    /// on the bottom row.
     fn map(tables: PanelHit) -> FrameMap {
         FrameMap::new([
             tables,
@@ -741,8 +669,7 @@ mod tests {
         );
     }
 
-    /// Contents at 24 columns from x=16: the bar and gutter take x=17, the
-    /// spacing x=18, then two four-wide columns.
+    /// Bar and gutter at x=17, spacing at x=18, then two four-wide columns.
     fn grid_map() -> FrameMap {
         FrameMap::new([
             plain(Panel::Tables, Rect::new(0, 0, 16, 7)),
@@ -789,9 +716,6 @@ mod tests {
         );
     }
 
-    /// [`grid_map`] with the two marks of its first column laid over the
-    /// last two cells of that heading, as [`crate::body::mark_bands`] places
-    /// them.
     fn marked_map() -> FrameMap {
         let mut hit = gridded(Panel::Contents, Rect::new(16, 0, 24, 8), 2, 19, &[4, 4]);
         hit.marks = [(21, Mark::Sort), (22, Mark::Filter)]

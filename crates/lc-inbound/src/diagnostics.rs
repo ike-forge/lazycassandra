@@ -1,8 +1,5 @@
-//! What the config files got wrong, drawn over the panels at startup.
-//!
-//! A `List` rather than `overlay.rs`'s `Paragraph`: diagnostics are a list,
-//! and that block's sizing under-counts an embedded newline by its own
-//! admission, so a multi-line message truncates (design §9).
+//! Config diagnostics, drawn at startup. A `List`, not `overlay.rs`'s
+//! `Paragraph`, which truncates multi-line messages.
 
 use lc_domain::style::Token;
 use lc_domain::view::DiagnosticRow;
@@ -19,9 +16,8 @@ const HEIGHT_PERCENT: u16 = 60;
 const MIN_W: u16 = 32;
 const MIN_H: u16 = 6;
 const MAX_W: u16 = 90;
-/// Between the left border and the location.
 const PAD: u16 = 1;
-/// The severity's column, wide enough for "warning".
+/// Wide enough for "warning".
 const SEVERITY: usize = 7;
 
 fn rect(area: Rect, rows: usize) -> Option<Rect> {
@@ -83,8 +79,7 @@ pub(crate) fn render(frame: &mut Frame, rows: &[DiagnosticRow], selected: usize,
     }
 }
 
-/// Two lines: where, then how bad and what. The location is `Muted` because
-/// the severity is what the eye should land on first.
+/// The location is muted so the eye lands on the severity first.
 fn item(row: &DiagnosticRow, theme: Theme) -> ListItem<'static> {
     let severity = match row.severity {
         lc_domain::style::Severity::Danger => "error",
@@ -157,10 +152,8 @@ mod tests {
         let without_scrollbar = drawn(&rows(1), 60, 12);
         let with_scrollbar = drawn(&rows(40), 60, 12);
 
-        // `▐` is the scrollbar thumb glyph (`render::THUMB`), not the box
-        // border's `│` — asserting on the border character would pass even
-        // with the scrollbar deleted, which is the bug this test exists to
-        // catch.
+        // `▐` is the thumb; the border's `│` would be there without a
+        // scrollbar.
         assert!(
             !without_scrollbar.contains('▐'),
             "a block with everything visible must not draw a scrollbar thumb: {without_scrollbar}"
@@ -173,10 +166,8 @@ mod tests {
 
     #[test]
     fn a_row_count_that_fits_by_lines_but_not_by_rows_still_gets_a_scrollbar() {
-        // Each row is two lines. A block whose inner height fits `rows.len()`
-        // *lines* still hides every row past `inner.height / 2` — the bug
-        // this test exists to catch counted lines where it should have
-        // counted rows.
+        // Two lines per row: counting lines instead hides rows past half the
+        // height.
         let drawn = drawn(&rows(7), 80, 24);
 
         assert!(

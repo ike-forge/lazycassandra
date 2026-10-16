@@ -1,25 +1,7 @@
-//! Drawing a [`Details`] body in a panel about twenty columns wide.
-//!
-//! Names are never abbreviated and values are never truncated: there is no
-//! expansion mechanism yet, so an abbreviation would owe the reader a decoder
-//! and a truncation would hide data permanently
-//! (docs/superpowers/specs/2026-08-09-table-metadata-design.md §6). Wrapping spends lines
-//! instead, which is why the option ordering carries so much weight.
-//!
-//! Widths are counted in `char`s. Every identifier this panel draws is ASCII;
-//! a comment carrying wide characters misaligns by a column, which `ratatui`
-//! clips rather than corrupts, and a `unicode-width` dependency is not worth
-//! that.
-//!
-//! A row's selection spans as many lines as it wrapped to
-//! (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.2), so `lay_out` reports
-//! back where it drew the highlight as a [`Span`] over the wrapped lines,
-//! rather than the row index the cursor carries in. `List` and `Table` need a
-//! guard against a selection scrolled out of view, because a stateful widget
-//! insists on scrolling one it cannot see back into view; `Paragraph` carries
-//! no selection of its own, and only ever draws the lines it is scrolled to,
-//! clipping the rest — so a highlight above or below the offset is simply
-//! never drawn, and there is nothing here to guard.
+//! Drawing a [`Details`] body about twenty columns wide. Names are never
+//! abbreviated and values never truncated: there is no way to expand them, so
+//! lines wrap instead. Widths count `char`s; a wide character misaligns by a
+//! column, which ratatui clips.
 
 use lc_domain::grid::BAR;
 use lc_domain::model::{ClusteringOrder, Setting};
@@ -39,30 +21,19 @@ use crate::theme::Theme;
 const ASCENDING: &str = " ↑";
 const DESCENDING: &str = " ↓";
 const INDENT: usize = 2;
-/// A wrapped value or type falls to its own line, one step in from the name.
+/// A wrapped value falls to its own line, one step in from the name.
 const TYPE_INDENT: usize = 4;
 const ELLIPSIS: char = '…';
-/// What separates one setting of a class-valued property from the next.
 const BULLET: &str = "· ";
 
-/// A body's lines, and where the selected row landed among them.
 pub(crate) struct Laid {
     pub(crate) lines: Vec<Line<'static>>,
     pub(crate) selection: Span,
-    /// The row each line was wrapped from, in step with `lines`. `None` for the
-    /// lines that belong to no row: the blanks between groups, and the section
-    /// headings.
-    ///
-    /// The inverse of [`Laid::selection`], and needed for the same reason it
-    /// is: this is the one panel whose rows do not stand one to a line, so a
-    /// press cannot name a row by arithmetic on the line it landed on.
+    /// The inverse of [`Laid::selection`]: rows here span several lines, so a
+    /// press cannot name one by arithmetic.
     pub(crate) rows: Vec<Option<usize>>,
 }
 
-/// The view model's Ddl body, as the renderer reads it.
-///
-/// A struct rather than five more parameters, the same reason `body.rs`'s
-/// `GridView` and `TreeView` exist.
 #[derive(Clone, Copy)]
 pub(crate) struct DetailsView<'a> {
     pub(crate) details: &'a Details,
@@ -95,8 +66,8 @@ pub(crate) fn render(
         theme,
     );
     let total = laid.lines.len();
-    // `Paragraph::scroll` is u16, and a body past 65535 lines is unreachable;
-    // the extent keeps the offset itself, so the thumb stays right regardless.
+    // `Paragraph::scroll` is u16; the extent keeps the true offset, so the
+    // thumb stays right.
     let scroll = u16::try_from(offset).unwrap_or(u16::MAX);
 
     frame.render_widget(Paragraph::new(laid.lines).scroll((scroll, 0)), area);
@@ -112,16 +83,8 @@ pub(crate) fn render(
     )
 }
 
-/// Every line the body occupies at `width`, with the selected row highlighted
-/// across all of its own.
-///
-/// The span is what the frame reports back as `Geometry::ddl_selection`, so
-/// the domain can bound an offset over text it cannot wrap itself
-/// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4). It is measured
-/// against every line this function produces, never against the ones a
-/// caller happens to scroll into view — an offset must never feed back into
-/// what is measured, or a redraw could chase its own tail
-/// (architecture.md §3).
+/// Measured over every line, never only those scrolled into view: an offset
+/// must not feed back into the measurement (architecture.md §3).
 pub(crate) fn lay_out(
     details: &Details,
     selected: usize,
@@ -130,11 +93,8 @@ pub(crate) fn lay_out(
     search: Option<&Search>,
     theme: Theme,
 ) -> Laid {
-    // Every row reserves the bar's column, the Tables tree's way and the
-    // Contents grid's, so nothing shifts sideways as the cursor moves
-    // (docs/superpowers/specs/2026-08-10-table-display-design.md §4.2). A
-    // heading is no cursor stop, so it opens at the margin and keeps the
-    // column for its own text.
+    // Every row reserves the bar's column so nothing shifts; a heading is no
+    // cursor stop and keeps it.
     let content = width.saturating_sub(usize::from(BAR));
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut rows: Vec<Option<usize>> = Vec::new();
@@ -143,9 +103,7 @@ pub(crate) fn lay_out(
     let mut previous: Option<Group> = None;
 
     for section in &details.sections {
-        // The one row spent on separation, and only where it buys a split
-        // between two of the panel's parts: what the rows are about, what the
-        // table is, what it is configured to do.
+        // One blank line between the panel's parts.
         if previous.is_some_and(|group| group != section.group) {
             lines.push(Line::raw(""));
             rows.push(None);
@@ -168,12 +126,8 @@ pub(crate) fn lay_out(
         for detail in &section.rows {
             let mut drawn = row_lines(detail, content, style, search, theme);
 
-            // The band first, the cursor's highlight over it, the way the
-            // tree and the grid stack them: a yank sends the cursor back to
-            // the row `v` was pressed on, so the anchor is both the cursor
-            // and part of what was taken, and a row that answered only to the
-            // cursor would drop the afterglow exactly there (visual mode
-            // design §6.1).
+            // Band first, cursor highlight over it: the anchor is both cursor
+            // and part of what was yanked.
             if marked.holds(row) {
                 let band = theme.style(marked.band);
                 drawn = drawn.into_iter().map(|line| patched(line, band)).collect();
@@ -213,13 +167,7 @@ pub(crate) fn lay_out(
     }
 }
 
-/// `text` behind its icon, or bare where the two together would push the name
-/// past `width`.
-///
-/// The name comes first: an icon says what a heading is, and the heading
-/// already says it in words — so the two columns it spends are given up rather
-/// than paid for out of a name this panel promises never to abbreviate
-/// (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §4).
+/// The icon is dropped before the name is abbreviated.
 fn prefixed(icon: &str, text: &str, width: usize) -> String {
     if icon.chars().count() + text.chars().count() > width {
         return text.to_owned();
@@ -262,17 +210,8 @@ fn row_lines(
     }
 }
 
-/// `Keyspace` or `Table` at the left, the name it carries at the right margin
-/// — the shape a key column already uses, so the two read as one table down
-/// the panel.
-///
-/// Label and name both wear the icon and the colour the Tables tree gives that
-/// kind of name. This withdraws
-/// docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.2's "the name
-/// is left plain": the name is the schema, and a schema name reads as one
-/// wherever it is written — the tree, the Table contents title, this row
-/// (vision.md §2). The two runs are one colour, not two, so the line is no
-/// busier than it was.
+/// Shaped like a key column. Both runs wear the tree's colour for that kind: a
+/// schema name reads as one wherever it is written.
 fn identity_lines(
     kind: IdentityKind,
     name: &str,
@@ -322,14 +261,7 @@ fn key_column_lines(
     )
 }
 
-/// A column in the Columns tab: the key glyph in the two columns the other tab
-/// spends on indentation, then the name, then the type at the margin.
-///
-/// The whole row wears the kind's colour rather than a marker alone. The glyph
-/// only says whether the column is part of the primary key — which of the two
-/// keys, and whether a non-key column is static, is what the colour carries,
-/// and it can only carry it by covering the row
-/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §5).
+/// The whole row wears the kind's colour: the glyph only says key or not.
 fn column_lines(
     name: &str,
     cql_type: &str,
@@ -351,9 +283,7 @@ fn column_lines(
         .collect()
 }
 
-/// `text` with its first `taken` characters lifted into a span of their own;
-/// the rest split against `search` in the same style (the label is never
-/// matched — Identity matches only `name`, search highlight design §4.2).
+/// Labels are never matched.
 fn marked(
     text: &str,
     taken: usize,
@@ -369,8 +299,6 @@ fn marked(
     Line::from(spans)
 }
 
-/// `left` with `right` at the margin when the two fit, `right` wrapped beneath
-/// it when they do not.
 fn laid_out(left: &str, right: &str, width: usize) -> Vec<String> {
     match gap(left, right, width) {
         Some(gap) => vec![format!("{left}{}{right}", " ".repeat(gap))],
@@ -380,17 +308,8 @@ fn laid_out(left: &str, right: &str, width: usize) -> Vec<String> {
     }
 }
 
-/// A property on one line when its name and value both fit, with the value at
-/// the right margin; name over indented value when they do not.
-///
-/// The margin is per row rather than a column shared by the whole section: a
-/// column is set by the widest name, and one long name then pushes every other
-/// value past the edge — `bloom_filter_fp_chance` puts it at 23, where
-/// `gc_grace_seconds` and `864000` need 29 of a 28-column panel
-/// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.2).
-///
-/// Which properties get one line therefore follows from their length. `comment`
-/// and `compaction` wrap because they are long, not because they are named.
+/// Per-row margin, not a section column: one long name would push every value
+/// past the edge.
 fn property_lines(
     name: &str,
     value: &str,
@@ -421,9 +340,6 @@ fn property_lines(
         .collect()
 }
 
-/// A class-valued property: the class where a plain property puts its value,
-/// and the settings behind it in the colour that keeps the class the thing the
-/// eye lands on.
 fn class_property_lines(
     name: &str,
     class: &str,
@@ -456,10 +372,8 @@ fn class_property_lines(
         return vec![Line::from(spans)];
     }
 
-    // The class and the settings wrap as two blocks rather than as one run of
-    // text: a wrapped line carries one style, and splitting the class across
-    // lines is already the worst this panel does to a name it promises not to
-    // abbreviate — colouring half of it faint on top of that would be worse.
+    // Class and settings wrap as separate blocks: a wrapped line carries one
+    // style.
     std::iter::once(name_line(name, width, search, label, theme))
         .chain(highlighted(
             crate::wrap::plain(class, width, TYPE_INDENT),
@@ -476,8 +390,7 @@ fn class_property_lines(
         .collect()
 }
 
-/// A property name sits one step in from the heading, where a key column's
-/// name does.
+/// One step in from the heading, where a key column's name sits.
 fn name_spans(
     name: &str,
     search: Option<&Search>,
@@ -521,8 +434,7 @@ fn highlighted(
         .map(move |text| Line::from(crate::highlight::spans(&text, search, style, theme)))
 }
 
-/// The settings run as it follows the class on a shared line: with the space
-/// the class does not carry itself, and empty where there are no settings.
+/// Empty where there are no settings.
 fn tail_at(tail: &str) -> String {
     if tail.is_empty() {
         String::new()
@@ -531,9 +443,7 @@ fn tail_at(tail: &str) -> String {
     }
 }
 
-/// The spaces that put `right` at the margin of a `width`-column line already
-/// holding `left`, or `None` when the two cannot share a line with a gap
-/// between them.
+/// `None` when the two cannot share a line with a gap.
 fn gap(left: &str, right: &str, width: usize) -> Option<usize> {
     match width.checked_sub(count(left) + count(right)) {
         Some(gap) if gap > 0 => Some(gap),
@@ -541,8 +451,7 @@ fn gap(left: &str, right: &str, width: usize) -> Option<usize> {
     }
 }
 
-/// The one place `…` appears: a single token wider than the panel, which
-/// nothing else can be done with.
+/// The one place `…` appears: a single token wider than the panel.
 fn truncate(text: &str, width: usize) -> String {
     if count(text) <= width {
         return text.to_owned();
@@ -566,7 +475,6 @@ mod tests {
 
     use super::*;
 
-    /// The text of each line, with the styling dropped.
     fn texts(lines: &[Line<'static>]) -> Vec<String> {
         lines.iter().map(ToString::to_string).collect()
     }
@@ -763,8 +671,6 @@ mod tests {
         );
     }
 
-    /// Label and name alike: the name is the schema, and a schema name is
-    /// drawn as one wherever it is written (vision.md §2).
     #[test]
     fn an_identity_row_carries_the_kinds_colour_over_both_its_halves() {
         let theme = Theme::default();
@@ -786,8 +692,6 @@ mod tests {
         }
     }
 
-    /// A name too long for the margin wraps to a line of its own, which is
-    /// still the same name and still the same colour.
     #[test]
     fn a_wrapped_identity_name_keeps_the_kinds_colour() {
         let theme = Theme::default();
@@ -861,7 +765,7 @@ mod tests {
             "the value is left alone: two treatments on one narrow line is one too many"
         );
 
-        // The wrapped shape marks the same thing the same way.
+        // The wrapped shape marks the same way.
         let wrapped = property_lines(
             "comment",
             "Order history for one customer.",
@@ -884,9 +788,7 @@ mod tests {
 
     #[test]
     fn a_match_a_wrap_split_is_painted_on_neither_half() {
-        // "for one" straddles the wrap boundary: fragment one ends in
-        // "for" and fragment two opens with "one", so neither drawn
-        // fragment holds the whole term (search highlight design §3.1).
+        // "for one" straddles the wrap, so no fragment holds the whole term.
         let theme = Theme::default();
         let search = Search::new("for one").expect("non-empty");
         let style = theme.style(Token::Faint);
@@ -1031,11 +933,6 @@ mod tests {
         }
     }
 
-    /// A yank sends the cursor back to the row `v` was pressed on, so the
-    /// anchor is inside the afterglow *and* under the cursor. The band is what
-    /// says what was taken — the tree and the grid both keep it under the
-    /// cursor's own highlight, and so does this panel (visual mode design
-    /// §6.1).
     #[test]
     fn the_cursor_row_inside_a_range_keeps_the_band_under_its_highlight() {
         let theme = Theme::default();
@@ -1063,9 +960,6 @@ mod tests {
         assert_eq!(cursor.style.bg, selected.bg, "and still says where it is");
     }
 
-    /// A heading is coloured by what it names and its rows by what they are.
-    /// `Section` on the rows would repaint every option value in the heading's
-    /// colour, which is why the two tokens are separate fields.
     #[test]
     fn a_heading_naming_no_schema_concept_is_the_only_part_of_its_group_in_the_section_colour() {
         let theme = Theme::default();

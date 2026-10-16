@@ -24,9 +24,7 @@ fn the_map_resolves_every_drawn_keyspace_to_the_row_that_drew_it() {
 
 #[test]
 fn the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn() {
-    // Twelve keyspaces in a panel that holds five rows forces the tree to
-    // scroll, so the stored offset is not zero and the row under the
-    // pointer is not the row of the same index.
+    // Twelve keyspaces in five rows force a scroll.
     let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
 
@@ -58,8 +56,7 @@ fn the_map_resolves_a_scrolled_tree_to_the_rows_that_were_drawn() {
 
 #[test]
 fn the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn() {
-    // Twenty rows in a panel that holds five forces the grid to scroll, so
-    // the row under the pointer is not the row of the same index.
+    // Twenty rows in five force a scroll.
     let labels: Vec<String> = (0..20).map(|i| format!("row{i:02}")).collect();
     let values: Vec<Vec<CqlValue>> = labels.iter().map(|l| vec![text(l)]).collect();
     let rows: Vec<&[CqlValue]> = values.iter().map(Vec::as_slice).collect();
@@ -92,7 +89,6 @@ fn the_map_resolves_a_scrolled_grid_to_the_rows_that_were_drawn() {
     );
 }
 
-/// The x of the first cell of screen row `y` holding `text`.
 fn column_of(buffer: &Buffer, y: u16, text: &str) -> u16 {
     let line = row(buffer, y);
     let at = line
@@ -102,9 +98,8 @@ fn column_of(buffer: &Buffer, y: u16, text: &str) -> u16 {
     u16::try_from(line[..at].chars().count()).expect("a frame is narrower than u16::MAX")
 }
 
-/// A two-column grid. Every value is unique and none is a row number, so
-/// finding one in the frame finds the cell that drew it rather than the
-/// gutter beside it.
+/// Unique values that are not row numbers, so a find hits the cell, not the
+/// gutter.
 fn grid_state() -> State {
     showing(page_of(
         &["id", "email"],
@@ -115,8 +110,6 @@ fn grid_state() -> State {
     ))
 }
 
-/// The same rule the palette draws between its groups, in the panel's own
-/// border style: it meets both borders rather than floating inside them.
 #[test]
 fn the_rule_under_a_grids_headings_meets_the_panel() {
     let (buffer, _) = draw_mapped(80, 14, &grid_state());
@@ -176,10 +169,6 @@ fn a_grids_heading_names_a_column_rather_than_its_first_row() {
     );
 }
 
-/// The bands and the glyphs are built from the same widths, and this is
-/// what pins them to each other: a press on the arrow the frame actually
-/// drew has to be the sort key
-/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
 #[test]
 fn a_press_on_the_arrow_the_frame_drew_is_the_sort_key() {
     let (buffer, map) = draw_mapped(60, 12, &grid_state());
@@ -276,16 +265,14 @@ fn a_single_tab_panel_resolves_its_title_to_its_one_tab() {
 
 #[test]
 fn the_map_resolves_every_line_of_a_wrapped_ddl_row_to_that_row() {
-    // The Columns tab of `orders()`: the Table identity row is too wide
-    // for 23 columns and wraps onto a second line, and the two rows before
-    // the first column are a blank and a heading (see
-    // `the_columns_tab_draws_every_column_with_its_kind_and_type`).
+    // The identity row wraps at 23 columns; a blank and a heading precede the
+    // first column.
     let (buffer, map) = draw_mapped(104, 41, &listing(orders()));
 
     assert_eq!(
         ddl_rows(&buffer)[..6],
         [
-            // The cursor opens on this row, which is where the bar is.
+            // The cursor opens on this row.
             "▌  \u{f084} Keyspace       shop",
             "   \u{f0ce} Table",
             "     orders_by_customer",

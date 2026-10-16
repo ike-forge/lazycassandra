@@ -2,9 +2,7 @@ use super::*;
 
 #[test]
 fn the_ddl_panel_scrolls_to_the_lines_below_its_fold() {
-    // At 40x20 the sidebar is 16 columns and the Ddl panel is 7 rows, so
-    // its body is fourteen columns of five rows — and `orders()` wraps to
-    // more than five lines in that.
+    // At 40x20 the Ddl body is 14 by 5, which `orders()` overflows.
     const WIDTH: usize = 14;
     const HEIGHT: usize = 5;
 
@@ -33,8 +31,7 @@ fn the_ddl_panel_scrolls_to_the_lines_below_its_fold() {
 
     let before = draw_state(40, 20, &state);
     let after = draw_state(40, 20, &scrolled);
-    // Inside the Ddl panel only: rows 13..17, columns 1..14. A full-width
-    // row would also carry whatever the Contents panel is saying.
+    // Rows 13..17, columns 1..14: the Ddl panel only.
     let visible = |buffer: &Buffer| -> Vec<String> {
         (13..18)
             .map(|y| {
@@ -60,8 +57,7 @@ fn the_ddl_panel_scrolls_to_the_lines_below_its_fold() {
     );
 }
 
-/// The Tables panel's right border at 40x12: column 15, between the
-/// corners at rows 0 and 6.
+/// Column 15 at 40x12, between rows 0 and 6.
 fn tables_border(buffer: &Buffer) -> String {
     (1..4)
         .filter_map(|y| buffer.cell((15, y)))
@@ -102,8 +98,7 @@ fn the_track_is_the_border_itself_rather_than_a_second_bar_beside_it() {
     let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
 
-    // Scrolled to the top, so the thumb is at the top and the rest of the
-    // column is track. `Scrollbar`'s default set would draw `║` here.
+    // Scrolled to the top; the default set would draw `║`.
     let border = tables_border(&draw_state(40, 12, &browsing(&refs, 0)));
     let track: String = border.chars().skip_while(|c| *c == '▐').collect();
 
@@ -131,11 +126,8 @@ fn the_bar_takes_the_border_column_rather_than_a_column_of_content() {
 
 #[test]
 fn what_the_frame_measures_does_not_depend_on_where_it_is_scrolled() {
-    // Both termination guards on the render→domain edge rest on this:
-    // `lc-app` sends only when the geometry changed, and `update` marks
-    // dirty only when the clamp moved the offset. A `Geometry` that varied
-    // with the offset it bounds would close the loop
-    // (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md §3).
+    // A `Geometry` varying with its own offset would close the render-domain
+    // loop.
     let state = describing(orders());
     let mut scrolled = describing(orders());
     scrolled.ddl.scroll.to_end(100, 6);
@@ -156,9 +148,7 @@ fn a_panel_whose_content_fits_keeps_its_border_intact() {
 
 #[test]
 fn the_selection_stays_visible_when_the_list_outgrows_the_panel() {
-    // Three rows of content fit in a five-row Tables panel at this size;
-    // twelve keyspaces force the scroll a plain `List` (no `ListState`)
-    // would silently fail to perform.
+    // Three content rows; twelve keyspaces force a scroll.
     let names: Vec<String> = (0..12).map(|i| format!("ks{i:02}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
 

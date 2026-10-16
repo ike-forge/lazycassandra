@@ -1,8 +1,5 @@
-//! Two hues only — warm amber and cool blue — over a neutral ramp. Green and
-//! red are reserved strictly for success and danger, so a colour that is not
-//! one of those two never means a verdict. Structure is carried by weight and
-//! glyph rather than by hue, which is why `clustering` is warm here and cool
-//! everywhere else (design §3.1, rule 4).
+//! Two hues, warm amber and cool blue, over a neutral ramp; green and red mean
+//! only success and danger. Hence `clustering` is warm here and cool elsewhere.
 
 use crate::theme::{Palette, rgb};
 

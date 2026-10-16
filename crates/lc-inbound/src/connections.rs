@@ -1,15 +1,6 @@
-//! The connection picker: the `[[connections]]` a config defines, drawn over
-//! the panels.
-//!
-//! Wider than the theme picker and for a reason it does not share: a row here
-//! is a name, the hosts behind it and the posture it opens under, because a
-//! name alone does not say which cluster it reaches
-//! (connection picker design §7).
-//!
-//! An empty list is not a short list. It is drawn as guidance naming the file
-//! a connection goes in, sized as a message rather than as rows — a user with
-//! no connections is the one who most needs telling why the panels are empty
-//! (design §3).
+//! The connection picker. Rows are name, hosts and posture, since a name alone
+//! does not say which cluster. An empty list draws guidance naming the config
+//! file.
 
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
@@ -23,28 +14,21 @@ use lc_domain::view::ConnectionRow;
 
 use crate::theme::Theme;
 
-/// The narrowest block that can hold a name, a host and a posture without
-/// truncating all three into uselessness. Below this the picker is refused
-/// rather than drawn, the way the theme picker's fixed width refuses.
+/// Below this the picker is refused.
 const MIN_WIDTH: u16 = 34;
 const MAX_WIDTH: u16 = 72;
 const PAD: u16 = 1;
-/// The gutter the default marker sits in, before every name.
 const MARKER: &str = "● ";
 const NO_MARKER: &str = "  ";
-/// Between the three columns a row is laid out in.
 const GAP: &str = "  ";
 
-/// What marks the entry `default_connection` names. One glyph rather than a
-/// trailing word: the mark belongs to the name it qualifies, and a column of
-/// "(default)" would push the hosts off a narrow block.
+/// A glyph, not "(default)", which would push the hosts off a narrow block.
 fn marker(row: &ConnectionRow) -> &'static str {
     if row.is_default { MARKER } else { NO_MARKER }
 }
 
-/// Rows a picker would show in `area` before it stops fitting entirely — this
-/// block does not scroll, so a list longer than this is refused rather than
-/// opened dead. `themes::visible_rows`' contract, over this block's width.
+/// The block does not scroll, so a longer list is refused rather than opened
+/// dead.
 pub(crate) fn visible_rows(area: Rect) -> usize {
     if area.width < MIN_WIDTH || area.height < 2 {
         return 0;
@@ -53,13 +37,7 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
     usize::from(area.height - 2)
 }
 
-/// The three column widths a row is laid out in: name, hosts, posture.
-///
-/// Measured over every connection rather than the ones a sift left, so the
-/// columns hold still as a filter narrows the list — the rule the block's own
-/// width already follows (overlay filter design §2). Ragged columns would cost
-/// the postures their readability, and a column of postures is the one thing
-/// here worth scanning rather than reading.
+/// Measured over every connection, so columns hold still as a filter narrows.
 fn columns(rows: &[ConnectionRow]) -> [usize; 3] {
     let widest = |of: fn(&ConnectionRow) -> usize| rows.iter().map(of).max().unwrap_or(0);
 
@@ -70,8 +48,6 @@ fn columns(rows: &[ConnectionRow]) -> [usize; 3] {
     ]
 }
 
-/// The width the widest row wants, clamped to what the frame and [`MAX_WIDTH`]
-/// allow.
 fn width(area: Rect, rows: &[ConnectionRow]) -> u16 {
     let [name, hosts, posture] = columns(rows);
     let widest = MARKER.chars().count() + name + GAP.len() + hosts + GAP.len() + posture;
@@ -82,8 +58,6 @@ fn width(area: Rect, rows: &[ConnectionRow]) -> u16 {
     wanted.min(area.width)
 }
 
-/// Where a picker listing every one of `rows` goes in `area`, or `None` when
-/// it does not fit.
 fn rect(area: Rect, rows: &[ConnectionRow]) -> Option<Rect> {
     let height = u16::try_from(rows.len().saturating_add(2)).unwrap_or(u16::MAX);
 
@@ -101,13 +75,8 @@ fn rect(area: Rect, rows: &[ConnectionRow]) -> Option<Rect> {
     ))
 }
 
-/// `rows` is every connection there is, and what the block is sized from: a
-/// live sift narrows what is drawn inside a block that does not move
-/// (overlay filter design §2). `matched` indexes the ones it left, and
-/// `selected` counts in `matched`.
-///
-/// `config_home` names the file a connection would be written in, and is
-/// drawn only when there are none to list.
+/// Sized from every row; `matched` indexes the survivors and `selected` counts
+/// in it. `config_home` is drawn only for an empty list.
 pub(crate) fn render(
     frame: &mut Frame,
     rows: &[ConnectionRow],
@@ -139,8 +108,7 @@ pub(crate) fn render(
     frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
 
-    // A term that matched nothing leaves no row to hold, so the picker says
-    // so rather than drawing an empty box (overlay filter design §3).
+    // Says so rather than drawing an empty box.
     if matched.is_empty() {
         frame.render_widget(
             List::new([ListItem::new(Line::from(Span::styled(
@@ -162,8 +130,7 @@ pub(crate) fn render(
                 theme.style(Token::Posture(row.posture)),
             )];
 
-            // Marked where a term matched, so the name is drawn as spans and
-            // padded after them rather than through a `{:width$}`.
+            // Drawn as spans to mark matches, so padding follows them.
             spans.extend(crate::highlight::spans(
                 &row.name,
                 search,
@@ -196,13 +163,7 @@ pub(crate) fn render(
     );
 }
 
-/// What is drawn where a config defines no connections at all: where to write
-/// one, and the shape it takes (design §3).
-///
-/// Sized here rather than handed to `overlay::render`, whose `wrapped_line_count`
-/// treats an embedded newline as ordinary whitespace by its own admission and
-/// would size this block too short. These lines are pre-broken and short, so
-/// counting them is the measurement.
+/// Sized here: `overlay::render` under-counts embedded newlines.
 fn empty(frame: &mut Frame, config_home: Option<&str>, theme: Theme) {
     let area = frame.area();
     let where_to = config_home.unwrap_or("your LazyCassandra config file");
@@ -250,9 +211,7 @@ fn empty(frame: &mut Frame, config_home: Option<&str>, theme: Theme) {
     );
 }
 
-/// The guidance, one string per drawn line. Pre-broken rather than wrapped:
-/// the TOML in the middle of it is an example the user copies, and a wrap
-/// would break it across lines that no longer parse.
+/// Pre-broken: wrapping would break the copyable TOML.
 fn guidance(where_to: &str) -> Vec<String> {
     vec![
         "No connection is configured.".to_owned(),
@@ -326,8 +285,6 @@ mod tests {
         assert!(frame.contains("staging"));
     }
 
-    /// Design §3: the entry `default_connection` names is marked, so the list
-    /// says which one a start with no picker would have opened.
     #[test]
     fn the_default_connection_is_marked_and_no_other_is() {
         let rows = [row("prod", false), row("local", true)];
@@ -340,8 +297,6 @@ mod tests {
         );
     }
 
-    /// Design §3: nothing to list is guidance, not an empty box — and it
-    /// names the file the connection goes in.
     #[test]
     fn no_connections_draws_guidance_naming_the_config_file() {
         let frame = drawn(80, 24, &[], &[]);
@@ -357,9 +312,6 @@ mod tests {
         );
     }
 
-    /// Overlay filter design §2: a filter narrows the list inside a block that
-    /// does not move, so the width is measured over every row rather than the
-    /// ones a term left.
     #[test]
     fn a_filter_moves_no_border() {
         let rows = [
@@ -395,8 +347,6 @@ mod tests {
         );
     }
 
-    /// Overlay filter design §3: a term that kept nothing says so rather than
-    /// drawing an empty box.
     #[test]
     fn a_term_that_matches_nothing_draws_a_line_saying_so() {
         let frame = drawn(80, 24, &[row("prod", false)], &[]);

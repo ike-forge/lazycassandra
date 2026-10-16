@@ -1,5 +1,4 @@
-//! Calm and low-chroma. A warm neutral ground with muted hues, for long
-//! sessions; nothing shouts.
+//! Calm and low-chroma on a warm neutral ground, for long sessions.
 
 use crate::theme::{Palette, rgb};
 
