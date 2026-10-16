@@ -1,32 +1,21 @@
-//! Where the two files are.
-//!
-//! Split so the logic is fast-tier testable: `global_path` and
-//! `local_candidates` are pure, and `first_existing` is the only thing that
-//! touches a disk and has no logic worth testing (design §12).
+//! Where the two files are. Only `first_existing` touches the disk.
 
 use std::path::{Path, PathBuf};
 
 const GLOBAL: &str = "lazycassandra/config.toml";
 const LOCAL: &str = ".lazycassandra.toml";
 
-/// `$XDG_CONFIG_HOME` if set, else `$HOME/.config`.
-///
-/// Resolved with `std::env` rather than a `dirs`-style crate: ten lines
-/// against a dependency whose value is Windows support this project does not
-/// target (design §3).
+/// `std::env` rather than a `dirs` crate: Windows is not a target.
 pub(crate) fn global_path(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     xdg.map(|dir| dir.join(GLOBAL))
         .or_else(|| home.map(|dir| dir.join(".config").join(GLOBAL)))
 }
 
-/// Every `.lazycassandra.toml` that could apply, nearest first.
 pub(crate) fn local_candidates(cwd: &Path) -> Vec<PathBuf> {
     cwd.ancestors().map(|dir| dir.join(LOCAL)).collect()
 }
 
-/// The first candidate that is there. Taking only the first is what keeps the
-/// model at two layers, which is what keeps the merge rule short enough to
-/// hold in the head (design §3).
+/// Only the first: the model stays at two layers.
 pub(crate) fn first_existing(candidates: &[PathBuf]) -> Option<&PathBuf> {
     candidates.iter().find(|path| path.is_file())
 }

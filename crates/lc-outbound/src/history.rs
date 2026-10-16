@@ -1,12 +1,6 @@
-//! The [`Store`] port over a file in the user's state directory.
-//!
-//! `$XDG_STATE_HOME/lazycassandra/history.toml`, falling back to
-//! `~/.local/state`. The state directory and not the cache: the XDG spec
-//! names it for "actions history", and a cache is what cleaners are allowed
-//! to empty (query history design §5).
-//!
-//! The statements are the user's own, and `CREATE ROLE … PASSWORD` is a
-//! statement, so the file is created `0600` in a `0700` directory.
+//! The [`Store`] port over `$XDG_STATE_HOME/lazycassandra/history.toml`. State,
+//! not cache: cleaners may empty a cache. `CREATE ROLE … PASSWORD` is a
+//! statement, so the file is 0600 in a 0700 directory.
 //!
 //! [`Store`]: lc_domain::ports::Store
 
@@ -26,8 +20,7 @@ use crate::config::{non_empty_env, save::quote};
 
 const HEADER: &str = "# LazyCassandra query history, newest first. Rewritten on every run.\n";
 
-/// Where the history file goes, whether or not it is there. `None` when
-/// neither `$XDG_STATE_HOME` nor `$HOME` is set.
+/// `None` without `$XDG_STATE_HOME` or `$HOME`.
 fn path(xdg_state: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     let state = xdg_state
         .map(Path::to_path_buf)
@@ -48,7 +41,6 @@ struct Section {
     entries: Vec<String>,
 }
 
-/// Every connection's entries, as the file holds them.
 type Sections = BTreeMap<String, Vec<String>>;
 
 fn parse(source: &str) -> Result<Sections, String> {
@@ -61,8 +53,7 @@ fn parse(source: &str) -> Result<Sections, String> {
         .collect())
 }
 
-/// `sections` as the file is written. Hand-rolled for `save.rs`'s reason:
-/// `toml`'s serialiser is off, and this is two shapes of string.
+/// Hand-rolled: `toml`'s serialiser is off.
 fn render(sections: &Sections) -> String {
     let mut out = String::from(HEADER);
 
@@ -80,12 +71,11 @@ fn render(sections: &Sections) -> String {
     out
 }
 
-/// Keeps the history in a file.
 #[derive(Debug)]
 pub struct FileStore {
     path: Option<PathBuf>,
-    /// Saves are read-modify-write over one file; two in flight would each
-    /// start from the file as it was.
+    /// Saves read-modify-write one file; two at once would each start from the
+    /// old file.
     writes: tokio::sync::Mutex<()>,
 }
 
@@ -181,8 +171,7 @@ impl Store for FileStore {
             |error: std::io::Error| StoreError::Unavailable(format!("{}: {error}", path.display()));
         let _one_at_a_time = self.writes.lock().await;
 
-        // A file that does not parse is replaced: it holds nothing the load
-        // would have shown, and `load` has already said so.
+        // An unparsable file is replaced: `load` already reported it.
         let mut sections = Self::read(path)
             .await
             .map_err(failed)?
@@ -194,8 +183,8 @@ impl Store for FileStore {
     }
 }
 
-/// Beside the target, so the rename stays on one filesystem, and named after
-/// this process, so two of them cannot collide.
+/// Beside the target for one filesystem; named after this process so two cannot
+/// collide.
 async fn write(path: &Path, contents: &str) -> Result<(), std::io::Error> {
     if let Some(parent) = path.parent() {
         let mut directory = tokio::fs::DirBuilder::new();

@@ -1,7 +1,4 @@
-//! Whole sessions driven through the in-memory cluster (architecture.md §10).
-//!
-//! Deterministic: no clock, no socket, no runtime beyond the one `#[tokio::test]`
-//! provides to await the port.
+//! Whole sessions driven through the in-memory cluster: no clock, no socket.
 
 use lc_domain::clock::Stamp;
 use lc_domain::config::{PageRows, PageSize};
@@ -141,8 +138,7 @@ async fn pressing_h_from_a_table_lands_on_its_parent_keyspace() {
     );
 }
 
-/// The keyspace's one table, its partition key `id` (see `support::table`)
-/// and a regular column.
+/// Partition key `id` and a regular column.
 fn customers() -> Page {
     Page {
         columns: vec!["id".to_owned(), "email".to_owned()],
@@ -161,7 +157,6 @@ fn customers() -> Page {
     }
 }
 
-/// Connect, describe, unfold `shop`, step onto `orders`.
 async fn on_a_table(cluster: &FakeCluster) -> State {
     let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
     run(cluster, &mut state, effects).await;
@@ -276,7 +271,7 @@ async fn reading_a_table_lands_focus_in_contents_and_j_walks_the_grid_rather_tha
     };
     let tree_row = *selected;
 
-    // Enter already took focus to Contents (design §1); `j` walks the grid.
+    // Enter already took focus to Contents.
     press(&mut state, Key::Char('j'));
 
     let view = view_model(&state);
@@ -300,8 +295,8 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
     .returning(customers());
     let mut state = on_a_table(&cluster).await;
 
-    // Deliberately not run yet: the first read has to still be outstanding
-    // when the second is issued.
+    // Not run yet: the first read must still be outstanding when the second is
+    // issued.
     let first = press(&mut state, Key::Enter);
     state.focus_on(Panel::Tables);
     press(&mut state, Key::Char('j'));
@@ -332,7 +327,6 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
     );
 }
 
-/// The `(label, name)` pairs of the identity rows the panel opens with.
 fn named(details: &Details) -> Vec<(&'static str, &str)> {
     details
         .rows()
@@ -343,7 +337,6 @@ fn named(details: &Details) -> Vec<(&'static str, &str)> {
         .collect()
 }
 
-/// The headings the sections carry, which the identity group has none of.
 fn headings(details: &Details) -> Vec<&str> {
     details
         .sections
@@ -397,7 +390,7 @@ async fn walking_the_ddl_strip_reaches_the_indexes_of_the_selected_table() {
 
     press(&mut state, Key::Char('l'));
     press(&mut state, Key::Char('l'));
-    // Once to reach the panel, then one press per tab up to the third.
+    // Once to reach the panel, then once per tab.
     for _ in 0..3 {
         press(&mut state, Key::Char('2'));
     }
@@ -465,9 +458,6 @@ async fn stepping_onto_a_table_describes_it_in_the_ddl_panel() {
     );
 }
 
-// The tier that catches what the unit tests cannot see: that the trail reads
-// in the order the session actually ran things, and that every effect it
-// issued was eventually closed out (query log design §10).
 #[tokio::test]
 async fn a_session_leaves_a_trail_of_everything_it_ran() {
     let cluster = FakeCluster::new(
@@ -500,9 +490,6 @@ async fn a_session_leaves_a_trail_of_everything_it_ran() {
     );
 }
 
-/// The whole drop path, driven through the ports: the tree names a table, the
-/// confirmation names the statement, and the success re-reads the schema the
-/// drop just changed (docs/superpowers/specs/2026-08-31-drop-design.md §4).
 #[tokio::test]
 async fn dropping_a_table_removes_it_from_the_tree() {
     let cluster = FakeCluster::new(
@@ -511,8 +498,7 @@ async fn dropping_a_table_removes_it_from_the_tree() {
     )
     .re_describing(tabled_schema_of(&[("shop", &["users"])]));
     let mut state = on_a_table(&cluster).await;
-    // What a rendered frame reports; `lc-inbound`'s `drop::fits` and the
-    // block it measures are held together by its own tests.
+    // Stands in for a rendered frame's report.
     state.geometry = state.geometry.with_drop_fits(true);
 
     let effects = press(&mut state, Key::Char('d'));
@@ -542,8 +528,6 @@ async fn dropping_a_table_removes_it_from_the_tree() {
     );
 }
 
-/// A read-only connection never gets as far as the question (design §1), and
-/// nothing reaches the cluster.
 #[tokio::test]
 async fn a_read_only_connection_drops_nothing() {
     let cluster = FakeCluster::new(
@@ -566,7 +550,6 @@ async fn a_read_only_connection_drops_nothing() {
     assert!(cluster.executed().is_empty());
 }
 
-/// A keyspace takes its name typed back before anything runs (design §2).
 #[tokio::test]
 async fn dropping_a_keyspace_takes_its_name_typed_back() {
     let cluster = FakeCluster::new(
@@ -616,10 +599,6 @@ async fn dropping_a_keyspace_takes_its_name_typed_back() {
     );
 }
 
-/// The whole delete path, driven through the ports: the grid names rows, the
-/// confirmation counts them and names the statement, and the success re-reads
-/// the page rather than the schema
-/// (docs/superpowers/specs/2026-08-31-drop-design.md §3.1, §4).
 #[tokio::test]
 async fn deleting_the_selected_rows_re_reads_the_grid() {
     let cluster = FakeCluster::new(
@@ -673,8 +652,6 @@ async fn deleting_the_selected_rows_re_reads_the_grid() {
     );
 }
 
-/// The gate that makes the rest of it safe: a page that does not carry every
-/// primary key column addresses no row, so `d` opens nothing (design §3.1).
 #[tokio::test]
 async fn a_page_without_the_whole_primary_key_deletes_nothing() {
     let cluster = FakeCluster::new(
@@ -702,7 +679,7 @@ async fn a_page_without_the_whole_primary_key_deletes_nothing() {
     assert_eq!(cluster.executed().len(), before);
 }
 
-/// The fixture table's key is `(id uuid, created_at timestamp)`.
+/// Fixture key `(id uuid, created_at timestamp)`.
 fn keyed_rows(count: usize) -> Page {
     Page {
         columns: vec!["id".to_owned(), "created_at".to_owned(), "email".to_owned()],
@@ -719,7 +696,6 @@ fn keyed_rows(count: usize) -> Page {
     }
 }
 
-/// `customers()`' two rows, as page `index` of three.
 fn customers_page(index: u8) -> Page {
     Page {
         next: (index < 2).then(|| PagingState(vec![index + 1])),
@@ -727,7 +703,6 @@ fn customers_page(index: u8) -> Page {
     }
 }
 
-/// Grid paging design §8: a read, `p`, then `P` to the end.
 #[tokio::test]
 async fn a_read_pages_through_p_and_then_shift_p_to_the_end() {
     let cluster = FakeCluster::new(

@@ -9,7 +9,6 @@ use lc_domain::ports::{ExportError, Sink, Writer};
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 
-/// Writes exports to the filesystem.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FileWriter;
 
@@ -22,8 +21,7 @@ impl Writer for FileWriter {
         if overwrite {
             options.create(true).truncate(true);
         } else {
-            // One syscall that both answers "does it exist" and does the work,
-            // so nothing can be created between the two (design §6.1).
+            // One syscall checks and creates, so nothing can appear between.
             options.create_new(true);
         }
 

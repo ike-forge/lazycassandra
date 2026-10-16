@@ -1,10 +1,6 @@
-//! Mouse capture, and its release.
-//!
-//! `ratatui::restore` disables raw mode and leaves the alternate screen; it
-//! knows nothing about capture, and the panic hook `ratatui::init` installs
-//! only calls `restore`. A leaked capture leaves the terminal reporting every
-//! pointer movement as an escape sequence until the user runs `reset`
-//! (docs/superpowers/specs/2026-08-09-mouse-input-design.md §8).
+//! Mouse capture and its release. `ratatui::restore` and its panic hook know
+//! nothing of capture, and a leaked capture prints escape sequences until
+//! `reset`.
 
 use std::io::stdout;
 
@@ -12,27 +8,20 @@ use anyhow::Result;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 
-/// Enables mouse capture and guarantees its release — on return, on `?`, and
-/// on panic.
-///
-/// The private field is what stops one being constructed without going through
-/// [`MouseCapture::enable`], so capture cannot be held without holding the
-/// thing that releases it (conventions.md §1).
+/// Released on return, `?` and panic. The private field means capture cannot
+/// exist without its release.
 pub(crate) struct MouseCapture(());
 
 impl MouseCapture {
-    /// Construct *after* `ratatui::init`, so the hook this chains onto is the
-    /// one that restores the terminal.
+    /// Construct after `ratatui::init`, so the chained hook restores the
+    /// terminal.
     ///
     /// # Errors
     ///
-    /// If the escape sequence cannot be written, in which case capture never
-    /// came on. The hook is already installed by then and stays installed; it
-    /// writes "capture off" to a terminal that was never capturing, which is a
-    /// no-op.
+    /// If the sequence cannot be written; capture never came on, and the hook's
+    /// "off" is a no-op.
     pub(crate) fn enable() -> Result<Self> {
-        // Installed before capture goes on, so there is no window in which
-        // capture is on with nothing yet able to release it.
+        // Installed first, so capture is never on without a release.
         let restore = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             disable();
@@ -44,16 +33,11 @@ impl MouseCapture {
         Ok(Self(()))
     }
 
-    /// Turns capture off for as long as `body` runs, and back on after.
-    ///
-    /// The guard is not given up and re-taken: `enable` installs a panic hook,
-    /// and re-taking it per edit would chain a new hook onto the last one every
-    /// time (external editor design §4).
+    /// The guard is kept: re-enabling would chain a new panic hook per edit.
     ///
     /// # Errors
     ///
-    /// If capture cannot be turned back on, which leaves the terminal usable
-    /// but with the pointer inert.
+    /// If capture cannot be turned back on; the pointer is then inert.
     #[expect(
         clippy::unused_self,
         reason = "the receiver is the proof a MouseCapture exists to suspend; \
@@ -76,9 +60,7 @@ impl Drop for MouseCapture {
     }
 }
 
-/// Ignores its error: this runs while unwinding and on the way out, and there
-/// is nobody left to report to. Running twice is harmless — the sequence says
-/// "off", not "toggle".
+/// Errors are ignored: this runs while unwinding. Idempotent.
 fn disable() {
     let _released = execute!(stdout(), DisableMouseCapture);
 }

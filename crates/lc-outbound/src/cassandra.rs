@@ -1,7 +1,5 @@
-//! The `Cluster` port over `scylla`.
-//!
-//! Driver types stop here: everything crossing back into the domain is our own
-//! vocabulary (architecture.md §5).
+//! The `Cluster` port over `scylla`. Driver types stop here (architecture.md
+//! §5).
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -38,37 +36,18 @@ use crate::secret::Secrets;
 use crate::tls;
 use crate::value::to_value;
 
-/// One cluster, reached over CQL.
-///
-/// Holds whichever connection was opened last rather than one fixed at
-/// construction: the address is chosen from the picker at runtime, so an
-/// adapter built around a single compiled-in contact point could not serve it
-/// (connection picker design §6). `&self` is why the session sits behind a
-/// lock. One target rather than a map is still the honest match for a `State`
-/// that holds exactly one connection — opening a second replaces the first,
-/// and the [`ConnId`] guard is what makes a late result for the one left
-/// behind droppable.
+/// Holds the connection opened last: the address is chosen at runtime. One
+/// target matches a `State` with one connection; the [`ConnId`] guard drops
+/// late results for the one replaced.
 #[derive(Debug, Default)]
 pub struct CassandraCluster {
     open: RwLock<Option<Open>>,
 }
 
-/// Folds every address the cluster reports onto the one endpoint the user can
-/// reach.
-///
-/// A host filter cannot do this job. Every peer read from `system.local` and
-/// `system.peers` is a `NodeAddr::Translatable` — the node holding the control
-/// connection included (`cluster/metadata/fetching.rs`) — so a filter narrow
-/// enough to keep only the tunnelled node rejects that node too, and the load
-/// balancing policy is left with an empty plan. Translation is the only
-/// mechanism the driver offers: there is no knob that turns topology discovery
-/// off.
-///
-/// The cluster still reports every node, so the driver holds one `Node` per
-/// peer and pools each to the same socket. Redundant, and the honest price of
-/// reaching a cluster through a single tunnel — the alternative is naming
-/// every pod's in-cluster address in the config file, where it would rot on
-/// the next reschedule.
+/// A host filter cannot do this: every peer, including the control connection's
+/// node, is `NodeAddr::Translatable`, so a filter narrow enough rejects the
+/// tunnelled node too. The driver then pools every peer to the one socket,
+/// which is the price of a single tunnel.
 #[derive(Debug)]
 struct ToTunnel(SocketAddr);
 
@@ -82,11 +61,8 @@ impl AddressTranslator for ToTunnel {
     }
 }
 
-/// The one host a tunnelled connection states, resolved.
-///
-/// Resolved here rather than held as a `SocketAddr` in the config: a tunnel is
-/// as likely to be named `localhost` as written as an address, and the
-/// translator owes the driver a `SocketAddr`.
+/// Resolved here: a tunnel is as likely named `localhost` as written as an
+/// address.
 async fn tunnel(target: &ConnectionConfig) -> Result<SocketAddr, DbError> {
     let [host] = target.hosts.as_slice() else {
         return Err(DbError::Unreachable(
@@ -101,18 +77,14 @@ async fn tunnel(target: &ConnectionConfig) -> Result<SocketAddr, DbError> {
         .ok_or_else(|| DbError::Unreachable(format!("{host} resolved to no address")))
 }
 
-/// The session in hand, and the id it answers to.
 #[derive(Debug)]
 struct Open {
     conn: ConnId,
     session: Arc<Session>,
 }
 
-/// Sorts a failed `build()` by its message.
-///
-/// The driver gives no typed route to the cause: the server's rejection sits in
-/// a variant with no `source`, and a handshake failure reaches us as an
-/// `io::Error` whose rustls cause `Error::source` skips.
+/// By message: the server's rejection has no `source`, and rustls causes are
+/// skipped by `Error::source`.
 fn connect_error(message: &str, plaintext: bool) -> DbError {
     const AUTH: [&str; 2] = ["Authentication failed", "Authentication is required"];
     const TLS: [&str; 5] = [
@@ -159,8 +131,8 @@ fn consistency(consistency: Consistency) -> scylla::statement::Consistency {
     }
 }
 
-/// With a datacenter stated, failover to another is refused: a browsing tool
-/// that silently reads across a region is worse than one that errors.
+/// With a datacenter stated, failover elsewhere is refused: silently reading
+/// across regions is worse than an error.
 fn execution_profile(target: &ConnectionConfig, driver: &DriverConfig) -> ExecutionProfile {
     let mut policy = DefaultPolicy::builder();
 
@@ -188,9 +160,7 @@ impl CassandraCluster {
     async fn session(&self, conn: ConnId) -> Result<Arc<Session>, DbError> {
         match self.open.read().await.as_ref() {
             Some(open) if open.conn == conn => Ok(Arc::clone(&open.session)),
-            // A statement for a connection this adapter has moved past. The
-            // domain drops such results by id anyway; refusing here means the
-            // driver is never asked in the first place.
+            // A statement for a connection this adapter has moved past.
             Some(_) => Err(DbError::Other(
                 "this adapter serves one connection".to_owned(),
             )),
@@ -226,8 +196,7 @@ impl Cluster for CassandraCluster {
         }
 
         if let Some(credentials) = &target.credentials {
-            // Resolved here rather than in the effect runtime so the plaintext
-            // never crosses into `lc-domain` (secret.rs).
+            // Resolved here so the plaintext never enters `lc-domain`.
             let (username, password) = Secrets
                 .credentials(credentials)
                 .await
@@ -240,8 +209,7 @@ impl Cluster for CassandraCluster {
             builder = builder.address_translator(Arc::new(ToTunnel(tunnel(target).await?)));
         }
 
-        // Boxed to satisfy clippy::large_futures: SessionBuilder::build's
-        // future is large enough to be worth moving off this async fn's stack.
+        // Boxed for `clippy::large_futures`.
         let session = Box::pin(builder.build())
             .await
             .map_err(|error| connect_error(&error.to_string(), tls == Tls::Off))?;
@@ -268,8 +236,7 @@ impl Cluster for CassandraCluster {
         schema(&session.get_cluster_state(), &columns, &options, &indexes)
     }
 
-    /// Unpaged: only mutations and DDL come through here, and they return no
-    /// rows to page (grid paging design §1).
+    /// Unpaged: only mutations and DDL come here.
     async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError> {
         let session = self.session(conn).await?;
 
@@ -289,8 +256,7 @@ impl Cluster for CassandraCluster {
         cursor: Option<&PagingState>,
     ) -> Result<Page, DbError> {
         let session = self.session(conn).await?;
-        // `PageSize` tops out far below `i32::MAX`, and scylla panics on a
-        // size that is not positive.
+        // scylla panics on a non-positive page size.
         let statement = scylla::statement::unprepared::Statement::new(stmt.cql.as_str())
             .with_page_size(i32::try_from(page_size.get()).unwrap_or(i32::MAX));
         let paging = cursor.map_or(
@@ -321,20 +287,13 @@ impl Cluster for CassandraCluster {
     }
 }
 
-/// Converts a driver result into our own vocabulary. Shared by `execute` and
-/// `execute_paged`, which differ only in how they got the result and what
-/// they do with `Page::next` afterwards.
 fn to_page(result: scylla::response::query_result::QueryResult) -> Result<Page, DbError> {
     use scylla::response::query_result::IntoRowsResultError;
 
     let result = match result.into_rows_result() {
         Ok(result) => result,
-        // A mutation and a DDL statement answer with a `Void` result, which
-        // is not an error: `Cluster::execute` is the unpaged path and every
-        // statement that comes through it returns no rows (§5). The driver
-        // spells "no rows to read" as a failed downcast, so the empty page is
-        // built here rather than reported as a rejection the cluster never
-        // made.
+        // The driver reports a `Void` result as a failed downcast; it is an
+        // empty page, not a rejection.
         Err(IntoRowsResultError::ResultNotRows(_)) => {
             return Ok(Page {
                 columns: Vec::new(),
@@ -369,13 +328,11 @@ fn to_page(result: scylla::response::query_result::QueryResult) -> Result<Page, 
     })
 }
 
-/// The three things `scylla::cluster::metadata` does not carry: clustering
-/// order, the CQL type as text, and whether a column is static
-/// (docs/superpowers/specs/2026-08-08-table-list-design.md §3).
+/// What the driver's metadata lacks: clustering order, the CQL type as text,
+/// and static-ness.
 const COLUMNS_QUERY: &str = "SELECT keyspace_name, table_name, column_name, kind, type, \
                              clustering_order FROM system_schema.columns";
 
-/// One row of `system_schema.columns`.
 struct ColumnRow {
     column_name: String,
     kind: String,
@@ -383,10 +340,7 @@ struct ColumnRow {
     clustering_order: String,
 }
 
-/// Every column in the cluster, grouped by the table it belongs to.
-///
-/// Materialized view columns are keyed by the view's own name, so they match
-/// no entry in `keyspace.tables` and fall out of the join.
+/// View columns key by the view's name and fall out of the join.
 async fn column_rows(
     session: &Session,
 ) -> Result<BTreeMap<(String, String), Vec<ColumnRow>>, DbError> {
@@ -420,18 +374,11 @@ async fn column_rows(
     Ok(grouped)
 }
 
-/// Every table's own settings.
-///
-/// `SELECT *` rather than named columns: the column set of
-/// `system_schema.tables` moves between Cassandra majors — 3.11 has
-/// `read_repair_chance`, 4.0 replaces it with `read_repair`, 5.0 adds
-/// `memtable` — so naming them would make this a hard error on any cluster
-/// missing one, while a wildcard reports whatever that cluster knows
-/// (docs/superpowers/specs/2026-08-09-table-metadata-design.md §2).
+/// `SELECT *`: the column set differs across majors, so naming columns would
+/// fail on some clusters.
 const OPTIONS_QUERY: &str = "SELECT * FROM system_schema.tables";
 
-/// The two columns that identify a row rather than describe it. They are the
-/// panel's heading, so listing them again would be noise.
+/// They identify the row and head the panel.
 const KEYSPACE_NAME: &str = "keyspace_name";
 const TABLE_NAME: &str = "table_name";
 
@@ -466,9 +413,7 @@ async fn option_rows(
     Ok(grouped)
 }
 
-/// `None` when the row carries no keyspace or table name, which no real
-/// `system_schema.tables` row does — the wildcard select is what makes it
-/// expressible at all.
+/// `None` only for a row without names, which the wildcard makes expressible.
 fn to_options(names: &[String], row: DriverRow) -> Option<((String, String), TableOptions)> {
     let mut keyspace = None;
     let mut table = None;
@@ -487,17 +432,8 @@ fn to_options(names: &[String], row: DriverRow) -> Option<((String, String), Tab
     Some(((keyspace?, table?), TableOptions::new(by_name)))
 }
 
-/// One option as the panel shows it.
-///
-/// Values go through the same `to_value` + [`cell::text`] pair the Contents
-/// grid uses, rather than a second formatter: `cell::text` is documented as
-/// the reason every renderer agrees on what a blob or a collection looks
-/// like, and a private opinion here would be exactly the drift it exists to
-/// prevent.
-///
-/// The one thing on top is the empty string. `comment` defaults to `''` on
-/// every table, and a property drawn with a blank line under it reads as
-/// broken rather than as unset.
+/// Through `cell::text`, as the grid, so renderers agree. An empty string draws
+/// as `''`, or `comment` reads as broken.
 fn option_text(value: Option<&DriverValue>) -> String {
     let text = cell::text(&to_value(value));
 
@@ -508,25 +444,15 @@ fn option_text(value: Option<&DriverValue>) -> String {
     }
 }
 
-/// `scylla::cluster::metadata` carries no indexes at all, so the whole of what
-/// the Indexes tab draws is read here.
-///
-/// Named columns rather than a wildcard, the opposite of [`OPTIONS_QUERY`]:
-/// these five have been `system_schema.indexes`' entire column set since
-/// Cassandra 3.0, and a target or a kind we failed to ask for is a tab that
-/// silently says "none".
+/// Named columns, unlike [`OPTIONS_QUERY`]: this set has been fixed since 3.0,
+/// and a missing one would silently show "none".
 const INDEXES_QUERY: &str = "SELECT keyspace_name, table_name, index_name, kind, options \
                              FROM system_schema.indexes";
 
-/// The `options` entry naming what an index covers, and the one naming who
-/// implements it.
 const TARGET: &str = "target";
 const CLASS_NAME: &str = "class_name";
 
-/// Every index in the cluster, grouped by the table it is built on.
-///
-/// A view's indexes — Cassandra allows none today — would key by the view's
-/// own name and fall out of the join, the way its columns do.
+/// A view's indexes would fall out of the join like its columns.
 async fn index_rows(session: &Session) -> Result<BTreeMap<(String, String), Vec<Index>>, DbError> {
     let result = session
         .query_unpaged(INDEXES_QUERY, &[])
@@ -535,9 +461,7 @@ async fn index_rows(session: &Session) -> Result<BTreeMap<(String, String), Vec<
         .into_rows_result()
         .map_err(|error| DbError::Other(error.to_string()))?;
 
-    // `Option` around the map because a null column deserializes into no
-    // collection rather than an empty one, and an index whose options are
-    // null is an index with no target — still worth listing by name.
+    // A null map deserialises to `None`; such an index is still listed by name.
     let rows = result
         .rows::<(
             String,
@@ -560,9 +484,7 @@ async fn index_rows(session: &Session) -> Result<BTreeMap<(String, String), Vec<
             .push(to_index(name, &kind, &options));
     }
 
-    // `index_name` is the clustering column, so the rows already arrive in
-    // this order; sorting says so rather than relying on it
-    // (conventions.md §4).
+    // Already in this order; sorted rather than relied on.
     for indexes in grouped.values_mut() {
         indexes.sort_by(|left, right| left.name.cmp(&right.name));
     }
@@ -570,8 +492,8 @@ async fn index_rows(session: &Session) -> Result<BTreeMap<(String, String), Vec<
     Ok(grouped)
 }
 
-/// A `CUSTOM` index without a `class_name` is a row Cassandra does not write,
-/// and the honest reading of one is that there is no class to name.
+/// A `CUSTOM` row without `class_name` is not written by Cassandra; read it as
+/// no class.
 fn to_index(name: String, kind: &str, options: &BTreeMap<String, String>) -> Index {
     let class = options.get(CLASS_NAME).cloned();
     let kind = match class.filter(|_| kind.eq_ignore_ascii_case("custom")) {
@@ -586,15 +508,9 @@ fn to_index(name: String, kind: &str, options: &BTreeMap<String, String>) -> Ind
     }
 }
 
-/// Builds a table from the driver's key ordering and `system_schema`'s column
-/// detail.
-///
-/// `None` when the two reads disagreed because DDL landed between them: a key
-/// column the driver named has no row in `system_schema`, or the driver's own
-/// `partition_key` came back empty — `collect::<Option<Vec<_>>>()` over an
-/// empty iterator is `Some(vec![])`, not `None`, so that case needs its own
-/// check. Either way `PrimaryKey::partition` documents itself as never empty,
-/// and this is the one place that guarantee is enforced.
+/// `None` when DDL raced the two reads. Also checks an empty driver
+/// `partition_key`, which `collect::<Option<_>>` would accept. The one place
+/// `PrimaryKey::partition`'s non-emptiness is enforced.
 fn to_table(
     name: &str,
     partition_key: &[String],
@@ -647,9 +563,8 @@ fn column(row: &ColumnRow) -> Column {
     }
 }
 
-/// Static and regular columns in name order: Cassandra records `position = -1`
-/// for both and keeps no declaration order, so this is what the cluster
-/// actually knows — `DESCRIBE` prints them the same way.
+/// Name order: Cassandra keeps no declaration order for static and regular
+/// columns.
 fn of_kind(rows: &[ColumnRow], kind: &str) -> Vec<Column> {
     let mut columns: Vec<Column> = rows
         .iter()
@@ -660,9 +575,8 @@ fn of_kind(rows: &[ColumnRow], kind: &str) -> Vec<Column> {
     columns
 }
 
-/// `clustering_order` is `asc`, `desc`, or `none` for a column outside the
-/// clustering key — and `none` only ever reaches here for a key column when
-/// the cluster is mid-upgrade, where ascending is Cassandra's own default.
+/// `none` reaches a key column only mid-upgrade, where ascending is the
+/// default.
 fn clustering_order(order: &str) -> ClusteringOrder {
     if order.eq_ignore_ascii_case("desc") {
         ClusteringOrder::Descending
@@ -703,14 +617,10 @@ fn to_keyspace(
         let key = (name.to_owned(), table_name.clone());
         let rows = columns.get(&key).map_or(&[][..], Vec::as_slice);
 
-        // An absent options row is not a failure the way an absent column row
-        // is: `PrimaryKey::partition` documents itself as never empty, while
-        // options carry no invariant at all (design §2).
+        // Options carry no invariant, so absence is not a failure.
         let settings = options.get(&key).cloned().unwrap_or_default();
 
-        // Absent for the same reason and with the same weight as an absent
-        // options row: a table with no index is the common case, not a read
-        // that came back short.
+        // A table with no index is the common case.
         let table_indexes = indexes.get(&key).cloned().unwrap_or_default();
 
         let mapped = to_table(
@@ -754,18 +664,15 @@ fn replication(strategy: &Strategy) -> Replication {
         Strategy::Other { name, .. } => Replication::Other {
             class: name.clone(),
         },
-        // `Strategy` is #[non_exhaustive]; a variant we have never seen
-        // still deserves a name. Unlike the `Other` arm above, there is no
-        // field to read one from, so this reports the full Debug rendering
-        // — braces and fields included — rather than a bare name.
+        // `Strategy` is `#[non_exhaustive]`; the Debug rendering is all there
+        // is to name one.
         other => Replication::Other {
             class: format!("{other:?}"),
         },
     }
 }
 
-/// Replication factors arrive as `usize`. Nothing near `u32::MAX` is a real
-/// factor, so saturating is the honest conversion.
+/// No real factor nears `u32::MAX`.
 fn factor(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
@@ -1028,12 +935,9 @@ mod tests {
 
     #[test]
     fn a_table_whose_driver_reported_partition_key_is_empty_is_refused() {
-        // scylla-1.7.0 can report `partition_key: vec![]` for a table its own
-        // metadata read raced against a DDL change, with no error
-        // (`validate_key_columns(vec![])` returns `Ok(vec![])`,
-        // scylla-1.7.0/src/cluster/metadata/fetching.rs:1084-1090). The
-        // columns query can still see that table, so `rows` here is
-        // non-empty even though the partition key is not.
+        // scylla 1.7.0 can report an empty `partition_key` after a DDL race
+        // without error (`cluster/metadata/fetching.rs:1084-1090`), while the
+        // columns query still sees the table.
         let empty_partition = to_table(
             "ghost",
             &[],
@@ -1091,9 +995,8 @@ mod tests {
 
     #[test]
     fn an_index_with_no_options_is_still_listed_by_name() {
-        // Neither a null `options` map nor a `CUSTOM` row without a class is
-        // something Cassandra writes; both are expressible, and dropping the
-        // index would hide one the table really has.
+        // Neither is written by Cassandra, but dropping the index would hide a
+        // real one.
         let index = to_index("orders_ghost".to_owned(), "CUSTOM", &BTreeMap::new());
 
         assert_eq!(index.name, "orders_ghost");
@@ -1115,8 +1018,7 @@ mod tests {
 
     #[test]
     fn an_option_is_rendered_the_way_the_contents_grid_renders_a_cell() {
-        // The point of the assertion is the shared renderer, not these
-        // values: `cell::text` is where the form is decided and tested.
+        // The shared renderer is the point, not these values.
         assert_eq!(
             option_text(Some(&driver_text("Order history."))),
             "Order history."
@@ -1223,14 +1125,7 @@ mod tests {
         );
     }
 
-    // Not gated behind `integration`: the guard refuses before the adapter
-    // ever reaches a socket, so this needs no cluster and belongs in
-    // `mise run ci`.
-    //
-    // The guard moved with the address: `connect` now binds whichever id it
-    // is handed, because the picker chooses the target at runtime, so what is
-    // refused is a *statement* for a connection this adapter is not holding
-    // (connection picker design §6).
+    // Refused before any socket, so it runs in the fast tier.
     #[tokio::test]
     async fn a_statement_before_any_connection_is_refused() {
         let cluster = CassandraCluster::new();

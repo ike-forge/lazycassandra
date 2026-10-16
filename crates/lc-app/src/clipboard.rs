@@ -1,22 +1,14 @@
-//! Putting a yanked line on the system clipboard.
-//!
-//! Two routes, both taken. OSC 52 asks the terminal, which is the only route
-//! that survives SSH onto a host with no display; a helper process asks the
-//! platform's clipboard, which is the only route that survives a multiplexer
-//! that declines to forward OSC 52 (yank design §3, amended).
+//! Putting a yanked line on the clipboard by two routes: OSC 52 survives SSH
+//! without a display; a helper survives a multiplexer that drops OSC 52.
 
 use std::process::Stdio;
 
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-/// What the environment says about which clipboard is reachable.
-///
-/// Read at the edge so the choice below stays a pure function of its inputs,
-/// the way `editor::program` is.
+/// Read at the edge so the choice stays pure.
 pub(crate) struct Reach<'a> {
-    /// `$WSL_INTEROP`. Absent means `clip.exe` cannot be launched at all, not
-    /// merely that it is missing.
+    /// Absent means `clip.exe` cannot be launched at all.
     pub(crate) interop: Option<&'a str>,
     pub(crate) wsl: Option<&'a str>,
     pub(crate) wayland: Option<&'a str>,
@@ -24,18 +16,9 @@ pub(crate) struct Reach<'a> {
     pub(crate) mac: bool,
 }
 
-/// The helpers worth trying, in the order they are worth trying, given what
-/// the environment says is reachable.
-///
-/// A list rather than a choice: an environment variable says a display exists,
-/// not that the tool for it is installed, so a candidate that will not spawn
-/// hands over to the next one.
-///
-/// WSL comes before X11 and Wayland deliberately. A WSL with a GUI layer
-/// offers all three sockets, and only `clip.exe` reaches the clipboard the
-/// user pastes from in Windows — the one they mean. It is also the only one of
-/// the three that exits when it is done: `wl-copy` and `xclip` must stay alive
-/// to serve the selection they own.
+/// A list: an environment variable says a display exists, not that its tool is
+/// installed. WSL first: with a GUI layer all three exist, but only `clip.exe`
+/// reaches the Windows clipboard.
 fn helpers(reach: &Reach<'_>) -> Vec<&'static [&'static str]> {
     let set = |value: Option<&str>| value.is_some_and(|value| !value.trim().is_empty());
     let mut helpers: Vec<&'static [&'static str]> = Vec::new();
@@ -56,15 +39,8 @@ fn helpers(reach: &Reach<'_>) -> Vec<&'static [&'static str]> {
     helpers
 }
 
-/// Hands `line` to the first helper that will take it.
-///
-/// Nothing is reported and nothing is waited for on the caller's side. A
-/// helper that owns a selection (`xclip`, `wl-copy`) does not exit until the
-/// next yank takes the selection from it, so waiting here would park the main
-/// loop for as long as the user goes without yanking again — and even
-/// `clip.exe`, which does exit, costs a tenth of a second per keystroke on the
-/// key most likely to be held down. The child is reaped by the task, not left
-/// a zombie.
+/// Not awaited: `xclip` and `wl-copy` live until the next yank, and even
+/// `clip.exe` costs 100 ms per keystroke. The task reaps the child.
 pub(crate) fn hand_off(line: &str) {
     let read = |name| std::env::var(name).ok();
     let (interop, wsl, wayland, display) = (
@@ -94,9 +70,7 @@ pub(crate) fn hand_off(line: &str) {
     });
 }
 
-/// `None` is a helper that would not start or would not take the line — the
-/// next candidate's turn. There is no route back to the user either way
-/// (yank design §4).
+/// `None` hands over to the next candidate.
 async fn write_to(argv: &'static [&'static str], line: &str) -> Option<()> {
     let (program, arguments) = argv.split_first()?;
     let mut child = Command::new(program)
@@ -107,8 +81,7 @@ async fn write_to(argv: &'static [&'static str], line: &str) -> Option<()> {
         .spawn()
         .ok()?;
 
-    // Dropping the handle closes the pipe, which is what tells the helper the
-    // line is complete.
+    // Closing stdin tells the helper the line is complete.
     child.stdin.take()?.write_all(line.as_bytes()).await.ok()?;
     let _reaped = child.wait().await;
 

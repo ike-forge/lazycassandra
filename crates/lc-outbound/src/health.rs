@@ -1,5 +1,4 @@
-//! Reads a table's health from every node's own system tables
-//! (docs/superpowers/specs/2026-10-13-table-health-design.md §2).
+//! Reads a table's health from every node's own system tables.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,16 +18,14 @@ const MIB: f64 = 1024.0 * 1024.0;
 const LOCAL: &str = "SELECT host_id, broadcast_address, data_center, release_version \
                      FROM system.local";
 
-/// `system_views` tables keyed by `(keyspace_name, table_name)` whose one
-/// value column is a size in MiB.
+/// Keyed by `(keyspace_name, table_name)`, one value column in MiB.
 const SIZES: [(&str, Metric); 3] = [
     ("disk_usage", Metric::DiskUsed),
     ("max_partition_size", Metric::LargestPartition),
     ("max_sstable_size", Metric::LargestSstable),
 ];
 
-/// In the order the large-partition threshold is looked for: 5.0's
-/// guardrail, 4.1's sized setting, 4.0's megabytes.
+/// 5.0's guardrail, 4.1's sized setting, 4.0's megabytes.
 const PARTITION_SETTINGS: [&str; 3] = [
     "partition_size_warn_threshold",
     "compaction_large_partition_warning_threshold",
@@ -37,11 +34,10 @@ const PARTITION_SETTINGS: [&str; 3] = [
 
 const PEERS: &str = "SELECT peer, data_center, host_id, release_version FROM system.peers_v2";
 
-/// `status_with_port` first: a node gossips its peers' state under that key
-/// alone, and fills `status` only for itself.
+/// A node gossips peers' state under `status_with_port` only; `status` is its
+/// own.
 const GOSSIP: &str = "SELECT host_id, status_with_port, status, load FROM system_views.gossip_info";
 
-/// One node's answer, under the `host_id` it is known by.
 struct Answer {
     host: String,
     node: Arc<Node>,
@@ -64,8 +60,7 @@ pub(crate) async fn read(session: &Arc<Session>, table: &TableRef) -> Result<Hea
     while let Some(joined) = reads.join_next().await {
         let answer =
             joined.map_err(|error| DbError::Other(format!("health read panicked: {error}")))?;
-        // Behind `discovery = "contact-points"` every node is pooled to the
-        // same socket, so several `Node`s answer as one host.
+        // Behind contact-points discovery several `Node`s answer as one host.
         if answered.iter().any(|seen| seen.host == answer.host) {
             continue;
         }
@@ -84,7 +79,7 @@ pub(crate) async fn read(session: &Arc<Session>, table: &TableRef) -> Result<Hea
     if let Some(reached) = reached {
         for (host, peer) in peers(session, &reached).await {
             match known.iter_mut().find(|(seen, _)| *seen == host) {
-                // A node that failed never said what it runs; its peers know.
+                // A failed node never said what it runs; its peers know.
                 Some((_, report)) => {
                     report.version = report.version.take().or(peer.version);
                     report.datacenter = report.datacenter.take().or(peer.datacenter);
@@ -107,8 +102,7 @@ pub(crate) async fn read(session: &Arc<Session>, table: &TableRef) -> Result<Hea
     Ok(Health { nodes })
 }
 
-/// Every other node `reached` knows of, none of them asked anything. The
-/// ones the driver reached as well are dropped by the caller.
+/// The caller drops the ones the driver reached too.
 async fn peers(session: &Session, reached: &Arc<Node>) -> Vec<(String, NodeReport)> {
     let Ok(rows) = rows(session, reached, PEERS, ()).await else {
         return Vec::new();
@@ -142,8 +136,7 @@ async fn peers(session: &Session, reached: &Arc<Node>) -> Vec<(String, NodeRepor
         .collect()
 }
 
-/// Every node's gossip state as `reached` hears it, by `host_id`. Empty
-/// before 5.0, which has no `gossip_info`.
+/// Empty before 5.0.
 async fn gossip(session: &Session, reached: &Arc<Node>) -> Vec<(String, Gossip)> {
     let Ok(rows) = rows(session, reached, GOSSIP, ()).await else {
         return Vec::new();
@@ -161,8 +154,7 @@ async fn gossip(session: &Session, reached: &Arc<Node>) -> Vec<(String, Gossip)>
         .collect()
 }
 
-/// `STATUS` carries the node's tokens after its state (`NORMAL,-1508…`),
-/// and `LOAD` is bytes printed as a float.
+/// `STATUS` carries tokens after the state; `LOAD` is bytes as a float.
 fn gossip_state(status: &str, load: Option<&str>) -> Gossip {
     Gossip {
         status: status.split(',').next().unwrap_or(status).to_owned(),
@@ -170,13 +162,9 @@ fn gossip_state(status: &str, load: Option<&str>) -> Gossip {
     }
 }
 
-/// The node's own name for itself, and what it said. A failure to read
-/// `system.local` is the node failing; a source missing after that is a
-/// metric its version does not have.
-///
-/// A node that answered is known by the `host_id` it reports, which behind a
-/// tunnel is the tunnelled node's whatever `Node` the request was aimed at.
-/// One that did not is known by the driver's, the only one there is.
+/// A failed `system.local` read is the node failing; a source missing after
+/// that is a metric its version lacks. Answered nodes are keyed by their
+/// reported `host_id`, which behind a tunnel is the tunnelled node's.
 async fn node_report(session: &Session, node: Arc<Node>, table: &TableRef) -> Answer {
     let failed = |reason: String| Answer {
         host: node.host_id.to_string(),
@@ -238,8 +226,6 @@ fn predates_virtual_tables(version: &str) -> bool {
 
 type Fold = fn(&[DriverRow], &mut Readings);
 
-/// Sources with a row per task, range or snapshot, each folded into
-/// readings by its own function.
 const LISTS: [(&str, Fold); 4] = [
     (
         "SELECT partitions_count, mean_partition_size FROM system.table_estimates \
@@ -263,9 +249,6 @@ const LISTS: [(&str, Fold); 4] = [
     ),
 ];
 
-/// `system_views` tables with one row per table, and the metrics their
-/// selected columns are, in order, after the `count` every one of them
-/// leads with.
 const SUMMARIES: [(&str, &str, &[Metric]); 5] = [
     (
         "tombstones_per_read",
@@ -332,9 +315,8 @@ async fn readings(session: &Session, node: &Arc<Node>, table: &TableRef) -> Read
     readings
 }
 
-/// `values` is the count, then one value per metric. A histogram that has
-/// seen nothing reads zero at every percentile, which is no latency at all
-/// rather than a fast one; only a rate is true at zero.
+/// A histogram that has seen nothing reads zero, which is no latency, not a
+/// fast one; only a rate is true at zero.
 fn summary(metrics: &[Metric], values: &[Option<f64>], readings: &mut Readings) {
     let seen = values
         .first()
@@ -351,8 +333,7 @@ fn summary(metrics: &[Metric], values: &[Option<f64>], readings: &mut Readings) 
     }
 }
 
-/// Weighted by each range's count, so the mean is over partitions rather
-/// than over ranges.
+/// Weighted by count, so the mean is over partitions.
 fn estimates(rows: &[DriverRow], readings: &mut Readings) {
     let (partitions, bytes) =
         rows.iter()
@@ -368,7 +349,7 @@ fn estimates(rows: &[DriverRow], readings: &mut Readings) {
     }
 }
 
-/// A task counted in anything but bytes — keys, ranges — adds no backlog.
+/// Tasks counted in keys or ranges add no byte backlog.
 fn tasks(rows: &[DriverRow], readings: &mut Readings) {
     let backlog = rows
         .iter()
@@ -387,8 +368,7 @@ fn tasks(rows: &[DriverRow], readings: &mut Readings) {
     readings.set(Metric::CompactionBacklog, backlog);
 }
 
-/// Folded from `0.0` rather than through `Sum`, whose empty `f64` sum is
-/// `-0.0` and draws as a negative size.
+/// `Sum` over empty `f64` is `-0.0`, which draws negative.
 fn total(sum: f64, value: f64) -> f64 {
     sum + value
 }
@@ -458,7 +438,7 @@ async fn thresholds(session: &Session, node: &Arc<Node>) -> Thresholds {
     }
 }
 
-/// A count or a limit, where Cassandra spells "disabled" as `-1` or `null`.
+/// Cassandra spells "disabled" as `-1` or `null`.
 fn positive(value: &str) -> Option<f64> {
     value
         .trim()
@@ -467,7 +447,6 @@ fn positive(value: &str) -> Option<f64> {
         .filter(|value| *value > 0.0)
 }
 
-/// A `DataStorageSpec` as `system_views.settings` prints it: `100MiB`.
 fn storage(value: &str) -> Option<f64> {
     let value = value.trim();
     let split = value
@@ -510,9 +489,7 @@ fn text(value: DriverValue) -> Option<String> {
     }
 }
 
-/// Every column of `row` as a number, `None` where it is null or not one.
-/// Read by value rather than by a typed tuple, so a column whose type moved
-/// between versions still reads.
+/// By value, so a column whose type moved between versions still reads.
 #[expect(
     clippy::cast_precision_loss,
     reason = "a byte count or a counter is far below 2^52"
@@ -542,7 +519,7 @@ async fn first(
     numbers(rows.first()?).into_iter().next().flatten()
 }
 
-/// `cql` on `node` alone: every source here is node-local.
+/// Every source here is node-local.
 async fn rows(
     session: &Session,
     node: &Arc<Node>,

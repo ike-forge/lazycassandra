@@ -1,8 +1,4 @@
 //! `SecretResolver` against the real environment and filesystem.
-//!
-//! The integration tier rather than the fast one: these read the world, and
-//! `Credential::Literal` — the only variant that does not — is covered by the
-//! unit tests beside the implementation (architecture.md §10).
 #![cfg(feature = "integration")]
 
 use std::path::PathBuf;
@@ -11,8 +7,7 @@ use lc_domain::config::{Credential, Credentials};
 use lc_domain::ports::{ConfigError, SecretResolver};
 use lc_outbound::secret::Secrets;
 
-/// Under the target dir, so a run leaves nothing in the user's tree — the
-/// convention `tests/file.rs` set.
+/// Under the target dir.
 #[allow(
     clippy::expect_used,
     reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
@@ -23,8 +18,7 @@ fn scratch(name: &str) -> PathBuf {
     path.join(name)
 }
 
-/// A directory holding a `cqlshrc` and, optionally, the `credentials` file
-/// beside it — the layout Cassandra 4.x cqlsh writes.
+/// The layout Cassandra 4.x cqlsh writes.
 #[allow(
     clippy::expect_used,
     reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
@@ -170,9 +164,8 @@ async fn a_missing_file_names_the_path_it_looked_at() {
 
 #[tokio::test]
 async fn an_environment_credential_is_read_from_the_environment() {
-    // `PATH` rather than a variable the test sets: `std::env::set_var` is
-    // `unsafe` in edition 2024, which `unsafe_code = "forbid"` rules out, and
-    // a test that skips itself when a variable is unset is an ignored test.
+    // `PATH`, since `set_var` is `unsafe` in edition 2024, and a self-skipping
+    // test is an ignored test.
     let expected = std::env::var("PATH").expect("a process has a PATH");
 
     let resolved = Secrets.resolve(&Credential::Env("PATH".to_owned())).await;

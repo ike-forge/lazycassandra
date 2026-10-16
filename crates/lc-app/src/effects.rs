@@ -1,8 +1,5 @@
-//! Interprets the effects `update` returned.
-//!
-//! This is the only place that performs I/O on the domain's behalf. Effects
-//! become tokio tasks; their results re-enter through the same channel as a
-//! keystroke (architecture.md §3).
+//! Performs the effects `update` returned, as tokio tasks whose results
+//! re-enter through the keystroke channel.
 
 use std::sync::Arc;
 
@@ -15,13 +12,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::input::Incoming;
 
-/// The effects that still have no port behind them are inert. `OpenEditor`
-/// is the one exception the main loop runs itself, before anything reaches
-/// here — the child process takes the terminal away from us (external editor
-/// design §4). `Yank` is not like that: its OSC 52 sequence goes to the same
-/// stream every frame is written to, so it is handled below like the rest.
-/// `Quit` needs no work here — `update` has already set
-/// `State::should_quit`.
+/// `OpenEditor` is run by the main loop. `Quit` needs nothing: `update` set
+/// `should_quit`.
 pub(crate) fn run(
     tx: &UnboundedSender<Incoming>,
     cluster: &Arc<dyn Cluster>,
@@ -69,20 +61,10 @@ pub(crate) fn run(
             });
         }
 
-        // Both routes, every time. OSC 52 asks the terminal, and the terminal
-        // does not answer: one that ignores the sequence is indistinguishable
-        // from one that honoured it (yank design §3, §4) — so there is no
-        // failure to detect and nothing to fall back from. A multiplexer that
-        // declines to forward the sequence is exactly that case, and it is why
-        // the helper is asked as well. Both are told the same line, so the
-        // clipboard holds the same thing whichever of them the platform
-        // listens to.
-        //
-        // The OSC 52 write stays here on the main loop: unlike `OpenEditor` it
-        // does not take the terminal away from us, but it does go to the
-        // stream every frame goes to, and a write racing a draw would
-        // interleave with an escape sequence mid-flight. The helper touches no
-        // terminal, so it is a task.
+        // Both routes every time: OSC 52 gets no answer, so failure is
+        // undetectable, and a multiplexer may drop it. The OSC write stays on
+        // the main loop so it cannot interleave with a frame; the helper is a
+        // task.
         Effect::Yank(line) => {
             let _written = crossterm::execute!(
                 std::io::stdout(),
@@ -161,7 +143,7 @@ fn connect(
             },
             Err(error) => Msg::ConnectFailed { conn, error, took },
         };
-        // A closed channel means the main loop has already ended.
+        // A closed channel means the main loop has ended.
         let _sent = tx.send(msg.into());
     });
 }
@@ -196,7 +178,7 @@ fn load_health(
         let started = std::time::Instant::now();
         let health = cluster.table_health(conn, &table).await;
         let took = started.elapsed();
-        // A closed channel means the main loop has already ended.
+        // A closed channel means the main loop has ended.
         let _sent = tx.send(
             Msg::HealthLoaded {
                 request,
@@ -208,7 +190,6 @@ fn load_health(
     });
 }
 
-/// Runs `call` as a task and sends back the page or the failure, timed.
 fn answer(
     tx: &UnboundedSender<Incoming>,
     query: QueryId,
@@ -227,23 +208,20 @@ fn answer(
             },
             Err(error) => Msg::Failed { query, error, took },
         };
-        // A closed channel means the main loop has already ended.
+        // A closed channel means the main loop has ended.
         let _sent = tx.send(msg.into());
     });
 }
 
-/// Silent on success, by design: the theme on screen is the confirmation, and
-/// only a failure is worth a line (theme persistence design §6).
-///
-/// Spawned by [`run`], and written as its own `async fn` so the two outcomes
-/// can be tested without a runtime racing the assertion.
+/// Silent on success. Its own `async fn` so both outcomes test without a racing
+/// runtime.
 async fn save(
     tx: UnboundedSender<Incoming>,
     sink: Arc<dyn ConfigSink>,
     theme: lc_domain::theme::ThemeChoice,
 ) {
     if let Err(error) = sink.save_theme(&theme).await {
-        // A closed channel means the main loop has already ended.
+        // A closed channel means the main loop has ended.
         let _sent = tx.send(
             Msg::ThemeSaveFailed {
                 reason: error.to_string(),
@@ -253,9 +231,8 @@ async fn save(
     }
 }
 
-/// Silent on success: the list on screen is the confirmation. A failure is
-/// one trail line, not a modal, because it repeats on every run for as long as
-/// the directory stays unwritable (query history design §5).
+/// A failure is a trail line, not a modal: it repeats every run while the
+/// directory is unwritable.
 async fn save_history(
     tx: UnboundedSender<Incoming>,
     store: Arc<dyn Store>,
@@ -263,7 +240,7 @@ async fn save_history(
     entries: Vec<String>,
 ) {
     if let Err(error) = store.save(&connection, &entries).await {
-        // A closed channel means the main loop has already ended.
+        // A closed channel means the main loop has ended.
         let _sent = tx.send(
             Msg::HistorySaveFailed {
                 reason: error.to_string(),

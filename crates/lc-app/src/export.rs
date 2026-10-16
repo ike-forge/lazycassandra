@@ -1,14 +1,6 @@
-//! The one effect that both reads the cluster and writes a file.
-//!
-//! It lives here rather than behind a port because it needs two of them, and
-//! the composition root is the one place that holds both (export design §5).
-//!
-//! `crates/lc-outbound/tests/support/mod.rs` mirrors this file's sequencing
-//! by hand, because this crate is a binary — the scenario tier cannot depend
-//! on it and call in directly. A change here that reorders or adds a step
-//! (a page write, a progress report, the finish/abort split) must be carried
-//! over there too, or the scenario tests stop proving anything about this
-//! code.
+//! The one effect that reads the cluster and writes a file, so it lives where
+//! both ports are. `lc-outbound/tests/support/mod.rs` mirrors this sequencing
+//! by hand; keep them in step.
 
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -66,11 +58,8 @@ async fn run(
     let mut sink = writer.open(&job.destination, job.overwrite).await?;
     let mut encoder = Encoder::new(job.format);
 
-    // A truncated array is not a document, and a partial file is not a result
-    // whatever the format (design §4). `finish` is the buffered writer's
-    // flush, so it is the failure most likely to leave one — returning on it
-    // left the user with `Export failed` and a half-written file on disk
-    // (final review I4).
+    // A partial file is not a result in any format, and `finish` is the flush
+    // most likely to leave one.
     let result = match write(tx, cluster, sink.as_mut(), &mut encoder, &job).await {
         Ok(written) => sink.finish().await.map(|()| written),
         Err(error) => Err(error),
@@ -108,8 +97,7 @@ async fn write(
     Ok(written)
 }
 
-/// Follows the paging cursor to the end, writing as it goes. The header is
-/// written from the first page, because that is where the columns are.
+/// The header comes from the first page, which carries the columns.
 async fn pages(
     tx: &UnboundedSender<Incoming>,
     cluster: &dyn Cluster,
@@ -150,6 +138,6 @@ async fn pages(
 }
 
 fn report(tx: &UnboundedSender<Incoming>, job: JobId, rows: usize) {
-    // A closed channel means the main loop has already ended.
+    // A closed channel means the main loop has ended.
     let _sent = tx.send(Msg::ExportProgress { job, rows }.into());
 }

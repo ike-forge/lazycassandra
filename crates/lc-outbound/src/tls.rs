@@ -17,8 +17,9 @@ use rustls::{
 use crate::secret::expand_home;
 
 /// # Errors
-/// [`DbError::Tls`] when a stated file is unreadable or holds no usable PEM,
-/// or the system has no trusted roots.
+///
+/// [`DbError::Tls`] when a stated file is unreadable or holds no usable PEM, or
+/// there are no trusted roots.
 pub(crate) async fn client_config(settings: &TlsSettings) -> Result<Arc<ClientConfig>, DbError> {
     let provider = Arc::new(aws_lc_rs::default_provider());
     let builder = ClientConfig::builder_with_provider(Arc::clone(&provider))
@@ -87,7 +88,7 @@ async fn roots(trust: &Trust) -> Result<RootCertStore, DbError> {
 
     match trust {
         Trust::System => {
-            // Reads the filesystem (or, off Linux, the OS keychain).
+            // Reads the filesystem, or off Linux the keychain.
             let loaded = tokio::task::spawn_blocking(rustls_native_certs::load_native_certs)
                 .await
                 .map_err(tls)?;
@@ -142,14 +143,12 @@ async fn identity_pair(
     Ok((chain, key))
 }
 
-/// The chain is checked by `inner`; only the name is judged differently.
-///
 /// webpki checks the name after the chain, so a name error means the chain
-/// already passed.
+/// passed.
 #[derive(Debug)]
 struct Relaxed {
     inner: Arc<WebPkiServerVerifier>,
-    /// Checked in place of the address dialled; `None` skips the name.
+    /// `None` skips the name check.
     name: Option<ServerName<'static>>,
 }
 
@@ -198,8 +197,7 @@ impl ServerCertVerifier for Relaxed {
     }
 }
 
-/// Accepts any certificate. The handshake signature is still checked, so the
-/// peer holds the key of whatever it presented.
+/// The handshake signature is still checked.
 #[derive(Debug)]
 struct Unverified {
     algorithms: WebPkiSupportedAlgorithms,

@@ -1,11 +1,5 @@
-//! The `SecretResolver` port.
-//!
-//! Resolution happens here rather than in the effect runtime so a plaintext
-//! password never crosses into `lc-domain`: an [`Effect`] carries the
-//! [`Credential`] — a name, a path, or a literal the config file already
-//! held — and the value it stands for exists only inside this crate, between
-//! this call and `SessionBuilder::user`
-//! (docs/superpowers/specs/2026-08-31-connection-picker-design.md §8).
+//! The `SecretResolver` port. Resolved here so a plaintext password never
+//! enters `lc-domain`: an [`Effect`] carries only the [`Credential`].
 //!
 //! [`Effect`]: lc_domain::update::Effect
 
@@ -15,16 +9,14 @@ use async_trait::async_trait;
 use lc_domain::config::{Credential, Credentials, Tls, TlsSettings, Trust, Verification};
 use lc_domain::ports::{ConfigError, SecretResolver};
 
-/// Reads a credential from the environment or the filesystem.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Secrets;
 
 impl Secrets {
-    /// The username and password a connection authenticates with.
-    ///
     /// # Errors
-    /// When a stated credential does not resolve, or a `cqlshrc` names no
-    /// username, or the password it points at cannot be read.
+    ///
+    /// When a stated credential does not resolve, a `cqlshrc` names no
+    /// username, or its password file cannot be read.
     pub async fn credentials(
         &self,
         credentials: &Credentials,
@@ -39,19 +31,17 @@ impl Secrets {
 }
 
 impl Secrets {
-    /// The TLS settings a `cqlshrc` states.
-    ///
     /// # Errors
+    ///
     /// When the file cannot be read.
     pub async fn cqlshrc_tls(&self, path: &Path) -> Result<Tls, ConfigError> {
         Ok(tls_from(&read(&expand_home(path)).await?))
     }
 }
 
-/// cqlsh turns SSL on with `[connection] ssl = true`; `[ssl]` only configures it.
-///
-/// `validate = true` (cqlsh's default) maps to `ChainOnly`: cqlsh checks the
-/// chain and not the hostname, so a setup that works there keeps working here.
+/// `[connection] ssl = true` turns SSL on; `[ssl]` only configures it.
+/// `validate = true` maps to `ChainOnly`, matching cqlsh, which skips the
+/// hostname.
 fn tls_from(text: &str) -> Tls {
     let flag = |section, key| value(text, section, key).map(|v| v.eq_ignore_ascii_case("true"));
 
@@ -82,10 +72,7 @@ fn tls_from(text: &str) -> Tls {
     })
 }
 
-/// `~` against `$HOME`, and nothing else.
-///
-/// Not a shell expansion: `~user` is left alone rather than guessed at, and a
-/// path that does not begin with `~` is never rewritten.
+/// `~user` and other paths are left alone.
 pub(crate) fn expand_home(path: &Path) -> PathBuf {
     let Ok(rest) = path.strip_prefix("~") else {
         return path.to_owned();
@@ -94,12 +81,9 @@ pub(crate) fn expand_home(path: &Path) -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| path.to_owned(), |home| PathBuf::from(home).join(rest))
 }
 
-/// The username and password a cqlsh configuration holds.
-///
-/// Cassandra 4.x splits them: the username sits in the `cqlshrc` under
-/// `[auth_provider]`, and the password in a separate mode-600 file under a
-/// section named for the provider class. Older cqlsh put both under
-/// `[authentication]`, which is read as a fallback.
+/// 4.x puts the username in `[auth_provider]` and the password in a separate
+/// mode-600 file; older cqlsh put both under `[authentication]`, read as a
+/// fallback.
 async fn cqlshrc(path: &Path) -> Result<(String, String), ConfigError> {
     let text = read(path).await?;
 
@@ -130,13 +114,8 @@ async fn cqlshrc(path: &Path) -> Result<(String, String), ConfigError> {
     Ok((username, password))
 }
 
-/// The credentials file a `cqlshrc` points at.
-///
-/// cqlsh's own rule, and nothing more: the stated path when there is one, and
-/// `~/.cassandra/credentials` when there is not. A `cqlshrc` naming a path
-/// this host does not have — one written for cqlsh running inside a
-/// container, say — is a broken configuration to fix where it is written,
-/// not something to guess around here.
+/// cqlsh's rule only: a path this host lacks is a configuration to fix, not to
+/// guess around.
 async fn credentials(cqlshrc: &str) -> Result<(PathBuf, String), ConfigError> {
     let path = value(cqlshrc, "authentication", "credentials")
         .map_or_else(default_credentials, |stated| {
@@ -157,12 +136,9 @@ async fn read(path: &Path) -> Result<String, ConfigError> {
         .map_err(|error| ConfigError::Unresolvable(format!("{}: {error}", path.display())))
 }
 
-/// One key from one section of a `configparser` file.
-///
-/// Hand-rolled rather than a dependency: cqlsh writes the format Python's
-/// `configparser` reads, and the part of it a credential lives in is sections,
-/// `key = value`, and comments. Inline comments are not stripped — Python does
-/// not strip them either unless asked, and a `#` is legal in a password.
+/// Hand-rolled: sections, `key = value` and comments are all a credential
+/// needs. Inline comments are kept, as Python does, since `#` is legal in a
+/// password.
 fn value(text: &str, section: &str, key: &str) -> Option<String> {
     let mut inside = false;
 
@@ -205,10 +181,7 @@ impl SecretResolver for Secrets {
                     ConfigError::Unresolvable(format!("{}: {error}", path.display()))
                 })?;
 
-                // Only the line ending, not `trim`: a password may legitimately
-                // begin or end with a space, and every way of writing a secret
-                // to a file — `echo`, an editor, a secrets mount — appends a
-                // newline the cluster was never meant to receive.
+                // Only the newline: a password may begin or end with a space.
                 Ok(value
                     .strip_suffix('\n')
                     .map_or(value.as_str(), |line| {
@@ -224,9 +197,8 @@ impl SecretResolver for Secrets {
 mod tests {
     use super::*;
 
-    /// `Env` and `File` read the world, so they are exercised in the
-    /// integration tier (`tests/secret.rs`) rather than here — the fast tiers
-    /// touch no environment and no filesystem (architecture.md §10).
+    /// `Env` and `File` touch the world, so they are tested in
+    /// `tests/secret.rs`.
     const CQLSHRC: &str = "\
 [auth_provider]
 module = cassandra.auth

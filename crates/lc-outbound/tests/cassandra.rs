@@ -1,6 +1,5 @@
-//! The integration tier (architecture.md §10): a real cluster, real CQL.
-//!
-//! Run with `mise run test:it` after `mise run db:up`.
+//! The integration tier: a real cluster. Run with `mise run test:it` after
+//! `mise run db:up`.
 
 #![cfg(feature = "integration")]
 
@@ -15,9 +14,7 @@ use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
 use lc_outbound::cassandra::CassandraCluster;
 
-/// The fixture, as a connection the adapter now takes at connect time rather
-/// than at construction (connection picker design §6). `LC_CASSANDRA_PORT`
-/// stays: this is the docker fixture's address, not application configuration.
+/// `LC_CASSANDRA_PORT` is the docker fixture's address, not app configuration.
 #[allow(
     clippy::expect_used,
     reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
@@ -296,7 +293,6 @@ async fn read(keyspace: &str, table: &str) -> lc_domain::model::Page {
         .expect("the read succeeds")
 }
 
-/// One row's cells as the grid would draw them, keyed by column name.
 #[expect(
     clippy::expect_used,
     reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
@@ -567,8 +563,8 @@ async fn paging_walks_a_table_larger_than_one_driver_page() {
         .await
         .expect("the fixture is up");
 
-    // shop.audit_log_by_day's single seeded partition is 10 000 rows
-    // (docker/seed.sh), which outruns the driver's 5 000-row default page.
+    // The seeded partition is 10 000 rows, past the driver's 5 000-row default
+    // page.
     let stmt = Statement::select_all("shop", "audit_log_by_day");
 
     let mut cursor = None;
@@ -588,9 +584,7 @@ async fn paging_walks_a_table_larger_than_one_driver_page() {
     }
 
     assert!(pages > 1, "a single page proves nothing about paging");
-    // A full-table scan sweeps the neighbouring days the seed adds for
-    // contrast as well as the wide partition, so the exact total is the
-    // seed's business rather than this test's.
+    // A full scan also sweeps the seed's neighbouring days.
     assert!(
         seen >= 10_000,
         "every row of the wide partition came back, and then some"
@@ -635,8 +629,7 @@ async fn the_option_set_covers_what_the_layout_rule_expects_of_cassandra_5() {
         .get("customers_by_id")
         .expect("customers_by_id exists");
 
-    // Not the whole list: it deliberately also names properties older and
-    // newer majors carry, which this cluster does not have.
+    // The list also names properties other majors have.
     for name in [
         "additional_write_policy",
         "allow_auto_snapshot",
@@ -673,11 +666,7 @@ async fn the_option_set_covers_what_the_layout_rule_expects_of_cassandra_5() {
     assert_eq!(table.options.get("table_name"), None);
 }
 
-/// A mutation answers with a `Void` result, which `into_rows_result` reports
-/// as a failed downcast. Every statement reaching `execute` is one — it is the
-/// unpaged path (architecture.md §5) — so a `Void` is an empty page rather
-/// than a rejection the cluster never made. Only the real driver produces one,
-/// which is why this lives here and not in the scenario tier.
+/// Only the real driver produces a `Void` result.
 #[tokio::test]
 async fn a_mutation_answers_with_an_empty_page_rather_than_an_error() {
     let conn = ConnId::next();
@@ -722,8 +711,7 @@ async fn the_fixture_reports_a_tables_health_from_its_one_node() {
         .connect(conn, &fixture(), &DriverConfig::default())
         .await
         .expect("the fixture is up");
-    // A histogram that has seen no read reports no percentile at all. A
-    // whole-table select is a range scan, not a read.
+    // A whole-table select is a range scan, not a read.
     cluster
         .execute_paged(
             conn,

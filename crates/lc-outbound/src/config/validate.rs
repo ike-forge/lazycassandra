@@ -1,8 +1,5 @@
-//! The merged layer into the total type the rest of the application reads.
-//!
-//! The smallest addressable unit is dropped: a named entry that will not
-//! validate loses the entry, a scalar that will not validate loses the key and
-//! falls through to the default (design §6).
+//! The merged layer into the total config type. The smallest unit is dropped: a
+//! bad entry loses the entry, a bad scalar loses the key.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,11 +19,8 @@ use super::wire::{
     HistoryLayer, Layer, LayoutLayer, Located, ThemeLayer, TlsLayer, TlsTable,
 };
 
-/// Collects diagnostics so a caller never has to thread a `Vec` by hand.
-///
-/// `fallback` is for the few diagnostics that name no located value; every
-/// other one takes its origin from the value that failed, which is what keeps
-/// a merged config pointing at the file the key was actually written in.
+/// Each diagnostic takes its origin from the value that failed, so it names the
+/// file the key was written in.
 struct Report {
     fallback: Origin,
     diagnostics: Vec<Diagnostic>,
@@ -54,7 +48,6 @@ impl Report {
         });
     }
 
-    /// For the few diagnostics that name no located value.
     fn error_unlocated(&mut self, message: String) {
         self.diagnostics.push(Diagnostic {
             origin: self.fallback.clone(),
@@ -75,8 +68,6 @@ impl Report {
         });
     }
 
-    /// The value if it validated, and a diagnostic naming where it was
-    /// written if it did not.
     fn keep<T, V>(
         &mut self,
         result: Result<T, OutOfRange>,
@@ -108,8 +99,7 @@ pub(crate) fn validate(merged: Layer) -> (Config, Vec<Diagnostic>) {
     let themes = themes(merged.themes, &mut report);
     let connections = connections(merged.connections, &mut report);
     let config = Config {
-        // Resolved against `themes` rather than within a layer: `theme =
-        // "midnight"` is valid if the *other* file defines it (design §6).
+        // Against the merged `themes`: the other file may define it.
         theme: theme(merged.theme, &themes, &mut report),
         background: background(merged.background, &mut report),
         icons: merged.icons.map_or_else(Default::default, bool_to_icons),
@@ -162,9 +152,7 @@ fn history(layer: Option<HistoryLayer>, report: &mut Report) -> HistoryConfig {
     }
 }
 
-/// One [`PanelRatios`] rather than three independent shares: a partial set
-/// cannot be constructed, so a failure falls back to
-/// [`PanelRatios::default`] as a unit rather than share by share.
+/// One unit: a partial set falls back to the default whole.
 fn layout(layer: Option<LayoutLayer>, report: &mut Report) -> PanelRatios {
     let Some(layer) = layer else {
         return PanelRatios::default();
@@ -187,9 +175,8 @@ fn layout(layer: Option<LayoutLayer>, report: &mut Report) -> PanelRatios {
         return ratios;
     }
 
-    // Each share is re-checked in isolation, against the other two at their
-    // defaults, so the diagnostic blames the share that is actually out of
-    // range rather than merely the first one the layer stated.
+    // Each share is checked alone, so the diagnostic blames the one out of
+    // range.
     let failing = [
         (
             layer.sidebar.as_ref(),
@@ -209,12 +196,8 @@ fn layout(layer: Option<LayoutLayer>, report: &mut Report) -> PanelRatios {
 
     match failing {
         Some((located, error)) => report.error(located, format!("layout: {error}")),
-        // Unreachable while every share is checked only against the literal
-        // `5..=95` (design §7, §11.8): no combination fails jointly without
-        // one of the three failing in isolation first. The day joint
-        // validation lands, this is exactly the case a silent fallback would
-        // be worst in, so it is reported now rather than left to be found
-        // then.
+        // Unreachable while shares are checked only against `5..=95`, but
+        // reported for when joint validation lands.
         None => report.error_unlocated(
             "layout: shares are individually in range but not jointly valid — using default"
                 .to_owned(),
@@ -511,8 +494,7 @@ fn connections(layers: Vec<ConnectionLayer>, report: &mut Report) -> Vec<Connect
     connections
 }
 
-/// A `cqlshrc` already owns the TLS half of the setup; `tls` stated beside it
-/// overrides.
+/// `tls` beside a `cqlshrc` overrides it.
 fn connection_tls(
     layer: Option<TlsLayer>,
     credentials: Option<&Credentials>,
@@ -572,12 +554,8 @@ fn tls(layer: TlsLayer) -> Result<Tls, String> {
     }))
 }
 
-/// The pair a connection authenticates with, or why it has none the cluster
-/// would accept.
-///
-/// Separate from [`connections`] so each source of a credential is refused in
-/// one place: `cqlshrc` supplies both halves, so anything stated beside it is
-/// a second answer to a question already answered rather than an override.
+/// `cqlshrc` supplies both halves, so anything beside it is refused rather than
+/// merged.
 fn credentials(
     cqlshrc: Option<String>,
     username: Option<String>,

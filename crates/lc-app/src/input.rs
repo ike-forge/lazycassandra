@@ -1,7 +1,5 @@
-//! Terminal input, forwarded as messages.
-//!
-//! crossterm reads on a dedicated blocking thread so the main loop never
-//! blocks on a keystroke (architecture.md §3).
+//! Terminal input, read on a dedicated blocking thread so the main loop never
+//! blocks on a keystroke.
 
 use crossterm::event::{self, Event, MouseEvent};
 use lc_domain::Msg;
@@ -9,14 +7,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// What the main loop receives.
-///
-/// A pointer event only means something against the frame it happened in, and
-/// this thread has no frame — so a bound one is forwarded whole, and the main
-/// loop, which holds the map, resolves it
-/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4). Gestures `is_bound` refuses
-/// — chiefly `Moved`, which any-event tracking reports for every cell the
-/// pointer crosses — never reach the channel at all (design §2).
+/// A pointer event is forwarded whole: only the main loop has the frame map.
+/// Unbound events such as `Moved` never reach the channel.
 #[derive(Debug)]
 pub(crate) enum Incoming {
     Msg(Msg),
@@ -29,18 +21,11 @@ impl From<Msg> for Incoming {
     }
 }
 
-/// How long the reader waits for an event before looking at the suspension
-/// flag again. Long enough that an idle terminal costs nothing measurable,
-/// short enough that handing the terminal over is not a visible pause
-/// (docs/superpowers/specs/2026-08-12-external-editor-design.md §4).
+/// Idle-cheap, yet short enough that handing over the terminal shows no pause.
 const POLL: Duration = Duration::from_millis(50);
 
-/// The handshake that gets the reader thread off stdin.
-///
-/// A child process spawned while the reader is inside `event::read()` competes
-/// with it for keystrokes, and the ones the reader wins are gone. So the main
-/// loop suspends the reader and waits for it to say it has parked before it
-/// spawns anything (design §4).
+/// A child spawned while the reader is in `event::read()` steals keystrokes, so
+/// the reader parks first.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Suspension(Arc<(Mutex<Flags>, Condvar)>);
 
@@ -48,15 +33,13 @@ pub(crate) struct Suspension(Arc<(Mutex<Flags>, Condvar)>);
 struct Flags {
     suspended: bool,
     parked: bool,
-    /// The reader dies on a poll error, a read error, or a closed channel —
-    /// the terminal or the main loop is gone. A `suspend` that outlives it
-    /// would otherwise wait forever for a `parked` that will never come,
-    /// freezing the program instead of exiting.
+    /// Set when the reader dies, so a `suspend` never waits for a park that
+    /// cannot come.
     gone: bool,
 }
 
 impl Suspension {
-    /// Blocks until the reader is parked. Called before the child is spawned.
+    /// Blocks until the reader is parked.
     pub(crate) fn suspend(&self) {
         let (flags, changed) = &*self.0;
         let mut flags = lock(flags);
@@ -66,14 +49,12 @@ impl Suspension {
         }
     }
 
-    /// Puts the reader back on stdin.
     pub(crate) fn resume(&self) {
         let (flags, changed) = &*self.0;
         lock(flags).suspended = false;
         changed.notify_all();
     }
 
-    /// The reader's half: parks while suspended, announcing that it has.
     fn park(&self) {
         let (flags, changed) = &*self.0;
         let mut flags = lock(flags);
@@ -85,9 +66,7 @@ impl Suspension {
         flags.parked = false;
     }
 
-    /// Marks the handshake dead: the reader has exited and will never park
-    /// again, so any `suspend` in progress or still to come must stop
-    /// waiting rather than block forever.
+    /// Any `suspend`, now or later, must stop waiting.
     fn leave(&self) {
         let (flags, changed) = &*self.0;
         lock(flags).gone = true;
@@ -95,10 +74,8 @@ impl Suspension {
     }
 }
 
-/// A poisoned lock means the other half panicked while holding two bools.
-/// There is no invariant left to restore and nobody to report to, so the
-/// flags are taken as they stand — the alternative is `unwrap`, which
-/// architecture.md §12 bans outside tests.
+/// Poisoning leaves nothing to restore in two bools; `unwrap` is banned outside
+/// tests.
 fn lock(flags: &Mutex<Flags>) -> MutexGuard<'_, Flags> {
     flags.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -107,12 +84,8 @@ fn wait<'a>(changed: &Condvar, flags: MutexGuard<'a, Flags>) -> MutexGuard<'a, F
     changed.wait(flags).unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Calls `Suspension::leave` on drop, so every exit from the reader loop —
-/// including a panic unwinding through it — is the same exit as the three
-/// `break`s that used to call it directly. A `leave()` placed after the loop
-/// is skipped on unwind, and a panicked reader that never sets `gone` is a
-/// `suspend` that blocks forever on a condvar nobody will ever notify
-/// (docs/superpowers/specs/2026-08-12-external-editor-design.md §4).
+/// On drop, so a panicking reader still sets `gone`; a `leave()` after the loop
+/// is skipped on unwind.
 struct LeaveOnDrop<'a>(&'a Suspension);
 
 impl Drop for LeaveOnDrop<'_> {
@@ -127,14 +100,12 @@ pub(crate) fn spawn_reader(tx: UnboundedSender<Incoming>, suspension: Suspension
         loop {
             suspension.park();
 
-            // Polled rather than blocked, so the park above is reached between
-            // reads and the thread is never inside `read()` when the main loop
-            // wants stdin for a child process (design §4).
+            // Polled, so the thread is never inside `read()` when a child needs
+            // stdin.
             match event::poll(POLL) {
                 Ok(true) => {}
                 Ok(false) => continue,
-                // A poll error means the terminal is gone; there is nobody
-                // left to report it to.
+                // The terminal is gone; nobody is left to tell.
                 Err(_) => break,
             }
 
@@ -165,12 +136,8 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    /// The handshake's whole contract: `suspend` does not return until the
-    /// other half has parked. A thread standing in for the reader.
-    ///
-    /// The stand-in parks in a loop, as the real reader does between polls: a
-    /// single `park()` that runs before `suspend` has set the flag returns at
-    /// once, and `suspend` then waits for a park that never comes.
+    /// The stand-in parks in a loop, as the reader does: a single early
+    /// `park()` would leave `suspend` waiting.
     #[test]
     fn suspend_waits_for_the_reader_to_park() {
         let suspension = Suspension::default();
@@ -202,9 +169,7 @@ mod tests {
         Suspension::default().park();
     }
 
-    /// Without the `gone` escape, this hangs: nothing left alive would ever
-    /// set `parked`, and nextest reports the hang as a timeout rather than a
-    /// clean failure — the same signal the deadlock case above relies on.
+    /// Without `gone` this hangs, which nextest reports as a timeout.
     #[test]
     fn suspend_stops_waiting_once_the_reader_is_gone() {
         let suspension = Suspension::default();
@@ -212,10 +177,7 @@ mod tests {
         suspension.suspend();
     }
 
-    /// The regression this guards: a `leave()` placed after the reader loop
-    /// is skipped when the loop body panics, so `gone` is never set and a
-    /// concurrent `suspend` blocks forever. `LeaveOnDrop` must fire on
-    /// unwind too.
+    /// `LeaveOnDrop` must fire on unwind.
     #[test]
     fn leave_on_drop_fires_even_when_the_reader_panics() {
         let suspension = Suspension::default();

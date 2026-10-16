@@ -1,10 +1,6 @@
-//! The annotated example written on first run.
-//!
-//! Authored rather than generated: the values in it could be derived from the
-//! types, but the comments could not, and the comments are the reason the file
-//! exists (example config design §3). What generation would have guaranteed —
-//! that every stated default is the real default — is bought back by
-//! `the_example_states_the_defaults_it_claims_to`.
+//! The annotated example written on first run. Authored, not generated, for the
+//! comments; `the_example_states_the_defaults_it_claims_to` keeps the values
+//! honest.
 
 use std::fs::File;
 use std::io::Write;
@@ -12,13 +8,8 @@ use std::path::Path;
 
 pub(crate) const EXAMPLE: &str = include_str!("example.toml");
 
-/// Writes the example, and does nothing at all if anything is in the way.
-///
-/// `create_new` makes the absence check and the creation one syscall, so there
-/// is no window between them and "someone else got there first" is
-/// indistinguishable from "it was already there" — which is what the silence
-/// of design §2 wants. It also refuses to follow a symlink someone pre-created
-/// at the path, the way `fs::write` would.
+/// `create_new` checks and creates in one syscall and refuses a pre-planted
+/// symlink.
 pub(crate) fn write_if_absent(path: &Path) {
     if let Some(parent) = path.parent() {
         let _ignored = std::fs::create_dir_all(parent);
@@ -49,9 +40,7 @@ mod tests {
         (config, diagnostics)
     }
 
-    /// A line stating a setting, as opposed to prose or a trailing comment
-    /// continued onto its own line. Both forms have to be told apart for
-    /// `uncommented` to produce a file rather than a mess.
+    /// Tells settings from prose and continued comments.
     fn is_setting(text: &str) -> bool {
         text.starts_with('[')
             || text.split_once('=').is_some_and(|(key, _)| {
@@ -60,8 +49,7 @@ mod tests {
             })
     }
 
-    /// The example with every setting turned on and every prose comment left
-    /// alone — what a user gets by deleting the `#` in front of everything.
+    /// Every setting uncommented, prose left alone.
     fn uncommented(source: &str) -> String {
         source
             .lines()
@@ -131,12 +119,8 @@ mod tests {
         assert_eq!(config.driver, default.driver, "{mismatch}");
     }
 
-    /// Every key `wire.rs` declares, plus the serialized spelling of every
-    /// `CredentialSource` variant. Listed by hand rather than derived:
-    /// `serde` gives no way to enumerate a struct's fields or an enum's
-    /// variants, and a list that has to be edited alongside the type is the
-    /// point — adding a field, or renaming a credential source variant,
-    /// without documenting it fails here.
+    /// By hand: `serde` cannot enumerate fields. An undocumented new key fails
+    /// here.
     const KEYS: &[&str] = &[
         "theme",
         "background",
@@ -190,10 +174,7 @@ mod tests {
         }
     }
 
-    /// The roles the example documents, read off its own list rather than
-    /// searched for one at a time: `table` and `comment` are ordinary words,
-    /// and a `contains` for either passes on any prose that happens to use
-    /// them.
+    /// From the example's own list: `table` and `comment` are ordinary words.
     fn documented_roles(source: &str) -> Vec<&str> {
         let list = source.split_once("The roles:").map_or("", |(_, rest)| rest);
         let list = list.split_once('.').map_or(list, |(before, _)| before);

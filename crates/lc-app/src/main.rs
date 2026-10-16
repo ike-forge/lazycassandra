@@ -1,7 +1,5 @@
-//! Composition root and the main loop.
-//!
-//! Deliberately thin: wiring, not logic (architecture.md §2). It is the only
-//! crate that sees all three layers.
+//! Composition root and the main loop: wiring, not logic. The only crate that
+//! sees all three layers.
 
 mod cli;
 mod clipboard;
@@ -24,23 +22,17 @@ use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, MissedTickBehavior, interval};
 
-/// The loader's frame interval. Real time enters the
-/// program here and nowhere else — the domain sees only `Msg::Tick`, and
-/// discards one that changes nothing (design §4.2).
+/// Real time enters here only; the domain sees `Msg::Tick` and ignores one that
+/// changes nothing.
 const TICK: Duration = Duration::from_millis(40);
 
-/// Feeds the loader's phase. Sends unconditionally; `update` is what decides
-/// whether a tick is worth a repaint, because it is what knows whether
-/// anything is outstanding.
+/// Sends unconditionally: only `update` knows whether a tick is worth a
+/// repaint.
 fn spawn_ticker(tx: mpsc::UnboundedSender<Incoming>) {
     tokio::spawn(async move {
         let mut ticks = interval(TICK);
-        // A blocking editing session lets ticks queue up behind it; the
-        // default `Burst` behaviour would replay every missed one on return,
-        // driving the loader and marking the frame dirty thousands of times
-        // before the edited buffer is even applied. A tick is a phase pulse,
-        // not an event with a payload — one catch-up tick means as much as
-        // any other (external editor design §4).
+        // `Skip`, not `Burst`: after a blocking editor session, replaying every
+        // missed tick would mark thousands of frames dirty.
         ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
@@ -58,8 +50,8 @@ fn spawn_ticker(tx: mpsc::UnboundedSender<Incoming>) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Before the terminal is touched, so a usage error or `--help` lands in
-    // the shell the user is looking at rather than behind an alternate screen.
+    // Before the terminal is touched, so usage errors and `--help` land in the
+    // shell.
     let options = match cli::parse(std::env::args_os().skip(1)) {
         Ok(cli::Invocation::Run(options)) => options,
         Ok(cli::Invocation::Print(text)) => {
@@ -78,26 +70,21 @@ async fn main() -> Result<()> {
         std::process::exit(2);
     }
 
-    // Installs a panic hook that restores the terminal before unwinding, so a
-    // panic does not leave the user in raw mode. A panic on a tokio worker
-    // fires the hook without ending the process, so the terminal is restored
-    // under a program that is still drawing — architecture.md §11 has that
-    // still open.
+    // The panic hook restores the terminal. A tokio worker panic fires it
+    // without ending the process (architecture.md §11, open).
     let terminal = ratatui::init();
     let result = captured(terminal, &options).await;
     ratatui::restore();
     result
 }
 
-/// Holds mouse capture for exactly as long as the loop runs, so it is released
-/// while the terminal is still ours.
+/// Released while the terminal is still ours.
 async fn captured(terminal: DefaultTerminal, options: &cli::Options) -> Result<()> {
     let capture = mouse::MouseCapture::enable()?;
 
     run(terminal, &capture, options).await
 }
 
-/// Draws a frame and reports what it turned out to be.
 fn draw(terminal: &mut DefaultTerminal, state: &State, themes: &Themes) -> Result<Rendered> {
     let mut rendered = Rendered::default();
     let view = view_model(state);
@@ -108,26 +95,19 @@ fn draw(terminal: &mut DefaultTerminal, state: &State, themes: &Themes) -> Resul
     Ok(rendered)
 }
 
-/// Tells the domain what the frame turned out to be, but only when it
-/// changed.
-///
-/// Sending unconditionally would redraw, re-measure and redraw forever
-/// (docs/superpowers/specs/2026-08-09-panel-scrolling-design.md §3).
+/// Unconditional sends would redraw and re-measure forever.
 fn report(tx: &mpsc::UnboundedSender<Incoming>, last: &mut Option<Geometry>, geometry: Geometry) {
     if *last == Some(geometry) {
         return;
     }
 
     *last = Some(geometry);
-    // A closed channel means the main loop has already ended.
+    // A closed channel means the main loop has ended.
     let _sent = tx.send(Msg::Measured(geometry).into());
 }
 
-/// A pointer event only means something against the frame it happened in, so
-/// it is resolved here rather than on the reader thread, which has none.
-///
-/// `None` is a gesture that landed on nothing, or one with no binding behind
-/// it: no message, and so no redraw.
+/// Resolved here: only the main loop has the frame map. `None` sends nothing
+/// and draws nothing.
 fn resolve(incoming: Incoming, map: &FrameMap) -> Option<Msg> {
     match incoming {
         Incoming::Msg(msg) => Some(msg),
@@ -135,21 +115,9 @@ fn resolve(incoming: Incoming, map: &FrameMap) -> Option<Msg> {
     }
 }
 
-/// The next message already waiting, where the frame this batch will draw may
-/// be the one that shows it — architecture.md §3's *redraw on state change,
-/// not per event*.
-///
-/// A held key repeats faster than a frame is painted, so a loop that draws
-/// once per press falls behind and keeps moving after the key is released: the
-/// events are queued, and nothing about being late makes them cheaper. Applied
-/// as a batch they cost one frame between them, and the cursor is where the
-/// user let go.
-///
-/// A gesture is the one thing that cannot join a batch. It is resolved against
-/// [`FrameMap`], which describes the frame it happened in and not the one the
-/// messages ahead of it have earned, so it is carried to the loop's next turn
-/// — after the draw that makes the map true again
-/// (docs/superpowers/specs/2026-08-09-mouse-input-design.md §4).
+/// Messages already queued are applied as one batch and one frame, so a held
+/// key stops where it was released. A gesture ends the batch: it must be
+/// resolved against the frame it happened in.
 fn queued(
     rx: &mut mpsc::UnboundedReceiver<Incoming>,
     carried: &mut Option<Incoming>,
@@ -174,9 +142,7 @@ async fn run(
     input::spawn_reader(tx.clone(), suspension.clone());
     spawn_ticker(tx.clone());
 
-    // Built empty: which cluster this reaches is whatever the config named as
-    // the default, or whatever the picker chooses, and neither is known here
-    // (connection picker design §6).
+    // Built empty: the target is chosen from the config default or the picker.
     let cluster: Arc<dyn Cluster> = Arc::new(CassandraCluster::new());
     let writer: Arc<dyn Writer> = Arc::new(lc_outbound::file::FileWriter);
 
@@ -192,9 +158,8 @@ async fn run(
     let (config, mut diagnostics) = source.load().await;
     let sink: Arc<dyn ConfigSink> = source;
 
-    // Loaded here rather than by an effect, as the config is: `init` runs
-    // before there is a runtime loop to answer one, and nothing can run a
-    // statement before the first frame.
+    // Loaded here, not by an effect: `init` runs before the loop can answer
+    // one.
     let store: Arc<dyn Store> = Arc::new(lc_outbound::history::FileStore::from_env());
     let (histories, history_diagnostics) = store.load(config.history.limit).await;
     diagnostics.extend(history_diagnostics);
@@ -216,9 +181,7 @@ async fn run(
     report(&tx, &mut measured, rendered.geometry);
     state.dirty = false;
 
-    // What the last batch took off the channel and could not apply against the
-    // frame it was drawing. `None` on every turn but the one after a gesture
-    // arrived mid-batch.
+    // A gesture carried from the last batch, to resolve after the draw.
     let mut carried: Option<Incoming> = None;
 
     loop {
@@ -234,11 +197,7 @@ async fn run(
         while let Some(incoming) = batch {
             if let Some(msg) = resolve(incoming, &map) {
                 for effect in update(&mut state, msg) {
-                    // The one effect that is not a task: the child owns the
-                    // terminal, so nothing else may draw while it holds it.
-                    // Its outcome comes back through the same channel every
-                    // other effect returns through (external editor design
-                    // §4).
+                    // Not a task: the editor owns the terminal while it runs.
                     if let Effect::OpenEditor { buffer } = &effect {
                         let outcome = editor::open(&mut terminal, capture, &suspension, buffer)?;
                         let _sent = tx.send(outcome.into());
@@ -312,9 +271,6 @@ mod tests {
         assert!(carried.is_none());
     }
 
-    /// The frame a gesture is resolved against is the one it happened in. A
-    /// batch that applied it behind three keystrokes would resolve it against
-    /// a map those keystrokes have already made false.
     #[test]
     fn a_gesture_ends_the_batch_and_waits_for_the_frame_it_earned() {
         let (tx, mut rx) = mpsc::unbounded_channel();

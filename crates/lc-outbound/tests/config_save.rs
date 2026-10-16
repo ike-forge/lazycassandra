@@ -133,9 +133,6 @@ async fn nowhere_to_write_is_an_error_and_not_a_panic() {
     );
 }
 
-/// The write must fail as a write, not as a half-finished one. The temporary
-/// file is created beside the target, so a directory that cannot be written is
-/// where this is felt (design §4).
 #[tokio::test]
 async fn a_target_that_cannot_be_written_fails_and_damages_nothing() {
     use std::os::unix::fs::PermissionsExt;
@@ -168,15 +165,11 @@ async fn a_target_that_cannot_be_written_fails_and_damages_nothing() {
         "and no temporary file is left behind"
     );
 
-    // Restored so the next run's `scratch` can clear the directory.
+    // Restored so the next run can clear the directory.
     std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
         .expect("the directory back");
 }
 
-/// A `config.toml` symlinked into a dotfiles repository is the ordinary case
-/// for anyone who keeps one. Renaming over the link would replace it with a
-/// regular file and quietly detach the user's config from their repository
-/// (design §4).
 #[tokio::test]
 async fn a_symlinked_config_keeps_its_symlink() {
     let xdg = scratch("save-symlink-xdg");
@@ -204,8 +197,6 @@ async fn a_symlinked_config_keeps_its_symlink() {
     assert_eq!(read(&real), "theme = \"quill-dark\"\n");
 }
 
-/// A config file may hold a `password` literal (configuration design §2.2), so
-/// a save must not widen it from 0600 to whatever the umask says.
 #[tokio::test]
 async fn the_files_permissions_are_the_ones_it_had() {
     use std::os::unix::fs::PermissionsExt;

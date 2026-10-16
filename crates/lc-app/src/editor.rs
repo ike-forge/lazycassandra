@@ -1,8 +1,5 @@
-//! Handing the terminal to the user's editor, and taking it back.
-//!
-//! The one effect that is not a tokio task: the child needs the terminal, so
-//! the main loop stops drawing, gets off stdin, and waits
-//! (docs/superpowers/specs/2026-08-12-external-editor-design.md §4).
+//! Handing the terminal to the user's editor and taking it back. Not a task:
+//! the child needs the terminal.
 
 use std::fs::File;
 use std::io::{Write, stdout};
@@ -21,22 +18,15 @@ use ratatui::DefaultTerminal;
 use crate::input::Suspension;
 use crate::mouse::MouseCapture;
 
-/// Openings within this process. With the pid it makes the temp file's name
-/// unique without reading a clock (design §4.1).
+/// With the pid, a unique temp name without a clock.
 static OPENINGS: AtomicUsize = AtomicUsize::new(0);
 
-/// Runs the user's editor on `buffer` and reports what came back.
-///
-/// The terminal is released and retaken here rather than through
-/// `ratatui::restore`/`init`: those install a panic hook per call, and one
-/// more hook chained onto the last for every edit is a leak the sequence does
-/// not need (design §4).
+/// Not `ratatui::restore`/`init`, which chain a new panic hook per call.
 ///
 /// # Errors
 ///
-/// Only if the terminal itself cannot be released or retaken. An editor that
-/// will not run is a `Msg::EditorFailed`, not an error: the program keeps
-/// running and the user is told.
+/// Only if the terminal cannot be released or retaken. An editor that will not
+/// run is a `Msg::EditorFailed`.
 pub(crate) fn open(
     terminal: &mut DefaultTerminal,
     capture: &MouseCapture,
@@ -44,12 +34,8 @@ pub(crate) fn open(
     buffer: &str,
 ) -> Result<Msg> {
     suspension.suspend();
-    // Capture off, then the alternate screen left; retaken in the reverse
-    // order — the alternate screen re-entered before capture goes back on.
-    // Nesting it any other way opens a window, on the retake path, where
-    // mouse reporting is live over a terminal that is out of raw mode and on
-    // the normal screen: pointer motion in that window is echoed as escape
-    // sequences into the user's shell (design §4).
+    // Capture off before leaving the alternate screen, back on after
+    // re-entering: otherwise pointer motion echoes into the user's shell.
     let released = capture.suspended(|| release(terminal, || session(buffer)));
     suspension.resume();
 
@@ -59,11 +45,8 @@ pub(crate) fn open(
     })
 }
 
-/// Leaves the alternate screen for `body` and comes back to a cleared one.
-///
-/// The retake runs whether or not `body` succeeded: a failed spawn that left
-/// the terminal released would leave the user in their shell with the program
-/// still running.
+/// Retaken even if `body` failed, or the user is dropped in their shell with
+/// the program running.
 fn release<T>(terminal: &mut DefaultTerminal, body: impl FnOnce() -> T) -> Result<T> {
     disable_raw_mode()?;
     execute!(stdout(), LeaveAlternateScreen)?;
@@ -77,27 +60,21 @@ fn release<T>(terminal: &mut DefaultTerminal, body: impl FnOnce() -> T) -> Resul
     Ok(value)
 }
 
-/// The temp file's whole life. `Err` is what the user is told, in their words
-/// rather than a type's.
+/// `Err` is in the user's words.
 fn session(buffer: &str) -> Result<String, String> {
     let path = temp_path();
     write_fresh(&path, buffer)
         .map_err(|error| format!("could not write {}: {error}", path.display()))?;
 
     let edited = run(&path);
-    // The editor is done with it either way, and a failure has nothing left
-    // to read out of it.
+    // Removed either way.
     let _removed = std::fs::remove_file(&path);
 
     edited
 }
 
-/// `create_new` refuses a path that already exists — including one a local
-/// attacker pre-created as a symlink to steer the write elsewhere — rather
-/// than following it the way `fs::write` would. The name is guessable
-/// (pid and a counter, not a random one — design §4.1), so this is the write
-/// that keeps a guessable path from being a hijackable one (external editor
-/// design §4.1).
+/// `create_new` refuses a pre-planted symlink: the name is guessable, so this
+/// keeps it from being hijackable.
 fn write_fresh(path: &Path, buffer: &str) -> std::io::Result<()> {
     File::options()
         .write(true)
@@ -128,10 +105,8 @@ fn run(path: &Path) -> Result<String, String> {
         .map_err(|error| format!("could not read the edited buffer back: {error}"))
 }
 
-/// `$VISUAL`, then `$EDITOR`, then `vi` — the chain every tool that opens an
-/// editor walks. The value is split on whitespace so `EDITOR="code -w"` works;
-/// this is not a shell, and an invocation that needs one needs a wrapper
-/// script (design §4.1).
+/// `$VISUAL`, `$EDITOR`, then `vi`. Split on whitespace so `EDITOR="code -w"`
+/// works; this is not a shell.
 fn program(visual: Option<&str>, editor: Option<&str>) -> Vec<String> {
     let chosen = [visual, editor]
         .into_iter()
@@ -142,9 +117,7 @@ fn program(visual: Option<&str>, editor: Option<&str>) -> Vec<String> {
     chosen.split_whitespace().map(str::to_owned).collect()
 }
 
-/// `.sql`, not `.cql`: the extension is what makes the user's editor highlight
-/// the buffer (design §4.1), and Neovim maps `.cql` to Clinical Quality
-/// Language, which has no highlighting for Cassandra's dialect.
+/// `.sql`, not `.cql`: Neovim maps `.cql` to Clinical Quality Language.
 fn temp_path() -> PathBuf {
     let opening = OPENINGS.fetch_add(1, Ordering::Relaxed);
 

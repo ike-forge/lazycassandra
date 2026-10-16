@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use lc_domain::ports::{ExportError, Writer};
 use lc_outbound::file::FileWriter;
 
-/// A directory under the target dir, so a run leaves nothing in the
-/// user's tree and two runs cannot collide on a name.
+/// Under the target dir, so runs leave nothing behind and cannot collide.
 #[allow(
     clippy::expect_used,
     reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"

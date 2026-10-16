@@ -1,9 +1,5 @@
-//! An in-memory `Cluster` with a scripted schema.
-//!
-//! Not test-only: scenario tests (architecture.md §10) drive whole sessions
-//! through it from the `lc-domain` side, so it ships in the crate rather than
-//! behind `#[cfg(test)]`. Deterministic by construction — no clock, no socket
-//! (conventions.md §4).
+//! An in-memory `Cluster` with a scripted schema. Shipped, not test-only:
+//! scenario tests drive sessions through it.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -21,36 +17,22 @@ use lc_domain::posture::Posture;
 pub struct FakeCluster {
     schema: Schema,
     posture: Posture,
-    /// What `execute` hands back, whatever the statement.
     page: Page,
-    /// What `connect` returns instead of succeeding.
     connect_error: Option<DbError>,
-    /// What `describe` returns instead of succeeding.
     describe_error: Option<DbError>,
-    /// What `describe` hands back from its second call onward, for a session
-    /// that changes the cluster's shape and re-reads it — a drop, whose
-    /// success re-issues `Effect::LoadSchema` (drop design §4). `None` means
-    /// every call describes the same cluster.
+    /// From the second call on, for sessions that change the schema and re-read
+    /// it. `None` keeps one shape.
     re_described: Option<Schema>,
-    /// How many times `describe` has answered, so `re_described` knows which
-    /// call it is. Behind an atomic because the port takes `&self`.
+    /// Atomic: the port takes `&self`.
     describes: AtomicUsize,
-    /// What `execute` returns instead of a page.
     execute_error: Option<DbError>,
-    /// The statements `execute` was asked for, in order. Behind a lock
-    /// because the port takes `&self`; a scenario asserts on it afterwards.
+    /// Locked: the port takes `&self`.
     executed: Mutex<Vec<Statement>>,
-    /// The page size each `execute_paged` call asked for, in order.
     page_sizes: Mutex<Vec<PageSize>>,
-    /// Pages `execute_paged` walks, in order. Empty means one page — whatever
-    /// `execute` would return — and no cursor.
+    /// Empty means one page, as `execute` would return, with no cursor.
     pages: Vec<Page>,
-    /// The page index at which `execute_paged` fails instead of handing back
-    /// the scripted page, and what it fails with. Every page before it is
-    /// still delivered, so a scenario can prove a mid-export abort rather
-    /// than a first-page one.
+    /// Earlier pages are still delivered, so a mid-export abort is testable.
     failing_page: Option<(usize, DbError)>,
-    /// What `table_health` hands back, whatever the table.
     health: Health,
 }
 
@@ -64,13 +46,11 @@ impl FakeCluster {
         }
     }
 
-    /// The rows `execute` will hand back.
     #[must_use]
     pub fn returning(self, page: Page) -> Self {
         Self { page, ..self }
     }
 
-    /// The shape `describe` reports from its second call onward.
     #[must_use]
     pub fn re_describing(self, schema: Schema) -> Self {
         Self {
@@ -79,7 +59,6 @@ impl FakeCluster {
         }
     }
 
-    /// A cluster that connects and describes itself but refuses to read.
     #[must_use]
     pub fn refusing_to_execute(self, error: DbError) -> Self {
         Self {
@@ -88,23 +67,14 @@ impl FakeCluster {
         }
     }
 
-    /// The pages `execute_paged` walks through, in order.
-    ///
-    /// The cursor is the index of the page that follows, so a scripted run
-    /// needs no driver and no clock.
+    /// The cursor is the next page's index.
     #[must_use]
     pub fn paging(self, pages: Vec<Page>) -> Self {
         Self { pages, ..self }
     }
 
-    /// Fails `execute_paged` when the cursor names `index` rather than
-    /// handing back the scripted page there.
-    ///
-    /// Two things to know before reaching for this: it is consulted only
-    /// after `pages` is non-empty (an unscripted cluster returns its one
-    /// `execute` page before `index` is ever checked), and `execute_error`
-    /// from [`Self::refusing_to_execute`] is checked first and, if set,
-    /// fails every call regardless of `index`.
+    /// Only consulted once `pages` is set; `refusing_to_execute` takes
+    /// precedence.
     #[must_use]
     pub fn failing_page(self, index: usize, error: DbError) -> Self {
         Self {
@@ -113,16 +83,13 @@ impl FakeCluster {
         }
     }
 
-    /// What `table_health` reports.
     #[must_use]
     pub fn reporting(self, health: Health) -> Self {
         Self { health, ..self }
     }
 
-    /// Every statement `execute` has been handed, in order.
-    ///
-    /// A poisoned lock is recovered from rather than propagated: the panic
-    /// that poisoned it is the failure worth reporting, not this.
+    /// A poisoned lock is recovered: the panic that poisoned it is the real
+    /// failure.
     #[must_use]
     pub fn executed(&self) -> Vec<Statement> {
         self.executed
@@ -131,7 +98,6 @@ impl FakeCluster {
             .clone()
     }
 
-    /// The page size every `execute_paged` call has asked for, in order.
     #[must_use]
     pub fn page_sizes(&self) -> Vec<PageSize> {
         self.page_sizes
@@ -140,7 +106,6 @@ impl FakeCluster {
             .clone()
     }
 
-    /// A cluster that cannot be reached at all.
     #[must_use]
     pub fn failing(error: DbError) -> Self {
         Self {
@@ -149,8 +114,7 @@ impl FakeCluster {
         }
     }
 
-    /// A cluster that connects and then refuses to describe itself — the shape
-    /// of a connection without the permissions to read `system_schema`.
+    /// A connection without permission to read `system_schema`.
     #[must_use]
     pub fn failing_to_describe(error: DbError) -> Self {
         Self {
@@ -240,24 +204,18 @@ impl Cluster for FakeCluster {
     }
 }
 
-/// A [`Writer`] that keeps what it was given in memory.
-///
-/// Ships in the crate rather than behind `#[cfg(test)]` for the reason
-/// [`FakeCluster`] does: the scenario tier drives whole exports through it.
+/// Shipped for the scenario tier, like [`FakeCluster`].
 #[derive(Debug, Default, Clone)]
 pub struct FakeWriter {
     written: Arc<Mutex<String>>,
     aborted: Arc<AtomicBool>,
     finished: Arc<AtomicBool>,
-    /// Whether `open` refuses every path as already taken.
     exists: bool,
-    /// Whether `finish` fails — the disk-full-at-close case, where a partial
-    /// file is likeliest (design §4).
+    /// Disk full at close, where a partial file is likeliest.
     unflushable: bool,
 }
 
 impl FakeWriter {
-    /// Everything every chunk was handed, concatenated.
     #[must_use]
     pub fn written(&self) -> String {
         self.written
@@ -266,7 +224,6 @@ impl FakeWriter {
             .clone()
     }
 
-    /// A writer that refuses every path as already taken.
     #[must_use]
     pub fn refusing_because_it_exists() -> Self {
         Self {
@@ -275,9 +232,7 @@ impl FakeWriter {
         }
     }
 
-    /// A writer whose `finish` fails. `finish` is the real writer's flush, so
-    /// this is the last moment an export can fail and the one that leaves a
-    /// truncated file behind.
+    /// `finish` is the flush, so this leaves a truncated file.
     #[must_use]
     pub fn failing_to_finish() -> Self {
         Self {
@@ -286,14 +241,12 @@ impl FakeWriter {
         }
     }
 
-    /// Whether `abort` was called.
     #[must_use]
     pub fn aborted(&self) -> bool {
         self.aborted.load(Ordering::Relaxed)
     }
 
-    /// Whether `finish` was called. A run that aborts must never also finish
-    /// (design §4).
+    /// An aborted run must never also finish.
     #[must_use]
     pub fn finished(&self) -> bool {
         self.finished.load(Ordering::Relaxed)
@@ -316,8 +269,7 @@ impl Writer for FakeWriter {
     }
 }
 
-/// The open half of a [`FakeWriter`], sharing its state so a scenario can
-/// still observe it after `open` has handed the sink away.
+/// Shares state with its writer so a scenario can observe it after `open`.
 struct FakeSink {
     written: Arc<Mutex<String>>,
     aborted: Arc<AtomicBool>,

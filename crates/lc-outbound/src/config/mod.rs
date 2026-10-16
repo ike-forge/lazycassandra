@@ -1,8 +1,5 @@
-//! Reading, layering and validating the config files.
-//!
-//! Everything here but `discover` is pure, so the merge rules are tested in
-//! the fast tier over inline strings
-//! (docs/superpowers/specs/2026-08-14-configuration-design.md §7).
+//! Reading, layering and validating config files. All but `discover` is pure,
+//! so the merge is tested over inline strings.
 
 mod discover;
 mod example;
@@ -18,10 +15,7 @@ use lc_domain::style::Severity;
 
 pub(crate) use wire::Layer;
 
-/// One config file's values, and everything wrong with it.
-///
-/// `None` means a syntax error: the file yielded no values at all, so there is
-/// nothing to drop selectively and the layer contributes nothing (design §6).
+/// `None` on a syntax error: the layer contributes nothing.
 pub(crate) fn parse(source: &str, origin: &Origin) -> (Option<Layer>, Vec<Diagnostic>) {
     let mut layer: Layer = match toml::from_str(source) {
         Ok(layer) => layer,
@@ -34,10 +28,8 @@ pub(crate) fn parse(source: &str, origin: &Origin) -> (Option<Layer>, Vec<Diagno
                     origin: origin.clone(),
                     span,
                     severity: Severity::Danger,
-                    // "file ignored" reads as one entry, not the whole file — a
-                    // wrong-typed scalar (`icons = "yes"`) takes this path too
-                    // (design §6), and per-key recovery from a type mismatch is
-                    // follow-up work (§11), so today the loss really is total.
+                    // A wrong-typed scalar lands here too; per-key recovery is
+                    // not implemented, so the whole file is skipped.
                     message: format!(
                         "{} — every setting in this file was skipped",
                         error.message()
@@ -46,17 +38,14 @@ pub(crate) fn parse(source: &str, origin: &Origin) -> (Option<Layer>, Vec<Diagno
             );
         }
     };
-    // Before anything else sees it: after the merge a value may have come
-    // from either file, and only here is it known which.
+    // First: after the merge, which file a value came from is lost.
     layer.locate(source, origin);
     let diagnostics = unknown_keys(&layer, origin);
 
     (Some(layer), diagnostics)
 }
 
-/// A byte offset as an editor counts it: both one-based, columns in
-/// characters rather than bytes, so a diagnostic on a line holding non-ASCII
-/// points where the user's cursor would land.
+/// One-based, columns in characters, as an editor counts.
 fn line_col(source: &str, offset: usize) -> Span {
     let consumed = source.get(..offset).unwrap_or(source);
     let line = consumed.matches('\n').count() + 1;
@@ -76,7 +65,7 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
         for key in keys.keys() {
             diagnostics.push(Diagnostic {
                 origin: origin.clone(),
-                // `serde`'s flatten keeps the name and not the position.
+                // `serde`'s flatten keeps the name, not the position.
                 span: None,
                 severity: Severity::Warning,
                 message: renamed(table, key).map_or_else(
@@ -116,22 +105,13 @@ fn unknown_keys(layer: &Layer, origin: &Origin) -> Vec<Diagnostic> {
     diagnostics
 }
 
-/// The key a retired one was renamed to. `grid.row_limit` was a `LIMIT` and
-/// `grid.page_rows` is a page size (grid paging design §1).
+/// `grid.row_limit` was a `LIMIT`; `grid.page_rows` is a page size.
 fn renamed(table: &str, key: &str) -> Option<&'static str> {
     (table == "grid." && key == "row_limit").then_some("grid.page_rows")
 }
 
-/// An environment variable, `None` if unset, empty, or not an absolute path.
-///
-/// The XDG spec treats an empty value as unset; without this, `XDG_CONFIG_HOME=""`
-/// or `HOME=""` would resolve `global_path` against the current directory
-/// instead. The spec also requires a non-absolute value to be ignored — for a
-/// read that only meant a surprising place to look, but for
-/// `write_example_config_from_env` it would mean writing
-/// `./lazycassandra/config.toml` into whatever directory the process happened
-/// to start in, exactly the untracked-file-in-a-repository outcome design §2
-/// rules out for the project file.
+/// Per XDG, empty and relative values are ignored; otherwise the example write
+/// could land in the working directory.
 pub(crate) fn non_empty_env(name: &str) -> Option<PathBuf> {
     non_empty(std::env::var_os(name))
 }
@@ -143,12 +123,7 @@ fn non_empty(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
-/// Where the global config file goes, whether or not it is there.
-///
-/// Exposed for the connection picker, which names it when a config defines no
-/// connections — the guidance has to point somewhere, and `lc-domain` cannot
-/// read an environment variable (connection picker design §3). `None` when
-/// neither `$XDG_CONFIG_HOME` nor `$HOME` is set.
+/// For the picker's empty-list guidance: `lc-domain` reads no environment.
 #[must_use]
 pub fn global_path() -> Option<PathBuf> {
     let xdg = non_empty_env("XDG_CONFIG_HOME");
@@ -157,11 +132,8 @@ pub fn global_path() -> Option<PathBuf> {
     discover::global_path(xdg.as_deref(), home.as_deref())
 }
 
-/// The files, layered (design §3).
-///
-/// Holds where to look rather than what was found: the save may create the
-/// user-level file, and both operations must see the disk as it is when they
-/// run (theme persistence design §3).
+/// Holds where to look: a save may create the user file, and both operations
+/// must see the disk as it is.
 #[derive(Debug, Clone)]
 pub struct FileConfigSource {
     cwd: PathBuf,
@@ -181,11 +153,8 @@ impl FileConfigSource {
         }
     }
 
-    /// The file `--config` named, layered above both discovered ones.
-    ///
-    /// Above rather than instead of: a user pointing at a file with two keys
-    /// in it is stating those two keys, not asking for the defaults
-    /// everywhere else (design §5).
+    /// Layered above, not instead: stating two keys is not asking for defaults
+    /// elsewhere.
     #[must_use]
     pub fn named(self, path: &Path) -> Self {
         Self {
@@ -194,12 +163,8 @@ impl FileConfigSource {
         }
     }
 
-    /// The connection `--connection` named, in place of whatever
-    /// `default_connection` says.
-    ///
-    /// An override of that key rather than a fourth kind of thing: what opens
-    /// a cluster at startup, and what the picker opens seated on, both already
-    /// read it (connection picker design §3).
+    /// Overrides `default_connection`, which startup and the picker already
+    /// read.
     #[must_use]
     pub fn opening(self, name: &str) -> Self {
         Self {
@@ -217,12 +182,8 @@ impl FileConfigSource {
         Self::new(&cwd, xdg.as_deref(), home.as_deref())
     }
 
-    /// Every file that applies, nearest last, skipping whichever is not there.
-    ///
-    /// The named file is not skipped when it is absent: the read then fails
-    /// and says so, because a `--config` naming nothing is a typo, and
-    /// falling through to the discovered files silently would answer it with
-    /// somebody else's settings.
+    /// A missing `--config` file is not skipped: falling through would answer a
+    /// typo with other settings.
     fn paths(&self) -> Vec<PathBuf> {
         let mut paths = Vec::new();
 
@@ -239,12 +200,8 @@ impl FileConfigSource {
         paths
     }
 
-    /// The file whose `theme` is in force: the highest layer stating one,
-    /// else the user-level file — created if it is not there.
-    ///
-    /// Writing a file that a higher layer overrides would save a value that
-    /// loses on the next launch, which is the bug this exists to remove
-    /// (theme persistence design §3).
+    /// The highest layer stating `theme`, else the user file: saving to an
+    /// overridden file would lose on the next launch.
     fn save_target(&self) -> Result<PathBuf, lc_domain::ports::ConfigWriteError> {
         let stated = self.paths().into_iter().rev().find(|path| {
             std::fs::read_to_string(path).is_ok_and(|source| save::states_theme(&source))
@@ -278,12 +235,7 @@ impl FileConfigSource {
     }
 }
 
-/// Points `default_connection` at `name`, or at nothing when the config holds
-/// no such connection.
-///
-/// Nothing rather than the file's own default: a mistyped `--connection` must
-/// not open a different cluster than the one asked for, and the picker asking
-/// is the outcome a user can see and correct.
+/// Unknown names clear the default: a typo must not open a different cluster.
 fn open_instead(config: &mut Config, name: &str) -> Vec<Diagnostic> {
     let named = config
         .connections
@@ -304,20 +256,14 @@ fn open_instead(config: &mut Config, name: &str) -> Vec<Diagnostic> {
     }]
 }
 
-/// Puts the annotated example at the user-level path when nothing is there
-/// (example config design §2).
-///
-/// Silent throughout, success and failure alike: a file appearing where the
-/// documentation says config lives is not an event, and a machine where the
-/// write cannot happen — no home, a read-only one, a container — is not a
-/// machine with a problem to report on every launch.
+/// Silent either way: the example appearing is no event, and an unwritable home
+/// is no problem to report every launch.
 pub fn write_example_config(xdg: Option<&Path>, home: Option<&Path>) {
     if let Some(path) = discover::global_path(xdg, home) {
         example::write_if_absent(&path);
     }
 }
 
-/// [`write_example_config`] against the environment this process was given.
 pub fn write_example_config_from_env() {
     let xdg = non_empty_env("XDG_CONFIG_HOME");
     let home = non_empty_env("HOME");
@@ -355,8 +301,7 @@ impl lc_domain::ports::ConfigSink for FileConfigSource {
         let target = self.save_target()?;
         let source = match std::fs::read_to_string(&target) {
             Ok(source) => source,
-            // Nothing there yet is not a failure: the first run's example
-            // write can have been blocked, and the key still has to land.
+            // A blocked first-run example write still lets the key land.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(error) => {
                 return Err(lc_domain::ports::ConfigWriteError::Io(format!(
@@ -538,10 +483,8 @@ mod tests {
     }
 }
 
-/// The repository's own `.lazycassandra.toml`, checked here rather than only
-/// by hand: it is what points a checkout at the docker fixture, and a typo in
-/// it would surface as an empty connection picker rather than as an error
-/// anyone would connect to this file.
+/// The repository's own file points a checkout at the fixture; a typo would
+/// only show as an empty picker.
 #[cfg(test)]
 mod repo_config {
     use lc_domain::config::Origin;

@@ -1,9 +1,5 @@
-//! Writing the chosen theme back into the file it is read from.
-//!
-//! A splice over one value rather than a re-serialisation: the user-level file
-//! is entirely comments (example config design §3), and a writer that produced
-//! valid TOML would take every one of them with it (theme persistence design
-//! §4).
+//! Writing the chosen theme back. A splice, not a re-serialisation, which would
+//! drop the file's comments.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -12,11 +8,7 @@ use lc_domain::ports::ConfigWriteError;
 use serde::Deserialize;
 use toml::Spanned;
 
-/// The root table's `theme`, and nothing else.
-///
-/// `serde` ignores unknown keys, so every other setting in the file is
-/// irrelevant here — and a `theme` inside `[[themes]]` or any other table is a
-/// different key this never sees.
+/// `serde` ignores the rest; a `theme` inside a table is a different key.
 #[derive(Debug, Deserialize)]
 struct Root {
     theme: Option<Spanned<String>>,
@@ -29,19 +21,13 @@ fn root_theme(source: &str) -> Result<Option<Spanned<String>>, String> {
     }
 }
 
-/// Whether this file is the one whose `theme` is in force.
 pub(crate) fn states_theme(source: &str) -> bool {
     matches!(root_theme(source), Ok(Some(_)))
 }
 
-/// `source` with its root `theme` set to `slug`, and everything else — every
-/// comment, every other key, the alignment — as it was.
-///
-/// The three rules, in order: replace a stated value where it sits; else
-/// uncomment the example's own commented line; else insert the key before the
-/// first table header. Never at the end of a file that has one: the example
-/// says why — "a key without its header lands in the wrong table and is
-/// reported as unknown" (design §4).
+/// Replace a stated value; else uncomment the example's line; else insert
+/// before the first table header, never at the end where it would land in the
+/// wrong table.
 pub(crate) fn set_theme(source: &str, slug: &str) -> Result<String, ConfigWriteError> {
     let value = quote(slug);
     let stated = root_theme(source)
@@ -60,11 +46,8 @@ pub(crate) fn set_theme(source: &str, slug: &str) -> Result<String, ConfigWriteE
     Ok(uncommented(source, &value).unwrap_or_else(|| inserted(source, &value)))
 }
 
-/// A TOML basic string.
-///
-/// `Cargo.toml` keeps `toml`'s `display` feature off — one scalar is not a
-/// reason to carry a serialiser — and `ThemeName::try_new` rejects whitespace
-/// but not a quote or a backslash, so a custom theme's name can need escaping.
+/// `toml`'s serialiser is off, and theme names may contain quotes or
+/// backslashes.
 pub(crate) fn quote(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('"');
@@ -85,7 +68,6 @@ pub(crate) fn quote(value: &str) -> String {
     quoted
 }
 
-/// Each line, and where it starts, with its terminator trimmed off.
 fn lines(source: &str) -> impl Iterator<Item = (usize, &str)> {
     let mut offset = 0;
 
@@ -97,12 +79,8 @@ fn lines(source: &str) -> impl Iterator<Item = (usize, &str)> {
     })
 }
 
-/// Uncomments the first commented line that is a root `theme` assignment.
-///
-/// The candidate is uncommented first and then parsed as a document of its
-/// own, so what counts as "a theme line" is the same TOML parser rule the
-/// stated case uses — a prose comment does not parse, and
-/// `# background = "theme"` parses to a different key.
+/// Uncommented then parsed, so "a theme line" means the same parser rule as the
+/// stated case.
 fn uncommented(source: &str, value: &str) -> Option<String> {
     for (at, line) in lines(source) {
         let Some(bare) = bare(line) else { continue };
@@ -123,8 +101,7 @@ fn uncommented(source: &str, value: &str) -> Option<String> {
     None
 }
 
-/// The line with its comment marker removed: the `#`, and one space after it
-/// if there is one, so the `=` keeps its column relative to the key.
+/// One space after `#` goes too, keeping the `=` aligned.
 fn bare(line: &str) -> Option<String> {
     let indent = &line[..line.len() - line.trim_start().len()];
     let rest = line.trim_start().strip_prefix('#')?;
@@ -135,8 +112,7 @@ fn bare(line: &str) -> Option<String> {
 
 fn inserted(source: &str, value: &str) -> String {
     let line = format!("theme = {value}\n");
-    // A commented `# [grid]` is a comment, not a table, so it does not push
-    // the key above itself.
+    // A commented `# [grid]` is not a header.
     let header = lines(source).find(|(_, line)| line.trim_start().starts_with('['));
 
     match header {
@@ -146,15 +122,9 @@ fn inserted(source: &str, value: &str) -> String {
     }
 }
 
-/// Replaces `path`'s contents with `contents`.
-///
-/// A temporary file beside the target and a rename, so a crash or a full disk
-/// cannot leave half a config where a whole one was. Two details carry their
-/// own reason: the target is canonicalised first, so a `config.toml` symlinked
-/// into a dotfiles repository is followed rather than replaced by a regular
-/// file; and the original's permissions are copied onto the temporary file,
-/// because a config may hold a `password` literal (configuration design §2.2)
-/// and must not widen from 0600 (theme persistence design §4).
+/// Temp file and rename, so a crash cannot leave half a config. Symlinks are
+/// followed, and the original's mode is copied: a config may hold a password
+/// and must not widen from 0600.
 pub(crate) fn write(path: &Path, contents: &str) -> Result<(), ConfigWriteError> {
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let failed =
@@ -177,8 +147,8 @@ pub(crate) fn write(path: &Path, contents: &str) -> Result<(), ConfigWriteError>
     })
 }
 
-/// Beside the target, so the rename stays on one filesystem, and named after
-/// this process, so two of them cannot collide.
+/// Beside the target for one filesystem; named after this process so two cannot
+/// collide.
 fn temporary(target: &Path) -> std::path::PathBuf {
     let name = target.file_name().map_or_else(
         || String::from("config.toml"),
@@ -301,10 +271,8 @@ mod tests {
         );
     }
 
-    /// Rule 2 is a promise about a file this repository ships. A reformat of
-    /// the example that moved its `theme` line out of reach would silently
-    /// downgrade every fresh install to rule 3 — the key appended somewhere
-    /// else, the annotated line still commented above it.
+    /// A reformat moving the example's `theme` line would silently downgrade
+    /// fresh installs to rule 3.
     #[test]
     fn the_examples_own_theme_line_is_the_one_rule_two_uncomments() {
         let saved = saved(crate::config::example::EXAMPLE);
@@ -320,8 +288,6 @@ mod tests {
         );
     }
 
-    /// The round trip the feature is: what `slug()` writes, `validate` reads
-    /// back as the same choice.
     #[test]
     fn every_built_in_survives_a_save_and_a_reload() {
         for built_in in BuiltIn::ALL {

@@ -1,17 +1,12 @@
-//! Layering, lowest to highest (design §5).
-//!
-//! Produces a `Layer` rather than a `Config`: validation is two-phase, because
-//! `theme = "midnight"` in the global file is valid if the *local* file
-//! defines that theme. Cross-references can only be resolved once both layers
-//! are one (design §6).
+//! Layering, lowest to highest. Produces a `Layer`: cross-file references
+//! resolve only after both are one.
 
 use lc_domain::config::{Diagnostic, Origin};
 use lc_domain::style::Severity;
 
 use super::wire::{DriverLayer, ExportLayer, GridLayer, HistoryLayer, Layer, LayoutLayer, Located};
 
-/// Diagnostics here are only the ones the merge itself discovers — a name
-/// stated twice within one file. Per-layer problems were reported by `parse`.
+/// Only a name stated twice within one file; `parse` reported the rest.
 pub(crate) fn merge(layers: Vec<Layer>) -> (Layer, Vec<Diagnostic>) {
     let mut diagnostics = Vec::new();
     let mut merged = Layer::default();
@@ -47,10 +42,8 @@ pub(crate) fn merge(layers: Vec<Layer>) -> (Layer, Vec<Diagnostic>) {
     (merged, diagnostics)
 }
 
-/// Global order first, then entries only the higher layer states. A name in
-/// both keeps its position and takes the higher layer's value **whole** —
-/// field-level merging would let `posture` be inherited invisibly from a file
-/// the user has forgotten about (design §5).
+/// A name in both keeps its position and takes the higher value whole: field
+/// merging would inherit `posture` from a forgotten file.
 fn union<T>(lower: Vec<T>, upper: Vec<T>, key: impl Fn(&T) -> String) -> Vec<T> {
     let mut upper: Vec<Option<T>> = upper.into_iter().map(Some).collect();
     let mut merged: Vec<T> = Vec::with_capacity(lower.len() + upper.len());
@@ -69,12 +62,7 @@ fn union<T>(lower: Vec<T>, upper: Vec<T>, key: impl Fn(&T) -> String) -> Vec<T> 
     merged
 }
 
-/// Within one file a repeated name is ambiguous rather than a layering. The
-/// first is kept, so the reading order a user scans in is the one that wins.
-///
-/// `name` yields the entry's `Located` name, which is where both the string
-/// and the file it was written in come from — nothing has to thread an origin
-/// through the merge.
+/// The first wins within a file: the order a user reads.
 fn dedup<T>(
     entries: Vec<T>,
     what: &str,

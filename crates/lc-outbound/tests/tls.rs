@@ -1,6 +1,5 @@
-//! TLS and password auth against the `cassandra-tls` fixture.
-//!
-//! Run with `mise run test:it` after `mise run db:tls:up`.
+//! TLS and password auth against the `cassandra-tls` fixture. Run with `mise
+//! run test:it` after `mise run db:tls:up`.
 
 #![cfg(feature = "integration")]
 

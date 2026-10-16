@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 use lc_domain::ports::ConfigSource;
 use lc_outbound::config::FileConfigSource;
 
-/// A directory under the target dir, so a run leaves nothing in the user's
-/// tree and two runs cannot collide on a name.
+/// Under the target dir, so runs leave nothing behind and cannot collide.
 #[allow(
     clippy::expect_used,
     reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
@@ -29,9 +28,6 @@ fn write(path: &Path, contents: &str) {
     std::fs::write(path, contents).expect("a file to load");
 }
 
-/// The save writes a file that may not have existed when the source was built,
-/// and the next load must see it. A source that snapshots existence in its
-/// constructor reads a stale disk (theme persistence design §3).
 #[tokio::test]
 async fn a_file_written_after_the_source_was_built_is_still_read() {
     let xdg = scratch("files-late-global");
@@ -48,7 +44,6 @@ async fn a_file_written_after_the_source_was_built_is_still_read() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
-/// And the project file, discovered by the same walk, has the same property.
 #[tokio::test]
 async fn a_project_file_written_after_the_source_was_built_still_wins() {
     let xdg = scratch("files-late-local-xdg");
@@ -69,7 +64,6 @@ async fn a_project_file_written_after_the_source_was_built_still_wins() {
     );
 }
 
-/// `--config` layers above both discovered files (configuration design §5).
 #[tokio::test]
 async fn a_named_file_wins_over_the_project_and_user_files() {
     let xdg = scratch("files-named-xdg");
@@ -96,8 +90,6 @@ async fn a_named_file_wins_over_the_project_and_user_files() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
-/// A named file that is gone is reported rather than absorbed: falling through
-/// to the discovered files would answer a typo with somebody else's settings.
 #[tokio::test]
 async fn a_named_file_that_is_not_there_is_a_diagnostic() {
     let cwd = scratch("files-named-missing");

@@ -1,9 +1,5 @@
-//! Driver values into our own.
-//!
-//! [`lc_domain::model::CqlValue`] covers the shapes the grid has to draw
-//! differently and documents that the rest arrives as text carrying the
-//! driver's rendering. scylla's `CqlValue` has no `Display`, so this module is
-//! that rendering (docs/superpowers/specs/2026-08-09-table-contents-design.md §5).
+//! Driver values into our own. scylla's `CqlValue` has no `Display`, so this is
+//! the rendering the domain's text values carry.
 
 use std::collections::BTreeMap;
 
@@ -11,7 +7,6 @@ use chrono::DateTime;
 use lc_domain::model::CqlValue;
 use scylla::value::{CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlValue as DriverValue};
 
-/// Nanoseconds in the units a CQL duration literal is written in.
 const NANOS_PER_HOUR: i64 = 3_600_000_000_000;
 const NANOS_PER_MINUTE: i64 = 60_000_000_000;
 const NANOS_PER_SECOND: i64 = 1_000_000_000;
@@ -20,7 +15,6 @@ const NANOS_PER_MICRO: i64 = 1_000;
 
 const MONTHS_PER_YEAR: i32 = 12;
 
-/// One column of one row. `None` is a null.
 pub(crate) fn to_value(value: Option<&DriverValue>) -> CqlValue {
     let Some(value) = value else {
         return CqlValue::Null;
@@ -39,8 +33,7 @@ pub(crate) fn to_value(value: Option<&DriverValue>) -> CqlValue {
         DriverValue::Double(value) => CqlValue::Float(*value),
 
         DriverValue::Ascii(value) | DriverValue::Text(value) => CqlValue::Text(value.clone()),
-        // Distinct from null and a Cassandra legacy: a zero-length value in a
-        // type that has no zero-length representation.
+        // Not null: a legacy zero-length value in a type with no empty form.
         DriverValue::Empty => CqlValue::Text(String::new()),
 
         DriverValue::Blob(bytes) => CqlValue::Blob(bytes.clone()),
@@ -60,12 +53,8 @@ pub(crate) fn to_value(value: Option<&DriverValue>) -> CqlValue {
     }
 }
 
-/// A map keeps its structure only when every key is textual.
-///
-/// Our `Map` is keyed by `String` and CQL keys are any type. Rendering other
-/// keys to strings to fit them in would let two distinct keys collide into one
-/// entry, which is a *wrong* answer where a rendered map is merely a coarse
-/// one.
+/// Only textual keys keep the structure: rendering others to strings could
+/// collide two keys into one.
 fn map(entries: &[(DriverValue, DriverValue)]) -> CqlValue {
     let textual: Option<BTreeMap<String, CqlValue>> = entries
         .iter()
@@ -83,7 +72,6 @@ fn map(entries: &[(DriverValue, DriverValue)]) -> CqlValue {
     )
 }
 
-/// The text for a value our own enum has no shape for.
 fn render(value: &DriverValue) -> String {
     match value {
         DriverValue::Decimal(decimal) => bigdecimal::BigDecimal::from(decimal.clone()).to_string(),
@@ -120,22 +108,17 @@ fn render(value: &DriverValue) -> String {
                 .collect();
             format!("{{{}}}", rendered.join(", "))
         }
-        // `CqlValue` is #[non_exhaustive]. A variant we have never seen still
-        // deserves a name, the way `replication()` handles an unknown
-        // `Strategy` — better a Debug rendering than an empty cell.
+        // `#[non_exhaustive]`: an unseen variant still gets a name.
         other => format!("{other:?}"),
     }
 }
 
-/// A value nested inside a tuple, UDT or non-textual map, as one line of text.
-///
-/// Goes through our own enum first so a nested list or blob renders the way it
-/// would in a column of its own, rather than two renderers disagreeing.
+/// Through our own enum, so nesting renders as a column would.
 fn flat(value: &DriverValue) -> String {
     lc_domain::cell::text(&to_value(Some(value)))
 }
 
-/// ISO-8601 in UTC, which is the only zone a Cassandra timestamp has.
+/// UTC, the only zone a Cassandra timestamp has.
 fn timestamp_text(CqlTimestamp(millis): CqlTimestamp) -> String {
     DateTime::from_timestamp_millis(millis).map_or_else(
         || millis.to_string(),
@@ -143,7 +126,7 @@ fn timestamp_text(CqlTimestamp(millis): CqlTimestamp) -> String {
     )
 }
 
-/// Days since `-5877641-06-23`, which puts the unix epoch at 2^31.
+/// Days since `-5877641-06-23`, putting the epoch at 2^31.
 fn date_text(CqlDate(days): CqlDate) -> String {
     let since_epoch = i64::from(days) - (1 << 31);
 
@@ -156,7 +139,7 @@ fn date_text(CqlDate(days): CqlDate) -> String {
         )
 }
 
-/// Nanoseconds since midnight, printed the way `cqlsh` prints a `time`.
+/// As `cqlsh` prints a `time`.
 fn time_text(CqlTime(nanos): CqlTime) -> String {
     let hours = nanos / NANOS_PER_HOUR;
     let minutes = (nanos % NANOS_PER_HOUR) / NANOS_PER_MINUTE;
@@ -166,12 +149,7 @@ fn time_text(CqlTime(nanos): CqlTime) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}.{rest:09}")
 }
 
-/// The CQL duration literal: `1y2mo3d4h5m6s`, sign in front.
-///
-/// A duration carries months, days and nanoseconds separately because their
-/// lengths are not fixed — a month is not 30 days and a day is not always 24
-/// hours. Collapsing them into one unit would be a wrong answer, so each
-/// keeps its own component.
+/// Months, days and nanoseconds stay separate: their lengths are not fixed.
 fn duration_text(
     CqlDuration {
         months,
@@ -332,8 +310,7 @@ mod tests {
 
     #[test]
     fn a_duration_keeps_months_days_and_nanoseconds_apart() {
-        // A month is not thirty days and a day is not always twenty-four
-        // hours, so collapsing them would be a wrong answer.
+        // A month is not thirty days, nor a day always twenty-four hours.
         assert_eq!(
             duration_text(CqlDuration {
                 months: 14,

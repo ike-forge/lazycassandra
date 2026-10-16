@@ -1,8 +1,4 @@
-//! The command line.
-//!
-//! Hand-rolled rather than `clap`: two flags, and the parse is pure, so it is
-//! fast-tier tested against `OsString` arguments the way `discover` is tested
-//! against paths (configuration design §5).
+//! The command line. Hand-rolled for two flags, and pure, so fast-tier tested.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -19,16 +15,15 @@ Options:
   -h, --help               Print this help
   -V, --version            Print the version";
 
-/// What the arguments asked for.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Invocation {
     Run(Options),
-    /// Help or version: print it and exit, having touched no terminal state.
+    /// Printed before any terminal state is touched.
     Print(String),
 }
 
-/// The flags, as given. Neither is resolved here: whether the file is there
-/// and whether the name is a connection are questions for the config source.
+/// Unresolved: whether the file or connection exists is the config source's
+/// question.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Options {
     pub(crate) config: Option<PathBuf>,
@@ -44,10 +39,8 @@ where
     let mut connection: Option<String> = None;
 
     while let Some(arg) = args.next() {
-        // A path is not required to be UTF-8, and a flag is; anything that is
-        // not UTF-8 is therefore not a flag. The separated form's value is
-        // taken from the iterator untouched, so such a path still arrives
-        // whole.
+        // Flags are UTF-8 and paths need not be, so non-UTF-8 is not a flag; a
+        // separated value passes through untouched.
         let Some(text) = arg.to_str() else {
             return Err(unknown(&arg.to_string_lossy()));
         };
@@ -76,8 +69,7 @@ where
     Ok(Invocation::Run(Options { config, connection }))
 }
 
-/// The value of `--flag value` or `--flag=value`; `None` when `text` names
-/// some other flag.
+/// `None` when `text` names another flag.
 fn value_of(
     flag: &str,
     text: &str,
@@ -100,9 +92,8 @@ fn value_of(
     })
 }
 
-/// Repeating a flag is a mistake worth naming: silently taking the last would
-/// leave a user looking at settings from a file they can see on their own
-/// command line.
+/// A repeated flag is an error: taking the last would hide one the user can
+/// see.
 fn set<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
     if slot.is_some() {
         return Err(format!("`{flag}` given more than once"));

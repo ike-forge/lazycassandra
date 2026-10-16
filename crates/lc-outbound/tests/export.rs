@@ -1,5 +1,4 @@
-//! Whole sessions that end in a file
-//! (docs/superpowers/specs/2026-08-14-export-design.md §9).
+//! Whole sessions that end in a file.
 
 use lc_domain::clock::Stamp;
 use lc_domain::config::PageSize;
@@ -15,13 +14,9 @@ use lc_outbound::fake::{FakeCluster, FakeWriter};
 mod support;
 use support::{press, run_with_writer, tabled_schema_of};
 
-/// Rows per page the grid reads by default.
 const PAGE: usize = 200;
 
-/// `count` rows with a page after them, so the panel's read is incomplete
-/// and the form's fetched-rows scope is reachable at all (design §3): a
-/// complete read makes the two scopes write the same file and disables the
-/// choice between them.
+/// A page left, so the fetched-rows scope is reachable.
 fn full_page(count: usize) -> Page {
     Page {
         columns: vec!["id".to_owned(), "email".to_owned()],
@@ -53,7 +48,6 @@ fn page(rows: &[(&str, &str)]) -> Page {
     }
 }
 
-/// Three pages, one row each, walked by `execute_paged` in order.
 fn three_pages() -> Vec<Page> {
     vec![
         Page {
@@ -71,8 +65,6 @@ fn three_pages() -> Vec<Page> {
     ]
 }
 
-/// Connect, describe, unfold `shop`, step onto `orders`, and read it — the
-/// state every export scenario opens its form from.
 async fn on_a_read_table(cluster: &FakeCluster) -> State {
     let (mut state, effects) = init(support::connected_config(), Vec::new(), Stamp::default());
     run_with_writer(cluster, None, &mut state, effects).await;
@@ -84,8 +76,7 @@ async fn on_a_read_table(cluster: &FakeCluster) -> State {
     let effects = press(&mut state, Key::Enter);
     run_with_writer(cluster, None, &mut state, effects).await;
 
-    // A frame with room for the form: `ctrl-e` is refused where nothing would
-    // draw one (design §2).
+    // Room for the form, or `ctrl-e` is refused.
     update(
         &mut state,
         Msg::Measured(Geometry::new([8, 14, 20, 1], 37, 14).with_export_fits(true)),
@@ -308,9 +299,6 @@ async fn an_existing_destination_asks_before_it_clobbers() {
     assert!(*overwrite);
 }
 
-/// The last thing an export does is flush, which is where a full disk shows
-/// up — and where the file on disk is likeliest to be a truncated one. The
-/// user got `Export failed` and kept the truncation (final review I4).
 #[tokio::test]
 async fn a_finish_that_fails_leaves_no_partial_file_either() {
     let cluster = FakeCluster::new(

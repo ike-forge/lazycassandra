@@ -1,13 +1,6 @@
-//! Shared fixtures and the driving loop for the scenario tiers
-//! (architecture.md §10).
-//!
-//! `run` pumps `update`'s effects through the ports and feeds the resulting
-//! messages back, exactly as `lc-app`'s runtime does. Every scenario file
-//! under `tests/` reuses it rather than rolling its own loop.
-//!
-//! Cargo compiles this module once per test binary that declares `mod
-//! support;`, and no one binary uses every item — the dead-code lint would
-//! otherwise flag whichever half a given file leaves untouched.
+//! Shared fixtures and the loop that pumps effects through the ports, as
+//! `lc-app`'s runtime does. Each test binary uses part of this, hence the
+//! dead-code allow.
 #![allow(
     dead_code,
     reason = "shared across test binaries with different subsets in use"
@@ -52,7 +45,6 @@ pub(crate) fn table(name: &str) -> Table {
     }
 }
 
-/// `(keyspace name, its table names)`.
 pub(crate) fn tabled_schema_of(keyspaces: &[(&str, &[&str])]) -> Schema {
     Schema {
         keyspaces: keyspaces
@@ -78,9 +70,7 @@ pub(crate) fn press(state: &mut State, key: Key) -> Vec<Effect> {
     update(state, Msg::Input(KeyPress::new(key)))
 }
 
-/// A config naming one connection and making it the default, which is what
-/// `init` needs before it will connect to anything at all: nothing is reached
-/// unless a file named it (connection picker design §2).
+/// `init` connects only to a default a config names.
 #[allow(
     clippy::expect_used,
     reason = "allow-expect-in-tests only covers #[test]-attributed items, not helpers they call"
@@ -103,14 +93,11 @@ pub(crate) fn connected_config() -> lc_domain::Config {
     }
 }
 
-/// Drives a session with no file destination in play. Any `Effect::Export`
-/// reaching this is a scenario bug: use [`run_with_writer`] instead.
+/// An `Effect::Export` here is a scenario bug: use [`run_with_writer`].
 pub(crate) async fn run(cluster: &dyn Cluster, state: &mut State, effects: Vec<Effect>) {
     run_with_writer(cluster, None, state, effects).await;
 }
 
-/// Drives a session, following an export through `writer` when the session
-/// produces one.
 pub(crate) async fn run_with_writer(
     cluster: &dyn Cluster,
     writer: Option<&dyn Writer>,
@@ -216,8 +203,6 @@ pub(crate) async fn run_with_writer(
     }
 }
 
-/// What one export needs, bundled the way `lc-app`'s own `Job` is (mirrors
-/// `crates/lc-app/src/export.rs::Job`).
 struct Job {
     conn: ConnId,
     id: JobId,
@@ -228,11 +213,8 @@ struct Job {
     page_size: PageSize,
 }
 
-/// Reproduces the sequencing of `lc-app`'s `export::run` against the ports,
-/// as messages rather than a channel send. `lc-app` is a binary crate and
-/// cannot be a dependency of `lc-outbound`, so this cannot call that code —
-/// only mirror it (task 11 brief). Keep the two in step by hand: any change
-/// to `crates/lc-app/src/export.rs`'s sequencing belongs here too.
+/// Mirrors `lc-app`'s `export::run`, which a library test cannot call. Keep the
+/// two in step by hand.
 async fn run_export(cluster: &dyn Cluster, writer: &dyn Writer, job: &Job) -> Vec<Msg> {
     let mut messages = Vec::new();
     let result = export(cluster, writer, job, &mut messages).await;

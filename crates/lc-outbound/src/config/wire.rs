@@ -1,13 +1,5 @@
-//! One config file, exactly as it was written.
-//!
-//! Every field is `Option`, which is what makes *unstated* distinguishable
-//! from *stated as the default* — without it a local `icons = true` cannot be
-//! told from silence, and the layer beneath wins a key the user set
-//! (design §5).
-//!
-//! Fields whose validation can fail carry a [`Located`], so the diagnostic
-//! that rejects one can quote a file and a line. Fields that cannot fail do
-//! not pay for a position they would never use.
+//! One config file as written. Every field is `Option`, so unstated differs
+//! from stated-as-default. Fallible fields carry a [`Located`] for diagnostics.
 
 use std::collections::BTreeMap;
 
@@ -15,13 +7,8 @@ use lc_domain::config::{Origin, Span};
 use serde::{Deserialize, Deserializer};
 use toml::Spanned;
 
-/// A value and where it was written.
-///
-/// `toml::Spanned` gives a byte range, and turning one into a line and column
-/// needs the source text — which `validate` does not have, and could not use
-/// anyway: after the merge a field may have come from either file. So the
-/// position is resolved in `parse`, while the source and the origin are both
-/// in hand, and travels with the value from then on.
+/// Resolved to a line in `parse`, the only place with both the source and the
+/// origin; after the merge a value may come from either file.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Located<T> {
     pub(crate) value: T,
@@ -30,7 +17,6 @@ pub(crate) struct Located<T> {
 }
 
 impl<T> Located<T> {
-    /// Fills in the position. Called once, by `Layer::locate`.
     fn locate(&mut self, source: &str, origin: &Origin) {
         self.at = Some((origin.clone(), super::line_col(source, self.byte)));
     }
@@ -56,9 +42,8 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Located<T> {
     }
 }
 
-/// Keys no struct here declares, captured so they can be reported rather than
-/// silently dropped. `deny_unknown_fields` would raise an error we cannot
-/// downgrade, and a typo should not cost a user their file (design §6).
+/// Captured to report, not reject: `deny_unknown_fields` errors can't be
+/// downgraded, and a typo should not cost the file.
 pub(crate) type Unknown = BTreeMap<String, toml::Value>;
 
 #[derive(Debug, Default, Deserialize)]
@@ -88,9 +73,6 @@ fn at<T>(located: Option<&mut Located<T>>, source: &str, origin: &Origin) {
 }
 
 impl Layer {
-    /// Resolves every position, once, while the source and the origin are
-    /// still in hand. After this the layer can be merged with another file's
-    /// and each value still knows which file it came from.
     pub(crate) fn locate(&mut self, source: &str, origin: &Origin) {
         at(self.theme.as_mut(), source, origin);
         at(self.background.as_mut(), source, origin);
@@ -189,8 +171,7 @@ pub(crate) struct ConnectionLayer {
     pub(crate) unknown: Unknown,
 }
 
-/// `tls = true` and `tls = { ca = "..." }` are one key. Plain `String`s rather
-/// than `Located`: a span cannot survive serde's buffering of an untagged enum.
+/// Plain `String`s: a span cannot survive serde's untagged buffering.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum TlsLayer {
@@ -209,9 +190,7 @@ pub(crate) struct TlsTable {
     pub(crate) unknown: Unknown,
 }
 
-/// `password = "hunter2"` and `password = { env = "DEV_PW" }` are one key.
-/// The alternative — a `password_env` sibling per source — multiplies keys and
-/// lets a user state two at once (design §2.2).
+/// One key for every source, so two cannot be stated at once.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum CredentialLayer {
