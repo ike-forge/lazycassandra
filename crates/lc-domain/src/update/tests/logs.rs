@@ -1,8 +1,5 @@
 use super::*;
 
-// The panel's unfocused height is a function of its buffer (layout.rs), so an
-// unfocused Logs tab would show one thing and be as tall as another
-// (query log design §5.2).
 #[test]
 fn leaving_the_panel_puts_the_buffer_back() {
     let mut state = on_the_trail();
@@ -65,8 +62,6 @@ fn escape_over_the_trail_clears_its_search() {
     assert_eq!(state.search(Searched::Queries), None);
 }
 
-// What lands on the clipboard is the pair, which is what makes it paste
-// into a ticket (query log design §5.3).
 #[test]
 fn yanking_an_entry_copies_its_statement_and_its_outcome() {
     let mut state = trail_of(&["SELECT one"]);
@@ -129,8 +124,6 @@ fn y_on_the_cql_tab_yanks_nothing() {
     assert!(press(&mut state, Key::Char('Y')).is_empty());
 }
 
-/// The panel's own number is not carved out of what an open buffer takes
-/// as text, or `WHERE id = 4` could not be typed.
 #[test]
 fn a_number_typed_into_the_focused_cql_buffer_inserts_the_digit() {
     let mut state = State::default();

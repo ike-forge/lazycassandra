@@ -1,5 +1,4 @@
-//! The cell inspector
-//! (docs/superpowers/specs/2026-09-17-cell-inspector-design.md).
+//! The cell inspector (cell inspector design).
 
 use crate::contents::{ContentsState, SelectionMode};
 use crate::inspect::{Inspected, Inspector};
@@ -12,8 +11,6 @@ use super::{
     Effect, copied, editable_here, escape, field_key, open_insert_commit, quit, start_edit,
 };
 
-/// The inspector's wrapped line count and body height, as the last frame
-/// measured them.
 pub(super) const fn inspector_extent(state: &State) -> (usize, usize) {
     (
         state.geometry.inspector_lines(),
@@ -21,14 +18,8 @@ pub(super) const fn inspector_extent(state: &State) -> (usize, usize) {
     )
 }
 
-/// What `Enter` over the grid would inspect: the row under the cursor in row
-/// mode, the cell under it in cell mode, as the grid draws them.
-///
-/// `None` in column mode, whose cursor names a column rather than one value;
-/// with nothing loaded, on an empty grid, while a range is held —
-/// `Enter` names one thing, and a selection is several — and on a frame with
-/// no room for the block (cell inspector design §2, §5). Read by the hint bar
-/// too, so `⏎ inspect` is named exactly where it opens.
+/// `None` in column mode, over a held range, and where the block does not fit.
+/// Read by the hint bar too.
 pub(crate) fn inspection(state: &State) -> Option<Inspector> {
     if state.focus() != Panel::Contents
         || state.geometry.inspector_rows() == 0
@@ -65,8 +56,8 @@ pub(crate) fn inspection(state: &State) -> Option<Inspector> {
         }
     };
 
-    // The dirty marks the grid is already drawing, carried onto the block:
-    // a reopened inspector says the same thing about the same cells.
+    // Carries the grid's dirty marks, so a reopened inspector agrees with the
+    // grid.
     let edited = match state.contents.mode {
         SelectionMode::Row => (0..columns.len())
             .filter(|at| page.is_edited(index, *at))
@@ -90,12 +81,11 @@ pub(super) fn open_inspector(state: &mut State) {
     }
 }
 
-/// `Enter` then `e`, in one press.
 pub(super) fn edit_from_grid(state: &mut State) -> Vec<Effect> {
     open_inspector(state);
     if matches!(state.overlay, Some(Overlay::Inspect(_))) {
-        // A row block opens on its first column, which is the partition key
-        // nearly everywhere: `e` there would only ever refuse.
+        // A row's first column is nearly always the partition key, where `e`
+        // only refuses.
         if state.contents.mode == SelectionMode::Row {
             focus_first_editable(state);
         }
@@ -104,8 +94,7 @@ pub(super) fn edit_from_grid(state: &mut State) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Moves the open inspector's cursor to the first field `e` would open, and
-/// leaves it on the first when there is none, so the refusal names that one.
+/// Stays on the first when none is editable, so the refusal names it.
 fn focus_first_editable(state: &mut State) {
     let Some(Overlay::Inspect(inspector)) = &state.overlay else {
         return;
@@ -125,13 +114,8 @@ fn focus_first_editable(state: &mut State) {
     }
 }
 
-/// Every key the inspector claims (cell inspector design §4). Anything else
-/// is inert, so no key means "close" in one frame and something else in the
-/// next.
+/// Unclaimed keys are inert.
 pub(super) fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
-    // An open field claims every printable key and the editing keys, the same
-    // rule the prompt, the form and the typed drop confirmation follow
-    // (cell editing design §3).
     if matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.field().is_some()) {
         return field_key(state, key);
     }
@@ -140,8 +124,7 @@ pub(super) fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
         return start_edit(state);
     }
 
-    // `⏎` closes the inspector everywhere but over a row that does not exist
-    // yet, where it asks to write it (insert design §4).
+    // Over a row not yet inserted, `⏎` asks to write it.
     if matches!(key, Key::Enter)
         && matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.is_inserting())
     {

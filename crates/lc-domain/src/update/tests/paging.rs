@@ -1,10 +1,5 @@
 use super::*;
 
-// ------------------------------------------------------------------
-// Paging (docs/superpowers/specs/2026-09-17-grid-paging-design.md)
-// ------------------------------------------------------------------
-
-/// Lands `page` on whatever the grid is waiting on.
 fn land_page(state: &mut State, page: Page) -> Vec<Effect> {
     let query = state.contents.outstanding().expect("a page is outstanding");
     update(
@@ -17,7 +12,6 @@ fn land_page(state: &mut State, page: Page) -> Vec<Effect> {
     )
 }
 
-/// The cursor of every page `effects` asks for.
 fn fetched_from(effects: &[Effect]) -> Vec<Option<PagingState>> {
     effects
         .iter()

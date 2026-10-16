@@ -16,8 +16,7 @@ fn prompt(state: &State) -> Option<&CommitPrompt> {
     }
 }
 
-/// Types `text` into the `field`th column of the open form, which the cursor
-/// reaches by `j` because an unset value is one line.
+/// An unset value is one line, so `j` reaches each field.
 fn fill(state: &mut State, field: usize, text: &str) {
     press(state, Key::Home);
     for _ in 0..field {

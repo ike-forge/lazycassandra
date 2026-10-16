@@ -191,8 +191,6 @@ fn escape_abandons_the_field_and_changes_nothing() {
     );
 }
 
-/// The edits are keyed by page row, so a sort that re-orders the grid
-/// carries each one with the row it was made on (design §4).
 #[test]
 fn an_edit_survives_a_sort_that_moves_its_row() {
     let mut state = inspecting_row(3);

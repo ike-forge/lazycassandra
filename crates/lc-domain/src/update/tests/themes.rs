@@ -21,8 +21,7 @@ fn label_index(label: &str) -> usize {
         .expect("a built-in with that label")
 }
 
-/// The rows the renderer is told to draw, which is what the picker's
-/// cursor counts in once a sift is up.
+/// What the cursor counts in once a sift is up.
 fn picker_labels(state: &State) -> Vec<String> {
     let Some(OverlayView::Themes { labels, .. }) = crate::view::view_model(state).overlay else {
         panic!("the picker is up");
@@ -31,9 +30,6 @@ fn picker_labels(state: &State) -> Vec<String> {
     labels
 }
 
-/// Overlay filter design §1 and §4: typing keeps the rows
-/// that match and seats the cursor — and so the preview — on the first of
-/// them at or beyond the row the prompt opened on.
 #[test]
 fn typing_in_the_picker_narrows_the_list_to_the_matches() {
     let mut state = measured(&["a"]);
@@ -53,8 +49,6 @@ fn typing_in_the_picker_narrows_the_list_to_the_matches() {
     assert_eq!(state.theme.label(), "Quill dark");
 }
 
-/// The cursor is what sets the previewed theme, so a search previews as
-/// it walks — no second mechanism (design §6).
 #[test]
 fn a_searched_row_previews_its_theme() {
     let mut state = measured(&["a"]);
@@ -66,8 +60,6 @@ fn a_searched_row_previews_its_theme() {
     assert_eq!(state.theme.label(), "Quill dark");
 }
 
-/// Overlay filter design §1: a term whose matches all sit above the row the
-/// prompt opened on seats on the last of them rather than on nothing.
 #[test]
 fn a_term_matching_only_above_the_origin_seats_on_the_last_match() {
     let mut state = measured(&["a"]);
@@ -89,8 +81,6 @@ fn a_term_matching_only_above_the_origin_seats_on_the_last_match() {
     );
 }
 
-/// Design §6: every keystroke searches from the origin, so extending a
-/// term does not walk the cursor forward.
 #[test]
 fn extending_a_term_searches_from_the_origin() {
     let mut state = measured(&["a"]);
@@ -104,9 +94,6 @@ fn extending_a_term_searches_from_the_origin() {
     assert_eq!(state.theme.label(), "Catppuccin Mocha");
 }
 
-/// Overlay filter design §4: a term that matches nothing leaves no row to hold,
-/// so the list is empty and the preview stays where it was. There is no
-/// failure state to render.
 #[test]
 fn a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview() {
     let mut state = measured(&["a"]);
@@ -120,11 +107,6 @@ fn a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview() {
     assert_eq!(state.theme, previewed);
 }
 
-/// Overlay search design §1: `theme_labels` is the order the search
-/// scans and `view_model`'s `OverlayView::Themes::labels` is what the
-/// renderer draws, so a search must land on the row the renderer reports
-/// at that index — a config theme included, which every other picker
-/// search test above runs without (`Config::default()` has none).
 #[test]
 fn typing_seats_on_a_config_theme_at_the_renderers_own_index() {
     let mut state = measured(&["a"]);
@@ -146,8 +128,6 @@ fn typing_seats_on_a_config_theme_at_the_renderers_own_index() {
     assert_eq!(theme_picker(&state), Some(expected));
 }
 
-/// Design §5: with a sift up the overlay takes text, so the letters that
-/// mean something in it type themselves.
 #[test]
 fn a_letter_typed_into_the_pickers_sift_does_not_quit_or_move() {
     let mut state = measured(&["a"]);
@@ -171,9 +151,6 @@ fn a_letter_typed_into_the_pickers_sift_does_not_quit_or_move() {
     assert_eq!(theme_picker(&state), Some(origin), "and moved nothing");
 }
 
-/// `g`/`G` are decided above the overlays (docs/shortcuts.md §1), but
-/// with a sift up the picker takes text (overlay search design §5), so
-/// both letters type themselves rather than jumping the cursor.
 #[test]
 fn g_and_shift_g_type_themselves_into_the_pickers_sift() {
     let mut state = measured(&["a"]);
@@ -195,8 +172,6 @@ fn g_and_shift_g_type_themselves_into_the_pickers_sift() {
     assert_eq!(theme_picker(&state), Some(origin), "and jumped nothing");
 }
 
-/// Design §5: `backspace` on an empty query closes the prompt and leaves
-/// the cursor where it is.
 #[test]
 fn backspace_on_an_empty_sift_closes_the_prompt() {
     let mut state = measured(&["a"]);
@@ -212,8 +187,6 @@ fn backspace_on_an_empty_sift_closes_the_prompt() {
     assert!(theme_picker(&state).is_some(), "the picker is not");
 }
 
-/// Design §1: `⏎` closes the prompt and keeps the cursor; the picker
-/// stays open, so a second `⏎` is what keeps the theme.
 #[test]
 fn enter_closes_the_pickers_sift_and_keeps_the_row() {
     let mut state = measured(&["a"]);
@@ -236,9 +209,6 @@ fn enter_closes_the_pickers_sift_and_keeps_the_row() {
     );
 }
 
-/// Design §10: `q` quits the moment a sift closes — the letter goes back
-/// to meaning what it means everywhere else once the prompt that was
-/// swallowing it is gone.
 #[test]
 fn q_quits_once_the_pickers_sift_has_closed() {
     let mut state = measured(&["a"]);
@@ -252,8 +222,6 @@ fn q_quits_once_the_pickers_sift_has_closed() {
     assert!(state.should_quit);
 }
 
-/// Design §1: `Esc` puts the cursor back where the prompt opened — and
-/// the preview with it; a second `Esc` closes the picker.
 #[test]
 fn escape_restores_the_row_the_pickers_sift_opened_on() {
     let mut state = measured(&["a"]);
@@ -272,10 +240,6 @@ fn escape_restores_the_row_the_pickers_sift_opened_on() {
     assert!(state.overlay.is_none());
 }
 
-/// Design §5: `ctrl-t` already refuses to open over any live overlay,
-/// `ctrl_key`'s blanket refusal for `Overlay::Themes { .. }` included, so
-/// a chord over a picker holding a live sift never reaches `open_themes`
-/// at all — the sift and its query are left exactly as they were.
 #[test]
 fn ctrl_t_over_a_live_sift_is_refused_by_ctrl_keys_overlay_guard() {
     let mut state = measured(&["a"]);
@@ -316,11 +280,8 @@ fn custom_theme(name: &str) -> crate::config::CustomTheme {
     }
 }
 
-/// Every picker test above runs on `Config::default()`, so the index is
-/// always `< BuiltIn::ALL.len()` and the custom branch of
-/// `theme_picker_index` — the `index - BuiltIn::ALL.len()` arithmetic and
-/// the round trip through `ThemeName` equality — never executes. This is
-/// the behaviour custom themes exist for.
+/// `Config::default()` has no custom themes, so the other tests never reach
+/// that branch.
 #[test]
 fn the_picker_seats_on_a_custom_theme_already_in_force() {
     let mut state = measured(&["a"]);
@@ -397,8 +358,6 @@ fn enter_saves_the_theme_it_keeps() {
     );
 }
 
-/// Opening the picker to look at the list and confirming out of it must
-/// not touch the user's config (theme persistence design §2).
 #[test]
 fn enter_on_the_theme_already_in_force_saves_nothing() {
     let mut state = measured(&["a"]);
@@ -461,8 +420,6 @@ fn a_frame_that_shrinks_below_the_picker_saves_nothing() {
     assert!(effects.is_empty(), "{effects:?}");
 }
 
-/// `Enter` inside a live sift ends the search and leaves the picker open,
-/// so the confirming `Enter` is the next one.
 #[test]
 fn ending_a_search_with_enter_saves_nothing_yet() {
     let mut state = measured(&["a"]);
@@ -622,9 +579,6 @@ fn q_still_quits_with_the_picker_open() {
     assert!(!effects.is_empty(), "quitting cancels what is in flight");
 }
 
-/// The panel guards above sweep states with no overlay, so an overlay's
-/// own bar needs its own sweep — the picker's is the only bar in the
-/// program whose keys none of them reach.
 #[test]
 fn every_hint_the_pickers_bar_shows_does_something() {
     // Mid-list, so every direction and both ends have somewhere to go.

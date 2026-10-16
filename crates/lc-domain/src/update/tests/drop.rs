@@ -1,11 +1,9 @@
 use super::*;
 
-/// The cursor on the keyspace row of `droppable_tree`.
 fn on_keyspace() -> State {
     droppable_tree()
 }
 
-/// The cursor on the table row below it.
 fn on_table() -> State {
     let mut state = droppable_tree();
     press(&mut state, Key::Char('j'));
@@ -128,8 +126,6 @@ fn enter_on_the_typed_name_drops_the_keyspace() {
     );
 }
 
-/// `n` cannot be a cancel where a name holding one has to be typeable
-/// (design §2.1).
 #[test]
 fn n_is_text_on_a_typed_confirmation() {
     let mut state = connected(Posture::Writable);
@@ -209,9 +205,6 @@ fn d_on_a_read_only_connection_asks_nothing_and_says_why() {
     );
 }
 
-/// The key is greyed *and* answered. Greying alone leaves a user who
-/// pressed it with nothing, and the bar cannot say which connection is
-/// the read-only one (posture design §3).
 #[test]
 fn the_read_only_refusal_names_the_way_out_of_it() {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
@@ -345,7 +338,6 @@ fn a_failed_drop_reloads_nothing_and_says_why() {
     );
 }
 
-/// The trail is where the reason survives the modal (design §5).
 #[test]
 fn a_drop_the_posture_refuses_is_logged_and_raised() {
     let mut state = on_table();
@@ -369,8 +361,6 @@ fn a_drop_the_posture_refuses_is_logged_and_raised() {
     );
 }
 
-/// A result for a drop that is no longer outstanding must not reload the
-/// schema behind a user who has moved on (architecture.md §3).
 #[test]
 fn a_page_for_an_ordinary_read_reloads_nothing() {
     let mut state = read_shop_orders();
@@ -495,8 +485,6 @@ fn n_abandons_a_delete() {
     assert!(state.dropping.is_none());
 }
 
-/// The "primary key known and present" gate (design §3.1), each half of
-/// it on its own.
 #[test]
 fn d_is_inert_where_the_rows_cannot_be_addressed() {
     let missing_key_column = grid_over(
@@ -589,8 +577,6 @@ fn a_delete_is_refused_on_a_read_only_connection() {
     );
 }
 
-/// A `Protected` connection is about *destructive* statements, and a row
-/// delete is a `Write` — so it stays y/n (design §2).
 #[test]
 fn a_protected_connection_still_answers_a_delete_with_y() {
     let mut state = deletable(2);
@@ -609,8 +595,6 @@ fn a_protected_connection_still_answers_a_delete_with_y() {
     );
 }
 
-/// What went stale is what gets re-read: a delete changed the rows of one
-/// table, and the grid is showing them (design §4).
 #[test]
 fn a_completed_delete_re_reads_the_grid_rather_than_the_schema() {
     let mut state = deletable(3);

@@ -1,4 +1,4 @@
-//! The query history picker (docs/superpowers/specs/2026-10-09-query-history-design.md).
+//! The query history picker (query history design).
 
 use crate::history::one_line;
 use crate::model::Key;
@@ -11,9 +11,7 @@ use crate::viewport::Cursor;
 
 use super::{Effect, escape, picker_matches, quit};
 
-/// The picker's rows, newest first. The one builder, shared with
-/// [`crate::view`]: the search's correctness claim is that `history_labels[i]`
-/// is the row the renderer draws at `i`.
+/// Shared with the view, for [`theme_labels`]'s reason.
 pub(crate) fn history_labels(state: &State) -> Vec<String> {
     state
         .history()
@@ -22,11 +20,7 @@ pub(crate) fn history_labels(state: &State) -> Vec<String> {
         .collect()
 }
 
-/// `ctrl-g` opens the history, seated on the newest entry.
-///
-/// Queries' chord, as `ctrl-r` is. Refused with nothing to list, so the bar
-/// greys it rather than the key opening an empty box; over a live prompt for
-/// `open_themes`' reason; and where the frame cannot draw the block.
+/// Refused with nothing to list, so the bar greys it instead.
 pub(super) fn open_history(state: &mut State) {
     let busy = matches!(state.overlay, Some(Overlay::Search(_)));
 
@@ -53,8 +47,6 @@ pub(super) fn open_history(state: &mut State) {
     });
 }
 
-/// What an open history responds to: the pickers' motion, `⏎` to load the
-/// entry into the buffer, `/` to filter.
 pub(super) fn history_key(state: &mut State, key: Key) -> Vec<Effect> {
     if matches!(state.overlay, Some(Overlay::History { sift: Some(_), .. })) {
         return history_sift_key(state, key);
@@ -93,9 +85,8 @@ pub(super) fn history_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// [`super::connections::connections_sift_key`]'s contract: `⏎` closes the
-/// prompt onto its row and does not load it, because the row the cursor holds
-/// may not be the one the user was still narrowing towards.
+/// `⏎` closes the prompt and does not load: the cursor's row may not be the one
+/// being narrowed to.
 fn history_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
     if matches!(key, Key::Escape) {
         escape(state);
@@ -141,12 +132,7 @@ fn history_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Appends the entry under the cursor to the buffer and closes the picker.
-///
-/// Appends and does not run: the entry is a starting point to edit, and
-/// `ctrl-r` is the one key that sends anything. The cursor counts in the rows
-/// a live sift left, so it is resolved through those first; a term that
-/// matched nothing holds no row and appends nothing.
+/// Appends, not runs: `ctrl-r` is the one key that sends.
 fn append(state: &mut State) {
     let labels = history_labels(state);
     let Some(Overlay::History { cursor, sift }) = &state.overlay else {

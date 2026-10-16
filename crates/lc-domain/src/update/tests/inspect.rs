@@ -7,9 +7,7 @@ fn inspecting(state: &State) -> Option<&Inspector> {
     }
 }
 
-/// `opened` over a value forty laid-out lines long — the length the frame
-/// `inspectable` measured wraps to, so the cursor and the offset count in
-/// the same unit here.
+/// Forty lines, what `inspectable` wraps to, so cursor and offset share a unit.
 fn opened_long() -> State {
     let mut state = opened(SelectionMode::Cell);
     let Some(Overlay::Inspect(inspector)) = &state.overlay else {

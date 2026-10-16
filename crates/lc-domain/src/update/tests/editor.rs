@@ -1,5 +1,4 @@
-//! The query editor slice: formatting, highlighting and completion
-//! (docs/superpowers/specs/2026-08-16-query-editor-design.md).
+//! Formatting, highlighting and completion.
 
 use super::*;
 
@@ -66,11 +65,8 @@ fn a_qualified_prefix_offers_that_keyspaces_tables() {
 
 #[test]
 fn an_unqualified_table_comes_from_the_keyspace_the_tree_is_on() {
-    // `browsing_tables` leaves the Tables cursor on `shop`, which is
-    // what makes a bare `orders` completable at all (design §5.2).
-    // A `FROM` clause wants a table, so the name the tree is
-    // standing on outranks a keyword that happens to share its
-    // prefix (design §6).
+    // The Tables cursor is on `shop`, so a bare `orders` is completable and
+    // outranks a keyword after `FROM`.
     let state = editing("SELECT * FROM ord");
 
     assert_eq!(
@@ -161,8 +157,7 @@ fn the_arrows_walk_the_popup_while_one_is_up() {
 #[test]
 fn ctrl_n_raises_a_popup_and_then_walks_it() {
     let mut state = editing("SELECT * FROM s");
-    // A motion takes the popup down without moving off the word, so
-    // `ctrl-n` has something to raise against.
+    // Takes the popup down without leaving the word.
     press(&mut state, Key::End);
     assert!(state.queries.completion().is_none());
 

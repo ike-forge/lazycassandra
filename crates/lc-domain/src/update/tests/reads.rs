@@ -1,8 +1,7 @@
 use super::*;
 
-/// Cancels `query` via `Msg::Quit`, which completes every in-flight trace
-/// without pushing an entry of its own — unlike superseding it with a
-/// second read, which would leave the newer entry as the log's last one.
+/// `Msg::Quit` completes every in-flight trace without pushing an entry, so
+/// this one stays last.
 fn cancel(state: &mut State, query: QueryId) {
     assert!(
         state.in_flight.contains_key(&query),
@@ -51,7 +50,6 @@ fn executed_query(effects: &[Effect]) -> QueryId {
         .expect("an Execute effect carrying the query")
 }
 
-// The trail records what ran (query log design §6).
 #[test]
 fn opening_a_table_logs_the_statement_it_issued() {
     let mut state = read_shop_orders();
@@ -246,10 +244,8 @@ fn focus_moves_before_the_page_arrives() {
 
 #[test]
 fn a_refused_read_still_lands_focus_in_contents() {
-    // No connection, so `submit` refuses before a query is made. `read`
-    // is called directly because the tree can only select a table when
-    // its schema is loaded, which itself requires a connection — the two
-    // cannot be pulled apart through key presses.
+    // `read` is called directly: no connection means no schema, so the tree
+    // cannot select a table.
     let mut state = tabled(&[("shop", &["orders"])]);
     state.connection = ConnectionState::Disconnected;
     state.focus_on(Panel::Tables);
@@ -304,8 +300,6 @@ fn a_page_reaches_the_panel_that_asked_for_it() {
     assert_eq!(state.contents.row_count(), 3);
 }
 
-// The domain reads no clock; a duration is a value the adapter measured
-// around the real call and handed in (query log design §4).
 #[test]
 fn a_result_carries_how_long_it_took() {
     let msg = Msg::PageReady {

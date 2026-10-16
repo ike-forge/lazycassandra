@@ -4,9 +4,6 @@ type Route = (&'static str, Box<dyn Fn(&mut State)>);
 
 #[test]
 fn switching_panels_clears_the_selection_of_the_panel_left_behind() {
-    // Every route focus can change by. A selection outliving one of them
-    // would let `y` act on a panel the user is no longer looking at
-    // (multi-group selection design §4).
     let routes: Vec<Route> = vec![
         (
             "tab",
@@ -55,13 +52,6 @@ fn switching_panels_clears_the_selection_of_the_panel_left_behind() {
 
 #[test]
 fn switching_away_from_the_trail_clears_its_selection_by_every_route() {
-    // Mirrors `switching_panels_clears_the_selection_of_the_panel_left_behind`,
-    // which only drives Tables through this matrix — the trail's
-    // selection lives on `state.log`, not on a panel struct `focus_on`'s
-    // match already walks, so it needs its own coverage (fix round 1,
-    // finding 1). `shift-tab` from the Logs tab lands on Cql without
-    // ever leaving the Queries panel, which is `show_queries_tab`'s path
-    // rather than `focus_on`'s.
     let routes: Vec<Route> = vec![
         (
             "tab",
@@ -104,11 +94,6 @@ fn switching_away_from_the_trail_clears_its_selection_by_every_route() {
 
 #[test]
 fn the_trails_search_does_not_survive_a_switch_to_the_cql_tab() {
-    // Finding 2 (fix round 1): the trail's search must not outlive the
-    // Logs tab being drawn, or a stray search left applied would keep
-    // the hint bar advertising `n`/`esc clear` while the Cql buffer
-    // takes text, and would cost an `Esc` press to something invisible
-    // instead of leaving the buffer.
     let mut state = trail_of(&["SELECT one", "DELETE two"]);
     search_for(&mut state, "DELETE");
     press(&mut state, Key::Enter);
@@ -138,8 +123,6 @@ fn the_trails_search_does_not_survive_a_switch_to_the_cql_tab() {
 
 #[test]
 fn re_focusing_the_focused_panel_keeps_its_selection() {
-    // Arriving where you already are is not navigation and must not cost
-    // you what you were reading (design §4).
     let mut state = tables_state();
     state.focus_on(Panel::Tables);
     state.tables.selection.start(0);
@@ -186,16 +169,13 @@ fn a_click_clears_the_selection_of_the_panel_it_leaves() {
 
 #[test]
 fn enter_on_a_table_leaves_no_selection_behind_in_tables() {
-    // `enter` focuses Contents on the table under the cursor; the tree it
-    // leaves must not stay lit behind it.
     let mut state = tables_state();
     state.focus_on(Panel::Tables);
     state.move_tree_cursor(1);
     state.tables.selection.start(1);
     state.tables.selection.stop(1);
 
-    // Row 1 is `orders`, a table: `enter` on a keyspace opens it and
-    // moves no focus.
+    // Row 1 is `orders`: `enter` on a keyspace would move no focus.
     let _ = press(&mut state, Key::Enter);
 
     assert_eq!(state.focus(), Panel::Contents);
@@ -204,8 +184,6 @@ fn enter_on_a_table_leaves_no_selection_behind_in_tables() {
 
 #[test]
 fn esc_out_of_queries_clears_what_queries_left_behind() {
-    // Queries holds no selection of its own; the panel it hands focus to
-    // must not inherit one either.
     let mut state = tables_state();
     state.focus_on(Panel::Queries);
 
@@ -303,7 +281,6 @@ fn v_types_a_v_in_queries() {
 
 #[test]
 fn v_builds_two_groups_and_esc_takes_both() {
-    // v j v, walk away, v — the gesture the design opens with (§1).
     let mut state = tables_state();
     state.focus_on(Panel::Tables);
 
@@ -386,11 +363,6 @@ fn a_range_over_a_list_that_shrank_is_pulled_back() {
 
 #[test]
 fn escape_leaves_queries_when_nothing_else_claims_it() {
-    // Rung 3 alone (§6): no overlay, no search (Queries cannot hold one
-    // yet — design §8), so `esc` falls through to leaving the editor.
-    // This does not pin rung 2 before rung 3 — that ordering is
-    // unreachable, and stays so, until the vim slice gives Queries a
-    // search to prefer.
     let mut state = browsing_tables(&[("shop", &["orders"])]);
     state.focus_on(Panel::Queries);
 
@@ -413,9 +385,6 @@ fn m_cycles_the_contents_selection_mode() {
     assert_eq!(state.contents.mode, SelectionMode::Row);
 }
 
-/// The grid is the only body with two cursors to choose between. `m` is
-/// not a panel number, so in the other panels it must fall through to the
-/// arm that answers those and do nothing.
 #[test]
 fn m_does_nothing_outside_the_grid() {
     for panel in [Panel::Tables, Panel::Ddl] {

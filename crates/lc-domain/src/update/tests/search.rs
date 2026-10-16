@@ -1,8 +1,6 @@
 use super::*;
 
-/// Two keyspaces, one holding `orders`, both folded — so `tree_rows` is
-/// 2 without a search and a search that matches forces the right one
-/// open.
+/// Both folded: `tree_rows` is 2 until a match forces `shop` open.
 fn loaded() -> State {
     browsing_tables(&[("shop", &["orders"]), ("billing", &[])])
 }
@@ -114,11 +112,6 @@ fn an_empty_commit_clears_the_search() {
     assert_eq!(state.search(Searched::Tables), None);
 }
 
-/// The design's own mechanism for an empty commit: `Search::new("")` is
-/// `None`, so backspacing a live query back to nothing already clears the
-/// search before `Enter` is ever pressed — unlike
-/// `an_empty_commit_clears_the_search` above, whose buffer is empty
-/// because nothing was ever typed into it.
 #[test]
 fn backspacing_a_query_to_empty_clears_the_search_live() {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
@@ -211,9 +204,6 @@ fn escape_puts_the_cursor_back_on_the_row_a_matchless_term_emptied_out() {
 
 #[test]
 fn a_term_extended_past_its_last_match_restores_the_cursor_to_origin() {
-    // Regression for the reviewer's repro: a term that jumps the cursor
-    // and then stops matching must snap back to `origin`, not strand the
-    // cursor at the last row it landed on (design §5.2).
     let mut state = browsing_tables(&[
         ("aaa", &[]),
         ("bbb", &[]),
@@ -313,11 +303,7 @@ fn enter_keeps_where_the_cursor_landed() {
 fn n_walks_to_the_next_match_and_wraps() {
     let mut state = loaded();
     state.focus_on(Panel::Tables);
-    // "o" rather than "orders": "billing" carries neither letter and is
-    // dropped, leaving the "shop" keyspace (row 0) and the "orders"
-    // table it holds (row 1), both matches. Exact indices, not a
-    // before/after comparison, so the second press pins the wrap rather
-    // than merely staying in bounds by accident.
+    // "billing" lacks an "o", leaving two matches.
     state.apply_search(Searched::Tables, Search::new("o"));
 
     press(&mut state, Key::Char('n'));
@@ -337,19 +323,11 @@ fn n_walks_to_the_next_match_and_wraps() {
 
 #[test]
 fn shift_n_walks_backwards() {
-    // Two matches is not enough to tell `n` from `N` apart: with only
-    // one other match in the ring, walking either direction from it
-    // lands on that same other match. A third row is what makes forward
-    // and backward diverge, so "orders" (one match) and "o" against
-    // `loaded()` (two matches, but the ring itself is three rows with
-    // only two of them matching) both fail to pin this — `box` is
-    // added so every row of a three-row ring matches "o" and the
-    // starting row genuinely has a different match on each side of it.
+    // Three rows that all match, so `n` and `N` land differently.
     let mut state = browsing_tables(&[("box", &[]), ("shop", &["orders"])]);
     state.focus_on(Panel::Tables);
     state.apply_search(Searched::Tables, Search::new("o"));
-    // Rows, alphabetical: "box" (0), "shop" (1, forced open by its own
-    // match), "orders" (2) — every one of the three matches "o".
+    // Rows: "box" (0), "shop" (1, forced open), "orders" (2).
     state.move_tree_cursor(1);
 
     press(&mut state, Key::Char('n'));
@@ -395,10 +373,6 @@ fn n_types_a_character_in_queries() {
 
 #[test]
 fn a_live_range_follows_an_n() {
-    // Same three-row ring as `shift_n_walks_backwards`: every row
-    // matches "o", so `n` from the middle genuinely moves the cursor and
-    // an exact-index assertion can tell a real jump from a bare `v`
-    // (which the `.ranges().is_empty()` version this replaces could not).
     let mut state = browsing_tables(&[("box", &[]), ("shop", &["orders"])]);
     state.focus_on(Panel::Tables);
     state.apply_search(Searched::Tables, Search::new("o"));
@@ -496,10 +470,6 @@ fn a_click_cancels_the_prompt() {
     );
 }
 
-/// The layer is dispatched above every overlay, so a chord that would open
-/// one has to refuse the prompt itself: opening a picker over a live query
-/// would leave the panel searched with nothing holding what it searched
-/// from (docs/shortcuts.md §1).
 #[test]
 fn ctrl_t_is_refused_over_a_live_prompt() {
     let mut state = measured(&["a"]);
@@ -511,9 +481,6 @@ fn ctrl_t_is_refused_over_a_live_prompt() {
     assert_eq!(searching(&state).map(Prompt::query), Some("t"));
 }
 
-/// The diagnostics overlay is the only place the list it shows lives —
-/// `State.config` does not keep it — so `ctrl-t` opening the theme picker
-/// from under it would destroy those diagnostics for good.
 #[test]
 fn ctrl_t_is_refused_over_diagnostics() {
     let (mut state, _) = init(Config::default(), vec![diagnostic("one")], Stamp::default());
@@ -526,8 +493,6 @@ fn ctrl_t_is_refused_over_diagnostics() {
     );
 }
 
-/// A ctrl chord the layer has no member for is refused as it is anywhere
-/// else, rather than typed into the query.
 #[test]
 fn an_unclaimed_ctrl_chord_is_not_text_in_the_prompt() {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
@@ -538,10 +503,6 @@ fn an_unclaimed_ctrl_chord_is_not_text_in_the_prompt() {
     assert_eq!(searching(&state).map(Prompt::query), Some(""));
 }
 
-/// The blank frame design §3.3 accepts, carried to its repair: the offset
-/// a wheel produced from pre-search geometry is out of range for the body
-/// the search left, and the next measurement pulls it back. One frame
-/// wide, and the loop terminates.
 #[test]
 fn the_measurement_after_a_search_pulls_a_stale_ddl_offset_back_inside() {
     let mut state = read_shop_orders();
@@ -566,17 +527,12 @@ fn the_measurement_after_a_search_pulls_a_stale_ddl_offset_back_inside() {
     press(&mut state, Key::Char('/'));
     press(&mut state, Key::Char('t'));
 
-    // A frame of nine wrapped lines in a four-line panel: no offset past
-    // five is drawable, whatever the search reported.
+    // Nine wrapped lines in a four-line panel: no offset past five is drawable.
     sized(&mut state, [8, 4, 8, 1], 9);
 
     assert_eq!(state.ddl.scroll.offset(), 5);
 }
 
-/// The Ddl half of the `esc` chain's second step. Its viewport is followed
-/// by span rather than by index (design §5.1 of the Ddl selection slice),
-/// so clearing a search that moved what the cursor names is repaired on
-/// the measurement that follows, not in `escape` itself.
 #[test]
 fn escape_clearing_a_ddl_search_re_follows_the_selection() {
     let mut state = read_shop_orders();

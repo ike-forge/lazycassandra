@@ -1,5 +1,4 @@
-//! The table health block
-//! (docs/superpowers/specs/2026-10-13-table-health-design.md).
+//! The table health block (table health design).
 
 use std::time::Duration;
 
@@ -15,8 +14,7 @@ use crate::tree::Node;
 
 use super::{Effect, escape, logged, quit, sentence};
 
-/// The table `H` would read in this frame. Shared with the hint bar, so the
-/// bar cannot promise a block the key refuses.
+/// Shared with the hint bar.
 pub(crate) fn health_target(state: &State) -> Option<TableRef> {
     if state.focus() != Panel::Tables || state.tables.selects_many() {
         return None;
@@ -28,8 +26,6 @@ pub(crate) fn health_target(state: &State) -> Option<TableRef> {
     }
 }
 
-/// `H` opens the block over the table under the tree cursor and sends the
-/// read.
 pub(super) fn open_health(state: &mut State) -> Vec<Effect> {
     if state.focus() != Panel::Tables {
         return Vec::new();
@@ -66,8 +62,7 @@ pub(super) fn open_health(state: &mut State) -> Vec<Effect> {
     }]
 }
 
-/// The trail is completed whether or not the block is still up: the read
-/// happened either way.
+/// Completes the trail even if the block was closed: the read happened.
 pub(super) fn health_loaded(
     state: &mut State,
     request: QueryId,
@@ -95,7 +90,6 @@ pub(super) fn health_loaded(
     Vec::new()
 }
 
-/// Motion, the tree's fold keys, and the two ways out.
 pub(super) fn health_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char('q') => return quit(state),
@@ -128,9 +122,7 @@ pub(super) fn health_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// A click on a row of the block: the row, then `⏎`. A row the previous frame
-/// drew and this one no longer has is dropped rather than clamped (mouse input
-/// design §6).
+/// A row the previous frame drew and this one lacks is dropped, not clamped.
 pub(super) fn health_entry(state: &mut State, row: usize) -> Vec<Effect> {
     let Some(Overlay::Health(panel)) = &mut state.overlay else {
         return Vec::new();

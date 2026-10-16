@@ -1,6 +1,5 @@
 use super::*;
 
-/// `ctrl-r`, the Queries member of the ctrl layer (docs/shortcuts.md §2).
 fn run_query(state: &mut State) -> Vec<Effect> {
     ctrl(state, Key::Char('r'))
 }
@@ -34,8 +33,6 @@ fn ctrl_r_runs_the_query_buffer() {
     );
 }
 
-// Rejected in update, so no effect was ever issued — the entry is born
-// complete (query log design §3, §3.1).
 #[test]
 fn a_statement_refused_by_the_posture_says_so_in_the_trail() {
     let mut state = editing("DELETE FROM store.orders WHERE id = 7");
@@ -54,9 +51,6 @@ fn a_statement_refused_by_the_posture_says_so_in_the_trail() {
     assert!(reason.contains("read-only"), "{reason}");
 }
 
-// The posture guard logs exactly once. Restructuring the logging into
-// `submit_into_contents`'s `Err` arm must not leave `submit` still
-// logging its own posture rejection too (I3).
 #[test]
 fn a_statement_refused_by_the_posture_logs_exactly_one_entry() {
     let mut state = editing("DELETE FROM store.orders WHERE id = 7");
@@ -71,10 +65,6 @@ fn a_statement_refused_by_the_posture_logs_exactly_one_entry() {
     );
 }
 
-// I3: before `Msg::Connected` lands, a read-only statement is not caught
-// by the mutation guard, so it fell through to `conn_id()` returning
-// `None` — a refusal `submit_into_contents` noticed (`refused` shows it
-// in Table contents) but never logged, so nothing outlived the panel.
 #[test]
 fn a_statement_refused_for_want_of_a_connection_says_so_in_the_trail() {
     let mut state = State::default();
@@ -98,9 +88,6 @@ fn a_statement_refused_for_want_of_a_connection_says_so_in_the_trail() {
     assert!(reason.contains("not connected"), "{reason}");
 }
 
-// M8: the one remaining refusal that left no trace — `run`'s
-// destructive-statement guard raises a modal `esc` destroys on dismissal
-// (query log design §1), and used to log nothing behind it.
 #[test]
 fn a_destructive_statement_refused_by_run_says_so_in_the_trail() {
     let mut state = editing("DROP TABLE shop.orders");
@@ -156,7 +143,7 @@ fn a_run_query_titles_the_panel_with_what_was_typed() {
     );
 }
 
-/// `editing` leaves the buffer open; the band is browsed with it closed.
+/// The band is browsed with the buffer closed.
 fn browsing_cql(text: &str) -> State {
     let mut state = editing(text);
     press(&mut state, Key::Escape);
@@ -328,10 +315,6 @@ fn a_typed_write_is_refused_on_a_read_only_connection() {
     );
 }
 
-/// Every mutating verb, run from the buffer against a read-only
-/// connection: nothing reaches the cluster and each one says why. The
-/// list is the classifier's, so a verb added there without a posture
-/// answer fails here (posture design §2).
 #[test]
 fn every_mutating_statement_typed_by_hand_is_refused_and_says_why() {
     for cql in [
@@ -362,8 +345,6 @@ fn every_mutating_statement_typed_by_hand_is_refused_and_says_why() {
     }
 }
 
-/// A read is not refused, and a read-only connection is what the tool is
-/// for — the modal must not be in the way of one.
 #[test]
 fn a_read_typed_by_hand_raises_no_refusal() {
     for cql in [
@@ -380,9 +361,6 @@ fn a_read_typed_by_hand_raises_no_refusal() {
     }
 }
 
-/// The posture names itself rather than deferring to the confirmation
-/// that is not what stands in the way here: a read-only connection has no
-/// `d` to send the user to.
 #[test]
 fn a_destructive_statement_on_a_read_only_connection_blames_the_posture() {
     let mut state = editing("DROP TABLE shop.orders");
@@ -400,8 +378,6 @@ fn a_destructive_statement_on_a_read_only_connection_blames_the_posture() {
     );
 }
 
-/// The refusal survives the modal, which `esc` destroys (query log design
-/// §1).
 #[test]
 fn a_statement_the_posture_refuses_says_so_in_the_trail_too() {
     let mut state = editing("DROP TABLE shop.orders");

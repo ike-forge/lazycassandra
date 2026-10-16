@@ -133,10 +133,6 @@ fn geometry_with_log(lines: usize, height: usize, selection: Span) -> Geometry {
     Geometry::new([0, 0, 0, height], 0, 0).with_log(lines, selection)
 }
 
-// The Logs tab follows Ddl's own rule (design §5.4): `G` moves only the
-// cursor, because the viewport counts wrapped lines the domain cannot
-// map a row onto for itself. The viewport catches up only once the
-// renderer reports back where the newly-selected entry landed.
 #[test]
 fn end_reaches_the_last_entry_and_the_next_measurement_follows_it_into_view() {
     let mut state = on_the_trail();
@@ -410,9 +406,6 @@ fn the_new_motions_emit_no_effects() {
     }
 }
 
-/// The frame this message describes is the frame that produced it.
-/// Marking dirty unconditionally would redraw, re-measure and redraw
-/// forever (design §3).
 #[test]
 fn a_measurement_that_changes_nothing_leaves_the_state_clean() {
     let mut state = browsing(&["a", "b", "c"]);
@@ -429,9 +422,6 @@ fn a_measurement_that_changes_nothing_leaves_the_state_clean() {
     );
 }
 
-/// A table scrolled to its last row and then left must not hand the next
-/// table its cursor position: the reader would open mid-document with
-/// nothing saying so.
 #[test]
 fn moving_the_tree_selection_returns_the_ddl_panel_to_the_top() {
     let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
@@ -487,7 +477,7 @@ fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
         "shop is still the selected node, so the panel is still on its description"
     );
 
-    // A second `l` steps onto shop's first table, which is a new subject.
+    // A second `l` steps onto shop's first table, a new subject.
     press(&mut state, Key::Char('l'));
 
     assert_eq!(state.ddl.cursor.index(), 0);
@@ -495,10 +485,6 @@ fn unfolding_a_keyspace_leaves_the_ddl_panel_where_it_is() {
 
 #[test]
 fn leaving_ddl_for_tables_clears_its_range_before_unfolding_ever_runs() {
-    // Once superseded by `switching_panels_clears_the_selection_of_the_panel_left_behind`:
-    // the range used to survive the focus change itself and die only on
-    // whatever motion followed. Now `focus_on` is what clears it, so the
-    // motion after has nothing left to disturb (design §4).
     let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
     state.focus_on(Panel::Ddl);
     press(&mut state, Key::Char('v'));
@@ -545,9 +531,8 @@ fn the_ddl_cursor_clamps_when_the_selected_table_shrinks() {
         "the fixture table has more than one row"
     );
 
-    // Same keyspace and table name, so `described()` sees no subject
-    // change — the clamp below is the only thing that can pull the
-    // cursor back in.
+    // Same names, so `described()` sees no subject change and only the clamp
+    // can pull the cursor back.
     let shrunk = crate::model::Table {
         name: "orders".to_owned(),
         primary_key: PrimaryKey {

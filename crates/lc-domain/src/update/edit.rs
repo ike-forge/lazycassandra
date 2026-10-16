@@ -1,5 +1,4 @@
-//! Editing a cell in place
-//! (docs/superpowers/specs/2026-09-18-cell-editing-design.md).
+//! Editing a cell in place (cell editing design).
 
 use crate::contents::{ContentsState, Subject};
 use crate::edit::Field;
@@ -12,13 +11,7 @@ use crate::style::Severity;
 
 use super::{Effect, edit_line, raise, refuse_read_only, uncommitted};
 
-/// `e` over the inspector: opens a field over the value the cursor is on, or
-/// says why it cannot (cell editing design §2).
-///
-/// Every refusal is spoken rather than silent, unlike the inspector's inert
-/// keys. A key that does nothing and explains nothing teaches that the value
-/// is unreachable rather than that this one is — the argument the posture
-/// refusal already makes (posture design §3).
+/// Every refusal is spoken: a silent key teaches that the value is unreachable.
 pub(super) fn start_edit(state: &mut State) -> Vec<Effect> {
     if !state.posture().permits_mutation() {
         refuse_read_only(state, "editing a value");
@@ -31,7 +24,7 @@ pub(super) fn start_edit(state: &mut State) -> Vec<Effect> {
                 inspector.start_edit(field);
             }
         }
-        // A modal would take the half-filled form with it (insert design §4).
+        // A modal would take the half-filled form with it.
         Err(refusal) if matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.is_inserting()) =>
         {
             state.notify(Severity::Warning, refusal);
@@ -49,26 +42,21 @@ pub(super) fn start_edit(state: &mut State) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Whether `e` would open a field this frame. Read by the hint bar, so the
-/// key is greyed exactly where §2 refuses it.
 #[must_use]
 pub(crate) fn editable_here(state: &State) -> bool {
     state.posture().permits_mutation() && editable(state).is_ok()
 }
 
-/// Whether anything is uncommitted — what the `ctrl-s` hint is named on.
 #[must_use]
 pub(crate) fn has_uncommitted(state: &State) -> bool {
     uncommitted(state).0 > 0
 }
 
-/// The field `e` would open, or the sentence saying why it opens none.
 fn editable(state: &State) -> Result<Field, String> {
     let Some(Overlay::Inspect(inspector)) = &state.overlay else {
         return Err(String::new());
     };
-    // A typed statement's columns belong to no one table, so there is no
-    // table to `UPDATE` and no schema to check a type against (design §2).
+    // A typed statement's columns belong to no one table.
     let Subject::Table(table) = inspector.subject() else {
         return Err(
             "Only a table's own rows can be edited. This grid came from a typed statement."
@@ -93,7 +81,6 @@ fn editable(state: &State) -> Result<Field, String> {
         return Err(format!("{name} is not a column of {}.", table.qualified()));
     };
 
-    // A new row's key columns are the first thing it needs (insert design §2).
     let inserting = inspector.is_inserting();
 
     if !inserting && key::columns(described).iter().any(|(key, _)| *key == name) {
@@ -115,8 +102,7 @@ fn editable(state: &State) -> Result<Field, String> {
         .value_at_cursor()
         .map_or_else(String::new, |value| {
             match value {
-                // A null is typed over from empty rather than from the word the
-                // grid draws in its place: `null` is not what the cell holds.
+                // A null starts empty: `null` is not what the cell holds.
                 CqlValue::Null => String::new(),
                 other => crate::cell::text(other),
             }
@@ -125,8 +111,6 @@ fn editable(state: &State) -> Result<Field, String> {
     Ok(Field::opened(column, name, &declared.cql_type, value))
 }
 
-/// The primary key of the row the inspector was opened over, `None` where
-/// this program cannot spell one (design §2).
 fn row_key(state: &State, described: &crate::model::Table) -> Option<RowKey> {
     let Some(Overlay::Inspect(inspector)) = &state.overlay else {
         return None;
@@ -140,16 +124,11 @@ fn row_key(state: &State, described: &crate::model::Table) -> Option<RowKey> {
         return None;
     }
 
-    // The row as the cluster sent it, not as the grid now draws it: an
-    // uncommitted edit to a non-key column changes no key column, and a
-    // `WHERE` written from an edited row would address a row the cluster
-    // does not have.
+    // As the cluster sent it: a `WHERE` from an edited row would address a row
+    // the cluster lacks.
     RowKey::of(&key, &page.page().columns, page.row(inspector.row())?)
 }
 
-/// Every key the open field claims: `⏎` accepts, `Esc` abandons, and every
-/// printable key is text — the rule the prompt, the form and the typed drop
-/// confirmation all follow (design §3).
 pub(super) fn field_key(state: &mut State, key: Key) -> Vec<Effect> {
     let accepted = {
         let Some(Overlay::Inspect(inspector)) = &mut state.overlay else {
@@ -179,8 +158,7 @@ pub(super) fn field_key(state: &mut State, key: Key) -> Vec<Effect> {
         }
     };
 
-    // `None` is text that does not parse: the field stays open with the
-    // reason under it rather than losing what was typed (design §3).
+    // Text that does not parse keeps the field open.
     let Some((at, column, edited)) = accepted else {
         return Vec::new();
     };
@@ -192,11 +170,8 @@ pub(super) fn field_key(state: &mut State, key: Key) -> Vec<Effect> {
     if let Some(page) = state.contents.loaded_mut() {
         page.set_edit(row, column, edited);
 
-        // An edit that restored the value it started from left no mark on the
-        // page, so it leaves none on the block either (design §1).
         let dirty = page.is_edited(row, column);
         if dirty {
-            // ctrl chords are inert over the inspector (design §4).
             state.notify(
                 Severity::Info,
                 "edit staged, close the inspector and ctrl-s to commit",

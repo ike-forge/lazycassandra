@@ -152,7 +152,6 @@ fn q_warns_before_it_discards_and_y_quits_through_the_warning() {
     assert!(!state.should_quit);
     assert!(matches!(state.overlay, Some(Overlay::Discard(_))));
 
-    // A second `q` is inert: the question has to be answered (design §6).
     let effects = press(&mut state, Key::Char('q'));
     assert!(effects.is_empty());
     assert!(!state.should_quit);
@@ -194,7 +193,7 @@ fn the_bar_greys_e_where_the_column_cannot_be_edited_and_lights_it_where_it_can(
             .map(|hint| hint.liveness)
     };
 
-    // The cursor opens on `id`, which is a key column.
+    // The cursor opens on `id`, a key column.
     let mut state = inspecting_row(3);
     assert_eq!(named(&state), Some(crate::view::Liveness::Inert));
 
@@ -223,8 +222,7 @@ fn an_open_field_names_only_the_two_keys_it_answers() {
 #[test]
 fn the_save_hint_greys_while_the_text_does_not_parse() {
     let mut state = editable_grid(1);
-    // `created_at` is a key column, so the one non-key typed column is
-    // `email`; a type that refuses text needs a column of its own.
+    // `email` is the one non-key typed column.
     press(&mut state, Key::Enter);
     on_email(&mut state);
     press(&mut state, Key::Char('e'));
@@ -257,13 +255,10 @@ fn the_contents_bar_names_commit_only_while_something_is_uncommitted() {
     assert!(named(&committable(1)));
 }
 
-/// The cursor counts drawn rows and `GridPage::order` is what resolves one,
-/// so `d` has to ask the page rather than index its unarranged rows — a
-/// sorted grid otherwise confirms one row and deletes another.
 #[test]
 fn d_over_a_sorted_grid_asks_about_the_row_the_cursor_is_actually_on() {
     let mut state = deletable(3);
-    // Descending on `id`, which reverses the three fixture rows.
+    // Descending on `id` reverses the three fixture rows.
     state.contents.cycle_sort(0);
 
     press(&mut state, Key::Char('d'));
@@ -277,7 +272,6 @@ fn d_over_a_sorted_grid_asks_about_the_row_the_cursor_is_actually_on() {
     );
 }
 
-/// Two dirty rows, the cursor on the second, its inspector open.
 fn inspecting_second_of_two() -> State {
     let mut state = committable(2);
     press(&mut state, Key::Enter);

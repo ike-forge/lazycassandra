@@ -1,5 +1,4 @@
-//! The command palette
-//! (docs/superpowers/specs/2026-08-09-command-palette-design.md).
+//! The command palette (command palette design).
 
 use crate::commands::{CommandsPanel, Run};
 use crate::model::Key;
@@ -9,11 +8,8 @@ use crate::state::State;
 
 use super::{Effect, escape, handle_key, quit};
 
-/// `?` opens the palette, replacing whatever overlay was up.
-///
-/// Refused where the frame cannot draw one: opening a palette nothing draws
-/// leaves the user in a mode with nothing on screen saying so, wondering why
-/// `j` stopped moving the tree (design §5.1).
+/// Refused where the frame cannot draw one: an undrawn palette would still
+/// swallow `j`.
 pub(super) fn open_palette(state: &mut State) {
     if state.geometry.command_rows() == 0 {
         return;
@@ -22,12 +18,8 @@ pub(super) fn open_palette(state: &mut State) {
     state.overlay = Some(Overlay::Commands(CommandsPanel::opened()));
 }
 
-/// What an open palette responds to.
-///
-/// `q` still quits, because a key that means "quit" everywhere except in one
-/// overlay is not a key anyone can trust without looking. Everything the
-/// palette does not use is inert rather than dismissing, so no letter means
-/// "close" in one frame and something else in the next (design §7).
+/// `q` still quits; unused keys are inert rather than dismissing, so no letter
+/// means "close" in only one frame.
 pub(super) fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
     if matches!(&state.overlay, Some(Overlay::Commands(panel)) if panel.sift().is_some()) {
         return palette_sift_key(state, key);
@@ -63,10 +55,6 @@ pub(super) fn palette_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// What a palette with a live sift responds to.
-///
-/// Text, for the reason [`themes_sift_key`] takes text: an overlay with a
-/// prompt up is a panel that takes text (overlay search design §5).
 fn palette_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
     if matches!(key, Key::Escape) {
         escape(state);
@@ -87,16 +75,9 @@ fn palette_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `⏎`: close the palette, then perform the row the cursor is on.
-///
-/// The row's own first key, pressed through [`handle_key`], is what performs
-/// it. A table of actions here would be the second dispatch point
-/// docs/shortcuts.md §2 forbids, and a row that ran something other than what
-/// its key runs is the "bar that lies" one level down
-/// (docs/superpowers/specs/2026-08-15-palette-execution-design.md §2).
-///
-/// The recursion terminates: the overlay is gone before the call, so
-/// `handle_key`'s palette arm cannot be re-entered on this pass.
+/// Performs the row by pressing its first key through [`handle_key`], so a row
+/// cannot run something its key does not. Terminates: the overlay is gone
+/// before the call.
 fn run_selected(state: &mut State) -> Vec<Effect> {
     let Some(Overlay::Commands(open)) = &state.overlay else {
         return Vec::new();

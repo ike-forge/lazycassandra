@@ -21,8 +21,6 @@ fn escape_closes_the_palette() {
     assert!(state.overlay.is_none());
 }
 
-/// Design §5: with a sift up the palette takes text, so `q` and `?` type
-/// themselves rather than quitting or closing.
 #[test]
 fn a_letter_typed_into_the_palettes_sift_does_not_quit_or_close() {
     let mut state = measured(&["a"]);
@@ -37,9 +35,6 @@ fn a_letter_typed_into_the_palettes_sift_does_not_quit_or_close() {
     assert_eq!(panel.sift().map(Sift::query), Some("q?"));
 }
 
-/// `g`/`G` are decided above the overlays (docs/shortcuts.md §1), but
-/// with a sift up the palette takes text (overlay search design §5), so
-/// both letters type themselves rather than jumping the cursor.
 #[test]
 fn g_and_shift_g_type_themselves_into_the_palettes_sift() {
     let mut state = measured(&["a"]);
@@ -57,8 +52,6 @@ fn g_and_shift_g_type_themselves_into_the_palettes_sift() {
     );
 }
 
-/// Design §1: `⏎` closes the prompt and keeps the cursor, so the next
-/// `⏎` runs the row the search landed on.
 #[test]
 fn enter_closes_the_palettes_sift_and_the_next_one_runs_the_row() {
     let mut state = measured(&["a"]);
@@ -78,8 +71,6 @@ fn enter_closes_the_palettes_sift_and_the_next_one_runs_the_row() {
     );
 }
 
-/// Design §1: `Esc` closes the prompt and restores the row; a second one
-/// closes the palette.
 #[test]
 fn escape_leaves_the_palettes_sift_before_the_palette() {
     let mut state = measured(&["a"]);
@@ -183,11 +174,7 @@ fn q_quits_from_inside_the_palette() {
 
 #[test]
 fn an_open_palette_swallows_the_keys_it_does_not_use() {
-    // Each starting focus is chosen so a leaked key would be observable:
-    // `t`/`Tab` need a focus their leak would actually move away from,
-    // `Space` needs `Tables` on a keyspace with a table, since folding a
-    // childless one leaves no visible trace at all. `Enter` is not among
-    // these cases: it runs the selected row (`run_selected`'s own tests).
+    // Each focus is chosen so a leaked key would be observable.
     let cases = [
         (Key::Char('t'), Panel::Contents),
         (Key::Tab, Panel::Contents),
@@ -213,8 +200,6 @@ fn an_open_palette_swallows_the_keys_it_does_not_use() {
     }
 }
 
-/// Walks the palette cursor down onto `action`'s row. `down` steps command
-/// to command, so this reaches every row a user can reach and no other.
 fn seat_on(state: &mut State, action: &str) {
     for _ in 0..crate::commands::row_count(None) {
         let seated = palette(state)
@@ -264,17 +249,13 @@ fn enter_presses_the_rows_own_key() {
     );
 }
 
-/// The one case that proves an effect survives the dispatch: a row that
-/// returns work rather than only moving state.
 #[test]
 fn enter_on_the_run_row_runs_the_buffer() {
     let mut state = measured(&["shop"]);
     state.focus_on(Panel::Queries);
     state.queries.start_editing();
     type_into(&mut state, "select * from shop.a");
-    // The buffer survives a focus change; leaving Queries before `?` is
-    // what lets the palette open through the real key path rather than
-    // by assigning the overlay directly.
+    // Leave Queries so `?` opens the palette through the real key path.
     state.focus_on(Panel::Tables);
 
     press(&mut state, Key::Char('?'));
@@ -294,8 +275,6 @@ fn enter_on_the_run_row_runs_the_buffer() {
     );
 }
 
-/// Focus moves even when the action that follows has nothing to do — the
-/// palette is how you get to the panel as well as to the binding.
 #[test]
 fn a_row_whose_action_cannot_act_still_moves_focus() {
     let mut state = measured(&["shop"]);
@@ -309,10 +288,6 @@ fn a_row_whose_action_cannot_act_still_moves_focus() {
     assert!(effects.is_empty(), "an empty buffer runs nothing");
 }
 
-/// Design §9: "Every `Run::Inert` row leaves focus, both cursors, and
-/// every selection as they were; only the overlay changed." `State` does
-/// not derive `PartialEq`, so the comparison is by `view_model`, the same
-/// shape `an_open_palette_swallows_the_keys_it_does_not_use` uses.
 #[test]
 fn enter_on_an_inert_row_closes_the_palette_and_stops() {
     for group in CATALOGUE {
@@ -344,9 +319,6 @@ fn enter_on_an_inert_row_closes_the_palette_and_stops() {
     }
 }
 
-/// Every row, from a state with a schema and a focused tree: the palette
-/// closes and nothing panics. The sweep is the point — a row added later
-/// is covered without anyone remembering to cover it.
 #[test]
 fn every_row_can_be_run() {
     for group in CATALOGUE {
@@ -375,10 +347,6 @@ fn every_row_can_be_run() {
     }
 }
 
-/// A row filed under a panel names a key that panel answers, and a key
-/// that answers *there*: one that moved focus away would be a row whose
-/// heading is a lie, which is how `tab` would read if it were filed under
-/// Export rather than left inert.
 #[test]
 fn a_row_filed_under_a_panel_stays_in_that_panel() {
     for group in CATALOGUE {
@@ -428,11 +396,6 @@ fn a_frame_that_shrinks_below_the_palette_closes_it() {
     );
 }
 
-/// The modal's own `MIN_W`/`MIN_H` gate is narrower than the shell's, so a
-/// frame between the two draws the panels but not the diagnostics —
-/// `command_rows() == 0` is the one signal `measured` has for "too small
-/// to draw a modal", and it must close this overlay too, not only the
-/// palette's.
 #[test]
 fn a_frame_that_shrinks_below_the_diagnostics_modal_closes_it() {
     let (mut state, _) = init(Config::default(), vec![diagnostic("one")], Stamp::default());

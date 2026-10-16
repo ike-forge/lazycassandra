@@ -1,8 +1,5 @@
-//! The one place state changes.
-//!
-//! `update` is synchronous, pure, and total. It mutates state and *describes*
-//! what should happen next; it cannot open a socket because it has nothing to
-//! open one with (architecture.md §3).
+//! The one place state changes: synchronous, pure and total. Effects are
+//! described here and performed in `lc-app` (architecture.md §3).
 
 use crate::clock::Stamp;
 use crate::commit::Discard;
@@ -84,87 +81,67 @@ pub(crate) use insert::insert_form;
 pub(crate) use inspect::inspection;
 pub(crate) use themes::theme_labels;
 
-/// Everything that can happen. Async results re-enter here through the same
-/// channel as a keystroke.
+/// Async results re-enter through the same channel as a keystroke.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Msg {
     Input(KeyPress),
-    /// A pointer gesture, resolved by `lc-inbound` against the frame it
-    /// happened in (docs/superpowers/specs/2026-08-09-mouse-input-design.md §5).
     Pointer(Pointer),
-    /// The terminal was resized. Carries no geometry — the renderer reads the
-    /// real size from `frame.area()` — it exists only to trigger a repaint.
+    /// Only triggers a repaint; the renderer reads the size from the frame.
     Resized,
-    /// What the frame just drawn turned out to be. The renderer's one report
-    /// back into the domain (design §3).
+    /// The renderer's one report back into the domain.
     Measured(Geometry),
-    /// Elapsed time, and the wall-clock the domain is not allowed to read
-    /// (query log design §4).
+    /// The domain reads no clock; time arrives here.
     Tick(Stamp),
     Connected {
         conn: ConnId,
         posture: Posture,
-        /// How long the call took, measured by the adapter around the real
-        /// call. The domain reads no clock (query log design §4).
+        /// Measured by the adapter around the call.
         took: Duration,
     },
     ConnectFailed {
         conn: ConnId,
         error: DbError,
-        /// As [`Msg::Connected::took`].
         took: Duration,
     },
     SchemaFailed {
         conn: ConnId,
         error: DbError,
-        /// As [`Msg::Connected::took`].
         took: Duration,
     },
     SchemaLoaded {
         conn: ConnId,
         schema: Box<Schema>,
-        /// As [`Msg::Connected::took`].
         took: Duration,
     },
     PageReady {
         query: QueryId,
         page: Box<Page>,
-        /// As [`Msg::Connected::took`].
         took: Duration,
     },
     Failed {
         query: QueryId,
         error: DbError,
-        /// As [`Msg::Connected::took`].
         took: Duration,
     },
-    /// The external editor exited cleanly; this is what it saved
-    /// (docs/superpowers/specs/2026-08-12-external-editor-design.md §3).
     EditorClosed {
         buffer: String,
     },
-    /// It could not be run, or it exited non-zero. The buffer is untouched.
     EditorFailed {
         reason: String,
     },
-    /// The theme was confirmed and could not be written down. Carries the
-    /// adapter's own words: which file, and why (theme persistence design §6).
     ThemeSaveFailed {
         reason: String,
     },
-    /// A history write failed. The in-memory list is untouched and the next
-    /// run retries with the whole of it (query history design §5).
+    /// The next save writes the whole list, so a lost one is repaired.
     HistorySaveFailed {
         reason: String,
     },
-    /// What the nodes said about the table the health block is open on.
     HealthLoaded {
         request: QueryId,
         health: Result<Health, DbError>,
-        /// As [`Msg::Connected::took`].
         took: Duration,
     },
-    /// Rows written so far by `job`, a running total.
+    /// A running total, not a delta.
     ExportProgress {
         job: JobId,
         rows: usize,
@@ -172,37 +149,26 @@ pub enum Msg {
     ExportFinished {
         job: JobId,
         result: Result<usize, ExportError>,
-        /// As [`Msg::Connected::took`].
         took: Duration,
     },
     Quit,
 }
 
-/// What `update` decided should happen. Interpreted by the effect runtime in
-/// `lc-app`, never here.
+/// Performed by `lc-app`'s effect runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
-    /// Open a session to `target`. Carries the connection rather than only an
-    /// id: the adapter has no table to look one up in, and a picker means the
-    /// address is chosen at runtime rather than fixed when the adapter is
-    /// built (connection picker design §6).
-    ///
-    /// Boxed for `clippy::large_enum_variant`: a [`ConnectionConfig`] holds
-    /// four strings and a host list.
+    /// Carries the connection: the adapter has no table to look an id up in.
     Connect {
         conn: ConnId,
         target: Box<ConnectionConfig>,
         driver: DriverConfig,
     },
     LoadSchema(ConnId),
-    /// A mutation or DDL, whose result is not paged.
     Execute {
         conn: ConnId,
         query: QueryId,
         stmt: Box<Statement>,
     },
-    /// One page of a read into Table contents, from `cursor` when it
-    /// continues one (grid paging design §1).
     ExecutePaged {
         conn: ConnId,
         query: QueryId,
@@ -211,38 +177,27 @@ pub enum Effect {
         cursor: Option<PagingState>,
     },
     Cancel(QueryId),
-    /// Read every node's view of `table`, answered by
-    /// [`Msg::HealthLoaded`] under `request`.
     LoadHealth {
         conn: ConnId,
         request: QueryId,
         table: TableRef,
     },
     RecordHistory(Box<Statement>),
-    /// Write `connection`'s history, newest first, to the store. Carries the
-    /// whole list rather than the new entry: a save replaces, so a lost one
-    /// is repaired by the next (query history design §5).
+    /// The whole list: a save replaces, so a lost one is repaired by the next.
     SaveHistory {
         connection: ConnectionName,
         entries: Vec<String>,
     },
-    /// Hand `buffer` to the user's editor and report what comes back. The one
-    /// effect `lc-app` runs on the main loop rather than as a task: the child
-    /// needs the terminal, so nothing else may draw while it holds it
-    /// (design §4).
+    /// Run on the main loop rather than as a task: the editor needs the
+    /// terminal.
     OpenEditor {
         buffer: String,
     },
-    /// Put the yanked line on the system clipboard. Write-only: OSC 52 gives
-    /// no answer, so there is no `Msg` back and nothing to report
-    /// (docs/superpowers/specs/2026-08-13-yank-design.md §3, §4).
+    /// Write-only: OSC 52 gives no answer.
     Yank(String),
-    /// Write the confirmed theme into the config file it is read from, so the
-    /// next launch opens on it (theme persistence design §2). Silent on
-    /// success: the theme on screen is the confirmation.
+    /// Silent on success: the theme on screen is the confirmation.
     SaveTheme(ThemeChoice),
-    /// Write a result set to a file. The paging loop, if there is one, runs in
-    /// `lc-app` (export design §5).
+    /// The paging loop runs in `lc-app`.
     Export {
         conn: ConnId,
         job: JobId,
@@ -250,25 +205,16 @@ pub enum Effect {
         destination: PathBuf,
         format: Format,
         overwrite: bool,
-        /// `driver.page_size`: export streams, so it pages by the driver's
-        /// size rather than the grid's (grid paging design §3).
+        /// Export pages by the driver's size, not the grid's.
         page_size: PageSize,
     },
     Quit,
 }
 
-/// Where an export's rows come from.
-///
-/// An enum and not a struct with two optional fields: a statement and a row
-/// list at once, or neither, are both nonsense and neither can be written
-/// down (design §5).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Source {
-    /// Run this and page to the end. The columns arrive with the first page.
-    ///
-    /// `limit` stops it after that many rows, mid-page if need be: a typed
-    /// statement's own `LIMIT` is the user's, so ours is counted here rather
-    /// than spliced into the CQL.
+    /// `limit` is counted here rather than spliced into the CQL: a statement's
+    /// own `LIMIT` is the user's.
     Whole {
         statement: Box<Statement>,
         limit: Option<NonZeroUsize>,
@@ -279,30 +225,15 @@ pub enum Source {
     },
 }
 
-/// The state the application starts in, and what it must do first.
-///
-/// TEA's `init`: the startup connection is *described* here rather than
-/// performed behind the domain's back, so the first frame can already say
-/// "Connecting…" (architecture.md §3).
-///
-/// Nothing is connected to unless a config named it. `default_connection` is
-/// the whole of that: it names one entry, so "exactly one connection is the
-/// default" is a property of the type rather than a rule the merge has to
-/// enforce, and a start with no default ends in the picker rather than at
-/// whatever address happened to be compiled in
-/// (connection picker design §2).
-///
-/// `now` is passed in for the reason `State::cwd` is: the domain cannot read
-/// a clock and must not learn how (query log design §4.1).
+/// Nothing connects unless the config names a default. `now` is passed in
+/// because the domain reads no clock.
 #[must_use]
 pub fn init(config: Config, diagnostics: Vec<Diagnostic>, now: Stamp) -> (State, Vec<Effect>) {
     let mut state = State::default();
     state.now = now;
     state.theme = config.theme.clone();
 
-    // Read before the move into the overlay below, so the trail carries these
-    // ahead of the connection entry — the order things happened in
-    // (query log design §8).
+    // Before the move below, so the trail keeps the order things happened in.
     for diagnostic in &diagnostics {
         state.log.push(Entry::new(
             now,
@@ -323,11 +254,8 @@ pub fn init(config: Config, diagnostics: Vec<Diagnostic>, now: Stamp) -> (State,
     state.connection = ConnectionState::Unchosen;
     state.dirty = true;
 
-    // The picker is not opened here: it is a block sized against a frame, and
-    // at `init` there has been none to measure. `offer_connections` opens it
-    // at the first measurement instead — and again after the diagnostics
-    // modal is dismissed, which is what claims startup's first frame whenever
-    // the config had anything wrong with it (connection picker design §4).
+    // No picker yet: it is sized against a frame and none has been measured.
+    // `offer_connections` opens it on the first measurement.
     let target = default_connection_index(&state.config)
         .and_then(|at| state.config.connections.get(at))
         .cloned();
@@ -336,7 +264,6 @@ pub fn init(config: Config, diagnostics: Vec<Diagnostic>, now: Stamp) -> (State,
     (state, effects)
 }
 
-/// Applies a message and returns the effects it implies.
 pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     let subject = described(state);
     let cursors = cursor_indices(state);
@@ -345,9 +272,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
 
     let effects = apply(state, msg);
 
-    // The Ddl offset belongs to the node being described, so a new subject
-    // opens at its top rather than halfway down the last one. Stated once here
-    // rather than at each of the four paths that can move the tree selection.
+    // A new subject opens the Ddl panel at its top, whichever path moved the
+    // tree selection.
     if described(state) != subject {
         state.ddl.cursor.to_start();
         state.ddl.scroll.to_start();
@@ -355,8 +281,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     }
 
     clamp_lists(state);
-    // Before the viewport follows it, so a page that lost columns cannot
-    // strand either.
+    // Before the viewport follows, so a page that lost columns strands neither.
     state
         .contents
         .column
@@ -375,11 +300,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     effects
 }
 
-/// What the Ddl panel is describing, in a form that survives the mutation it
-/// is compared across — [`Node`] borrows the schema.
-///
-/// Unfolding is deliberately not part of the identity: it leaves the keyspace
-/// selected and the panel on the same subject, so it must not scroll it.
+/// Owned, so it survives the mutation it is compared across. Unfolding is
+/// excluded: it must not scroll the panel.
 #[derive(PartialEq, Eq)]
 enum Described {
     Keyspace(String),
@@ -402,9 +324,8 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::Tick(now) => tick(state, now),
 
-        // The flash is a moment rather than a state, and the next input is the
-        // end of it: left standing, it would contend with a fresh `v` for the
-        // same band (visual mode design §6.1).
+        // Left standing, the flash would contend with a fresh `v` for the same
+        // band.
         Msg::Input(press) => {
             state.flash = None;
             state.held = None;
@@ -435,14 +356,10 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         Msg::SchemaLoaded { conn, schema, took } => schema_loaded(state, conn, *schema, took),
 
-        // A result whose id is no longer in flight belongs to a cancelled
-        // query, and applying it would resurrect a view the user left. The
-        // panel applies the second gate: whether the result is *its* result.
+        // A result no longer in flight belongs to a cancelled query.
         Msg::PageReady { query, page, took } => page_ready(state, query, *page, took),
 
-        // No overlay, unlike `SchemaFailed`: a schema failure disables the
-        // application, a failed browse disables one panel, and an overlay per
-        // mistyped table is the warning noise vision.md §8 flags.
+        // No overlay: a failed browse disables one panel, not the application.
         Msg::Failed { query, error, .. } => query_failed(state, query, &error),
 
         Msg::EditorClosed { buffer } => editor_closed(state, &buffer),
@@ -475,12 +392,7 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
     }
 }
 
-/// The two things elapsed time does to the frame: turn the loader, and burn
-/// down a yank's afterglow.
-///
-/// Each repaints only when it changed something. A tick arrives 25 times a
-/// second, and one that changes nothing must not cost a frame (visual polish
-/// design §4.2).
+/// Repaints only on change: a tick arrives 25 times a second.
 fn tick(state: &mut State, now: Stamp) -> Vec<Effect> {
     state.now = now;
 
@@ -528,12 +440,7 @@ fn editor_failed(state: &mut State, reason: String) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `q`, from wherever it was pressed.
-///
-/// The guard is here rather than at each key that reaches it, so the palette's
-/// quit row, the inspector's `q` and `Msg::Quit` are all caught by
-/// construction and `Effect::Quit` still leaves from one place
-/// (cell editing design §6).
+/// The guard lives here so every route to quit passes it.
 fn quit(state: &mut State) -> Vec<Effect> {
     let (cells, rows) = uncommitted(state);
 
@@ -546,8 +453,6 @@ fn quit(state: &mut State) -> Vec<Effect> {
     quit_now(state)
 }
 
-/// Quitting past the guard: what `q` does with nothing outstanding, and what
-/// answering the warning with `y` does.
 fn quit_now(state: &mut State) -> Vec<Effect> {
     state.should_quit = true;
     let in_flight: Vec<QueryId> = state.in_flight.keys().copied().collect();
@@ -562,11 +467,6 @@ fn quit_now(state: &mut State) -> Vec<Effect> {
         .collect()
 }
 
-/// Pushes an entry stamped from the clock the last tick left behind.
-///
-/// Every push happens in the arm that returns the effect the entry waits on,
-/// or in the arm that handles the result — nothing outside `update` writes to
-/// the trail (query log design §3.1).
 fn logged(state: &mut State, subject: LogSubject, outcome: Outcome) {
     state.log.push(Entry::new(state.now, subject, outcome));
 }
@@ -575,56 +475,19 @@ fn sentence(text: impl Into<String>) -> LogSubject {
     LogSubject::Sentence(text.into())
 }
 
-/// A statement as the trail draws it: one logical line, highlighted once.
-///
-/// `cql::issued` works from the lexer's tokens rather than the raw text, so
-/// whitespace collapses only between tokens — never inside a string literal
-/// — and a comment is dropped rather than swallowing the clause that
-/// followed it. What ran is the statement, not its indentation (query log
-/// design §3, §6).
+/// Token-based: whitespace collapses only between tokens, and comments drop.
 fn statement_subject(stmt: &Statement) -> LogSubject {
     LogSubject::Statement(cql::issued(&stmt.cql))
 }
 
-/// The way a message overlay is installed. Every site goes through here —
-/// `ConnectFailed`, `SchemaFailed`, and `run`'s destructive-statement refusal.
-///
-/// A direct `state.overlay = Some(Overlay::Message(_))` replaces a live search
-/// prompt without restoring its `previous`, stranding the target under
-/// whatever the half-typed query had applied and losing the only copy of what
-/// was there before (panel search design §3.1). Cancelling the prompt first is
-/// the same guarantee `Esc` gives, and it belongs to the installation rather
-/// than to each caller's memory of it.
-///
-/// That no current site can *observe* the difference is incidental: a message
-/// arrives on connect, before a prompt can be open, and `run` gates on Queries
-/// having focus, which no prompt can coexist with. Design §8 anticipates
-/// Queries gaining a search, at which point a prompt over it is constructible.
-///
-/// A live theme picker is unwound for the same reason and by the same rule:
-/// its cursor writes `State.theme` as it moves, so replacing it outright
-/// would strand the frame in a half-previewed theme with nothing left saying
-/// which one the user had chosen (themes design §6). [`restore_theme`] is
-/// what puts it back, and — unlike the prompt above — a message *can* arrive
-/// over an open picker today, since the picker outlives no focus condition.
+/// Unwinds the overlay first: replacing a live prompt or theme picker outright
+/// strands what it was previewing.
 fn raise(state: &mut State, message: Message) {
     unwind_overlay(state);
     state.overlay = Some(Overlay::Message(message));
 }
 
-/// The one modal a read-only connection answers a mutating action with.
-///
-/// `what` names the action in the user's vocabulary — the key they pressed,
-/// not the statement it would have built — because the statement is the part
-/// they have not seen yet.
-///
-/// There is deliberately no way past it. A posture is a property of the
-/// connection, so the way to run this is to open a connection that permits
-/// it; an override key here would make the posture a suggestion, and a
-/// suggestion is not what vision.md §6 asks for (posture design §3).
-///
-/// `state.dirty` is set by [`raise`]'s callers elsewhere; set here because
-/// both call sites are refusals that change nothing else in the frame.
+/// No way past it: the posture belongs to the connection (posture design §3).
 fn refuse_read_only(state: &mut State, what: &str) {
     raise(
         state,
@@ -641,15 +504,8 @@ fn refuse_read_only(state: &mut State, what: &str) {
     state.mark_dirty();
 }
 
-/// Puts back whatever the overlay on screen was previewing, and completes
-/// whatever it was leaving pending, so a replacement can be installed over
-/// it without stranding either (final review, I4 follow-up).
-///
-/// Every message-driven overlay replacement goes through here: [`raise`], and
-/// the `Exists` arm of [`finish_export`], which puts the export form back over
-/// whatever the user opened while the export was in flight — a picker among
-/// them, since the overlay is `None` for the whole of a running export and
-/// `ctrl-t` is not refused (final review I2).
+/// Restores what the overlay was previewing and completes what it left pending,
+/// so a replacement strands neither.
 fn unwind_overlay(state: &mut State) {
     if let Some(Overlay::Search(prompt)) = &state.overlay {
         let (target, previous, origin) =
@@ -661,10 +517,7 @@ fn unwind_overlay(state: &mut State) {
     restore_theme(state);
 }
 
-/// The rows the picker draws under `search`, as indices into the unfiltered
-/// list — the numbering [`theme_at_picker_index`] counts in, and the one a
-/// cursor is put back into when the prompt closes
-/// (docs/superpowers/specs/2026-08-31-overlay-filter-design.md §4).
+/// Indices into the unfiltered list.
 pub(crate) fn picker_matches(labels: &[String], search: Option<&Search>) -> Vec<usize> {
     labels
         .iter()

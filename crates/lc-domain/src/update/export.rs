@@ -1,5 +1,4 @@
-//! The export form, its confirmation, and the running job
-//! (docs/superpowers/specs/2026-08-14-export-design.md).
+//! The export form, its confirmation, and the running job (export design).
 
 use crate::connection::ConnectionState;
 use crate::contents::{ContentsState, Subject};
@@ -18,29 +17,9 @@ use super::{
     Decision, Effect, Source, edit_line, logged, raise, sentence, statement_subject, unwind_overlay,
 };
 
-/// Completes the current overlay's pending export trail entry as
-/// `Cancelled`, if it is an `Overlay::Export` confirmation with one.
-/// Otherwise a no-op.
-///
-/// The one place that reads a confirmation's `JobId` before the overlay
-/// carrying it is dropped or replaced, so a fourth site cannot silently
-/// leave the trace pending the way three already did (final review, I4
-/// follow-up). An orphaned pending entry is not merely a stale row any
-/// more: `is_working_in(Panel::Queries)` (`state.rs`) is now true for any
-/// pending entry, so a trace nothing will ever complete keeps
-/// `State::is_working` true forever, and the app never goes idle again
-/// (`tick` keeps advancing the loader and marking every frame dirty).
-///
-/// Called from the same four places dropping or replacing the overlay
-/// while it might be this confirmation: [`escape`] (the click-dismiss
-/// path — keyboard `Esc` while the form is up is claimed by
-/// [`export_key`] first and never reaches `escape`), the resize-shrink
-/// close in [`measured`], [`confirm_key`]'s own `Esc` arm, and here in
-/// [`unwind_overlay`], which covers every message-driven replacement
-/// ([`raise`]'s callers) including the one that reaches it: `editor_failed`,
-/// if an `Exists` confirmation lands on the trail while the external
-/// editor is suspending the terminal and `Msg::EditorFailed` is what
-/// resumes it.
+/// Every path that drops or replaces an export confirmation must call this: an
+/// orphaned pending entry keeps `State::is_working` true and the app never
+/// idles.
 pub(super) fn cancel_pending_export(state: &mut State) {
     let job = match &state.overlay {
         Some(Overlay::Export(form)) => form.pending().map(Pending::job),
@@ -51,15 +30,8 @@ pub(super) fn cancel_pending_export(state: &mut State) {
     }
 }
 
-/// Refused over a grid with no rows, and while an export is already running:
-/// one at a time (design §5).
-///
-/// Refused too where the frame cannot draw the form, for the reason
-/// [`open_palette`] gives: the form claims every key while it is open, so one
-/// nothing draws is a mode with nothing on screen saying so and only `Esc` out
-/// of it. Gated on the form's own measurement rather than on the palette's,
-/// which is the weaker condition — a frame that draws the palette need not
-/// draw a 56×11 block.
+/// Refused where the frame cannot draw the form: an undrawn form would still
+/// claim every key.
 pub(super) fn open_export(state: &mut State) {
     if state.export.is_some() {
         state.notify(Severity::Info, "an export is already running");
@@ -95,10 +67,6 @@ pub(super) fn open_export(state: &mut State) {
     state.dirty = true;
 }
 
-/// Every key the export form claims.
-///
-/// A confirmation in front of the form is resolved first, through
-/// [`confirm_key`].
 pub(super) fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
     let confirming =
         matches!(&state.overlay, Some(Overlay::Export(form)) if form.confirm().is_some());
@@ -137,7 +105,6 @@ pub(super) fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
                 form.up();
                 Decision::Nothing
             }
-            // The count is a number: anything else typed there is dropped.
             Key::Char(character) if form.stop() == Stop::Rows && !character.is_ascii_digit() => {
                 Decision::Nothing
             }
@@ -165,12 +132,8 @@ pub(super) fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 }
 
-/// Turns the form into the one effect that does the work.
-///
-/// A confirmation re-emits the source it is holding rather than reading the
-/// panel again: the panel is live for the whole of an export, and by the time
-/// `Exists` comes back the user may be standing on another table (final review
-/// I3).
+/// Re-emits the held source rather than re-reading the panel, which may have
+/// moved on by the time `Exists` returns.
 pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
     let Some(Overlay::Export(form)) = state.overlay.take() else {
         return Vec::new();
@@ -181,10 +144,8 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
     };
 
     let overwrite = form.confirm() == Some(Confirm::Overwrite);
-    // A retry reuses the refused attempt's own `JobId` rather than minting a
-    // fresh one: it is the same export continuing past the overwrite
-    // question, not a second one, so it reuses that attempt's still-pending
-    // trail entry instead of orphaning it (final review I4).
+    // A retry reuses the refused attempt's `JobId`, and so its pending trail
+    // entry.
     let retry = form.pending().map(Pending::job);
     let attempt = match form.pending() {
         Some(pending) => Some(pending.source().clone()),
@@ -201,16 +162,10 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
         form.format(),
     );
 
-    // Only a fresh attempt logs an entry. A retry's is already pending under
-    // the id just reused, and logging a second one for it would give one
-    // `Trace` two pending entries — `Log::complete` would rewrite whichever
-    // it found first and strand the other exactly as before.
+    // A retry's entry is already pending; a second would strand one.
     if retry.is_none() {
-        // Both scopes are something the session ran and both get an entry
-        // (design §8's `ExportFinished(Err)` row names no scope qualifier). A
-        // `Whole` export logs the statement it paged; a `Fetched` export writes
-        // rows already in memory and issues no statement (export design §3), so
-        // its subject records the act rather than quoting a query that never ran.
+        // A `Fetched` export issued no statement, so its subject records the
+        // act.
         let subject = match &source {
             Source::Whole { statement, .. } => statement_subject(statement),
             Source::Fetched { .. } => sentence("Exporting the fetched rows"),
@@ -224,8 +179,7 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
         );
     }
 
-    // Cloned rather than borrowed: the effect carries it out of the domain and
-    // the job holds it against an `Exists` that has not come back yet.
+    // Cloned: the job holds it against an `Exists` that has not come back yet.
     state.notify(
         Severity::Info,
         format!("exporting to {}", destination.display()),
@@ -249,19 +203,14 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
     }]
 }
 
-/// What the chosen scope reads.
-///
-/// `None` when the panel is no longer showing a page — which the form's own
-/// key claim makes impossible today, and which must not become a panic if it
-/// ever stops being.
+/// `None` is unreachable today but must not panic if that changes.
 pub(super) fn source(state: &State, form: &ExportForm) -> Option<Source> {
     let ContentsState::Loaded { subject, page, .. } = state.contents.state() else {
         return None;
     };
 
     match form.scope() {
-        // Ours is the limit that is dropped; a typed statement's own is the
-        // user's and is honoured verbatim (design §3).
+        // Only our limit is dropped; a typed statement's own is the user's.
         Scope::Whole | Scope::First => {
             let statement = Box::new(match subject {
                 Subject::Table(table) => Statement::select_all(&table.keyspace, &table.table),
@@ -274,10 +223,7 @@ pub(super) fn source(state: &State, form: &ExportForm) -> Option<Source> {
 
             Some(Source::Whole { statement, limit })
         }
-        // What the grid is showing, arrangement and all: a form opened over
-        // a filtered grid offering to write the rows behind the filter would
-        // be exporting something the user cannot see
-        // (grid sort and filter design §4).
+        // What the grid shows, filter and sort included.
         Scope::Fetched => Some(Source::Fetched {
             columns: page.page().columns.clone(),
             rows: page.drawn_rows(),
@@ -285,16 +231,12 @@ pub(super) fn source(state: &State, form: &ExportForm) -> Option<Source> {
     }
 }
 
-/// The overwrite confirmation's keys: `Space` or `Enter` confirms, `Esc` goes
-/// back to the form (design §7).
 pub(super) fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char(' ') | Key::Enter => start_export(state),
         Key::Escape => {
-            // Read before `dismiss()` drops the source it was asking about:
-            // nothing else will ever complete this trace once the question
-            // is gone (final review I4, and its I4-follow-up choke point,
-            // `cancel_pending_export`).
+            // Before `dismiss()` drops the source: nothing else would complete
+            // this trace.
             cancel_pending_export(state);
             if let Some(Overlay::Export(form)) = &mut state.overlay {
                 form.dismiss();
@@ -305,8 +247,7 @@ pub(super) fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 }
 
-/// A running total for `job`, dropped if it belongs to a job no longer
-/// tracked — cancelled, or already finished.
+/// Dropped for a job no longer tracked.
 pub(super) fn export_progress(state: &mut State, job: JobId, rows: usize) -> Vec<Effect> {
     if let Some(running) = &mut state.export {
         running.progressed(job, rows);
@@ -315,11 +256,8 @@ pub(super) fn export_progress(state: &mut State, job: JobId, rows: usize) -> Vec
     Vec::new()
 }
 
-/// An export ended. `Exists` is the one outcome that is a question rather than
-/// a result: it reopens the form with its confirmation up (design §7), and
-/// the trail's entry stays pending — closed by `start_export`'s retry, which
-/// reuses this `job` rather than minting a fresh one, or by `confirm_key`'s
-/// `Esc` arm if the question is abandoned instead (final review I4).
+/// `Exists` reopens the form with its confirmation; the trail entry stays
+/// pending until a retry or `Esc` closes it.
 pub(super) fn finish_export(
     state: &mut State,
     job: JobId,

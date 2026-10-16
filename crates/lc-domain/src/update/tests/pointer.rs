@@ -19,7 +19,6 @@ fn click_cell(state: &mut State, panel: Panel, row: usize, column: usize) -> Vec
     )
 }
 
-/// `shop.orders` loaded with `count` single-column rows.
 fn showing_rows(count: usize) -> State {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
     let query = QueryId::next();
@@ -47,7 +46,6 @@ fn showing_rows(count: usize) -> State {
     state
 }
 
-/// `shop.orders` loaded with one row of `columns` columns.
 fn showing_columns(columns: usize) -> State {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
     let query = QueryId::next();
@@ -126,9 +124,6 @@ fn a_click_on_a_cell_moves_both_cursors() {
     assert_eq!(state.contents.column.index(), 2);
 }
 
-/// A press names whatever cells it can reach; which of them the grid draws
-/// a band around is the mode's business, and `m` is the only thing that
-/// changes it.
 #[test]
 fn a_click_on_a_cell_leaves_the_selection_mode_alone() {
     for mode in [
@@ -205,7 +200,7 @@ fn a_click_on_a_ddl_row_that_has_gone_is_dropped_rather_than_clamped() {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
     click_row(&mut state, Panel::Tables, 0);
 
-    // Nothing is selected, so the panel describes nothing and has no rows.
+    // Nothing is selected, so the panel describes nothing.
     let effects = click_row(&mut state, Panel::Ddl, 3);
 
     assert!(effects.is_empty());
@@ -248,9 +243,6 @@ fn a_click_on_the_logs_tab_focuses_queries_and_draws_the_trail() {
     assert_eq!(state.queries.tab(), QueriesTab::Logs);
 }
 
-/// The same reachability rule the key obeys: on a keyspace the strip has
-/// one tab, so a press on a strip drawn a frame ago cannot reach a tab
-/// this frame has not got.
 #[test]
 fn a_click_on_a_tab_the_strip_no_longer_draws_only_focuses() {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
@@ -442,10 +434,6 @@ fn a_wheel_over_a_panel_with_nothing_to_scroll_is_inert() {
 
 #[test]
 fn a_wheel_over_tables_moves_the_viewport_rather_than_the_selection() {
-    // Four keyspaces, so three rows a notch would have landed on the
-    // last one under the old cursor-moving wheel. Now nothing about the
-    // tree selection changes, so `described()` sees no subject change
-    // and `state.ddl.scroll` is left alone (design §7).
     let mut state = browsing(&["a", "b", "c", "d"]);
     state.geometry = Geometry::new([3, 3, 3, 1], 0, 0);
     state.focus_on(Panel::Queries);
@@ -497,15 +485,14 @@ fn a_wheel_does_not_dismiss_the_overlay() {
     assert_eq!(state.contents.cursor.index(), 0, "and nothing scrolled");
 }
 
-/// A Contents panel showing `count` rows in a five-row viewport.
 fn scrolling_rows(count: usize) -> State {
     let mut state = showing_rows(count);
     state.geometry = Geometry::new([5, 5, 5, 1], 0, 0);
     state
 }
 
-/// Named apart from the production `wheel`, which has the same parameter
-/// list and would otherwise be shadowed by this inside `use super::*`.
+/// Not `wheel`: that name would shadow the production fn through `use
+/// super::*`.
 fn roll(state: &mut State, panel: Panel, direction: Wheel) -> Vec<Effect> {
     point(state, Pointer::Wheel { panel, direction })
 }
@@ -618,7 +605,7 @@ fn a_list_that_shrank_pulls_its_offset_back() {
     }
     assert_eq!(state.tables.scroll.offset(), 4, "seven rows, three visible");
 
-    // Folding takes the tree back to one row, which no offset can be past.
+    // Folding leaves one row, which no offset can be past.
     click_row(&mut state, Panel::Tables, 0);
 
     assert_eq!(row_count(&state), 1);

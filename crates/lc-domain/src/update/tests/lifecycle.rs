@@ -1,10 +1,6 @@
 use super::*;
 
-/// A config naming one connection and making it the default.
-///
-/// What `init` needs before it opens anything at all: nothing is reached
-/// unless a file named it, so `Config::default()` now starts in the
-/// picker rather than on a cluster (connection picker design §2).
+/// `init` connects only to a default a config names.
 fn connecting_config() -> Config {
     let name = ConnectionName::try_new("fixture").expect("a valid name");
 
@@ -23,8 +19,6 @@ fn connecting_config() -> Config {
     }
 }
 
-/// Starts up on a config with a default connection, and reports the id
-/// `init` minted for it — the id is no longer the caller's to choose.
 fn started_on_default(diagnostics: Vec<Diagnostic>, now: Stamp) -> (State, ConnId, Vec<Effect>) {
     let (state, effects) = init(connecting_config(), diagnostics, now);
     let Some(Effect::Connect { conn, .. }) = effects.first() else {
@@ -136,7 +130,6 @@ fn the_fatal_modal_quits_rather_than_dismissing() {
     }
 }
 
-// The config diagnostics describe a session that is not going to happen.
 #[test]
 fn a_fatal_modal_replaces_the_diagnostics_it_lands_on() {
     let (mut state, conn, _effects) =
@@ -263,8 +256,6 @@ fn a_tick_refreshes_the_clock() {
     assert!(effects.is_empty());
 }
 
-// A tick arrives twenty-five times a second. One that changes nothing must
-// not cost a frame (visual polish design §4.2).
 #[test]
 fn refreshing_the_clock_does_not_cost_a_frame() {
     let mut state = State::default();
@@ -503,9 +494,6 @@ fn schema_for_a_stale_connection_is_ignored() {
     );
 }
 
-/// Design §2: a config that names a default connection opens it, and one
-/// that does not opens nothing — the tool reaches no cluster a file did
-/// not name.
 #[test]
 fn a_config_naming_a_default_connection_opens_it_at_startup() {
     let (state, conn, effects) = started_on_default(Vec::new(), Stamp::default());
@@ -738,10 +726,8 @@ fn a_message_arriving_over_an_open_prompt_restores_the_previous_search() {
         "the live prompt is previewing its own buffer, not the previous search"
     );
 
-    // Any message-driven overlay unwinds a live search the same way
-    // (`unwind_overlay`'s doc comment) — `EditorFailed` stands in
-    // because `SchemaFailed` now raises `Overlay::Fatal`, which has
-    // nothing to preserve (there is no application left to return to).
+    // `EditorFailed` stands in: `SchemaFailed` raises `Fatal`, which has
+    // nothing to preserve.
     update(
         &mut state,
         Msg::EditorFailed {

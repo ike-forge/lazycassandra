@@ -264,9 +264,7 @@ fn ctrl_d_is_inert_under_a_search_prompt() {
 
 #[test]
 fn tab_walks_every_stop_in_order_and_wraps() {
-    // A keyspace with no tables, so DDL offers its one tab and the
-    // stops are exactly the ones docs/shortcuts.md §4 lists: Tables,
-    // Ddl, Contents, Queries/Cql, Queries/Logs.
+    // A keyspace with no tables, so DDL offers one tab.
     let mut state = browsing(&["a"]);
 
     press(&mut state, Key::Tab);
@@ -307,9 +305,6 @@ fn shift_tab_walks_the_same_stops_the_other_way() {
     assert_eq!(state.focus(), Panel::Contents);
 }
 
-/// Whether a freshly-focused `panel` takes text — the panels a press
-/// cannot reach from, now that it depends on the Queries tab rather than
-/// on the panel alone.
 fn does_not_take_text(panel: Panel) -> bool {
     let mut state = State::default();
     state.focus_on(panel);
@@ -340,13 +335,12 @@ fn a_number_focuses_its_panel_from_any_panel_that_does_not_take_text() {
 
 #[test]
 fn a_repeated_number_keeps_focus_and_walks_the_panels_tabs() {
-    // Queries numbers each tab instead; see `four_focuses_queries_…`.
+    // Queries numbers each tab instead.
     for panel in Panel::ALL
         .into_iter()
         .filter(|panel| does_not_take_text(*panel) && *panel != Panel::Queries)
     {
-        // A table has to be selected, or the DDL strip draws one tab and
-        // there is nothing to walk to.
+        // Over a table, so the DDL strip draws two tabs.
         let mut state = browsing_a_table();
         state.focus_on(Panel::Tables);
 
@@ -370,9 +364,7 @@ fn a_repeated_number_keeps_focus_and_walks_the_panels_tabs() {
 fn pressing_two_once_per_tab_returns_to_the_first_one() {
     let mut state = browsing_a_table();
 
-    // One press to arrive, then one per tab: the walk wraps whatever the
-    // strip holds, so the count follows `DdlTab::ALL` rather than a
-    // number a third tab would have made wrong.
+    // Counted from `DdlTab::ALL` so a third tab cannot make it wrong.
     for _ in 0..=DdlTab::ALL.len() {
         press(&mut state, Key::Char('2'));
     }
@@ -564,8 +556,6 @@ fn a_click_on_the_buffer_opens_it() {
     assert!(state.takes_text());
 }
 
-/// Also the collision test: a number that an earlier arm already answers
-/// would never reach the focus arm, and the focus assertion would fail.
 #[test]
 fn a_number_moves_focus_and_does_nothing_else() {
     for panel in Panel::ALL {
@@ -594,8 +584,7 @@ fn a_number_moves_focus_and_does_nothing_else() {
 #[test]
 fn the_letters_the_numbers_replaced_stay_unbound() {
     for freed in ['a', 'b', 'c', 'd', 'u'] {
-        // Focus starts elsewhere, so an unmoved focus is evidence rather
-        // than the state it began in.
+        // Focus starts elsewhere, so an unmoved focus is evidence.
         let elsewhere = Panel::Ddl;
         let mut state = State::default();
         state.focus_on(elsewhere);

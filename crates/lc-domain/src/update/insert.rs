@@ -1,5 +1,4 @@
-//! Inserting a row
-//! (docs/superpowers/specs/2026-10-12-row-insert-design.md).
+//! Inserting a row (row insert design).
 
 use crate::commit::CommitPrompt;
 use crate::contents::{ContentsState, Subject};
@@ -13,12 +12,7 @@ use crate::style::Severity;
 
 use super::refuse_read_only;
 
-/// The form `i` would open, or the sentence saying why it opens none —
-/// empty where the refusal is not worth saying, as for a panel that is not
-/// Contents.
-///
-/// One derivation, read by the key and by the hint bar, so the bar cannot
-/// promise a form the key refuses (insert design §1).
+/// Shared with the hint bar. An empty refusal is not worth saying.
 pub(crate) fn insert_form(state: &State) -> Result<Inspector, String> {
     if state.focus() != Panel::Contents {
         return Err(String::new());
@@ -54,11 +48,7 @@ pub(crate) fn insert_form(state: &State) -> Result<Inspector, String> {
     ))
 }
 
-/// `i` over Table contents: opens the inspector over a row with nothing in it.
-///
-/// The posture is the one refusal that is spoken as a modal, for
-/// [`super::edit::start_edit`]'s reason; the rest are toasts, which leave the
-/// grid where it is.
+/// Only the posture refusal is a modal; the rest are toasts.
 pub(super) fn open_insert(state: &mut State) {
     if state.focus() != Panel::Contents {
         return;
@@ -74,8 +64,7 @@ pub(super) fn open_insert(state: &mut State) {
 
     match insert_form(state) {
         Ok(blank) => {
-            // What the cluster refused last time, for the same table
-            // (insert design §5).
+            // What the cluster refused last time for this table.
             let form = state
                 .contents
                 .take_draft()
@@ -90,11 +79,7 @@ pub(super) fn open_insert(state: &mut State) {
     }
 }
 
-/// `⏎` over the form: builds the `INSERT` and opens the confirmation over it,
-/// keeping the form for `n` to hand back (insert design §4).
-///
-/// Refused with a toast rather than a modal wherever the form can be fixed
-/// and tried again, which is everywhere but the posture.
+/// Toasts, not modals, wherever the form can be fixed and retried.
 pub(super) fn open_insert_commit(state: &mut State) {
     if !state.posture().permits_mutation() {
         refuse_read_only(state, "inserting a row");
@@ -132,11 +117,7 @@ pub(super) fn open_insert_commit(state: &mut State) {
     state.mark_dirty();
 }
 
-/// The `INSERT` the form holds, or the sentence saying what it lacks.
-///
-/// A row is addressed by its whole primary key, so a form missing any key
-/// column writes nothing — and a form with only key columns is still a row
-/// (insert design §3).
+/// Every key column is required; a form with only key columns is still a row.
 fn insert_statement(state: &State, form: &Inspector) -> Result<Statement, String> {
     let (Subject::Table(table), Inspected::Row { columns, .. }) =
         (form.subject(), form.inspected())

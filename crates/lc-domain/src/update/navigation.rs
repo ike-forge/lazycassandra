@@ -1,5 +1,3 @@
-//! Moving between panels, tabs and tree levels.
-
 use crate::contents::TableRef;
 use crate::ddl::DdlTab;
 use crate::panel::Panel;
@@ -9,22 +7,13 @@ use crate::tree::Node;
 
 use super::{Effect, Side, read, step_column};
 
-/// Which way [`walk_tab`] steps through a panel's strip, or [`walk_landing`]
-/// through the `Tab` cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Step {
     Forward,
     Back,
 }
 
-/// Focuses the panel `key` numbers and, where it already had focus, steps to
-/// its next tab.
-///
-/// One key for both: a panel is the place, and its tabs are what that place
-/// can show — so a reader who knows how to arrive already knows how to look at
-/// the rest (docs/shortcuts.md §4). A panel with one tab answers the second
-/// press by staying where it is. Queries is the exception: each of its tabs
-/// has a number, and `4` arrives ready to type.
+/// Queries is the exception: each tab has its own number.
 pub(super) fn focus_by_number(state: &mut State, key: char) {
     if let Some(tab) = QueriesTab::from_number(key) {
         state.focus_on(Panel::Queries);
@@ -44,12 +33,8 @@ pub(super) fn focus_by_number(state: &mut State, key: char) {
     }
 }
 
-/// Steps the focused panel's strip one tab in `step`, wrapping.
-///
-/// A tab the strip does not draw is not a place to arrive at: on a keyspace
-/// the DDL panel offers one tab, and walking stays on it. Queries reaches
-/// here only with its buffer closed — an open one has already claimed `]`
-/// and `[` as text (cql edit mode design §2).
+/// A tab the strip does not draw is skipped: a keyspace's DDL panel offers one
+/// tab.
 pub(super) fn walk_tab(state: &mut State, step: Step) {
     match state.focus() {
         Panel::Ddl => {}
@@ -75,12 +60,8 @@ pub(super) fn walk_tab(state: &mut State, step: Step) {
     }
 }
 
-/// One stop in the `Tab`/`BackTab` cycle: a panel, and — where it has more
-/// than one — the tab it lands on.
-///
-/// Every `(panel, tab)` pair a strip can draw is a stop, DDL's tabs and
-/// Queries' two included, so `Tab` alone walks everything a number and its
-/// repeats reach (docs/shortcuts.md §2).
+/// Every `(panel, tab)` pair a strip draws is a stop, so `Tab` alone reaches
+/// what the numbers do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Landing {
     Tables,
@@ -90,11 +71,7 @@ pub(super) enum Landing {
 }
 
 impl Landing {
-    /// Every stop the cycle can be at right now, in the order it visits them.
-    ///
-    /// Built fresh rather than cached: DDL's strip depends on what the
-    /// Tables cursor is on, so a keyspace's single tab is one stop here and a
-    /// table's two are two, the same distinction [`walk_tab`] draws for `2`.
+    /// Built fresh: DDL's strip depends on what the Tables cursor is on.
     pub(super) fn all(state: &State) -> Vec<Self> {
         std::iter::once(Self::Tables)
             .chain(crate::view::ddl_tabs(state).iter().copied().map(Self::Ddl))
@@ -103,7 +80,6 @@ impl Landing {
             .collect()
     }
 
-    /// The stop the frame is sitting on right now.
     pub(super) fn current(state: &State) -> Self {
         match state.focus() {
             Panel::Tables => Self::Tables,
@@ -113,13 +89,8 @@ impl Landing {
         }
     }
 
-    /// Focuses the panel this stop names and draws the tab it names, in one
-    /// move.
-    ///
-    /// Both, even where the panel already has focus: [`State::focus_on`]
-    /// reverts the Queries tab to `Cql` the moment focus leaves it, so a
-    /// landing on `Queries(Logs)` reached only by focusing and never told
-    /// which tab to draw would be undone by its own arrival.
+    /// Both, even with focus already there: [`State::focus_on`] reverts Queries
+    /// to `Cql` when focus leaves.
     pub(super) fn arrive(self, state: &mut State) {
         match self {
             Self::Tables => state.focus_on(Panel::Tables),
@@ -136,7 +107,6 @@ impl Landing {
     }
 }
 
-/// Steps `Tab`/`BackTab` to the next or previous [`Landing`], wrapping.
 pub(super) fn walk_landing(state: &mut State, step: Step) {
     let stops = Landing::all(state);
     let current = Landing::current(state);
@@ -150,17 +120,11 @@ pub(super) fn walk_landing(state: &mut State, step: Step) {
     stops[next].arrive(state);
 }
 
-/// Draws the `tab`th tab of the strip `panel` last drew. `click_at` has
-/// already focused it.
-///
-/// Reaches the same `show` the keys do — [`walk_tab`] for DDL, [`Landing`]
-/// for Queries — so a tab arrived at by pointer and one arrived at by key
-/// cannot diverge.
+/// Reaches the same `show` the keys do, so pointer and key cannot diverge.
 pub(super) fn show_tab(state: &mut State, panel: Panel, tab: usize) {
     match panel {
-        // The map a press was resolved against describes the previous frame,
-        // so a strip that has since lost a tab drops the press rather than
-        // showing whichever tab took that position (design §6).
+        // The map describes the previous frame: a strip that lost a tab drops
+        // the press.
         Panel::Ddl => {
             if let Some(tab) = crate::view::ddl_tabs(state).get(tab).copied() {
                 state.ddl.show(tab);
@@ -181,11 +145,6 @@ pub(super) enum Transition {
     Close,
 }
 
-/// `l` and `→`: into the tree, or on to the next column.
-///
-/// The four horizontal keys mean *move left* and *move right*, and each panel
-/// resolves that in its own vocabulary — the shape `j`/`k` already have
-/// (docs/shortcuts.md §2, docs/superpowers/specs/2026-08-10-table-display-design.md §2).
 pub(super) fn go_right(state: &mut State) -> Vec<Effect> {
     match state.focus() {
         Panel::Tables => return step_in(state),
@@ -196,14 +155,7 @@ pub(super) fn go_right(state: &mut State) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `l` and `→` in Tables: a keyspace opens, a table is read.
-///
-/// *Move right* out of a table row is the panel to its right — the tree has no
-/// further level, and Contents is what a table's contents are drawn in — so
-/// the key lands where `⏎` already does rather than doing nothing
-/// (docs/shortcuts.md §4). The keyspace arm keeps [`TablesPanel::open`]'s own
-/// vocabulary, which is what makes it not merely `⏎`'s synonym: `⏎` folds an
-/// open keyspace, `l` steps into it.
+/// `⏎` folds an open keyspace; `l` steps into it.
 pub(super) fn step_in(state: &mut State) -> Vec<Effect> {
     let table = {
         let Some((tables, schema)) = state.tables_and_schema() else {
@@ -211,9 +163,8 @@ pub(super) fn step_in(state: &mut State) -> Vec<Effect> {
         };
 
         match tables.selected(schema) {
-            // Reading a table needs one table, the argument `activate` makes
-            // for `⏎` (docs/shortcuts.md §4). Folding is left alone: it
-            // addresses the cursor's row, not the selection.
+            // Reading needs one table. Folding addresses the cursor's row, so
+            // it is left alone.
             Some(Node::Table { .. }) if tables.selects_many() => return Vec::new(),
             Some(Node::Table { keyspace, table }) => TableRef::new(&keyspace.name, &table.name),
             _ => {
@@ -239,9 +190,8 @@ pub(super) fn transition(state: &mut State, transition: Transition) {
         return;
     }
 
-    // The search guard lives in TablesPanel::open/close themselves (design
-    // §4.1), so every entry point — this one, and activate's click/Enter/Space
-    // path — inherits it from one place rather than two that must agree.
+    // The search guard lives in `TablesPanel::open`/`close`, so every entry
+    // point inherits it.
     let Some((tables, schema)) = state.tables_and_schema() else {
         return;
     };

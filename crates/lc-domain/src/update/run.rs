@@ -1,5 +1,3 @@
-//! Statements to the cluster: reads, `ctrl-r`, paging, and their results.
-
 use crate::connection::ConnectionState;
 use crate::contents::{ContentsState, Continue, Failure, Landed, Subject, TableRef};
 use crate::log::{Outcome, Trace};
@@ -25,9 +23,8 @@ pub(super) fn page_ready(
         return Vec::new();
     }
     let rows = page.rows.len();
-    // Answers whichever asked for it. A drop's result reaches the
-    // panel too and is dropped there, because the panel is not
-    // waiting on that id (drop design §3).
+    // A drop's result reaches the panel too and is dropped there: the panel is
+    // not waiting on that id.
     let landed = state.contents.page_ready(
         query,
         page,
@@ -66,8 +63,8 @@ pub(super) fn query_failed(state: &mut State, query: QueryId, error: &DbError) -
     let outcome = Outcome::Failed {
         detail: error.to_string(),
     };
-    // A later page has no entry of its own to complete, and the rows
-    // already loaded stay, so the trail is the one place it can fail.
+    // A later page has no entry of its own and the loaded rows stay, so the
+    // trail is the one place it fails.
     if state.contents.failed(query, error) == Some(Failure::Page) {
         let label = match state.contents.state() {
             ContentsState::Loaded { subject, .. } => subject.label(),
@@ -87,7 +84,6 @@ pub(super) fn query_failed(state: &mut State, query: QueryId, error: &DbError) -
     effects
 }
 
-/// `Enter` and `Space`: unfold a keyspace, or read a table.
 pub(super) fn activate(state: &mut State) -> Vec<Effect> {
     if state.tables.selects_many() {
         return Vec::new();
@@ -115,13 +111,8 @@ pub(super) fn activate(state: &mut State) -> Vec<Effect> {
     read(state, table)
 }
 
-/// Replaces whatever the Contents panel is showing with a read of `table`,
-/// and takes focus there.
-///
-/// Focus moves now rather than when the page lands: it is a consequence of the
-/// keypress, and a focus change that waits on the network happens at a time
-/// the user cannot predict
-/// (docs/superpowers/specs/2026-08-10-table-display-design.md §1).
+/// Focus moves now rather than when the page lands: a focus change that waits
+/// on the network is unpredictable.
 pub(super) fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
     state.focus_on(Panel::Contents);
 
@@ -129,16 +120,12 @@ pub(super) fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
     submit_into_contents(state, Subject::Table(table), stmt)
 }
 
-/// `ctrl-r`: the Queries buffer, whole, as one statement (design §3).
 pub(super) fn run(state: &mut State) -> Vec<Effect> {
     if state.focus() != Panel::Queries {
         return Vec::new();
     }
 
-    // The statement the cursor is in rather than the whole buffer: the
-    // protocol carries one statement per request, so a buffer holding several
-    // was never runnable whole, and the band on screen says which one this is
-    // (cql statement selection design §5).
+    // One statement per request: the protocol carries no more.
     let Some(cql) = state.queries.statement() else {
         return Vec::new();
     };
@@ -146,21 +133,12 @@ pub(super) fn run(state: &mut State) -> Vec<Effect> {
 
     let stmt = Statement::typed(cql);
 
-    // Refused rather than executed: vision.md §4 principle 6 makes typed
-    // confirmation the condition on these running at all, and the tree's `d`
-    // is the only place that confirmation exists. A statement typed by hand
-    // names its target in text this program does not parse, so there is
-    // nothing to ask the user to type back (drop design's preamble). This
-    // call site becomes the prompt once there is (design §5).
-    // Gated on the posture permitting mutation at all: on a read-only
-    // connection the confirmation is not what stands between the user and
-    // this statement, and naming it would send them looking for a `d` that
-    // would refuse them too. `submit_into_contents` raises the posture's own
-    // refusal below (posture design §3).
+    // Refused: a typed statement names its target in text nothing parses, so
+    // there is nothing to confirm against (vision.md §4 principle 6). On a
+    // read-only connection the posture's refusal is raised instead.
     if stmt.kind.is_destructive() && state.posture().permits_mutation() {
-        // Logged before the modal, not instead of it: the modal is gone the
-        // moment it is dismissed, and the trail is where the reason survives
-        // (query log design §1, §8).
+        // Logged too: the modal is gone once dismissed, and the trail keeps the
+        // reason.
         logged(
             state,
             statement_subject(&stmt),
@@ -188,8 +166,7 @@ pub(super) fn run(state: &mut State) -> Vec<Effect> {
 
     let mut effects = submit_into_contents(state, Subject::Typed(cql.to_owned()), stmt);
 
-    // Only what was sent: a statement the posture refused issues nothing, and
-    // is no more worth recalling than one that never left the buffer.
+    // A refused statement sent nothing and is not worth recalling.
     if !effects.is_empty() {
         effects.extend(record_history(state, cql));
     }
@@ -197,9 +174,8 @@ pub(super) fn run(state: &mut State) -> Vec<Effect> {
     effects
 }
 
-/// Remembers a statement sent from the buffer against the connection in use.
 /// Only the buffer: reading a table from the tree is not something the user
-/// typed (query history design §2).
+/// typed.
 pub(super) fn record_history(state: &mut State, cql: &str) -> Option<Effect> {
     let ConnectionState::Connected(connection) = &state.connection else {
         return None;
@@ -215,15 +191,7 @@ pub(super) fn record_history(state: &mut State, cql: &str) -> Option<Effect> {
         })
 }
 
-/// Puts `stmt`'s result in the Contents panel, cancelling whatever it was
-/// waiting on. One grid, one outstanding query, whichever way it was asked for.
-///
-/// Focus is deliberately not touched here: both callers move it themselves —
-/// reading from the tree ([`read`]) and `ctrl-r` alike land the user on the
-/// rows they asked for. The Queries panel collapses to the query it holds
-/// when focus leaves it, so the grid gets the room the editor was using
-/// (docs/superpowers/specs/2026-08-16-cql-semantics-design.md §8, which
-/// supersedes table display design §1).
+/// Focus is left to the callers.
 pub(super) fn submit_into_contents(
     state: &mut State,
     subject: Subject,
@@ -231,8 +199,7 @@ pub(super) fn submit_into_contents(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
-    // Dropping the id is what actually stops a late page from being applied;
-    // the effect is still inert (architecture.md §3).
+    // Dropping the id is what stops a late page; the effect is inert.
     if let Some(superseded) = state.contents.outstanding() {
         state.in_flight.remove(&superseded);
         state
@@ -241,10 +208,7 @@ pub(super) fn submit_into_contents(
         effects.push(Effect::Cancel(superseded));
     }
 
-    // Logged here rather than inside `submit`, so every refusal the panel
-    // notices — the posture guard and the no-connection guard alike — gets
-    // an entry by construction: one arm, not one call per refusal path to
-    // remember (query log design §8).
+    // Logged here so every refusal `submit` returns gets an entry.
     let log_subject = statement_subject(&stmt);
     match submit(state, stmt.clone()) {
         Ok((query, submitted)) => {
@@ -261,10 +225,8 @@ pub(super) fn submit_into_contents(
             );
             state.contents.refused(subject, &error);
 
-            // Logged before the modal, not instead of it: the modal is gone
-            // the moment it is dismissed, and the trail is where the reason
-            // survives (query log design §1, §8). Only the posture raises
-            // one — "not connected" is already what the empty panels say.
+            // Logged too: the modal is gone once dismissed. Only the posture
+            // raises one; "not connected" shows in the empty panels.
             if matches!(error, DbError::ReadOnly) {
                 refuse_read_only(state, "a statement that changes anything");
             }
@@ -274,22 +236,12 @@ pub(super) fn submit_into_contents(
     effects
 }
 
-/// Turns a statement into an effect, or refuses.
-///
-/// The posture gate lives here rather than in the TUI because the TUI does not
-/// construct effects — there is no path around this one (architecture.md §4).
-///
-/// Returns the [`QueryId`] alongside the effects, so a panel can record which
-/// result is the one it is waiting for.
+/// The posture gate lives here because the TUI constructs no effects.
 ///
 /// # Errors
 ///
-/// [`DbError::ReadOnly`] if the statement mutates and the connection's posture
-/// does not permit it, and [`DbError::Unreachable`] if there is no connection
-/// to run it on. Neither is logged here — `submit_into_contents`, the one
-/// caller, logs every refusal it sees in its `Err` arm, so this function
-/// stays the single place that decides whether a statement runs and leaves
-/// the trail to the caller that owns it.
+/// [`DbError::ReadOnly`] if the statement mutates and the posture forbids it;
+/// [`DbError::Unreachable`] with no connection.
 pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect>), DbError> {
     if stmt.mutates() && !state.posture().permits_mutation() {
         return Err(DbError::ReadOnly);
@@ -330,8 +282,6 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
     Ok((query, vec![execute, Effect::RecordHistory(Box::new(stmt))]))
 }
 
-/// `p`: one more page into the grid, whatever stop `P` last reached
-/// (grid paging design §2).
 pub(super) fn next_page(state: &mut State) -> Vec<Effect> {
     if state.focus() != Panel::Contents {
         return Vec::new();
@@ -341,7 +291,6 @@ pub(super) fn next_page(state: &mut State) -> Vec<Effect> {
     follow(state, next)
 }
 
-/// `P`: pages until the result ends or the next stop (grid paging design §3).
 pub(super) fn every_page(state: &mut State) -> Vec<Effect> {
     if state.focus() != Panel::Contents {
         return Vec::new();
@@ -351,8 +300,7 @@ pub(super) fn every_page(state: &mut State) -> Vec<Effect> {
     follow(state, next)
 }
 
-/// Asks for the page the grid wants next, if it wants one. A continuation is
-/// not a new statement: no trail entry and no history (grid paging design §2).
+/// A continuation is not a new statement: no trail entry and no history.
 pub(super) fn follow(state: &mut State, next: Option<Continue>) -> Vec<Effect> {
     let Some(Continue {
         query,

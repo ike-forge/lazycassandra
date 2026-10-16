@@ -9,7 +9,6 @@ use crate::viewport::Cursor;
 
 use super::row_count;
 
-/// The groups, or the one row the cursor is on when nothing is selected.
 pub(super) fn spanned(selection: &Selection, cursor: usize) -> Ranges {
     let ranges = selection.ranges(cursor);
 
@@ -20,27 +19,16 @@ pub(super) fn spanned(selection: &Selection, cursor: usize) -> Ranges {
     }
 }
 
-/// One axis a panel selects on: the run selected, and the cursor that is its
-/// far end while it is being extended.
-///
-/// The two travel together because reading one without the other is always a
-/// mistake — a `Selection` only means a range in company with its cursor, and
-/// which cursor that is depends on the grid's mode.
+/// A selection only means a range in company with its cursor, and which cursor
+/// depends on the grid's mode.
 pub(super) struct Axis<'a> {
     pub(super) selection: &'a mut Selection,
     pub(super) cursor: &'a mut Cursor,
-    /// How many rows the axis has, so a cursor sent along it cannot leave it.
     pub(super) len: usize,
 }
 
-/// The axes `panel` selects on. Two for the grid in cell mode, which selects a
-/// rectangle (design §3); none for Queries' Cql tab, which is an editor; one
-/// for its Logs tab, a list like Tables and Ddl (query log design §5.3).
-///
-/// The one place a selection is matched up with its cursor. Column mode puts
-/// the *column* cursor on the first axis, and a second match written out
-/// elsewhere would be one edit away from disagreeing about that — silently,
-/// since both are `usize`.
+/// The one place a selection is matched to its cursor: column mode puts the
+/// column cursor on the first axis.
 pub(super) fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
     let rows = row_count(state, panel);
     let columns = state.contents.column_count();
@@ -110,16 +98,12 @@ pub(super) fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
     }
 }
 
-/// `v`: freeze, drop or open a group at the cursor (multi-group selection
-/// design §1).
 pub(super) fn toggle_visual(state: &mut State) {
     for axis in axes(state, state.focus()).into_iter().flatten() {
         axis.selection.toggle(axis.cursor.index());
     }
 }
 
-/// `esc`'s second rung: leave visual mode, keeping the range. Reports whether
-/// there was one to leave.
 pub(super) fn stop_extending(state: &mut State) -> bool {
     let mut stopped = false;
 
@@ -133,7 +117,6 @@ pub(super) fn stop_extending(state: &mut State) -> bool {
     stopped
 }
 
-/// `esc`'s third rung: drop the range. Reports whether there was one.
 pub(super) fn clear_selection(state: &mut State) -> bool {
     let mut cleared = false;
 
@@ -147,19 +130,10 @@ pub(super) fn clear_selection(state: &mut State) -> bool {
     cleared
 }
 
-/// `y`'s second half: spend the selection and send each cursor back to the end
-/// it grew from (visual mode design §5.1).
-///
-/// A yank is one gesture rather than a mode the user is left standing in — the
-/// range has been said, so it stops being drawn, and the cursor goes back to
-/// where `v` was pressed rather than sitting wherever the range happened to
-/// end. The anchor and not the range's first row: a selection grown upwards
-/// started at its last one.
+/// The cursor returns to the anchor, not the range's first row: a range grown
+/// upwards started at its last.
 pub(super) fn collapse_selection(state: &mut State) {
     for axis in axes(state, state.focus()).into_iter().flatten() {
-        // The selection is spent unconditionally (visual-mode design §5.1);
-        // only the cursor's move home is conditional on an anchor surviving
-        // (multi-group design §3).
         if let Some(anchor) = axis.selection.anchor() {
             axis.cursor.go_to(anchor, axis.len);
         }

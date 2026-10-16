@@ -1,7 +1,6 @@
 use super::*;
 use crate::health::{Health, HealthPanel, NodeOutcome, NodeReport, Readings, Thresholds};
 
-/// `droppable_tree` in a frame with room for the block, seated on the table.
 fn on_table() -> State {
     let mut state = droppable_tree();
     state.geometry = state.geometry.with_health_rows(20);

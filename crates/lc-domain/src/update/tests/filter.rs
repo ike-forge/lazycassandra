@@ -1,8 +1,6 @@
 use super::*;
 
-/// A grid in column mode with the cursor on `column`, over three rows
-/// whose first column is out of lexicographic order — so a sort has
-/// something to do and the order it produces is unambiguous.
+/// The first column is out of order, so a sort has something to do.
 fn columnar_grid(column: usize) -> State {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
     let query = QueryId::next();
@@ -218,9 +216,7 @@ fn a_column_yanks_the_rows_the_grid_is_showing() {
 
 #[test]
 fn exporting_the_fetched_rows_writes_the_ones_the_grid_is_showing() {
-    // A full page, so the form has a Fetched scope to toggle to: under
-    // the limit the fetched rows *are* the whole table, and the radio has
-    // nowhere to go (export design §3).
+    // A full page, so the form has a Fetched scope to toggle to.
     let mut state = connected(Posture::ReadOnly);
     state.geometry = Geometry::default().with_export_fits(true);
     state.focus_on(Panel::Contents);

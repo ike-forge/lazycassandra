@@ -143,8 +143,6 @@ fn y_yanks_the_cell_in_cell_mode() {
     );
 }
 
-/// The panel opens in row mode, so this is what `y` does by default
-/// (design §1).
 #[test]
 fn y_yanks_the_row_in_row_mode() {
     let mut state = grid_of_named_cells(3, 2);
@@ -176,8 +174,6 @@ fn y_yanks_the_column_in_column_mode() {
     );
 }
 
-/// `y` is one gesture: it copies, and then it puts the panel back where
-/// the user started it from (visual mode design §5.1).
 #[test]
 fn y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor() {
     let mut state = grid_of_named_cells(3, 4);
@@ -196,8 +192,6 @@ fn y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor() {
     );
 }
 
-/// The anchor, not the top of the range: a selection extended upwards
-/// started at its *last* row, and that is where the cursor came from.
 #[test]
 fn a_selection_grown_upwards_sends_the_cursor_back_down() {
     let mut state = grid_of_named_cells(3, 4);
@@ -211,8 +205,6 @@ fn a_selection_grown_upwards_sends_the_cursor_back_down() {
     assert_eq!(state.contents.cursor.index(), 3);
 }
 
-/// Frozen by a second `v`, so the group is no longer extending and the
-/// cursor has already left the anchor by the time `y` asks for it.
 #[test]
 fn a_frozen_range_still_knows_where_to_send_the_cursor() {
     let mut state = grid_of_named_cells(3, 4);
@@ -261,8 +253,6 @@ fn the_tree_collapses_its_selection_on_y_too() {
     assert_eq!(state.tables.cursor().index(), 0);
 }
 
-/// Nothing yanked is nothing said, and a `y` that said nothing must not
-/// move the cursor or throw the selection away either (visual mode design §5.1).
 #[test]
 fn a_y_that_yanks_nothing_leaves_the_selection_alone() {
     let mut state = measured(&["a"]);
@@ -281,9 +271,6 @@ fn a_y_that_yanks_nothing_leaves_the_selection_alone() {
     );
 }
 
-/// The selection stops being drawn on `y`, so without this the copy would
-/// leave no mark at all and the user would have nothing but the absence of
-/// a range to tell them it happened (visual mode design §6.1).
 #[test]
 fn y_lights_up_what_it_yanked() {
     let mut state = grid_of_named_cells(3, 4);
@@ -302,8 +289,6 @@ fn y_lights_up_what_it_yanked() {
     assert_eq!(flash.columns(), &Ranges::of(Range::new(0, 1)));
 }
 
-/// Empty on an axis is every row or every column of it — the convention
-/// the view model's ranges already carry, and what row mode yanks.
 #[test]
 fn row_mode_lights_the_whole_row_and_column_mode_the_whole_column() {
     let mut rows = grid_of_named_cells(3, 4);
@@ -330,8 +315,6 @@ fn row_mode_lights_the_whole_row_and_column_mode_the_whole_column() {
     assert_eq!(flash.columns(), &Ranges::of(Range::new(0, 0)));
 }
 
-/// Nothing was selected, so what the flash marks is the one row `y` took —
-/// a bare `y` earns the same feedback as a ranged one.
 #[test]
 fn a_bare_y_lights_the_row_it_took() {
     let mut state = browsing(&["a", "b"]);
@@ -377,8 +360,6 @@ fn the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint() {
     );
 }
 
-/// The flash is a moment, and the next key is the end of it — otherwise a
-/// fresh `v` would contend with a fading one for the same band.
 #[test]
 fn the_next_key_ends_the_flash() {
     let mut state = browsing(&["a", "b"]);
@@ -389,8 +370,6 @@ fn the_next_key_ends_the_flash() {
     assert_eq!(state.flash, None);
 }
 
-/// An empty OSC 52 payload asks the terminal to clear its clipboard, so a
-/// `y` with nothing to say must say nothing (design §4).
 #[test]
 fn y_on_a_null_cell_raises_no_effect() {
     let mut state = browsing_a_table();
@@ -472,8 +451,6 @@ fn y_in_column_mode_on_a_column_of_one_null_yanks_nothing() {
     );
 }
 
-/// An empty text is a value Cassandra holds and a null is not, but neither
-/// has anything to put on the clipboard (design §4).
 #[test]
 fn y_on_a_cell_holding_the_empty_string_raises_no_effect() {
     let mut state = browsing_a_table();
@@ -502,7 +479,6 @@ fn y_on_a_cell_holding_the_empty_string_raises_no_effect() {
     );
 }
 
-/// What is drawn is a window; what is yanked is the column (design §6).
 #[test]
 fn a_column_yank_carries_rows_the_viewport_hides() {
     let mut state = grid_of_rows(1, 20, 80);
@@ -683,9 +659,6 @@ fn y_over_two_groups_yanks_their_rows_in_drawn_order() {
 
 #[test]
 fn y_sends_the_cursor_home_to_the_last_v_and_spends_every_group() {
-    // The last press is where the user last was, and it is the only one of the
-    // three candidate rows still true after a group has been dropped from the
-    // middle (design §3).
     let mut state = tables_state();
     state.focus_on(Panel::Tables);
     state.tables.selection.start(0);
@@ -707,8 +680,6 @@ fn y_sends_the_cursor_home_to_the_last_v_and_spends_every_group() {
 fn y_over_a_selection_whose_anchor_was_dropped_moves_no_cursor() {
     let mut state = tables_state();
     state.focus_on(Panel::Tables);
-    // Two groups; the second one's row is where `v` was last pressed, and
-    // dropping it takes the anchor with it. The first group still stands.
     state.tables.selection.toggle(0);
     state.tables.selection.toggle(1);
     state.tables.selection.toggle(3);
@@ -733,8 +704,6 @@ fn y_over_a_selection_whose_anchor_was_dropped_moves_no_cursor() {
 
 #[test]
 fn a_single_cell_in_one_group_each_way_still_yanks_bare() {
-    // "One" is now "one row and one column in one group each"; the bare,
-    // unescaped value must survive that rewording (design §5).
     let mut state = contents_state();
     state.focus_on(Panel::Contents);
     state.contents.mode = SelectionMode::Cell;
@@ -750,8 +719,7 @@ fn a_single_cell_in_one_group_each_way_still_yanks_bare() {
 
 #[test]
 fn a_payload_of_nothing_but_delimiters_reaches_no_clipboard() {
-    // `grid_of_rows` fills its cells with `Int(1)`; this needs nulls, so
-    // the page is built here rather than borrowed from it.
+    // `grid_of_rows` has no nulls.
     let mut state = browsing_tables(&[("shop", &["orders"])]);
     let query = QueryId::next();
     state.contents.requested(

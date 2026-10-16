@@ -16,8 +16,6 @@ fn ctrl_e_hands_the_queries_buffer_to_an_editor() {
     );
 }
 
-/// The chord means one thing now: it scrolled the Table DDL viewport as
-/// well until that half was retired (docs/shortcuts.md §4).
 #[test]
 fn ctrl_e_is_inert_outside_queries() {
     for focus in [Panel::Tables, Panel::Ddl] {
@@ -97,8 +95,6 @@ fn a_failed_editor_says_so_and_keeps_the_buffer() {
     ));
 }
 
-/// The modal stays — the user is waiting on it right now — and gets a
-/// mirror in the trail alongside it (query log design §8).
 #[test]
 fn an_editor_that_would_not_run_leaves_its_reason_in_the_trail() {
     let mut state = State::default();
@@ -122,8 +118,7 @@ fn an_editor_that_would_not_run_leaves_its_reason_in_the_trail() {
 
 #[test]
 fn a_letter_typed_in_queries_is_text_not_a_shortcut() {
-    // Every letter here is bound somewhere: t/a/c/u focus a panel, j/k/h/l
-    // move, q quits. In the editor they are all just text.
+    // Every letter here is bound outside the editor.
     let state = editing("tacujkhlq");
 
     assert_eq!(state.focus(), Panel::Queries, "no letter moved focus");
@@ -140,9 +135,6 @@ fn y_is_text_in_the_editor() {
     assert!(effects.is_empty(), "not reachable from Queries (§1)");
 }
 
-/// `?` is a CQL bind marker before it is a shortcut, so the editor has to
-/// win it. Neither parent of the merge that brought the palette and the
-/// editor together could test this: each was the only mode in its branch.
 #[test]
 fn a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette() {
     let mut state = measured(&["a"]);
@@ -158,9 +150,6 @@ fn a_question_mark_typed_in_queries_is_a_bind_marker_not_the_palette() {
     assert_eq!(state.queries.text(), "?");
 }
 
-/// The two mode guards in `handle_key`, in the order they are written: an
-/// overlay the user opened deliberately outranks the focused panel's claim
-/// on printable keys (docs/shortcuts.md §2).
 #[test]
 fn an_open_palette_outranks_a_panel_that_takes_text() {
     let mut state = measured(&["a", "b", "c"]);
@@ -205,9 +194,6 @@ fn escape_closes_the_buffer_and_a_second_leaves_for_tables() {
     assert_eq!(state.queries.text(), "SELECT", "leaving keeps the buffer");
 }
 
-/// The last rung is the panel, not the editor: a key that backs out of
-/// Queries and sits inert in DDL beside it means two things
-/// (docs/shortcuts.md §2).
 #[test]
 fn escape_leaves_every_panel_for_tables() {
     for panel in Panel::ALL {

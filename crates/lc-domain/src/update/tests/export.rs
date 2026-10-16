@@ -34,7 +34,6 @@ fn contents_showing_typed(cql: &str) -> State {
     state
 }
 
-/// The form's bar changes with the stop, so each stop is swept.
 #[test]
 fn every_live_hint_the_export_forms_bar_shows_does_something() {
     for tabs in 0..4 {
@@ -132,9 +131,6 @@ fn ctrl_e_does_nothing_over_an_empty_contents_panel() {
     assert_eq!(toasted(&state), Some((Severity::Info, "nothing to export")));
 }
 
-/// A form nothing draws would still claim every key: `q` would not quit,
-/// `Tab` would not switch panel, and the path stop would swallow letters
-/// into an invisible field.
 #[test]
 fn ctrl_e_is_inert_where_the_frame_cannot_draw_the_form() {
     let mut state = contents_showing(5);
@@ -149,9 +145,6 @@ fn ctrl_e_is_inert_where_the_frame_cannot_draw_the_form() {
     );
 }
 
-/// The band between the program's too-small threshold and the form's own
-/// size is where the panels draw and the form does not — a palette-sized
-/// gate would leave it open there, so the form is measured on its own.
 #[test]
 fn a_frame_that_shrank_past_the_form_closes_it() {
     let mut state = contents_showing(5);
@@ -169,8 +162,6 @@ fn a_frame_that_shrank_past_the_form_closes_it() {
     );
 }
 
-/// The chord keeps its Queries meaning; the two are gated on focus, the
-/// way ctrl-r already is (design §1).
 #[test]
 fn ctrl_e_in_queries_still_opens_the_external_editor() {
     let mut state = connected(Posture::ReadOnly);
@@ -251,10 +242,6 @@ fn space_on_the_path_stop_types_a_space() {
     assert!(form_of(&state).path().text().ends_with(' '));
 }
 
-/// `Space` is the form's activation key (design §2). `Enter` reaches the
-/// Export button because a focused button is what it means everywhere
-/// else — but a radio group is not a button, and a keystroke there must
-/// not write a file.
 #[test]
 fn enter_on_a_radio_group_does_not_run_the_export() {
     let mut state = contents_showing_more(PAGE);
@@ -309,8 +296,7 @@ fn esc_closes_the_form_and_writes_nothing() {
 #[test]
 fn the_theme_picker_cannot_replace_an_open_export_form() {
     let mut state = contents_showing(5);
-    // Room for the picker, so what refuses the chord is the open form and
-    // not the picker's own size gate.
+    // Room for the picker, so the open form is what refuses the chord.
     state.geometry = state.geometry.with_theme_rows(20);
     open_form(&mut state);
 
@@ -335,7 +321,6 @@ fn a_second_ctrl_e_leaves_the_open_form_as_it_was() {
     assert_eq!(form_of(&state).stop(), crate::export::Stop::Path);
 }
 
-/// A typed statement, exported to `destination`, mid-flight.
 fn export_in_flight(cql: &str, destination: &str) -> State {
     let mut state = contents_showing_typed(cql);
     open_form(&mut state);
@@ -349,8 +334,6 @@ fn export_in_flight(cql: &str, destination: &str) -> State {
     state
 }
 
-/// The rows already in the grid, exported to `destination`, mid-flight —
-/// `export_in_flight`'s `Source::Fetched` counterpart.
 fn export_fetched_in_flight(destination: &str) -> State {
     let mut state = contents_showing_more(PAGE);
     open_form(&mut state);
@@ -399,7 +382,6 @@ fn exporting_the_whole_table_asks_for_it_without_a_limit() {
     assert!(!overwrite, "the first attempt never clobbers");
 }
 
-/// The user's own LIMIT is theirs; only ours is dropped (design §3).
 #[test]
 fn exporting_a_typed_query_re_runs_it_verbatim() {
     let mut state = contents_showing_typed("SELECT * FROM shop.orders LIMIT 10");
@@ -602,12 +584,6 @@ fn a_finished_export_records_the_exact_statement_and_where_it_went() {
     assert!(detail.contains("/tmp/orders.csv"), "{detail}");
 }
 
-/// `ExportError::Exists` puts the form back for a retry rather than
-/// ending the job, so the entry stays pending while the question is up —
-/// and the retry reuses the refused attempt's own `JobId` rather than
-/// minting a fresh one, so it is this same entry the retry's outcome
-/// closes, not a second one left stranded at `⋯ running` (final review
-/// I4).
 #[test]
 fn an_export_that_exists_stays_pending_through_the_retry_and_completes_with_it() {
     let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
@@ -663,10 +639,6 @@ fn an_export_that_exists_stays_pending_through_the_retry_and_completes_with_it()
     assert!(detail.contains("18420"), "{detail}");
 }
 
-/// Nothing else will ever complete a trace whose question was abandoned:
-/// the source it was asking about is dropped with the confirmation, so
-/// the entry has to be closed right there rather than left `⋯ running`
-/// for a retry that is now never coming (final review I4).
 #[test]
 fn abandoning_the_overwrite_confirmation_cancels_the_pending_entry() {
     let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
@@ -690,11 +662,6 @@ fn abandoning_the_overwrite_confirmation_cancels_the_pending_entry() {
     assert_eq!(*entry.outcome(), Outcome::Cancelled);
 }
 
-/// A click is modal-dismissing (`handle_pointer` routes it to `escape`)
-/// and reaches `Overlay::Export`'s arm there, unlike keyboard `Esc`,
-/// which `export_key` claims first — the path re-review found still
-/// dropped the confirmation's `Pending` on the floor (final review, I4
-/// follow-up).
 #[test]
 fn a_click_dismissing_the_overwrite_confirmation_cancels_the_pending_entry() {
     let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
@@ -722,11 +689,6 @@ fn a_click_dismissing_the_overwrite_confirmation_cancels_the_pending_entry() {
     assert_eq!(*entry.outcome(), Outcome::Cancelled);
 }
 
-/// A resize past the form's own threshold closes it outright
-/// (`a_frame_that_shrank_past_the_form_closes_it` covers the plain
-/// form); this is the same close while a confirmation is up, which the
-/// re-review found left the trace pending forever (final review, I4
-/// follow-up).
 #[test]
 fn a_resize_that_closes_the_overwrite_confirmation_cancels_the_pending_entry() {
     let mut state = export_in_flight("SELECT * FROM store.orders", "/tmp/orders.csv");
@@ -754,10 +716,6 @@ fn a_resize_that_closes_the_overwrite_confirmation_cancels_the_pending_entry() {
     assert_eq!(*entry.outcome(), Outcome::Cancelled);
 }
 
-/// A `Fetched` export issues no statement, but it is still something the
-/// session ran (design §8's `ExportFinished(Err)` row names no scope
-/// qualifier) — it gets an entry too, a sentence rather than a quoted
-/// query that never ran.
 #[test]
 fn a_fetched_export_lands_a_pending_entry_when_it_starts() {
     let state = export_fetched_in_flight("/tmp/orders.csv");
@@ -829,10 +787,6 @@ fn a_failed_fetched_export_completes_its_entry_as_failed() {
     assert!(detail.contains("disk full"), "{detail}");
 }
 
-/// Decision #4 holds for a `Fetched` export the same as it does for a
-/// `Whole` one: `Exists` completes nothing while the question is up, and
-/// the retry — reusing the same `JobId` — is what closes this entry
-/// rather than orphaning it (final review I4).
 #[test]
 fn a_fetched_export_that_exists_stays_pending_through_the_retry_and_completes_with_it() {
     let mut state = export_fetched_in_flight("/tmp/orders.csv");
@@ -888,8 +842,6 @@ fn a_fetched_export_that_exists_stays_pending_through_the_retry_and_completes_wi
     assert!(detail.contains("200"), "{detail}");
 }
 
-/// The abandon path holds for a `Fetched` export the same as a `Whole`
-/// one (final review I4).
 #[test]
 fn abandoning_a_fetched_exports_overwrite_confirmation_cancels_the_pending_entry() {
     let mut state = export_fetched_in_flight("/tmp/orders.csv");
@@ -937,8 +889,6 @@ fn a_failure_is_reported_as_a_danger() {
     assert_eq!(message.severity, Severity::Danger);
 }
 
-/// Not a message: the user is meant to answer it, and the form has to be
-/// there to go back to (design §7).
 #[test]
 fn an_existing_file_reopens_the_form_asking_to_overwrite() {
     let mut state = contents_showing_more(PAGE);
@@ -960,15 +910,9 @@ fn an_existing_file_reopens_the_form_asking_to_overwrite() {
     assert_eq!(form_of(&state).confirm(), Some(Confirm::Overwrite));
 }
 
-/// The overlay is `None` for the whole of a running export, so `ctrl-t` is
-/// not refused and the picker can be up and previewing when the answer
-/// lands. Replacing it outright would leave the previewed theme in force
-/// with `restored` — the only copy of the user's own — dropped with the
-/// picker (final review I2).
 #[test]
 fn an_existing_file_landing_on_an_open_picker_puts_the_theme_back() {
     let mut state = contents_showing_more(PAGE);
-    // Room for the picker as well as the form.
     state.geometry = Geometry::new([8, 14, 20, 1], 37, 14)
         .with_export_fits(true)
         .with_theme_rows(20);
@@ -1021,15 +965,11 @@ fn confirming_re_emits_the_export_with_overwrite_set() {
     assert!(state.overlay.is_none());
 }
 
-/// The overlay is `None` and the panel is live for the whole of an export,
-/// so the user can step to another table and read it before `Exists` comes
-/// back. What the confirmation re-emits is the export that was attempted,
-/// not whatever the panel holds by then (final review I3).
 #[test]
 fn confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds() {
     let mut state = contents_showing_more(PAGE);
     open_form(&mut state);
-    // Scope: Whole -> Fetched, so the rows themselves ride on the effect.
+    // Scope: Whole -> Fetched, so the rows ride on the effect.
     handle_key(&mut state, KeyPress::new(Key::Char(' ')));
     for _ in 0..3 {
         handle_key(&mut state, KeyPress::new(Key::Tab));
@@ -1078,8 +1018,6 @@ fn confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds() {
     assert_eq!(*source, attempted, "shop.orders' rows, not audit_log's");
 }
 
-/// The panel need not be showing a page at all by then — `source` would
-/// hand back `None` and `Space` would be a silent no-op.
 #[test]
 fn confirming_still_exports_when_the_panel_has_moved_on_entirely() {
     let mut state = contents_showing_more(PAGE);

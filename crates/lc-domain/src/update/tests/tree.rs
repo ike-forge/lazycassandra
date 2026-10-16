@@ -101,8 +101,6 @@ fn a_click_clears_the_range_it_lands_beside() {
     assert_eq!(state.tables.cursor().index(), 2);
 }
 
-/// One key for one action: `Space` was `Enter`'s synonym and is now free
-/// (docs/shortcuts.md §2, §3).
 #[test]
 fn space_is_not_a_second_name_for_enter() {
     let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
@@ -144,8 +142,6 @@ fn h_and_left_close_a_keyspace() {
     }
 }
 
-/// `l` on a table row is `⏎`: *move right* out of the tree's last level
-/// is the panel to its right (docs/shortcuts.md §4).
 #[test]
 fn l_and_right_read_the_table_under_the_cursor() {
     for key in [Key::Char('l'), Key::Right] {
@@ -283,14 +279,9 @@ fn folding_under_a_search_does_not_disturb_the_fold_state_it_will_return_to() {
     );
 }
 
-/// Every entry point that can land on a retained keyspace row — not just
-/// `h`/`l` — must leave the unfold set alone while a search is applied.
-/// `activate` (`Enter`, `Space`, and a click, which routes through it too)
-/// has no guard of its own; it inherits `TablesPanel::toggle`'s. Remove
-/// that guard and the `Key::Enter` case here fails: the search's own
-/// projection reports `shop` as unfolded, `toggle` reads that as "fold
-/// it", and the real unfold set loses "shop" even though nothing moved
-/// on screen.
+/// `activate` has no search guard of its own; it inherits
+/// `TablesPanel::toggle`'s. Without it, `Enter` here folds `shop` in the real
+/// unfold set.
 #[test]
 fn no_tables_entry_point_writes_the_fold_state_under_a_search() {
     enum Action {
@@ -330,8 +321,6 @@ fn no_tables_entry_point_writes_the_fold_state_under_a_search() {
     }
 }
 
-/// `Enter` still reads a table under a search — the guard stops keyspace
-/// folding, not table activation.
 #[test]
 fn enter_still_reads_a_table_under_a_search() {
     let mut state = browsing_tables(&[("shop", &["orders", "users"])]);

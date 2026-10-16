@@ -1,13 +1,9 @@
 use super::*;
 
-/// A state focused on Contents, showing a page of `columns` columns each
-/// two characters wide, in a grid `width` characters across.
 fn grid_of(columns: usize, width: usize) -> State {
     grid_of_rows(columns, 1, width)
 }
 
-/// [`grid_of`] in cell mode, where `h`/`l` move the column cursor. Row
-/// mode moves the window under it instead (selection modes design §3).
 fn cell_grid_of(columns: usize, width: usize) -> State {
     let mut state = grid_of(columns, width);
     state.contents.mode = SelectionMode::Cell;
@@ -54,8 +50,7 @@ fn the_grid_cursor_cannot_run_off_either_edge_of_a_page() {
 
 #[test]
 fn row_mode_scrolls_the_grid_a_column_per_press() {
-    // Four columns of width 6 with two blanks between: two fit in a grid
-    // 18 wide, as `the_column_viewport_follows_the_cell_cursor` counts it.
+    // Four 6-wide columns with two blanks between: two fit in 18.
     let mut state = grid_of(4, 18);
     assert_eq!(state.contents.mode, SelectionMode::Row);
 
@@ -153,11 +148,8 @@ fn horizontal_motion_belongs_to_the_focused_panel_only() {
 
 #[test]
 fn the_column_viewport_follows_the_cell_cursor() {
-    // Four columns of width 6 ("c0" plus the marks its heading carries,
-    // which outrun a one-digit value) with two spaces between: 6+2+6 = 14
-    // fits two columns in a grid 18 wide once the merged bar+gutter block
-    // (bar plus a one-digit gutter) and the spacing ahead of the values
-    // are taken off.
+    // Four 6-wide columns (heading marks outrun the value) with two blanks
+    // between: two fit in 18 once the bar and gutter are taken off.
     let mut state = cell_grid_of(4, 18);
 
     press(&mut state, Key::Char('l'));
@@ -230,8 +222,7 @@ fn a_frame_too_small_to_draw_does_not_strand_the_column_viewport() {
         press(&mut state, Key::Char('l'));
     }
 
-    // What `render` reports when the terminal is below its minimum size:
-    // nothing was drawn, so the grid has no width at all.
+    // A frame below the minimum size draws nothing.
     update(&mut state, Msg::Measured(Geometry::default()));
     assert_eq!(
         state.contents.column_scroll.first(),

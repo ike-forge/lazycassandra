@@ -141,10 +141,8 @@ fn press_stroke(state: &mut State, stroke: Stroke) -> Vec<Effect> {
     press_binding(state, stroke.press())
 }
 
-/// A frame big enough for a palette and a picker. `browsing` leaves
-/// geometry at its default, whose `command_rows` and `theme_rows` are
-/// zero — which is itself a binding
-/// (`the_palette_does_not_open_where_it_cannot_be_drawn`).
+/// `browsing` leaves `command_rows` and `theme_rows` at zero, where no palette
+/// or picker opens.
 fn measured(keyspaces: &[&str]) -> State {
     let mut state = browsing(keyspaces);
     state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_theme_rows(20);
@@ -171,10 +169,6 @@ fn palette(state: &State) -> Option<&CommandsPanel> {
     }
 }
 
-/// Puts the panel straight on the Logs tab without walking a key
-/// sequence to it: what these tests are covering is the Logs tab itself,
-/// not the cycle that reaches it (that is `Tab`'s job, covered
-/// separately).
 fn on_the_trail() -> State {
     let mut state = State::default();
     state.focus_on(Panel::Queries);
@@ -182,8 +176,6 @@ fn on_the_trail() -> State {
     state
 }
 
-/// A trail with one `Outcome::Cancelled` entry per statement, focused on
-/// the Logs tab so `/`, `n`, `v` and `y` reach it directly.
 fn trail_of(statements: &[&str]) -> State {
     let mut state = on_the_trail();
     for statement in statements {
@@ -196,9 +188,6 @@ fn trail_of(statements: &[&str]) -> State {
     state
 }
 
-/// Opens a search over the focused panel and types `term` into it, the
-/// same two steps `n_walks_to_the_next_match_and_wraps` and its
-/// neighbours drive press by press.
 fn search_for(state: &mut State, term: &str) {
     press(state, Key::Char('/'));
     type_into(state, term);
@@ -208,9 +197,7 @@ fn ctrl(state: &mut State, key: Key) -> Vec<Effect> {
     update(state, Msg::Input(KeyPress::ctrl(key)))
 }
 
-/// A state focused on Queries with its buffer opened and `text` typed
-/// into it, `\n` meaning Enter — the same convention `editor.rs`'s own
-/// helper uses.
+/// `\n` means Enter.
 fn editing(text: &str) -> State {
     let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
     state.focus_on(Panel::Queries);
@@ -219,8 +206,7 @@ fn editing(text: &str) -> State {
     state
 }
 
-/// Types `text` into the focused editor, `\n` meaning Enter — the same
-/// convention `editor.rs`'s own helper uses.
+/// `\n` means Enter.
 fn type_into(state: &mut State, text: &str) {
     for character in text.chars() {
         if character == '\n' {
@@ -231,8 +217,7 @@ fn type_into(state: &mut State, text: &str) {
     }
 }
 
-/// `browsing_tables` with the cursor stepped onto a table, which is what
-/// the Columns tab needs in order to exist.
+/// The Columns tab exists only over a table.
 fn browsing_a_table() -> State {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
     press(&mut state, Key::Char('l'));
@@ -290,14 +275,12 @@ fn grid_of_rows(columns: usize, rows: usize, width: usize) -> State {
     state
 }
 
-/// `shop` unfolded, with `orders` at row 1 — a table, not a keyspace.
 fn tables_state() -> State {
     let mut state = browsing_tables(&[("shop", &["orders", "users", "products"])]);
     press(&mut state, Key::Char('l'));
     state
 }
 
-/// Contents focused and showing a loaded page.
 fn contents_state() -> State {
     grid_of_rows(2, 3, 80)
 }
@@ -322,10 +305,9 @@ fn page_of(rows: usize) -> Page {
     }
 }
 
-/// `grid.page_rows`' default, the size of a page that has a successor.
+/// `grid.page_rows`' default.
 const PAGE: usize = 200;
 
-/// [`page_of`], with a page after it.
 fn more_of(rows: usize) -> Page {
     Page {
         next: Some(PagingState(vec![1])),
@@ -333,9 +315,7 @@ fn more_of(rows: usize) -> Page {
     }
 }
 
-/// A page whose cell at row `r`, column `c` reads `r{r}c{c}`, so that a
-/// yank names which cell, row or column it came from rather than only how
-/// many commas it holds.
+/// Cells read `r{r}c{c}`, so a yank says where it came from.
 fn grid_of_named_cells(columns: usize, rows: usize) -> State {
     let mut state = browsing_tables(&[("shop", &["orders"])]);
     let query = QueryId::next();
@@ -379,20 +359,13 @@ fn sized(state: &mut State, heights: [usize; 4], ddl_lines: usize) {
     update(state, Msg::Measured(Geometry::new(heights, ddl_lines, 0)));
 }
 
-/// A state where every motion has somewhere to go in both directions:
-/// two keyspaces with the second unfolded, a page of rows under the
-/// Contents cursor, and a DDL document longer than its panel. A cursor
-/// resting on 0 would make `k`/`h` and `home` inert and fail a correct
-/// hint. The Ddl viewport is likewise nudged off zero, or `ctrl-y` would
-/// find nothing to scroll up over.
+/// Every cursor and offset sits off its ends, so motion hints have somewhere to
+/// go both ways.
 fn populated(focus: Panel) -> State {
     let mut state = browsing_tables(&[("alpha", &["a1"]), ("shop", &["orders", "users"])]);
     state.move_tree_cursor(1);
     press(&mut state, Key::Char('l'));
 
-    // Tables keeps its cursor on the keyspace, where `l` steps in and `h`
-    // folds. The other panels need a table selected: Ddl draws its
-    // details from one, and Contents shows what reading it returned.
     if focus != Panel::Tables {
         press(&mut state, Key::Char('l'));
         press(&mut state, Key::Enter);
@@ -400,9 +373,7 @@ fn populated(focus: Panel) -> State {
             .contents
             .outstanding()
             .expect("pressing enter on a table issues a read");
-        // Three columns, not `page_of`'s one: `h`/`l` need a middle
-        // column to move away from in both directions for their hint to
-        // be exercised.
+        // Three columns, so `h`/`l` can move both ways.
         update(
             &mut state,
             Msg::PageReady {
@@ -425,8 +396,7 @@ fn populated(focus: Panel) -> State {
     }
 
     sized(&mut state, [3, 3, 3, 3], 40);
-    // Room for the export form, or Contents' `ctrl-e export` hint is drawn
-    // inert and promises nothing to test.
+    // Room for the export form, or its hint is inert.
     state.geometry = state.geometry.with_export_fits(true);
     let ddl_len = crate::view::ddl_rows(&state);
     state.ddl.cursor.page_down(ddl_len, 3);
@@ -451,9 +421,6 @@ fn click_row(state: &mut State, panel: Panel, row: usize) -> Vec<Effect> {
     )
 }
 
-/// A writable connection with a table under the tree, on a frame with
-/// room for the confirmation: the state `d` answers in (drop design §1).
-/// The cursor starts on the keyspace row, so `j` reaches the table.
 fn droppable_tree() -> State {
     let mut state = connected(Posture::Writable);
     let conn = current_conn(&state);
@@ -468,17 +435,10 @@ fn droppable_tree() -> State {
     state.geometry = Geometry::new([8, 14, 20, 1], 37, 14)
         .with_theme_rows(20)
         .with_drop_fits(true);
-    // Unfolded, so the row below the keyspace is its table.
     press(&mut state, Key::Char('l'));
     state
 }
 
-// ------------------------------------------------------------------
-// Inspecting (docs/superpowers/specs/2026-09-17-cell-inspector-design.md)
-// ------------------------------------------------------------------
-
-/// `grid_of_named_cells`, measured into a frame whose inspector shows ten
-/// rows of a value forty lines long.
 fn inspectable(columns: usize, rows: usize) -> State {
     let mut state = grid_of_named_cells(columns, rows);
     update(
@@ -501,10 +461,6 @@ fn opened(mode: SelectionMode) -> State {
     state
 }
 
-// ------------------------------------------------------------------
-// Dropping (docs/superpowers/specs/2026-08-31-drop-design.md)
-// ------------------------------------------------------------------
-
 fn dropping(state: &State) -> Option<&DropPrompt> {
     match &state.overlay {
         Some(Overlay::Drop(prompt)) => Some(prompt),
@@ -518,12 +474,7 @@ fn type_in(state: &mut State, text: &str) {
     }
 }
 
-// ------------------------------------------------------------------
-// Deleting rows (drop design §3.1, §4)
-// ------------------------------------------------------------------
-
-/// A grid over `shop.orders`, whose fixture primary key is
-/// `(id uuid, created_at timestamp)`, holding `rows` addressable rows.
+/// Fixture primary key: `(id uuid, created_at timestamp)`.
 fn deletable(rows: usize) -> State {
     grid_over(
         rows,
@@ -614,8 +565,7 @@ fn contents_showing(rows: usize) -> State {
     state
 }
 
-/// [`contents_showing`] over a result with pages left, so the form's
-/// fetched-rows scope differs from the whole one.
+/// Pages left, so the fetched-rows scope differs from the whole one.
 fn contents_showing_more(rows: usize) -> State {
     let mut state = connected(Posture::ReadOnly);
     state.geometry = Geometry::default().with_export_fits(true);
@@ -639,12 +589,7 @@ fn open_form(state: &mut State) {
     handle_key(state, KeyPress::ctrl(Key::Char('e')));
 }
 
-// ------------------------------------------------------------------
-// Editing cells (docs/superpowers/specs/2026-09-18-cell-editing-design.md)
-// ------------------------------------------------------------------
-
-/// The fixture table with `email text` added as a regular column: the
-/// shared one is all primary key, and §2 refuses every column of it.
+/// The shared fixture is all primary key, which `e` refuses.
 fn schema_with_email() -> Schema {
     let mut schema = tabled_schema(&[("shop", &["orders"])]);
     if let Some(table) = schema
@@ -660,10 +605,7 @@ fn schema_with_email() -> Schema {
     schema
 }
 
-/// A grid over `shop.orders` — key `(id uuid, created_at timestamp)`, one
-/// editable column — with room for the inspector and the confirmation.
-/// The cursor lands on `id`, so a test walks to `email` before `e` opens
-/// anything.
+/// The cursor lands on `id`; walk to `email` before `e`.
 fn editable_grid(rows: usize) -> State {
     editable_grid_at(rows, Posture::Writable)
 }
@@ -723,8 +665,6 @@ fn inspecting_row(rows: usize) -> State {
     state
 }
 
-/// Walks the inspector's cursor onto `email`, the one editable column of
-/// the fixture: `id` and `created_at` are its primary key.
 fn on_email(state: &mut State) {
     for _ in 0..2 {
         press(state, Key::Char('j'));

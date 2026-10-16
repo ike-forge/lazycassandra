@@ -2,18 +2,14 @@ use super::*;
 use crate::config::{HistoryConfig, HistoryLimit};
 use crate::view::hints::bar;
 
-/// `ctrl-g`, Queries' history chord (docs/shortcuts.md §1).
 fn open_history(state: &mut State) -> Vec<Effect> {
     ctrl(state, Key::Char('g'))
 }
 
-/// A frame the history fits in.
 fn roomy() -> Geometry {
     Geometry::new([8, 14, 20, 1], 37, 14).with_history_rows(10)
 }
 
-/// A connection that has run `statements` from the buffer, oldest first, and
-/// is back on the Queries panel with an empty buffer.
 fn having_run(statements: &[&str]) -> State {
     let mut state = editing("");
     state.geometry = roomy();

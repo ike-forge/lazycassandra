@@ -1,5 +1,4 @@
-//! Committing or discarding cell edits
-//! (docs/superpowers/specs/2026-09-18-cell-editing-design.md).
+//! Committing or discarding cell edits (cell editing design).
 
 use crate::commit::CommitPrompt;
 use crate::contents::{ContentsState, Subject, TableRef};
@@ -18,24 +17,15 @@ use super::{
     statement_subject, submit, submit_into_contents,
 };
 
-/// The commit block's wrapped line count and body height, as the last frame
-/// measured them.
 pub(super) const fn commit_extent(state: &State) -> (usize, usize) {
     (state.geometry.commit_lines(), state.geometry.commit_rows())
 }
 
-/// `ctrl-s`: builds one statement from every uncommitted edit and opens the
-/// confirmation over it (design §5).
-///
-/// Silently inert with nothing dirty and on a frame with no room for the
-/// block; spoken on a read-only connection, for [`start_edit`]'s reason.
 pub(super) fn open_commit(state: &mut State) -> Vec<Effect> {
     open_scoped_commit(state, CommitScope::All)
 }
 
-/// `ctrl-s` inside the inspector: the same confirmation over the edits of the
-/// row it shows, leaving every other row's dirty. An open field is accepted
-/// first, and one that does not parse keeps the key from doing anything.
+/// An open field that does not parse keeps the key from doing anything.
 pub(super) fn commit_inspected_row(state: &mut State) -> Vec<Effect> {
     if matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.field().is_some()) {
         field_key(state, Key::Enter);
@@ -46,8 +36,7 @@ pub(super) fn commit_inspected_row(state: &mut State) -> Vec<Effect> {
     if inspector.field().is_some() {
         return Vec::new();
     }
-    // A new row is written whole, and has no page row to scope to
-    // (insert design §4).
+    // A new row is written whole and has no page row to scope to.
     if inspector.is_inserting() {
         open_insert_commit(state);
         return Vec::new();
@@ -100,12 +89,8 @@ fn open_scoped_commit(state: &mut State, scope: CommitScope) -> Vec<Effect> {
     Vec::new()
 }
 
-/// The statement every uncommitted edit becomes, with the table and the counts
-/// the confirmation's border names.
-///
-/// `None` with nothing dirty, and where the page's rows cannot all be
-/// addressed — the same [`RowKey`] gate `e` applies per row, re-applied here
-/// because a schema can be reloaded between the two.
+/// The [`RowKey`] gate is re-applied: the schema can reload between `e` and
+/// here.
 pub(super) fn pending_commit(
     state: &State,
     scope: CommitScope,
@@ -158,9 +143,7 @@ pub(super) fn pending_commit(
     Some((table.clone(), statement, rows.len(), cells))
 }
 
-/// Every key the commit confirmation claims. A body to read, and one question
-/// to answer: `y` runs it, `n` and `Esc` abandon it, and `⏎` answers nothing
-/// — an `UPDATE` is a `Write`, so there is no typed spelling (design §5).
+/// No typed spelling: an `UPDATE` is a `Write`.
 pub(super) fn commit_key(state: &mut State, key: Key) -> Vec<Effect> {
     let (lines, height) = commit_extent(state);
     state.mark_dirty();
@@ -187,11 +170,7 @@ pub(super) fn commit_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Turns the answered confirmation into the statement it was asking about.
-///
-/// `submit` is where the posture guard lives, so [`open_commit`]'s own gate is
-/// convenience and a posture that changed under a held-open confirmation is
-/// still refused here — `start_drop`'s arrangement, and its reason.
+/// `submit` re-checks the posture, as in `start_drop`.
 pub(super) fn start_commit(state: &mut State) -> Vec<Effect> {
     let Some(Overlay::Commit(mut prompt)) = state.overlay.take() else {
         return Vec::new();
@@ -235,17 +214,8 @@ pub(super) fn start_commit(state: &mut State) -> Vec<Effect> {
     }
 }
 
-/// A commit ended. `error` is `None` on the success the cluster reported.
-///
-/// Dropped where `query` is not the commit outstanding, which is every
-/// ordinary read: this is called from both result arms and the id is the only
-/// thing separating a commit's answer from a grid's (architecture.md §3).
-///
-/// The success arm writes the edits into the page rather than re-reading it:
-/// a re-read costs the user their place, their paging and their arrangement,
-/// and the values now in the page are exactly the ones the cluster was sent
-/// (design §5). A failure leaves them dirty — nothing was written, so nothing
-/// about the page has changed.
+/// Success writes the edits into the page rather than re-reading it, which
+/// would lose the user's place, paging and arrangement.
 pub(super) fn finish_commit(
     state: &mut State,
     query: QueryId,
@@ -274,8 +244,7 @@ pub(super) fn finish_commit(
         return Vec::new();
     }
 
-    // A new row has no place in the page to be written into, and where it
-    // sorts is the cluster's to say (insert design §5).
+    // Where a new row sorts is the cluster's to say.
     if committed.is_insert() {
         let table = committed.table().clone();
         state.notify(
@@ -294,8 +263,7 @@ pub(super) fn finish_commit(
         cells
     });
 
-    // The inspector may still be up over the row that was just written, and
-    // its copy of the page carries the marks it drew them with.
+    // The inspector's copy of the page carries its own edit marks.
     if let Some(Overlay::Inspect(inspector)) = &mut state.overlay {
         for at in inspector.edited().to_vec() {
             inspector.unmark(at);
@@ -314,9 +282,7 @@ pub(super) fn finish_commit(
     Vec::new()
 }
 
-/// Every key the quit warning claims. `y` quits and discards, `n` and `Esc`
-/// stay, and everything else — a second `q` included — is inert: the question
-/// has to be answered rather than pressed past (design §6).
+/// A second `q` is inert: the question must be answered.
 pub(super) fn discard_key(state: &mut State, key: Key) -> Vec<Effect> {
     state.mark_dirty();
 
@@ -333,7 +299,6 @@ pub(super) fn discard_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 }
 
-/// What is uncommitted, as `(cells, rows)`. `(0, 0)` with nothing loaded.
 pub(super) fn uncommitted(state: &State) -> (usize, usize) {
     match state.contents.state() {
         ContentsState::Loaded { page, .. } => (page.edits().cells(), page.edits().rows()),
