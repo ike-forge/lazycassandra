@@ -1253,7 +1253,7 @@ mod tests {
     }
 
     /// A hint is the half of the pair that chooses what to teach; the palette
-    /// is the half with no discretion (docs/shortcuts.md §5). So a key a bar
+    /// is the half with no discretion (docs/shortcuts.md §2). So a key a bar
     /// names is by construction a key that does something, and the catalogue
     /// owes it a row. `m` reached a bar and no group, which is what this
     /// catches without anyone having to read the document.
