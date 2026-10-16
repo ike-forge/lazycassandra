@@ -8,7 +8,8 @@ use std::collections::BTreeSet;
 
 use crate::model::{Keyspace, Schema, Table};
 use crate::search::{Direction, Search};
-use crate::state::{Cursor, Scroll, Selection};
+use crate::selection::Selection;
+use crate::viewport::{Cursor, Scroll};
 
 /// The Tables panel's own state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

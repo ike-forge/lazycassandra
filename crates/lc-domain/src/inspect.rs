@@ -14,8 +14,8 @@ use crate::cell;
 use crate::contents::Subject;
 use crate::edit::{Edited, Field};
 use crate::model::CqlValue;
-use crate::state::{Scroll, Span};
 use crate::style::Segment;
+use crate::viewport::{Scroll, Span};
 
 /// What `Enter` opened over, copied out of the page: the grid beneath can be
 /// replaced while the overlay is up, and what is being read must not change

@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use input::Incoming;
+use lc_domain::geometry::Geometry;
 use lc_domain::ports::{Cluster, ConfigSink, ConfigSource, Store, Writer};
-use lc_domain::state::Geometry;
 use lc_domain::{Effect, Msg, State, update, view_model};
 use lc_inbound::{FrameMap, Rendered, Themes};
 use lc_outbound::cassandra::CassandraCluster;

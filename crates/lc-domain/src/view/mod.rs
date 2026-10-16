@@ -32,12 +32,16 @@ use crate::cql::{CandidateKind, Completion};
 use crate::ddl::DdlTab;
 use crate::drop::Answer;
 use crate::export::{Confirm, Format, Scope, Stop};
+use crate::overlay::{Message, Overlay};
+use crate::panel::Panel;
 use crate::posture::Posture;
 use crate::queries::{CqlMode, Highlight, QueriesTab};
 use crate::search::{Direction, Search, Sift};
-use crate::state::{Cursor, Message, Overlay, Panel, Ranges, State};
+use crate::selection::Ranges;
+use crate::state::State;
 use crate::style::{Severity, Token};
 use crate::theme::ThemeChoice;
+use crate::viewport::Cursor;
 
 /// Everything a renderer needs for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -755,7 +759,7 @@ pub enum PanelBody {
 /// It outranks the selection wherever it is lit, and cannot contend with one:
 /// the yank spent the selection that named it, and the next input puts the
 /// flash out before it can reach a new one (visual mode design §6.1).
-fn flash_over(state: &State, panel: Panel) -> Option<&crate::state::Flash> {
+fn flash_over(state: &State, panel: Panel) -> Option<&crate::feedback::Flash> {
     state.flash.as_ref().filter(|flash| flash.panel() == panel)
 }
 
@@ -895,9 +899,10 @@ pub(crate) fn waiting(text: &str) -> PanelBody {
 
 #[cfg(test)]
 pub(crate) mod tests_support {
+    use crate::connection::{Connection, ConnectionState, SchemaState};
     use crate::model::{ConnId, Schema};
     use crate::posture::Posture;
-    use crate::state::{Connection, ConnectionState, SchemaState, State};
+    use crate::state::State;
     use crate::tree::tests_support::schema_of as tabled_schema;
 
     use super::{PanelBody, view_model};
@@ -946,10 +951,12 @@ mod tests {
     use crate::config::{Config, CustomTheme};
     use crate::contents::{Subject, TableRef};
     use crate::export::{ExportForm, Fetched, Format, Scope, Stop};
+    use crate::jobs::ExportJob;
     use crate::model::{JobId, Key, Page, QueryId};
-    use crate::state::{Cursor, ExportJob, Message, Overlay};
+    use crate::overlay::{Message, Overlay};
     use crate::theme::{BuiltIn, Ours, Ported, ThemeName};
     use crate::update::init;
+    use crate::viewport::Cursor;
 
     #[test]
     fn every_panel_is_projected_in_reading_order() {
@@ -1252,7 +1259,7 @@ mod tests {
             .iter()
             .position(|b| *b == built_in)
             .expect("listed");
-        let mut cursor = crate::state::Cursor::default();
+        let mut cursor = crate::viewport::Cursor::default();
         cursor.go_to(index, BuiltIn::ALL.len());
         let mut state = State::default();
         state.overlay = Some(Overlay::Themes {

@@ -8,8 +8,8 @@
 
 use lc_domain::export::Field;
 use lc_domain::model::Key;
+use lc_domain::panel::Panel;
 use lc_domain::pointer::{Click, Mark, Pointer};
-use lc_domain::state::Panel;
 use ratatui::layout::{Position, Rect};
 use unicode_width::UnicodeWidthChar as _;
 

@@ -3,9 +3,12 @@
 
 use crate::contents::{ContentsState, Subject, TableRef};
 use crate::drop::{DropPrompt, Target};
+use crate::jobs::Dropping;
 use crate::log::{Outcome, Trace};
 use crate::model::{DbError, Key, QueryId, Row, Statement};
-use crate::state::{Dropping, Message, Overlay, Panel, State};
+use crate::overlay::{Message, Overlay};
+use crate::panel::Panel;
+use crate::state::State;
 use crate::style::Severity;
 use crate::tree::Node;
 

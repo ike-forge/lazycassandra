@@ -6,7 +6,9 @@ use crate::contents::{ContentsState, Subject};
 use crate::inspect::{Inspected, Inspector};
 use crate::key;
 use crate::model::Statement;
-use crate::state::{Overlay, Panel, State};
+use crate::overlay::Overlay;
+use crate::panel::Panel;
+use crate::state::State;
 use crate::style::Severity;
 
 use super::refuse_read_only;

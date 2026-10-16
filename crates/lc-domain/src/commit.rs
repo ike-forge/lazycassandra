@@ -6,8 +6,8 @@ use crate::contents::TableRef;
 use crate::edit::CommitScope;
 use crate::inspect::Inspector;
 use crate::model::Statement;
-use crate::state::Scroll;
 use crate::style::Segment;
+use crate::viewport::Scroll;
 
 /// The open commit confirmation.
 ///
@@ -160,7 +160,7 @@ impl CommitPrompt {
 
 /// The quit warning: what would be lost, and nothing else.
 ///
-/// A variant of its own rather than a [`crate::state::Message`] with a flag:
+/// A variant of its own rather than a [`crate::overlay::Message`] with a flag:
 /// the type says "answering this ends the process", which is the argument
 /// `Overlay::Fatal` already makes (query log design §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

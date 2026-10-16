@@ -6,7 +6,8 @@ use crate::edit::Field;
 use crate::key;
 use crate::key::RowKey;
 use crate::model::{CqlValue, Key};
-use crate::state::{Message, Overlay, State};
+use crate::overlay::{Message, Overlay};
+use crate::state::State;
 use crate::style::Severity;
 
 use super::{Effect, edit_line, raise, refuse_read_only, uncommitted};

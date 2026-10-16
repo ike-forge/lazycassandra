@@ -13,8 +13,9 @@ use std::time::Duration;
 use crate::clock::Stamp;
 use crate::model::{ConnId, JobId, QueryId};
 use crate::search::{Direction, Search};
-use crate::state::{Cursor, Scroll, Selection};
+use crate::selection::Selection;
 use crate::style::{Segment, Severity};
+use crate::viewport::{Cursor, Scroll};
 
 /// Entries the trail retains. Past this the oldest is dropped and counted.
 ///

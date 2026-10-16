@@ -3,7 +3,9 @@
 
 use crate::commands::{CommandsPanel, Run};
 use crate::model::Key;
-use crate::state::{Overlay, Panel, State};
+use crate::overlay::Overlay;
+use crate::panel::Panel;
+use crate::state::State;
 
 use super::{Effect, escape, handle_key, quit};
 

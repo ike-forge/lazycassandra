@@ -4,9 +4,9 @@
 //! Wrapped here, because wrapping needs a width; the line count goes back to
 //! the domain through `Geometry`, the way the Logs tab's does.
 
-use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{EditView, InspectBody, InspectValue, InspectView};
+use lc_domain::viewport::Span;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::Style;
@@ -308,7 +308,8 @@ mod tests {
     use lc_domain::contents::{Subject, TableRef};
     use lc_domain::inspect::{Inspected, Inspector};
     use lc_domain::model::CqlValue;
-    use lc_domain::state::{Overlay, State};
+    use lc_domain::overlay::Overlay;
+    use lc_domain::state::State;
     use lc_domain::view::{OverlayView, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

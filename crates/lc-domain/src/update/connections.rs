@@ -2,10 +2,13 @@
 //! (docs/superpowers/specs/2026-08-31-connection-picker-design.md).
 
 use crate::config::{Config, ConnectionConfig};
+use crate::connection::ConnectionState;
 use crate::log::{Entry, Outcome, Trace};
 use crate::model::{ConnId, Key};
+use crate::overlay::Overlay;
 use crate::search::Sift;
-use crate::state::{ConnectionState, Cursor, Overlay, State};
+use crate::state::State;
+use crate::viewport::Cursor;
 
 use super::{Effect, escape, picker_matches, quit, sentence};
 

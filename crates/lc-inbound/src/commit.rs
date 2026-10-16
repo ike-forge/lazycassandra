@@ -221,7 +221,8 @@ mod tests {
     use lc_domain::commit::CommitPrompt;
     use lc_domain::contents::TableRef;
     use lc_domain::model::{Statement, UpdatedRow};
-    use lc_domain::state::{Overlay, State};
+    use lc_domain::overlay::Overlay;
+    use lc_domain::state::State;
     use lc_domain::view::{OverlayView, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

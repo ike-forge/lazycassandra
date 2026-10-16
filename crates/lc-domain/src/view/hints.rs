@@ -1,9 +1,12 @@
 //! What the focused panel responds to, as the bar will say it.
 
+use crate::contents::SelectionMode;
 use crate::model::{Key, KeyPress};
-use crate::queries::QueriesTab;
+use crate::overlay::Overlay;
+use crate::panel::Panel;
+use crate::queries::{CqlMode, QueriesTab};
 use crate::search::{Direction, Searched};
-use crate::state::{Overlay, Panel, State};
+use crate::state::State;
 
 /// A binding, keyed by the presses `handle_key` actually matches on.
 ///
@@ -983,7 +986,7 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
 }
 
 fn pages(binding: &Binding) -> bool {
-    *binding == crate::state::NEXT_PAGE || *binding == crate::state::EVERY_PAGE
+    *binding == crate::view::hints::NEXT_PAGE || *binding == crate::view::hints::EVERY_PAGE
 }
 
 /// Whether the connection's posture forbids the binding outright. Such a hint
@@ -1077,13 +1080,269 @@ fn key_name(key: Key) -> String {
     }
 }
 
+// Motion is not here, in any panel's bar: `j`/`k`, `home`/`end`, the arrows
+// and `pgup`/`pgdn` are what a user of a terminal list already reaches for,
+// and a bar that spends its width teaching them has none left for what is
+// particular to the panel (docs/shortcuts.md §2). The palette still lists
+// every one.
+const TABLES_HINTS: &[Binding] = &[
+    // `⏎` on a keyspace folds it and on a table reads it. The bar names the
+    // focused panel and nothing finer (design §1), so one label has to cover
+    // both — "open" is true of either row, "read" of half of them.
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "open",
+    },
+    // Not global: it does nothing in Queries, where `/` is text (panel
+    // search design §5.3).
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+    // Greyed rather than dropped where the statement could not run — a
+    // read-only connection, a frame with no room for the block — the same
+    // promise `ctrl-e` keeps over an empty grid (drop design §1).
+    Binding {
+        keys: &[Stroke::key(Key::Char('d'))],
+        action: "drop",
+    },
+    // Greyed on a keyspace and where the block has no room, as `d` is.
+    Binding {
+        keys: &[Stroke::key(Key::Char('H'))],
+        action: "health",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('v'))],
+        action: "select",
+    },
+];
+
+const DDL_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('v'))],
+        action: "select",
+    },
+];
+
+pub(crate) const NEXT_PAGE: Binding = Binding {
+    keys: &[Stroke::key(Key::Char('p'))],
+    action: "next page",
+};
+
+pub(crate) const EVERY_PAGE: Binding = Binding {
+    keys: &[Stroke::key(Key::Char('P'))],
+    action: "all",
+};
+
+const CONTENTS_HINTS: &[Binding] = &[
+    // Named only where it opens: a selection, an empty grid or a frame too
+    // small for the block leaves it off (cell inspector design §6).
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "inspect",
+    },
+    // Named only while the result has more to fetch, and greyed while a page
+    // is in flight (grid paging design §6).
+    NEXT_PAGE,
+    EVERY_PAGE,
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('e'))],
+        action: "export",
+    },
+    // The same key the tree answers, aimed at what this panel holds. Greyed
+    // wherever the rows on screen cannot be addressed by their primary key
+    // (drop design §3.1).
+    Binding {
+        keys: &[Stroke::key(Key::Char('d'))],
+        action: "delete",
+    },
+    // Greyed where no form could open — a typed statement's grid, a frame
+    // with no room — and left off a read-only connection, as `d` is (insert
+    // design §1).
+    Binding {
+        keys: &[Stroke::key(Key::Char('i'))],
+        action: "insert",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('m'))],
+        action: "mode",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('v'))],
+        action: "select",
+    },
+];
+
+/// What column mode adds, and what the bar names only there.
+///
+/// Three keys that address the column the cursor is on, so they are named in
+/// the one mode whose cursor *is* a column — the same rule that keeps `esc
+/// clear` off a bar with nothing to clear: a hint has to be true in the frame
+/// it is drawn in (docs/shortcuts.md §2,
+/// docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §6).
+const CONTENTS_COLUMN_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('s'))],
+        action: "sort",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('f'))],
+        action: "filter",
+    },
+    // Named apart from `esc clear`, which clears a search and a range: this
+    // one clears the filter on this column and nothing else (design §3).
+    Binding {
+        keys: &[Stroke::key(Key::Char('c'))],
+        action: "clear filter",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "inspect",
+    },
+    NEXT_PAGE,
+    EVERY_PAGE,
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('e'))],
+        action: "export",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('m'))],
+        action: "mode",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('v'))],
+        action: "select",
+    },
+];
+
+/// The Cql tab before its buffer is open. `⏎` first: typing is what the tab
+/// is for, and nothing else on screen says how to start (cql edit mode design
+/// §3).
+const CQL_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "edit",
+    },
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('r'))],
+        action: "run",
+    },
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('e'))],
+        action: "$EDITOR",
+    },
+];
+
+/// The Cql tab with its buffer open.
+const QUERIES_HINTS: &[Binding] = &[
+    // First: it is what the panel is for. `⏎ newline` is what it does on the
+    // way there, and `esc done` — appended by the bar, on the frames no
+    // popup claims `esc` first — closes the buffer again.
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('r'))],
+        action: "run",
+    },
+    // Unconditionally true in every frame Queries is focused, so it is named
+    // plainly rather than greyed — unlike `ctrl-r`, which lies on an empty
+    // buffer (external editor design §5).
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('e'))],
+        action: "$EDITOR",
+    },
+    // Greyed on a buffer already laid out, for the reason `ctrl-r` is greyed
+    // on an empty one (query editor design §4.3).
+    Binding {
+        keys: &[Stroke::ctrl(Key::Char('f'))],
+        action: "format",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Enter)],
+        action: "newline",
+    },
+];
+
+/// The Logs tab's own bar, once its trail is drawn rather than the CQL
+/// buffer beside it (query log design §5.1). It is read-only and takes no
+/// text, so it advertises like the other list panels — `/` and `v`, not
+/// `⏎ newline`, which types nothing here: `Enter` only reaches `activate`,
+/// which is gated to Tables. `esc` is not listed here either, for the reason
+/// no list panel lists it: the bar appends it itself, as `clear` or as
+/// `leave`, whichever is true of the frame (docs/shortcuts.md's Logs
+/// subsection).
+const LOGS_HINTS: &[Binding] = &[
+    Binding {
+        keys: &[Stroke::key(Key::Char('/'))],
+        action: "search",
+    },
+    Binding {
+        keys: &[Stroke::key(Key::Char('v'))],
+        action: "select",
+    },
+];
+
+impl Panel {
+    /// What this panel responds to.
+    ///
+    /// Exhaustive, so a fifth panel cannot compile without declaring its
+    /// bindings — the same guarantee `ALL` and `shortcut` give.
+    #[must_use]
+    pub const fn hints(self) -> &'static [Binding] {
+        match self {
+            Self::Tables => TABLES_HINTS,
+            Self::Ddl => DDL_HINTS,
+            Self::Contents => CONTENTS_HINTS,
+            Self::Queries => QUERIES_HINTS,
+        }
+    }
+}
+
+impl State {
+    /// What the focused panel responds to this frame.
+    ///
+    /// A question about `State` rather than about `Panel`, for the same
+    /// reason `takes_text` moved here: the Queries panel's bindings depend on
+    /// which tab is drawn, and `Panel::hints` cannot see that (query log
+    /// design §5.1). Every other panel answers exactly what `Panel::hints`
+    /// already did — with the one further exception column mode makes over
+    /// Table contents, whose three column keys answer in that mode alone
+    /// (grid sort and filter design §6).
+    #[must_use]
+    pub fn hints(&self) -> &'static [Binding] {
+        match self.focus() {
+            Panel::Queries => match self.queries.mode() {
+                None => LOGS_HINTS,
+                Some(CqlMode::Browsing) => CQL_HINTS,
+                Some(CqlMode::Editing) => QUERIES_HINTS,
+            },
+            Panel::Contents if self.contents.mode == SelectionMode::Column => CONTENTS_COLUMN_HINTS,
+            panel => panel.hints(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::CommandsPanel;
+    use crate::geometry::Geometry;
+    use crate::overlay::Overlay;
+    use crate::panel::Panel;
     use crate::search::{Prompt, Search, Searched};
-    use crate::state::{Cursor, Geometry, Overlay, Panel, State};
+    use crate::state::State;
     use crate::theme::ThemeChoice;
+    use crate::viewport::Cursor;
 
     /// A frame big enough for a palette to draw in.
     fn fits() -> State {
@@ -1419,7 +1678,7 @@ mod tests {
     #[test]
     fn the_bar_names_what_diagnostics_responds_to() {
         use crate::config::Diagnostic;
-        use crate::state::DiagnosticsPanel;
+        use crate::overlay::DiagnosticsPanel;
 
         let mut state = State::default();
         state.overlay = Some(Overlay::Diagnostics(DiagnosticsPanel::new(vec![
@@ -1727,7 +1986,7 @@ mod tests {
                 Liveness::Live,
             ),
         ] {
-            let mut state = connected(posture, crate::state::SchemaState::Loading);
+            let mut state = connected(posture, crate::connection::SchemaState::Loading);
             state.focus_on(Panel::Queries);
             state.queries.start_editing();
             for character in cql.chars() {
@@ -1774,14 +2033,15 @@ mod tests {
             .liveness
     }
 
-    fn connected(posture: crate::Posture, schema: crate::state::SchemaState) -> State {
+    fn connected(posture: crate::Posture, schema: crate::connection::SchemaState) -> State {
         let mut state = fits();
-        state.connection = crate::state::ConnectionState::Connected(crate::state::Connection {
-            id: crate::model::ConnId::next(),
-            name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
-            posture,
-            schema,
-        });
+        state.connection =
+            crate::connection::ConnectionState::Connected(crate::connection::Connection {
+                id: crate::model::ConnId::next(),
+                name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
+                posture,
+                schema,
+            });
         state
     }
 
@@ -1790,11 +2050,10 @@ mod tests {
     /// design §1).
     #[test]
     fn the_drop_hint_is_live_only_where_the_key_would_open_something() {
-        let loading = crate::state::SchemaState::Loading;
-        let loaded = crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
-            "shop",
-            &["orders"],
-        )]));
+        let loading = crate::connection::SchemaState::Loading;
+        let loaded = crate::connection::SchemaState::Loaded(crate::tree::tests_support::schema_of(
+            &[("shop", &["orders"])],
+        ));
 
         let mut state = connected(crate::Posture::Writable, loaded.clone());
         state.focus_on(Panel::Tables);
@@ -1821,10 +2080,9 @@ mod tests {
 
     #[test]
     fn the_health_hint_is_live_on_a_table_with_room_for_the_block() {
-        let loaded = crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
-            "shop",
-            &["orders"],
-        )]));
+        let loaded = crate::connection::SchemaState::Loaded(crate::tree::tests_support::schema_of(
+            &[("shop", &["orders"])],
+        ));
         let mut state = connected(crate::Posture::ReadOnly, loaded);
         state.focus_on(Panel::Tables);
         let schema = state.schema().expect("loaded").clone();
@@ -1847,10 +2105,9 @@ mod tests {
 
     #[test]
     fn a_read_only_connection_leaves_d_off_the_bar() {
-        let loaded = crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
-            "shop",
-            &["orders"],
-        )]));
+        let loaded = crate::connection::SchemaState::Loaded(crate::tree::tests_support::schema_of(
+            &[("shop", &["orders"])],
+        ));
 
         for panel in [Panel::Tables, Panel::Contents] {
             let mut state = connected(crate::Posture::ReadOnly, loaded.clone());
@@ -1870,7 +2127,7 @@ mod tests {
     fn the_delete_hint_is_inert_over_a_grid_holding_no_addressable_row() {
         let mut state = connected(
             crate::Posture::Writable,
-            crate::state::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
+            crate::connection::SchemaState::Loaded(crate::tree::tests_support::schema_of(&[(
                 "shop",
                 &["orders"],
             )])),
@@ -1901,6 +2158,26 @@ mod tests {
                     hint.keys,
                     hint.action
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn every_panel_says_what_it_responds_to() {
+        for panel in Panel::ALL {
+            assert!(
+                !panel.hints().is_empty(),
+                "{panel:?} responds to nothing, which no panel does any more"
+            );
+        }
+    }
+
+    #[test]
+    fn no_binding_claims_a_key_with_no_action_to_go_with_it() {
+        for panel in Panel::ALL {
+            for binding in panel.hints() {
+                assert!(!binding.keys.is_empty(), "{panel:?} has a keyless hint");
+                assert!(!binding.action.is_empty(), "{panel:?} has a nameless hint");
             }
         }
     }

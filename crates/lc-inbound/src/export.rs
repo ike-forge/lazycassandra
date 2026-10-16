@@ -460,7 +460,8 @@ fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) -> Option<Mo
 mod tests {
     use lc_domain::contents::{Subject, TableRef};
     use lc_domain::export::{ExportForm, Fetched};
-    use lc_domain::state::{Overlay, State};
+    use lc_domain::overlay::Overlay;
+    use lc_domain::state::State;
     use lc_domain::view::view_model;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

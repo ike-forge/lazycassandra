@@ -9,9 +9,9 @@
 
 use lc_domain::grid::BAR;
 use lc_domain::search::Search;
-use lc_domain::state::Span;
 use lc_domain::style::{Segment, Token};
 use lc_domain::view::{Activity, LogRow, RUNNING};
+use lc_domain::viewport::Span;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -232,7 +232,7 @@ fn stamped(line: Vec<(char, Style)>, at: &str, theme: Theme) -> Vec<(char, Style
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::Ranges;
+    use lc_domain::selection::Ranges;
     use lc_domain::style::{Segment, Severity, Token};
     use lc_domain::view::LogRow;
     use lc_domain::{Ours, ThemeChoice};

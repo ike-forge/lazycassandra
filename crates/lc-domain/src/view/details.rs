@@ -11,8 +11,9 @@ use crate::model::{
     ClassKind, ClassOption, ClusteringOrder, Column, Index, IndexKind, Keyspace, Replication,
     Setting, Table,
 };
+use crate::panel::Panel;
 use crate::search::{Direction, Search};
-use crate::state::{Panel, State};
+use crate::state::State;
 use crate::style::Token;
 use crate::tree::Node;
 
@@ -613,12 +614,13 @@ fn populated<const N: usize>(sections: [Section; N]) -> Vec<Section> {
 mod tests {
     use std::collections::BTreeMap;
 
+    use crate::connection::{Connection, ConnectionState, SchemaState};
     use crate::model::{
         ClusteringColumn, Column, ConnId, DbError, Index, IndexKind, IndexTarget, PrimaryKey,
         Replication, Schema, TableOptions,
     };
     use crate::search::{Search, Searched};
-    use crate::state::{Connection, ConnectionState, SchemaState, State};
+    use crate::state::State;
     use crate::tree::tests_support::{options, schema_of};
 
     use super::super::tests_support::{connected, panel_body, state_with, tabled};

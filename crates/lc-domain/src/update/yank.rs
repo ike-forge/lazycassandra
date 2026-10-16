@@ -2,10 +2,13 @@
 //! (docs/superpowers/specs/2026-08-13-yank-design.md).
 
 use crate::contents::{ContentsState, SelectionMode};
+use crate::feedback::Flash;
 use crate::log::Entry;
 use crate::model::Row;
+use crate::panel::Panel;
 use crate::queries::QueriesTab;
-use crate::state::{Flash, Panel, Range, Ranges, State};
+use crate::selection::{Range, Ranges};
+use crate::state::State;
 
 use super::{Effect, collapse_selection, spanned};
 

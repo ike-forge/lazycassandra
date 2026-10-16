@@ -8,7 +8,7 @@
 use crate::cell;
 use crate::log::Entry;
 use crate::model::{ClusteringOrder, CqlValue, Row};
-use crate::state::Ranges;
+use crate::selection::Ranges;
 use crate::tree::Node;
 use crate::view::logs::outcome_text;
 use crate::view::{ColumnKind, DetailRow};
@@ -196,7 +196,7 @@ mod tests {
         ClusteringOrder, CqlValue, Keyspace, Page, PrimaryKey, Replication, Row, Setting, Table,
         TableOptions,
     };
-    use crate::state::Range;
+    use crate::selection::Range;
     use crate::tree::Node;
     use crate::view::{ColumnKind, DetailRow, IdentityKind};
     use std::collections::BTreeMap;

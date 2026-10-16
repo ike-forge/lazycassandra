@@ -367,7 +367,7 @@ fn ctrl_g_with_the_history_disabled_toasts_instead_of_opening() {
 
     assert!(state.overlay.is_none());
     assert_eq!(
-        state.toast.as_ref().map(crate::state::Toast::message),
+        state.toast.as_ref().map(crate::feedback::Toast::message),
         Some("history is disabled")
     );
 }
@@ -377,7 +377,7 @@ fn the_toast_leaves_after_its_ticks() {
     let mut state = disabled();
     open_history(&mut state);
 
-    for _ in 0..crate::state::TOAST_TICKS {
+    for _ in 0..crate::feedback::TOAST_TICKS {
         assert!(state.toast.is_some());
         update(&mut state, Msg::Tick(crate::clock::Stamp::default()));
     }

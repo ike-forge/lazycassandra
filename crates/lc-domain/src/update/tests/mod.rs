@@ -6,22 +6,25 @@ use crate::commit::CommitPrompt;
 use crate::config::{
     Config, ConnectionName, Diagnostic, Discovery, Icons, Origin, Span as ConfigSpan,
 };
+use crate::connection::Connection;
 use crate::contents::{ContentsState, SelectionMode};
 use crate::drop::{DropPrompt, Target};
 use crate::export::Confirm;
+use crate::feedback::FLASH_TICKS;
 use crate::inspect::{Inspected, Inspector};
+use crate::jobs::ExportJob;
 use crate::model::{CqlValue, Modifiers, Row, StatementKind};
 use crate::pointer::Mark;
 use crate::pointer::{Click, Pointer, Wheel};
 use crate::search::Sift;
 use crate::search::{Prompt, Search, Searched};
-use crate::state::ExportJob;
-use crate::state::{Connection, FLASH_TICKS, Range, Span};
+use crate::selection::Range;
 use crate::theme::{Ours, Ported};
 use crate::tree::tests_support::schema_of as tabled_schema;
 use crate::view::OverlayView;
 use crate::view::Stroke;
 use crate::view::tests_support::tabled;
+use crate::viewport::Span;
 
 mod columns;
 mod commit;

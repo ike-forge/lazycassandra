@@ -112,8 +112,10 @@ pub(crate) fn render(
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::{Cursor, Overlay, State};
+    use lc_domain::overlay::Overlay;
+    use lc_domain::state::State;
     use lc_domain::view::view_model;
+    use lc_domain::viewport::Cursor;
     use lc_domain::{BuiltIn, Ported, ThemeChoice};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

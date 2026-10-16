@@ -310,7 +310,7 @@ fn y_runs_the_insert() {
         state
             .committing
             .as_ref()
-            .is_some_and(crate::state::Committing::is_insert)
+            .is_some_and(crate::jobs::Committing::is_insert)
     );
 }
 

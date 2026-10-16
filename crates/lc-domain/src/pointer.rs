@@ -7,7 +7,7 @@
 //! than a crossterm event.
 
 use crate::model::Key;
-use crate::state::Panel;
+use crate::panel::Panel;
 
 /// A pointer gesture, already resolved against the frame it happened in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

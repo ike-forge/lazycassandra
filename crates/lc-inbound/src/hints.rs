@@ -170,7 +170,8 @@ fn push_joined(spans: &mut Vec<Span<'static>>, segments: &[Segment], theme: Them
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::{Geometry, Panel};
+    use lc_domain::geometry::Geometry;
+    use lc_domain::panel::Panel;
     use lc_domain::{State, view_model};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

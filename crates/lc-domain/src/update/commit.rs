@@ -4,11 +4,13 @@
 use crate::commit::CommitPrompt;
 use crate::contents::{ContentsState, Subject, TableRef};
 use crate::edit::CommitScope;
+use crate::jobs::Committing;
 use crate::key;
 use crate::key::RowKey;
 use crate::log::Outcome;
 use crate::model::{DbError, Key, QueryId, Statement, UpdatedRow};
-use crate::state::{Committing, Message, Overlay, State};
+use crate::overlay::{Message, Overlay};
+use crate::state::State;
 use crate::style::Severity;
 
 use super::{

@@ -1,12 +1,15 @@
 //! The export form, its confirmation, and the running job
 //! (docs/superpowers/specs/2026-08-14-export-design.md).
 
+use crate::connection::ConnectionState;
 use crate::contents::{ContentsState, Subject};
 use crate::export::{Confirm, ExportForm, Fetched, Pending, Scope, Stop};
+use crate::jobs::ExportJob;
 use crate::log::{Outcome, Trace};
 use crate::model::{JobId, Key, Statement};
+use crate::overlay::{Message, Overlay};
 use crate::ports::ExportError;
-use crate::state::{ConnectionState, ExportJob, Message, Overlay, State};
+use crate::state::State;
 use crate::style::Severity;
 use std::path::PathBuf;
 use std::time::Duration;

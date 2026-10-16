@@ -7,8 +7,8 @@ use std::time::Duration;
 use crate::bytes::Bytes;
 use crate::contents::TableRef;
 use crate::model::{DbError, QueryId};
-use crate::state::Cursor;
 use crate::style::Severity;
+use crate::viewport::Cursor;
 
 /// Cassandra 4.0's `compaction_large_partition_warning_threshold_mb` default,
 /// for a node that configures no large-partition threshold at all.

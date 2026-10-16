@@ -2,8 +2,10 @@
 //! (docs/superpowers/specs/2026-08-09-mouse-input-design.md).
 
 use crate::model::Key;
+use crate::overlay::Overlay;
+use crate::panel::Panel;
 use crate::pointer::{Click, Held, Mark, Pointer, Wheel};
-use crate::state::{Overlay, Panel, State};
+use crate::state::State;
 
 use super::{
     Effect, activate, axes, escape, health_entry, open_filter, overlay_key, panel_scroll,

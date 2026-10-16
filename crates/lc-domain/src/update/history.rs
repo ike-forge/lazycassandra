@@ -2,9 +2,12 @@
 
 use crate::history::one_line;
 use crate::model::Key;
+use crate::overlay::Overlay;
+use crate::panel::Panel;
 use crate::search::Sift;
-use crate::state::{Cursor, Overlay, Panel, State};
+use crate::state::State;
 use crate::style::Severity;
+use crate::viewport::Cursor;
 
 use super::{Effect, escape, picker_matches, quit};
 

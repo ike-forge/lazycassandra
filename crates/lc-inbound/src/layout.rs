@@ -11,7 +11,7 @@
 //! holds — closed to its borders when that buffer is empty. Contents, which
 //! it shares the column with, takes whatever it leaves.
 
-use lc_domain::state::Panel;
+use lc_domain::panel::Panel;
 use lc_domain::view::{PanelBody, ViewModel};
 use ratatui::layout::Rect;
 

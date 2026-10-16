@@ -6,7 +6,8 @@
 use std::time::Duration;
 
 use crate::log::{Entry, Outcome, Subject};
-use crate::state::{Panel, State};
+use crate::panel::Panel;
+use crate::state::State;
 use crate::style::{Segment, Severity, Token};
 use crate::view::PanelBody;
 
@@ -122,10 +123,11 @@ fn elapsed(took: Duration) -> String {
 mod tests {
     use super::*;
     use crate::clock::Stamp;
+    use crate::feedback::Flash;
     use crate::log::{LOG_CAPACITY, Log, Trace};
     use crate::model::QueryId;
     use crate::queries::QueriesTab;
-    use crate::state::{Flash, Range, Ranges};
+    use crate::selection::{Range, Ranges};
 
     fn state_with(log: Log) -> State {
         let mut state = State::default();

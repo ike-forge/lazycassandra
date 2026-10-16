@@ -22,12 +22,13 @@ use lc_domain::contents::{Order, SelectionMode};
 use lc_domain::grid::{BAR, COLUMN_SPACING, MARKS, available, fitting};
 use lc_domain::queries::{CqlMode, Highlight};
 use lc_domain::search::Search;
-use lc_domain::state::{Ranges, Span};
+use lc_domain::selection::Ranges;
 use lc_domain::style::Token;
 use lc_domain::style::{Segment, text};
 use lc_domain::view::{
     Activity, CompletionView, GridCell, GridColumn, PanelBody, Position, RowKind, TreeRow,
 };
+use lc_domain::viewport::Span;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};

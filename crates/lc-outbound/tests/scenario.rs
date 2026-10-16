@@ -10,8 +10,8 @@ use lc_domain::model::{
     Column, CqlValue, DbError, Index, IndexKind, IndexTarget, Key, KeyPress, Page, PagingState,
     Row, Statement,
 };
+use lc_domain::panel::Panel;
 use lc_domain::posture::Posture;
-use lc_domain::state::Panel;
 use lc_domain::style::Token;
 use lc_domain::view::{DetailRow, Details, OverlayView, PanelBody, RowKind, Section};
 use lc_domain::{Effect, Msg, State, init, update, view_model};

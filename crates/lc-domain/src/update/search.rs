@@ -2,8 +2,9 @@
 //! (docs/superpowers/specs/2026-08-10-panel-search-design.md).
 
 use crate::model::Key;
+use crate::overlay::Overlay;
 use crate::search::{Direction, Origin, Prompt, Searched};
-use crate::state::{Overlay, State};
+use crate::state::State;
 
 use super::{Effect, escape, tree_rows};
 

@@ -24,9 +24,9 @@
 use lc_domain::grid::BAR;
 use lc_domain::model::{ClusteringOrder, Setting};
 use lc_domain::search::Search;
-use lc_domain::state::Span;
 use lc_domain::style::Token;
 use lc_domain::view::{ColumnKind, DetailRow, Details, Group, IdentityKind};
+use lc_domain::viewport::Span;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -560,7 +560,7 @@ fn count(text: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::{Range, Ranges};
+    use lc_domain::selection::{Range, Ranges};
     use lc_domain::style::Token;
     use lc_domain::view::{Heading, IdentityKind, Section};
 

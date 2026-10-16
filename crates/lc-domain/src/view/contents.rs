@@ -14,8 +14,10 @@ use crate::contents::{
 };
 use crate::inspect::{Inspected, Inspector};
 use crate::model::{CqlValue, Schema};
+use crate::panel::Panel;
 use crate::search::Search;
-use crate::state::{Panel, Ranges, State};
+use crate::selection::Ranges;
+use crate::state::State;
 use crate::style::{Segment, Severity, Token};
 
 use super::{InspectBody, InspectField, InspectValue, InspectView, PanelBody, waiting};
@@ -488,12 +490,13 @@ fn grid_table(state: &State, subject: &Subject) -> Option<TableRef> {
 
 #[cfg(test)]
 mod tests {
+    use crate::connection::{Connection, ConnectionState, SchemaState};
     use crate::model::{
         ClusteringColumn, ClusteringOrder, Column, ConnId, Page, QueryId, Row, Schema,
     };
     use crate::posture::Posture;
     use crate::search::{Search, Searched};
-    use crate::state::{Connection, ConnectionState, SchemaState, State};
+    use crate::state::State;
 
     use super::super::tests_support::{panel_body, tabled};
     use super::super::view_model;
@@ -1237,7 +1240,7 @@ mod tests {
             panic!("a loaded page draws a grid");
         };
 
-        assert_eq!(rows_ranges, Ranges::of(crate::state::Range::new(0, 2)));
+        assert_eq!(rows_ranges, Ranges::of(crate::selection::Range::new(0, 2)));
         assert_eq!(
             columns_ranges,
             Ranges::default(),
@@ -1511,7 +1514,7 @@ mod tests {
     #[test]
     fn only_the_rows_the_panel_can_show_are_projected() {
         let mut state = showing(ids(20));
-        state.geometry = crate::state::Geometry::new([8, 8, 5, 1], 0, 0);
+        state.geometry = crate::geometry::Geometry::new([8, 8, 5, 1], 0, 0);
         state.contents.cursor.go_to(7, 20);
         state.contents.scroll.follow(7, 5);
 

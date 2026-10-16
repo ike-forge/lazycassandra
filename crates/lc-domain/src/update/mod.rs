@@ -7,12 +7,15 @@
 use crate::clock::Stamp;
 use crate::commit::Discard;
 use crate::config::{Config, ConnectionConfig, ConnectionName, Diagnostic, DriverConfig, PageSize};
+use crate::connection::{ConnectionState, SchemaState};
 use crate::contents::{
     ContentsState, Continue, Failure, Filter, Landed, SelectionMode, Subject, TableRef,
 };
 use crate::cql;
 use crate::ddl::DdlTab;
 use crate::export::Format;
+use crate::feedback::{Flash, Toast};
+use crate::geometry::Geometry;
 use crate::grid::{self, ColumnScroll};
 use crate::health::Health;
 use crate::line::Line;
@@ -20,18 +23,19 @@ use crate::log::{Entry, Outcome, Subject as LogSubject, Trace};
 use crate::model::{
     ConnId, DbError, JobId, Key, KeyPress, Page, PagingState, QueryId, Row, Schema, Statement,
 };
+use crate::overlay::{DiagnosticsPanel, Message, Overlay};
+use crate::panel::Panel;
 use crate::pointer::Pointer;
 use crate::ports::ExportError;
 use crate::posture::Posture;
 use crate::queries::{CqlMode, QueriesTab, Refresh};
 use crate::search::{Direction, Search, Searched};
-use crate::state::{
-    ConnectionState, Cursor, DiagnosticsPanel, Flash, Geometry, Message, Overlay, Panel, Range,
-    Ranges, SchemaState, Scroll, Selection, State, Toast,
-};
+use crate::selection::{Range, Ranges, Selection};
+use crate::state::State;
 use crate::style::Severity;
 use crate::theme::{BuiltIn, ThemeChoice};
 use crate::tree::Node;
+use crate::viewport::{Cursor, Scroll};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -556,7 +560,7 @@ fn connected(state: &mut State, conn: ConnId, posture: Posture, took: Duration) 
     let name = name.clone();
     state.notify(Severity::Info, format!("connected to {}", name.as_str()));
 
-    state.connection = ConnectionState::Connected(crate::state::Connection {
+    state.connection = ConnectionState::Connected(crate::connection::Connection {
         id: conn,
         name,
         posture,

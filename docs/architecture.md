@@ -196,7 +196,15 @@ Testing the whole application becomes synchronous. `update` is a function from
 ```
 lc-domain/src/
   model/        # Schema, Keyspace, Table, PrimaryKey, CqlValue, Statement
-  state.rs      # State, Panel, Cursor, Scroll, Selection, Overlay, Geometry
+  state.rs      # State: the root struct over the panel modules
+  panel.rs      # the four panels, in frame order
+  viewport.rs   # Cursor, Scroll, Span: bounded motion over a list
+  selection.rs  # Range, Ranges, Selection
+  geometry.rs   # what the last frame measured (see §3)
+  overlay.rs    # Overlay: what outranks focus
+  connection.rs # ConnectionState, SchemaState
+  jobs.rs       # export, drop and commit in flight
+  feedback.rs   # loader, yank flash, toasts
   update/       # update() and its dispatch; one module per overlay or flow
   view/         # ViewModel projection (see §3), hint bar bindings
   ports.rs      # trait definitions (see §5)

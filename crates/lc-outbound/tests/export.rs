@@ -4,9 +4,10 @@
 use lc_domain::clock::Stamp;
 use lc_domain::config::PageSize;
 use lc_domain::export::{Confirm, Format, Stop};
+use lc_domain::geometry::Geometry;
 use lc_domain::model::{CqlValue, DbError, Key, KeyPress, Page, PagingState, Row};
+use lc_domain::overlay::{Message, Overlay};
 use lc_domain::posture::Posture;
-use lc_domain::state::{Geometry, Message, Overlay};
 use lc_domain::style::Severity;
 use lc_domain::{Effect, Msg, Source, State, init, update};
 use lc_outbound::fake::{FakeCluster, FakeWriter};

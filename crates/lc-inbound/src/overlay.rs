@@ -1,6 +1,6 @@
 //! The block drawn over the panels when something needs saying.
 
-use lc_domain::state::Message;
+use lc_domain::overlay::Message;
 use lc_domain::style::Token;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -109,7 +109,8 @@ fn wrapped_line_count(message: &str, width: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use lc_domain::state::{ConnectionState, Message, Overlay};
+    use lc_domain::connection::ConnectionState;
+    use lc_domain::overlay::{Message, Overlay};
     use lc_domain::style::{Severity, Token};
     use lc_domain::{State, view_model};
     use ratatui::Terminal;

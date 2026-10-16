@@ -4,7 +4,9 @@
 use crate::contents::{ContentsState, SelectionMode};
 use crate::inspect::{Inspected, Inspector};
 use crate::model::{CqlValue, Key};
-use crate::state::{Overlay, Panel, State};
+use crate::overlay::Overlay;
+use crate::panel::Panel;
+use crate::state::State;
 
 use super::{
     Effect, copied, editable_here, escape, field_key, open_insert_commit, quit, start_edit,

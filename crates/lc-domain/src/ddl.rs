@@ -6,7 +6,8 @@
 //! field on `State` (architecture.md §11).
 
 use crate::search::Search;
-use crate::state::{Cursor, Scroll, Selection};
+use crate::selection::Selection;
+use crate::viewport::{Cursor, Scroll};
 
 /// Which of the panel's tabs is drawn.
 ///
@@ -82,7 +83,7 @@ impl DdlTab {
 /// The DDL panel's own state.
 ///
 /// The cursor and the viewport count in different units — see
-/// [`Span`](crate::state::Span) — which is why this panel is not in `update`'s
+/// [`Span`](crate::viewport::Span) — which is why this panel is not in `update`'s
 /// `LISTS` and follows a span rather than an index.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DdlPanel {
@@ -145,7 +146,7 @@ impl DdlPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Range, Ranges};
+    use crate::selection::{Range, Ranges};
 
     #[test]
     fn a_panel_opens_on_the_tab_that_describes_the_table() {

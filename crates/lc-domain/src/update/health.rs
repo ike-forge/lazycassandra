@@ -7,7 +7,9 @@ use crate::contents::TableRef;
 use crate::health::{Health, HealthPanel};
 use crate::log::{Outcome, Trace};
 use crate::model::{DbError, Key, QueryId};
-use crate::state::{Overlay, Panel, State};
+use crate::overlay::Overlay;
+use crate::panel::Panel;
+use crate::state::State;
 use crate::style::Severity;
 use crate::tree::Node;
 

@@ -186,7 +186,7 @@ pub fn gutter(rows: usize) -> u16 {
 
 /// Which column the grid is drawn from.
 ///
-/// Not [`crate::state::Scroll`]: every method there takes a `height`, because
+/// Not [`crate::viewport::Scroll`]: every method there takes a `height`, because
 /// a row viewport shows a fixed number of rows whatever the offset. How many
 /// columns fit depends on which one you start from, so the window is a
 /// function of the offset rather than a constant beside it (design §5).
@@ -205,7 +205,7 @@ impl ColumnScroll {
     /// Pulls a stale offset back over a panel that grew or a page that
     /// narrowed, so the drawn window ends no later than the last column.
     ///
-    /// [`crate::state::Scroll::clamp_to`] over columns, and needed for the
+    /// [`crate::viewport::Scroll::clamp_to`] over columns, and needed for the
     /// same reason: [`Self::follow`] only ever moves towards the cursor, so
     /// without this a panel that shrank and grew again draws one column beside
     /// a screen of dead space until the user presses `h` (design §5).

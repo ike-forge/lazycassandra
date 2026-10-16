@@ -372,8 +372,9 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Bu
 mod tests {
     use lc_domain::contents::TableRef;
     use lc_domain::drop::{DropPrompt, Target};
+    use lc_domain::overlay::Overlay;
     use lc_domain::posture::Posture;
-    use lc_domain::state::{Overlay, State};
+    use lc_domain::state::State;
     use lc_domain::view::view_model;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

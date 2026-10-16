@@ -1581,7 +1581,7 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | Every palette of ours reads on every ground it declares, the crosshair included | `every_palette_of_ours_reads_on_every_ground_it_declares`, `the_neutral_ramp_of_ours_is_a_staircase`, `every_border_of_ours_is_perceptible` (`inbound/theme/mod.rs`) |
 | Every flavour reads against its own base, and a highlight bar is distinct from its field | `every_flavour_reads_against_its_own_base`, `a_highlight_bar_is_distinct_from_its_field` (`inbound/theme/ported/catppuccin.rs`) |
 | Every palette sets every surface | `Palette` holds plain `Color`s and no `Option<Color>`, so nothing can decline one and there is nothing left to test (`inbound/theme/mod.rs`) |
-| Panel numbers are distinct and total | `every_panel_has_a_distinct_number`, `a_number_leads_back_to_the_panel_that_claims_it`, `the_numbers_are_the_ones_the_design_names` — all in `state.rs` |
+| Panel numbers are distinct and total | `every_panel_has_a_distinct_number`, `a_number_leads_back_to_the_panel_that_claims_it`, `the_numbers_are_the_ones_the_design_names` — all in `panel.rs` |
 | No number is shadowed by an earlier arm | `a_number_focuses_its_panel_from_any_panel_that_does_not_take_text` |
 | A number and a bracket are text in a panel that takes text | `a_number_is_text_in_a_panel_that_takes_text`, `a_bracket_is_text_in_a_panel_that_takes_text` |
 | Numbers have no side effects | `a_number_moves_focus_and_does_nothing_else` |
@@ -1852,15 +1852,15 @@ Tests in `crates/lc-domain/src/update/tests/` unless noted.
 | `y` on a single cell still yanks it bare | `y_on_a_single_cell_still_yanks_it_bare` |
 | Every row of a range is banded, and the cursor row reads apart from them | `every_row_of_a_range_is_banded_and_the_cursor_row_reads_apart_from_them` (`inbound/render/tests/`) |
 | `y` drops the range and sends each cursor back to its anchor | `y_drops_the_selection_and_sends_the_cursor_back_to_its_anchor`, `a_selection_grown_upwards_sends_the_cursor_back_down`, `a_frozen_range_still_knows_where_to_send_the_cursor`, `cell_mode_sends_both_cursors_home`, `the_tree_collapses_its_selection_on_y_too` |
-| A frozen group keeps the end it grew from, pulled back the same way on a clamp | `clamping_pulls_an_extending_anchor_back_into_the_list`, `clamping_a_frozen_group_pulls_its_surviving_anchor_back_too` (`state.rs`) |
+| A frozen group keeps the end it grew from, pulled back the same way on a clamp | `clamping_pulls_an_extending_anchor_back_into_the_list`, `clamping_a_frozen_group_pulls_its_surviving_anchor_back_too` (`selection.rs`) |
 | A `y` that yanks nothing resets nothing and lights nothing | `a_y_that_yanks_nothing_leaves_the_selection_alone`, `a_y_that_yanks_nothing_lights_nothing` |
 | `y` lights what it took, on the axes its mode bounds | `y_lights_up_what_it_yanked`, `row_mode_lights_the_whole_row_and_column_mode_the_whole_column`, `a_bare_y_lights_the_row_it_took` |
 | The flash fades, costs one repaint doing it, and the next key ends it | `the_flash_fades_and_only_the_tick_that_ends_it_costs_a_repaint`, `the_next_key_ends_the_flash` |
 | The flash inverts the rows it took, and reaches one panel | `a_yanks_afterglow_inverts_the_rows_it_took`, `a_yank_in_the_tree_lights_the_tree_alone` (`inbound/render/tests/`) |
 | The bar names `esc` while a range stands, and leaves it off a panel with neither a range nor a search | `the_bar_names_esc_while_a_range_stands`, `the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_search` (`view/hints.rs`) |
 | `v` on an unheld row opens a second group beside what is frozen, and `Esc` takes both at once | `v_builds_two_groups_and_esc_takes_both` |
-| `v` on a held row drops that group and no other | `v_on_a_selected_row_drops_that_group_only`, `v_freezes_then_opens_a_second_group_then_drops_one` (`state.rs`) |
-| Dropping a group takes the anchor with it only when the anchor was inside it | `dropping_the_group_holding_the_anchor_takes_the_anchor`, `dropping_another_group_keeps_the_anchor`, `clamping_away_the_group_holding_the_anchor_takes_the_anchor` (`state.rs`) |
+| `v` on a held row drops that group and no other | `v_on_a_selected_row_drops_that_group_only`, `v_freezes_then_opens_a_second_group_then_drops_one` (`selection.rs`) |
+| Dropping a group takes the anchor with it only when the anchor was inside it | `dropping_the_group_holding_the_anchor_takes_the_anchor`, `dropping_another_group_keeps_the_anchor`, `clamping_away_the_group_holding_the_anchor_takes_the_anchor` (`selection.rs`) |
 | `y` over several groups yanks their rows in the order they are drawn, with nothing between the groups, and sends the cursor home to the last `v` | `y_over_two_groups_yanks_their_rows_in_drawn_order`, `y_sends_the_cursor_home_to_the_last_v_and_spends_every_group`, `a_single_cell_in_one_group_each_way_still_yanks_bare` |
 | Switching panels clears the selection of the panel left behind, by every route, and re-focusing the same panel does not | `switching_panels_clears_the_selection_of_the_panel_left_behind`, `re_focusing_the_focused_panel_keeps_its_selection`, `leaving_contents_clears_both_of_its_axes`, `a_click_clears_the_selection_of_the_panel_it_leaves`, `enter_on_a_table_leaves_no_selection_behind_in_tables`, `esc_out_of_queries_clears_what_queries_left_behind` |
 

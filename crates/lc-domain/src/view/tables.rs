@@ -1,7 +1,10 @@
 //! The Tables panel's projection: the keyspace/table tree as drawable rows.
 
+use crate::connection::{ConnectionState, SchemaState};
+use crate::feedback::Flash;
 use crate::model::{KeyspaceKind, Schema};
-use crate::state::{ConnectionState, Flash, Panel, SchemaState, State};
+use crate::panel::Panel;
+use crate::state::State;
 use crate::style::{Segment, Token};
 use crate::tree::{Node, TablesPanel};
 
@@ -162,9 +165,11 @@ fn tree_row(node: &Node<'_>, followed: bool) -> TreeRow {
 
 #[cfg(test)]
 mod tests {
+    use crate::connection::{Connection, ConnectionState, SchemaState};
     use crate::model::{ConnId, DbError};
     use crate::posture::Posture;
-    use crate::state::{Connection, ConnectionState, Ranges, SchemaState, State};
+    use crate::selection::Ranges;
+    use crate::state::State;
     use crate::style::Token;
 
     use crate::search::{Search, Searched};
@@ -509,6 +514,6 @@ mod tests {
             panic!("a loaded schema draws a tree");
         };
 
-        assert_eq!(ranges, Ranges::of(crate::state::Range::new(0, 0)));
+        assert_eq!(ranges, Ranges::of(crate::selection::Range::new(0, 0)));
     }
 }

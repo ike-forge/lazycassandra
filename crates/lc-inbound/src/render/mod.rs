@@ -1,9 +1,11 @@
 //! Drawing a frame.
 
 use lc_domain::ViewModel;
-use lc_domain::state::{Geometry, Panel, Span as Selection};
+use lc_domain::geometry::Geometry;
+use lc_domain::panel::Panel;
 use lc_domain::style::Token;
 use lc_domain::view::{OverlayView, PanelBody, PanelTitle, Tab};
+use lc_domain::viewport::Span as Selection;
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
 use ratatui::style::{Modifier, Style};

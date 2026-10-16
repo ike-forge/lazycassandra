@@ -15,8 +15,9 @@ use crate::grid::ColumnScroll;
 use crate::inspect::Inspector;
 use crate::model::{CqlValue, DbError, KeyspaceKind, Page, PagingState, QueryId, Row, Statement};
 use crate::search::{Direction, Search};
-use crate::state::{Cursor, Scroll, Selection};
+use crate::selection::Selection;
 use crate::style::{Segment, Token};
+use crate::viewport::{Cursor, Scroll};
 
 /// The Contents panel's own state.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -288,7 +289,7 @@ impl Sort {
 /// count them. `update`'s epilogue and every drawn frame each wanted that
 /// answer, so an idle tick over a page of blobs allocated megabytes to reach
 /// the conclusion that nothing had moved — the cost
-/// [`crate::state::Loader`]'s repaint rule exists to avoid.
+/// [`crate::feedback::Loader`]'s repaint rule exists to avoid.
 ///
 /// The widths are a pure function of the page and are built with it, so the
 /// cache has no way to go stale. That is why there is no public constructor

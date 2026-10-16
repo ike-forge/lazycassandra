@@ -8,13 +8,14 @@
 
 use crate::contents::ContentsPanel;
 use crate::model::Key;
+use crate::panel::Panel;
 use crate::posture::Posture;
 use crate::search::{Search, Sift};
-use crate::state::{Cursor, Panel};
 use crate::view::Binding;
 use crate::view::Liveness;
 use crate::view::Stroke;
 use crate::view::hints::label;
+use crate::viewport::Cursor;
 
 /// One labelled group of commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -915,7 +916,7 @@ fn seek(slots: &[Slot], from: usize, direction: Direction) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Panel;
+    use crate::panel::Panel;
     use crate::view::Liveness;
 
     /// The widest row `MIN_W` in the renderer is derived from

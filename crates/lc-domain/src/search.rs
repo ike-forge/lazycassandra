@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use crate::state::Panel;
+use crate::panel::Panel;
 
 /// A search term that is applied to a panel.
 ///
@@ -185,7 +185,7 @@ pub struct Origin {
 
 /// An open search prompt.
 ///
-/// Lives in [`crate::state::Overlay`] rather than beside it, so "a palette and
+/// Lives in [`crate::overlay::Overlay`] rather than beside it, so "a palette and
 /// a prompt at once" cannot be written down — the argument that enum's own doc
 /// comment already makes about a message and a palette (design §1).
 #[derive(Debug, Clone, PartialEq, Eq)]

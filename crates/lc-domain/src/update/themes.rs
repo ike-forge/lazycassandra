@@ -3,9 +3,11 @@
 
 use crate::config::Config;
 use crate::model::Key;
+use crate::overlay::Overlay;
 use crate::search::Sift;
-use crate::state::{Cursor, Overlay, State};
+use crate::state::State;
 use crate::theme::{BuiltIn, ThemeChoice};
+use crate::viewport::Cursor;
 
 use super::{Effect, escape, picker_matches, quit};
 

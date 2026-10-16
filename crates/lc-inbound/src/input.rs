@@ -106,8 +106,8 @@ fn notch(map: &FrameMap, event: MouseEvent, direction: Wheel) -> Option<Pointer>
 mod tests {
     use super::*;
     use crate::hit::{PanelHit, RowStrip};
+    use lc_domain::panel::Panel;
     use lc_domain::pointer::Click;
-    use lc_domain::state::Panel;
     use ratatui::layout::Rect;
 
     /// Tables at the top-left of a 40×12 frame, drawing three rows from the

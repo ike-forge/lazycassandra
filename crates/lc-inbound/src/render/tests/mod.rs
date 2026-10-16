@@ -1,19 +1,21 @@
 use crate::body::Marked;
 use lc_domain::commands::CommandsPanel;
+use lc_domain::connection::{Connection, ConnectionState, SchemaState};
 use lc_domain::contents::{SelectionMode, Subject, TableRef};
 use lc_domain::ddl::DdlTab;
+use lc_domain::feedback::Flash;
+use lc_domain::geometry::Geometry;
 use lc_domain::grid::{BAR, COLUMN_SPACING};
 use lc_domain::model::{
     ClusteringColumn, ClusteringOrder, Column, ConnId, CqlValue, Index, IndexKind, IndexTarget,
     Key, Keyspace, Page, PrimaryKey, QueryId, Replication, Schema, Statement, Table, TableOptions,
 };
+use lc_domain::overlay::{Message, Overlay};
+use lc_domain::panel::Panel;
 use lc_domain::pointer::{Click, Mark};
 use lc_domain::posture::Posture;
 use lc_domain::search::{Prompt, Search, Searched};
-use lc_domain::state::{
-    Connection, ConnectionState, Flash, Geometry, Message, Overlay, Panel, Range, Ranges,
-    SchemaState, Selection,
-};
+use lc_domain::selection::{Range, Ranges, Selection};
 use lc_domain::style::Severity;
 use lc_domain::view::{Footer, PanelBody};
 use lc_domain::{Ported, ThemeChoice};
