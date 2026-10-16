@@ -1,11 +1,6 @@
-//! The cell inspector: one value, or one row, read whole
-//! (docs/superpowers/specs/2026-09-17-cell-inspector-design.md).
-//!
-//! The grid caps a column and ellipsises what does not fit; this is where a
-//! value is laid out for reading instead. Wrapping is the renderer's, because
-//! it needs a width, so the domain holds a cursor over the laid-out lines it
-//! can count itself, and an offset it bounds by what the frame reports back
-//! (design §5).
+//! The cell inspector: one value or one row, read whole. The domain counts
+//! laid-out lines; wrapping is the renderer's, so the offset follows the span
+//! the last frame reports.
 
 use std::collections::BTreeMap;
 
@@ -17,23 +12,17 @@ use crate::model::CqlValue;
 use crate::style::Segment;
 use crate::viewport::{Scroll, Span};
 
-/// What `Enter` opened over, copied out of the page: the grid beneath can be
-/// replaced while the overlay is up, and what is being read must not change
-/// under it.
+/// Copied out of the page: the grid can be replaced while the overlay is up.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inspected {
-    /// The value under the cell cursor, in cell and column mode.
     Cell {
-        /// The column's index in the page, which is what an edit is keyed by
-        /// — the name alone addresses nothing
-        /// (cell editing design §4).
+        /// The page column index, which edits are keyed by.
         at: usize,
         column: String,
         value: CqlValue,
     },
-    /// Every column of the row, in row mode.
     Row {
-        /// The gutter's number, one-based.
+        /// One-based.
         number: usize,
         columns: Vec<String>,
         values: Vec<CqlValue>,
@@ -41,7 +30,6 @@ pub enum Inspected {
 }
 
 impl Inspected {
-    /// Every value the block lays out, in the order it draws them.
     fn values(&self) -> &[CqlValue] {
         match self {
             Self::Cell { value, .. } => std::slice::from_ref(value),
@@ -49,9 +37,6 @@ impl Inspected {
         }
     }
 
-    /// The page column the `at`th drawn value belongs to. In row mode a field
-    /// *is* a column, in column order; in cell mode there is one field and it
-    /// is the column the grid cursor was on.
     fn column_of(&self, at: usize) -> Option<(usize, &str)> {
         match self {
             Self::Cell {
@@ -62,9 +47,7 @@ impl Inspected {
         }
     }
 
-    /// Replaces the `at`th drawn value, so the block redraws what was just
-    /// typed into it: the inspector holds a copy of the page, and a copy that
-    /// did not follow the edit would show the value the user replaced.
+    /// The inspector holds a copy of the page, which must follow the edit.
     fn set(&mut self, at: usize, value: CqlValue) {
         match self {
             Self::Cell { value: held, .. } if at == 0 => *held = value,
@@ -78,34 +61,22 @@ impl Inspected {
     }
 }
 
-/// An open inspector: what it shows, which line the cursor is on, and how
-/// far down it is scrolled.
-///
-/// The cursor counts laid-out lines, which the domain can count for itself:
-/// the layout is width-independent, and only the wrapping under it is not.
-/// The offset counts wrapped lines, so it follows the cursor by the span the
-/// last frame drew it at, the way the Logs tab's does (design §5).
+/// The cursor counts laid-out lines (width-independent); the offset counts
+/// wrapped lines and follows by span.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Inspector {
-    /// The drawn row the grid was standing on, which is what an edit made
-    /// here is applied back to (cell editing design §4).
+    /// The drawn row an edit made here applies back to.
     row: usize,
     subject: Subject,
     inspected: Inspected,
     cursor: usize,
     scroll: Scroll,
-    /// The open edit field, while one is.
-    ///
-    /// A field on the inspector rather than a sibling overlay: a field with
-    /// no value under it is not a state, the argument the export form makes
-    /// for its overwrite confirmation (export design §7).
+    /// On the inspector, not a sibling overlay: a field with no value under it
+    /// is not a state.
     field: Option<Field>,
-    /// Which drawn fields have been typed into and not yet written. Indices
-    /// into the values the block draws, so the projection can band them
-    /// without going back to the page.
+    /// Indices into the drawn values, so the projection needs no page.
     edited: Vec<usize>,
-    /// Set while the block is the form for a row that does not exist yet
-    /// (docs/superpowers/specs/2026-10-12-row-insert-design.md §2).
+    /// Set while the block is the form for a row not yet inserted.
     new_row: Option<BTreeMap<usize, Edited>>,
 }
 
@@ -124,11 +95,8 @@ impl Inspector {
         }
     }
 
-    /// The form for a row that does not exist yet: every column of `subject`,
-    /// all unset (insert design §2).
-    ///
-    /// The grid row is `0` and means nothing: nothing typed here is applied
-    /// to the page, which is what [`Self::row`] otherwise addresses.
+    /// The grid row is `0` and means nothing: nothing typed here applies to the
+    /// page.
     #[must_use]
     pub fn inserting(subject: Subject, columns: Vec<String>) -> Self {
         let values = vec![CqlValue::Null; columns.len()];
@@ -151,16 +119,14 @@ impl Inspector {
         self.new_row.is_some()
     }
 
-    /// The fields typed into so far, as `(drawn field, value)` in column
-    /// order, which is the order the statement reads in.
+    /// In column order, which is the statement's order.
     pub fn typed(&self) -> impl Iterator<Item = (usize, &Edited)> {
         self.new_row
             .iter()
             .flat_map(|typed| typed.iter().map(|(at, edited)| (*at, edited)))
     }
 
-    /// Whether `⏎` would accept the open field. An empty field is accepted in
-    /// the form, where it unsets the column (insert design §3).
+    /// An empty field is accepted in the form, where it unsets the column.
     #[must_use]
     pub fn can_accept(&self) -> bool {
         self.field.as_ref().is_some_and(|field| {
@@ -168,7 +134,6 @@ impl Inspector {
         })
     }
 
-    /// Why `⏎` is greyed, `None` while it is not.
     #[must_use]
     pub fn field_error(&self) -> Option<String> {
         if self.can_accept() {
@@ -178,7 +143,6 @@ impl Inspector {
         self.field.as_ref().and_then(Field::error)
     }
 
-    /// Whether the field under the cursor holds a value in the form.
     #[must_use]
     pub fn is_set_at_cursor(&self) -> bool {
         self.new_row
@@ -186,8 +150,8 @@ impl Inspector {
             .is_some_and(|typed| typed.contains_key(&self.field_at_cursor()))
     }
 
-    /// Unsets the field under the cursor, which is the only way back to
-    /// "not written" for a free-text column once it holds a value.
+    /// The only way back to "not written" once a free-text column holds a
+    /// value.
     pub fn unset(&mut self) {
         let at = self.field_at_cursor();
 
@@ -198,9 +162,7 @@ impl Inspector {
         }
     }
 
-    /// Accepts the open field into the form: a value is held, an empty field
-    /// unsets the column. `false` while the text does not parse, which leaves
-    /// the field open (cell editing design §3).
+    /// `false` while the text does not parse.
     pub fn accept_new(&mut self) -> bool {
         if !self.can_accept() {
             return false;
@@ -216,9 +178,7 @@ impl Inspector {
             return false;
         };
 
-        // An empty field is a value only for a free-text column, and only once
-        // it has been typed to empty or already held one: opening a field and
-        // pressing `⏎` leaves the column unset (insert design §3).
+        // Opening a field and pressing `⏎` leaves the column unset.
         let blank = field.line().text().is_empty();
         let keeps_blank = blank
             && crate::edit::takes_empty(field.cql_type())
@@ -241,26 +201,23 @@ impl Inspector {
         true
     }
 
-    /// The drawn grid row this was opened over.
     #[must_use]
     pub const fn row(&self) -> usize {
         self.row
     }
 
-    /// Marks the drawn fields already dirty when the block opened, so a
-    /// reopened inspector says so too.
+    /// Marks fields already dirty, so a reopened inspector agrees with the
+    /// grid.
     #[must_use]
     pub fn with_edited(self, edited: Vec<usize>) -> Self {
         Self { edited, ..self }
     }
 
-    /// The drawn fields typed into and not yet written.
     #[must_use]
     pub fn edited(&self) -> &[usize] {
         &self.edited
     }
 
-    /// The open field, while one is.
     #[must_use]
     pub const fn field(&self) -> Option<&Field> {
         self.field.as_ref()
@@ -270,9 +227,7 @@ impl Inspector {
         self.field.as_mut()
     }
 
-    /// The drawn field the cursor's line belongs to, and the page column and
-    /// name it names. `None` where the cursor is on a value that belongs to
-    /// no column of the page.
+    /// `None` on a value that belongs to no page column.
     #[must_use]
     pub fn at_field(&self) -> Option<(usize, usize, &str)> {
         let at = self.field_at_cursor();
@@ -282,19 +237,16 @@ impl Inspector {
             .map(|(column, name)| (at, column, name))
     }
 
-    /// The value the cursor's line belongs to, as the block draws it.
     #[must_use]
     pub fn value_at_cursor(&self) -> Option<&CqlValue> {
         self.inspected.values().get(self.field_at_cursor())
     }
 
-    /// How many values the block draws.
     #[must_use]
     pub fn field_count(&self) -> usize {
         self.inspected.values().len()
     }
 
-    /// Puts the cursor on the first line of the `at`th drawn value.
     pub fn focus_field(&mut self, at: usize) {
         let before = self
             .inspected
@@ -307,7 +259,6 @@ impl Inspector {
         self.go_to(before);
     }
 
-    /// Opens `field` over the value the cursor is on.
     pub fn start_edit(&mut self, field: Field) {
         self.field = Some(field);
     }
@@ -316,13 +267,7 @@ impl Inspector {
         self.field = None;
     }
 
-    /// Accepts the open field: closes it, redraws the value it typed, and
-    /// answers with the drawn field and what was accepted — which is what
-    /// `update` carries back to the page.
-    ///
-    /// `None` while the text does not parse, which leaves the field open:
-    /// a keystroke that loses what was typed is worse than no validation
-    /// (design §3).
+    /// `None` while the text does not parse, which keeps what was typed.
     pub fn accept_edit(&mut self) -> Option<(usize, usize, Edited)> {
         let field = self.field.as_ref()?;
         let edited = field.parsed()?;
@@ -337,13 +282,10 @@ impl Inspector {
         Some((at, column, edited))
     }
 
-    /// Unmarks the `at`th drawn field, for an edit that restored the value it
-    /// started from (design §1).
     pub fn unmark(&mut self, at: usize) {
         self.edited.retain(|marked| *marked != at);
     }
 
-    /// Which drawn value the cursor's line falls in.
     fn field_at_cursor(&self) -> usize {
         let mut at = self.cursor;
 
@@ -369,19 +311,16 @@ impl Inspector {
         &self.inspected
     }
 
-    /// The first wrapped line drawn.
     #[must_use]
     pub const fn offset(&self) -> usize {
         self.scroll.offset()
     }
 
-    /// The laid-out line the cursor is on.
     #[must_use]
     pub const fn cursor(&self) -> usize {
         self.cursor
     }
 
-    /// Laid-out lines the block holds: one value's, or every field's.
     #[must_use]
     pub fn line_count(&self) -> usize {
         self.inspected
@@ -419,19 +358,14 @@ impl Inspector {
         self.cursor = cursor.min(self.line_count().saturating_sub(1));
     }
 
-    /// Pulls the viewport the shortest distance that puts the cursor's line
-    /// inside it, `span` being where the last frame wrapped that line to.
     pub const fn follow(&mut self, span: Span, height: usize) {
         self.scroll.follow_span(span, height);
     }
 
-    /// Pulls the offset back over a body that rewrapped shorter.
     pub const fn clamp_to(&mut self, lines: usize, height: usize) {
         self.scroll.clamp_to(lines, height);
     }
 
-    /// What the grid's `y` yanks in the mode this was opened from: the bare
-    /// value, or the row as one CSV line (design §4).
     #[must_use]
     pub fn yank(&self) -> Option<String> {
         match &self.inspected {
@@ -442,9 +376,7 @@ impl Inspector {
         }
     }
 
-    /// The laid-out line under the cursor, its indent dropped — and, in row
-    /// mode, without the column name beside it, which is a heading rather
-    /// than a value. `None` over a null, as [`Self::yank`] is.
+    /// The indent dropped, and in row mode the column name too.
     #[must_use]
     pub fn line(&self) -> Option<String> {
         let (value, line) = self.at_cursor()?;
@@ -455,7 +387,6 @@ impl Inspector {
         }
     }
 
-    /// The value the cursor's line belongs to, and the line.
     fn at_cursor(&self) -> Option<(&CqlValue, String)> {
         let mut at = self.cursor;
 
@@ -471,7 +402,6 @@ impl Inspector {
         None
     }
 
-    /// `<subject> · <column>`, or `<subject> · row <n>`.
     #[must_use]
     pub fn title(&self) -> Vec<Segment> {
         let mut segments = match &self.subject {
@@ -488,8 +418,7 @@ impl Inspector {
         segments
     }
 
-    /// The cell's size for the bottom border. `None` over a row, and over a
-    /// null, which has no bytes to count.
+    /// `None` over a row and over a null.
     #[must_use]
     pub fn size(&self) -> Option<String> {
         let Inspected::Cell { value, .. } = &self.inspected else {
@@ -507,13 +436,8 @@ impl Inspector {
     }
 }
 
-/// `value` laid out for reading, one string per line, leading spaces its
-/// indent (design §3).
-///
-/// Control characters are dropped, which is what the grid's cells come to:
-/// ratatui draws no grapheme holding one. Dropped here rather than left to
-/// the renderer because wrapping reads `\n` and `\t` as whitespace, and a
-/// break the grid never draws would appear in the inspector.
+/// Control characters are dropped here, not by the renderer: wrapping reads
+/// `\n` and `\t` as whitespace, and would break where the grid draws none.
 #[must_use]
 pub fn lines(value: &CqlValue) -> Vec<String> {
     let laid = match value {
@@ -526,8 +450,6 @@ pub fn lines(value: &CqlValue) -> Vec<String> {
         .collect()
 }
 
-/// A collection one element to a line inside its brackets, nested ones a level
-/// deeper; any other value as the grid draws it.
 fn nested(value: &CqlValue) -> Vec<String> {
     match value {
         CqlValue::List(values) => bracketed(values.iter().map(|value| (None, value)), '[', ']'),
@@ -576,14 +498,8 @@ fn bracketed<'a>(
     lines
 }
 
-/// `text` re-indented as JSON, or `None` when it is not JSON enough to
-/// re-indent safely: it must open with `{` or `[`, balance its brackets,
-/// terminate every string, end where its outermost bracket closes, and hold
-/// no whitespace between two bare tokens — `[not json]` would otherwise come
-/// out as `notjson`.
-///
-/// Hand-rolled rather than parsed into a map: a map reorders keys and
-/// reformats numbers, and every token here is kept byte for byte (design §3).
+/// `None` unless it is safely re-indentable JSON. Hand-rolled: a parsed map
+/// would reorder keys and reformat numbers.
 fn json(text: &str) -> Option<Vec<String>> {
     let chars: Vec<char> = text.trim().chars().collect();
     if !matches!(chars.first(), Some('{' | '[')) {
@@ -649,8 +565,7 @@ fn json(text: &str) -> Option<Vec<String>> {
     Some(lines)
 }
 
-/// Copies the string opening at `at` into `line`, and answers with the index
-/// of its closing quote. `None` for a string that never closes.
+/// `None` for a string that never closes.
 fn string(chars: &[char], at: usize, line: &mut String) -> Option<usize> {
     line.push('"');
     let mut escaped = false;
@@ -670,7 +585,6 @@ fn string(chars: &[char], at: usize, line: &mut String) -> Option<usize> {
     None
 }
 
-/// The index of the first non-whitespace character at or after `from`.
 fn significant(chars: &[char], from: usize) -> usize {
     chars
         .iter()
@@ -679,8 +593,7 @@ fn significant(chars: &[char], from: usize) -> usize {
         .map_or(chars.len(), |offset| from + offset)
 }
 
-/// A character of a number, a literal or a string's quote: what two tokens
-/// separated only by whitespace would run together as.
+/// What two tokens separated only by whitespace would run together as.
 const fn bare(character: char) -> bool {
     !matches!(character, '{' | '}' | '[' | ']' | ',' | ':' | ' ')
 }

@@ -1,4 +1,6 @@
-//! What the focused panel responds to, as the bar will say it.
+//! What the focused panel responds to, as the bar says it. A hint must be true
+//! in the frame it is drawn: greyed where its key would do nothing this frame,
+//! absent where it never could.
 
 use crate::contents::SelectionMode;
 use crate::model::{Key, KeyPress};
@@ -8,18 +10,13 @@ use crate::queries::{CqlMode, QueriesTab};
 use crate::search::{Direction, Searched};
 use crate::state::State;
 
-/// A binding, keyed by the presses `handle_key` actually matches on.
-///
-/// Not a display string: a string could name a press no arm of `handle_key`
-/// claims and nothing would ever catch it, and a bar that lies is worse than
-/// no bar (design §2). `update::tests` presses every one of these.
+/// Keyed by presses, not display text, so `update::tests` can press every one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
     pub keys: &'static [Stroke],
     pub action: &'static str,
 }
 
-/// One way of pressing a binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stroke(KeyPress);
 
@@ -40,18 +37,13 @@ impl Stroke {
     }
 }
 
-/// Whether pressing a hint's key in this frame would do anything.
-///
-/// A hint that would not is drawn greyed rather than dropped: the binding is
-/// still what the panel is for, and a bar whose contents move as the buffer
-/// fills teaches less than one that stays put (docs/shortcuts.md §2).
+/// Greyed rather than dropped, so the bar does not shift as the buffer fills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Liveness {
     Live,
     Inert,
 }
 
-/// One binding, as text, for a renderer that never sees a [`Key`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hint {
     pub keys: String,
@@ -59,24 +51,16 @@ pub struct Hint {
     pub liveness: Liveness,
 }
 
-/// What the focused panel does, and what works everywhere.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HintBar {
     pub panel: Vec<Hint>,
     pub global: Vec<Hint>,
-    /// A running export's count, drawn on the bar's right (export design §5).
     pub export: Option<String>,
 }
 
-/// Bindings every panel answers to. Repeated in each panel's bar rather than
-/// learned once: a user who never presses `tab` has no way to find the other
-/// three panels (design §3).
-///
-/// The bar drops global hints from the left as the frame narrows, so position
-/// is survival order, and [`QUIT`] is appended after these: `q quit` is last
-/// to go because a user who can read one hint needs the way out, `?` sits just
-/// ahead of it because it is the way to every binding the bar had no room for,
-/// and `tab panel` — which teaches only one binding — is the first to go.
+/// Repeated in every bar: a user who never presses `tab` cannot find the other
+/// panels. The bar drops from the left as the frame narrows, so order is
+/// survival order; [`QUIT`] goes last.
 pub(crate) const GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Tab)],
@@ -88,28 +72,14 @@ pub(crate) const GLOBAL: &[Binding] = &[
     },
 ];
 
-/// Global everywhere a letter is a binding — which is every panel but one.
-/// In a panel that takes text `q` types a `q`, and naming it would be a lie
-/// (queries editor design §6).
-///
-/// `pub(crate)` so `update`'s "every global hint does something" test can
-/// still reach it now that it has left [`GLOBAL`].
+/// Not in [`GLOBAL`]: in a panel that takes text `q` types itself.
 pub(crate) const QUIT: Binding = Binding {
     keys: &[Stroke::key(Key::Char('q'))],
     action: "quit",
 };
 
-/// `esc` is named only here. The bar leaves it out everywhere else because it
-/// does something only when an overlay is up, and naming it always would be a
-/// lie in most frames (hint bar design §3). With the palette open it is never
-/// a lie, and `?`/`esc` together are what the user is owed for `q` still
-/// quitting (design §7) — both close it, so both are named.
-///
-/// `⏎ run` comes first so it is the first hint width-fitting gives up
-/// (`lc-inbound::hints::fit` drops from the front of `global`) — a user
-/// who has read this far still has `?`/`esc`/`q` to fall back on, the
-/// ways out the bar keeps longest everywhere else (palette execution
-/// design §12).
+/// `esc` is named only here among the globals: with the palette open it always
+/// closes it. `⏎ run` first, so it is dropped first.
 const PALETTE_GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
@@ -129,18 +99,13 @@ const PALETTE_GLOBAL: &[Binding] = &[
     },
 ];
 
-/// What the bar names while the diagnostics overlay is up. `esc` is the only
-/// way out — `diagnostics_key` claims every key motion does not, including
-/// `q`, so naming `quit` here would be the exact lie this bar exists to
-/// prevent (design §9).
+/// No `quit`: `diagnostics_key` claims `q`.
 const DIAGNOSTICS_GLOBAL: &[Binding] = &[Binding {
     keys: &[Stroke::key(Key::Escape)],
     action: "close",
 }];
 
-/// What the bar names while the inspector is up. `j/k` is named for the
-/// reason the theme picker names it: nothing else on screen says the block
-/// moves (cell inspector design §6).
+/// `j/k` named: nothing else says the block moves.
 pub(crate) const INSPECT: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('j')), Stroke::key(Key::Char('k'))],
@@ -161,23 +126,16 @@ const INSPECT_GLOBAL: &[Binding] = &[Binding {
     action: "close",
 }];
 
-/// The `e` hint, appended to the inspector's bar and greyed wherever §2
-/// refuses it — so the refusal is visible before the key is pressed, the
-/// promise every greyed hint keeps
-/// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §7).
 const EDIT: Binding = Binding {
     keys: &[Stroke::key(Key::Char('e'))],
     action: "edit",
 };
 
-/// The `⏎` hint over the insert form, where `⏎` writes rather than closes
-/// (insert design §4).
 const INSERT: Binding = Binding {
     keys: &[Stroke::key(Key::Enter)],
     action: "insert",
 };
 
-/// The `x` hint over the insert form, greyed over a field holding nothing.
 const UNSET: Binding = Binding {
     keys: &[Stroke::key(Key::Char('x'))],
     action: "unset",
@@ -188,9 +146,7 @@ const COMMIT_ROW: Binding = Binding {
     action: "commit row",
 };
 
-/// What the bar names while a field is open. No panel group and no `q`: the
-/// field claims every printable key, so naming anything else would be the
-/// lie this bar exists to prevent (design §3).
+/// No panel group and no `q`: the field claims every printable key.
 const FIELD: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
@@ -202,7 +158,6 @@ const FIELD: &[Binding] = &[
     },
 ];
 
-/// The commit confirmation's own bar, and the quit warning's.
 const COMMIT: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('y'))],
@@ -225,19 +180,13 @@ const DISCARD: &[Binding] = &[
     },
 ];
 
-/// The `ctrl-s` hint, appended to Table contents' bar wherever anything is
-/// uncommitted and left off entirely where nothing is: a key that would do
-/// nothing at all is not an affordance (design §7).
+/// Left off entirely where nothing is uncommitted.
 const COMMIT_HINT: Binding = Binding {
     keys: &[Stroke::ctrl(Key::Char('s'))],
     action: "commit",
 };
 
-/// What the bar names in place of the focused panel's group while the picker
-/// is open. Moving is the whole panel group, and it is named "preview"
-/// because that is what the press does — the cursor writes `State.theme` on
-/// every step (themes design §6). The one bar that still names `j`/`k`: what
-/// it teaches is the side effect, not the motion.
+/// `j`/`k` named as "preview": the motion's side effect is what it teaches.
 pub(crate) const THEMES: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('j')), Stroke::key(Key::Char('k'))],
@@ -249,10 +198,7 @@ pub(crate) const THEMES: &[Binding] = &[
     },
 ];
 
-/// The two ways out are named apart, because they differ in what they leave
-/// behind: `⏎` keeps the previewed theme and `esc` puts back the one the
-/// picker opened on (themes design §6). `q` is named for the reason
-/// [`PALETTE_GLOBAL`] names it — the picker leaves quitting alone.
+/// `⏎` keeps the previewed theme; `esc` restores the original.
 pub(crate) const THEMES_GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
@@ -268,28 +214,19 @@ pub(crate) const THEMES_GLOBAL: &[Binding] = &[
     },
 ];
 
-/// What the bar names in place of the focused panel's group while the
-/// connection picker is open.
-///
-/// No `j`/`k` here where [`THEMES`] names them: the theme picker teaches the
-/// motion because moving it previews a theme, and there is a side effect
-/// worth naming. Moving this cursor does nothing until `⏎`, so the motion is
-/// assumed as it is in every panel bar (docs/shortcuts.md §2).
+/// No `j`/`k`: moving this cursor previews nothing.
 pub(crate) const CONNECTIONS: &[Binding] = &[Binding {
     keys: &[Stroke::key(Key::Char('/'))],
     action: "search",
 }];
 
-/// Named only where `ctrl-g` opens something, and last of the panel's own
-/// hints so a narrow bar drops it before `run` (query history design §4).
+/// Last of the panel's hints, so a narrow bar drops it before `run`.
 const HISTORY_HINT: Binding = Binding {
     keys: &[Stroke::ctrl(Key::Char('g'))],
     action: "history",
 };
 
-/// What the bar names while the history is open: `⏎` appends and runs nothing,
-/// which is the difference from `ctrl-r` worth saying (query history design
-/// §3). Motion is assumed, as in the connection picker.
+/// `⏎` appends and runs nothing, the difference from `ctrl-r` worth saying.
 pub(crate) const HISTORY: &[Binding] = &[Binding {
     keys: &[Stroke::key(Key::Char('/'))],
     action: "search",
@@ -310,8 +247,7 @@ pub(crate) const HISTORY_GLOBAL: &[Binding] = &[
     },
 ];
 
-/// What the bar names while the health block is open. Motion is assumed, as
-/// in the pickers; `⏎` is named because it folds here rather than choosing.
+/// `⏎` named: it folds here rather than choosing.
 pub(crate) const HEALTH: &[Binding] = &[Binding {
     keys: &[Stroke::key(Key::Enter)],
     action: "fold/unfold",
@@ -328,10 +264,6 @@ pub(crate) const HEALTH_GLOBAL: &[Binding] = &[
     },
 ];
 
-/// The two ways out differ in what they leave behind, as the theme picker's
-/// do: `⏎` opens the connection under the cursor, and `esc` leaves the tool
-/// connected to whatever it already was — which at startup is nothing.
-/// `q` is named for the reason [`PALETTE_GLOBAL`] names it.
 pub(crate) const CONNECTIONS_GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
@@ -347,12 +279,7 @@ pub(crate) const CONNECTIONS_GLOBAL: &[Binding] = &[
     },
 ];
 
-/// What the bar names while the drop confirmation is up. Two sets, because
-/// the two spellings are answered with different keys and a bar that named
-/// both would be lying in every frame (drop design §2.1).
-///
-/// `q` is not named on either: `drop_key` claims every key it does not use,
-/// quitting included, the same rule `DIAGNOSTICS_GLOBAL` follows.
+/// Two sets: the spellings answer different keys. No `q`: `drop_key` claims it.
 pub(crate) const DROP_YES_NO: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('y'))],
@@ -364,9 +291,7 @@ pub(crate) const DROP_YES_NO: &[Binding] = &[
     },
 ];
 
-/// The same two, for the target that deletes rows rather than dropping a
-/// named thing. The verb is what the bar is for: `y` is the key either way,
-/// and which of the two it answers is the only thing worth a word.
+/// The verb is the only difference worth a word.
 pub(crate) const DELETE_YES_NO: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('y'))],
@@ -378,8 +303,7 @@ pub(crate) const DELETE_YES_NO: &[Binding] = &[
     },
 ];
 
-/// `⏎` is greyed until the field says the name it asked for — the promise
-/// every other greyed hint keeps (docs/shortcuts.md §2).
+/// `⏎` is greyed until the typed name matches.
 pub(crate) const DROP_TYPED: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
@@ -407,8 +331,7 @@ const NEXT_OPTION: Binding = Binding {
     action: "next option",
 };
 
-/// `space` means what the stop under `tab` makes it mean, and nothing on the
-/// path stop, where it is text (export design §2).
+/// Text on the path stop.
 const TOGGLE: Binding = Binding {
     keys: &[Stroke::key(Key::Char(' '))],
     action: "toggle",
@@ -419,7 +342,7 @@ const EXPORT: Binding = Binding {
     action: "export",
 };
 
-/// `q` is not named: the form claims it and does nothing with it.
+/// No `q`: the form claims it.
 const EXPORT_CLOSE: Binding = Binding {
     keys: &[Stroke::key(Key::Escape)],
     action: "close",
@@ -436,12 +359,7 @@ pub(crate) const EXPORT_OVERWRITE: &[Binding] = &[
     },
 ];
 
-/// What the bar names while a prompt is up, and while the filter modal is —
-/// two text fields with the same two ways out, `⏎` writing what was typed and
-/// `esc` leaving what was there (grid sort and filter design §3). The panel
-/// group is empty for both: the focused panel responds to nothing, and naming
-/// its bindings would be the lie design §2 exists to prevent (panel search
-/// design §5.2).
+/// Empty panel group: the focused panel responds to nothing under a prompt.
 const SEARCH_GLOBAL: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
@@ -453,60 +371,41 @@ const SEARCH_GLOBAL: &[Binding] = &[
     },
 ];
 
-/// Named only while a popup is up, which is the only frame in which it is
-/// true: `tab` moves focus every other one, and `⏎` splits the line, and the
-/// hints that say so are dropped for exactly these frames
-/// (query editor design §5.5).
+/// Only while a popup is up; the `tab panel` and `⏎ newline` hints drop for
+/// those frames.
 const COMPLETE: Binding = Binding {
     keys: &[Stroke::key(Key::Tab), Stroke::key(Key::Enter)],
     action: "complete",
 };
 
-/// `esc` is named only where pressing it unconditionally does something
-/// (hint bar design §3). With a search applied, it clears one — which is
-/// what keeps clearing discoverable (panel search design §5.3).
 const CLEAR: Binding = Binding {
     keys: &[Stroke::key(Key::Escape)],
     action: "clear",
 };
 
-/// What `esc` does once nothing nearer claims it: every panel but Tables
-/// hands focus back to Tables, so the bar says so in exactly those frames.
-/// [`CLEAR`] wins where both would be true — one key gets one hint, and the
-/// rung that fires first is the one worth naming (docs/shortcuts.md §2).
+/// [`CLEAR`] wins where both apply: one key, one hint.
 const LEAVE: Binding = Binding {
     keys: &[Stroke::key(Key::Escape)],
     action: "leave",
 };
 
-/// Named while `P` runs, the rung of `esc`'s chain that fires first there
-/// (grid paging design §2).
 const STOP: Binding = Binding {
     keys: &[Stroke::key(Key::Escape)],
     action: "stop",
 };
 
-/// `esc` while the Cql buffer is open: it closes the buffer and keeps focus,
-/// so [`LEAVE`] would promise a move that does not happen.
+/// Not [`LEAVE`]: closing the buffer keeps focus.
 const DONE: Binding = Binding {
     keys: &[Stroke::key(Key::Escape)],
     action: "done",
 };
 
-/// Named on the same condition as [`CLEAR`]: `n`/`N` are inert without a
-/// search applied, and a hint that would do nothing this frame is a lie
-/// (docs/shortcuts.md §2, design §5.3).
 const NEXT_MATCH: Binding = Binding {
     keys: &[Stroke::key(Key::Char('n'))],
     action: "next match",
 };
 
-/// The connection picker's bar.
-///
-/// With nothing to list the picker is guidance rather than a list, and neither
-/// searching it nor pressing `⏎` on it does anything — so the bar names
-/// neither. A hint that would do nothing this frame is the lie this bar exists
-/// to prevent (design §2, connection picker design §3).
+/// An empty picker names neither `/` nor `⏎`.
 fn connections_bar(state: &State, export: Option<String>) -> HintBar {
     let listed = !state.config.connections.is_empty();
 
@@ -525,13 +424,10 @@ fn connections_bar(state: &State, export: Option<String>) -> HintBar {
     }
 }
 
-/// The bar an overlay draws in place of the focused panel's, or `None` where
-/// no overlay claims the row. Split out of [`bar`] only for its length.
 fn overlay_bar(state: &State, export: Option<&String>) -> Option<HintBar> {
     let export = export.cloned();
 
-    // An overlay with a prompt up is a panel that takes text, and the two
-    // ways out are the prompt's two (overlay search design §8).
+    // A sifting overlay takes text: the prompt's two ways out.
     if sifting(state) {
         return Some(HintBar {
             panel: Vec::new(),
@@ -540,10 +436,7 @@ fn overlay_bar(state: &State, export: Option<&String>) -> Option<HintBar> {
         });
     }
 
-    // No panel group: moving — by a row, by a screen, or to an end — is
-    // assumed rather than taught, in here as in every panel bar
-    // (docs/shortcuts.md §2). What is left, `⏎ run` and the two ways out,
-    // is all global (palette execution design §12).
+    // No panel group: motion is assumed.
     if matches!(state.overlay, Some(Overlay::Commands(_))) {
         return Some(HintBar {
             panel: Vec::new(),
@@ -637,13 +530,9 @@ pub(crate) fn bar(state: &State) -> HintBar {
         return bar;
     }
 
-    // `?` promises a palette that draws; below `command_rows()` it would
-    // not, so the bar drops the promise rather than make it (design §5.1).
-    // Matched by key rather than sliced off the front, so a reorder of
-    // `GLOBAL` cannot silently drop the wrong hint instead.
-    // `tab` moves focus in every frame but one: with a completion popup up it
-    // accepts what is selected, so the global hint would be a lie exactly
-    // where the panel hint is true (query editor design §5.5).
+    // `?` is dropped where no palette fits, matched by key so a reorder of
+    // `GLOBAL` cannot drop the wrong one. `tab` accepts a completion while a
+    // popup is up.
     let completing = state.queries.completion().is_some() && state.takes_text();
     let fits = state.geometry.command_rows() > 0;
     let mut global: Vec<Hint> = GLOBAL
@@ -656,8 +545,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
         global.push(rendered(&QUIT));
     }
 
-    // `⏎ newline` is dropped for the frames `⏎` accepts instead, the same
-    // way the global `tab panel` hint is above: one key, one true hint.
+    // `⏎ newline` drops while `⏎` accepts a completion.
     let mut panel: Vec<Hint> = state
         .hints()
         .iter()
@@ -712,9 +600,7 @@ pub(crate) fn bar(state: &State) -> HintBar {
     }
 }
 
-/// The confirmation's own bar. No panel group: the overlay claims every key,
-/// so the tree underneath answers to nothing — the rule `Search` and the
-/// export form already follow above.
+/// No panel group: the confirmation claims every key.
 fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar {
     let bindings = match (prompt.takes_text(), prompt.target().row_count().is_some()) {
         (true, false) => DROP_TYPED,
@@ -740,15 +626,13 @@ fn drop_bar(prompt: &crate::drop::DropPrompt, export: Option<String>) -> HintBar
     }
 }
 
-/// The inspector's own bar. Each copy key is greyed where it copies nothing:
-/// `y` over a null value, `Y` over a null field's line.
+/// `y` greys over a null value, `Y` over a null field's line.
 fn inspect_bar(
     state: &State,
     inspector: &crate::inspect::Inspector,
     export: Option<String>,
 ) -> HintBar {
-    // An open field claims every key the block otherwise answers, so its bar
-    // names only what it answers itself (design §3).
+    // An open field names only what it answers.
     if inspector.field().is_some() {
         return HintBar {
             panel: Vec::new(),
@@ -823,9 +707,7 @@ fn inspect_bar(
     }
 }
 
-/// The form's own bar. The panel underneath answers to nothing, so it has no
-/// panel group of its own; what the stop under `tab` answers to is named in
-/// its place.
+/// The stop under `tab` stands in for the panel group.
 fn export_bar(form: &crate::export::ExportForm, export: Option<String>) -> HintBar {
     use crate::export::Stop;
 
@@ -852,7 +734,6 @@ fn export_bar(form: &crate::export::ExportForm, export: Option<String>) -> HintB
     }
 }
 
-/// Whether an overlay has a live search over its list.
 fn sifting(state: &State) -> bool {
     match &state.overlay {
         Some(Overlay::Commands(panel)) => panel.sift().is_some(),
@@ -865,37 +746,21 @@ fn sifting(state: &State) -> bool {
     }
 }
 
-/// Whether the focused panel is carrying a live range. A hint must be true in
-/// the frame it is drawn in, and under a live range `esc` unconditionally
-/// clears it (docs/shortcuts.md §2) — the same rule that already puts `esc`
-/// on the bar for a panel carrying a search.
+/// Under a live range `esc` clears it, so the bar names it.
 fn selected(state: &State) -> bool {
     match state.focus() {
         Panel::Tables => state.tables.selection.is_active(),
         Panel::Ddl => state.ddl.selection.is_active(),
         Panel::Contents => state.contents.rows.is_active() || state.contents.columns.is_active(),
-        // `false` on the Cql tab, which is an editor and has no selection to
-        // be active; the Logs tab is a list like the other three.
+        // The Cql tab is an editor with no selection.
         Panel::Queries => {
             state.queries.tab() == QueriesTab::Logs && state.log.selection.is_active()
         }
     }
 }
 
-/// `ctrl-r` on a buffer holding no statement submits nothing, silently
-/// (query execution design §3), and an empty buffer is the panel's starting
-/// state — so the hint the panel leads with would otherwise be a lie in the
-/// first frame the user sees. It is greyed against the connection's posture
-/// too, on the statement the band is over rather than on the whole buffer:
-/// that is the one `ctrl-r` would send (cql statement selection design §5).
-/// Matched by press rather than by action, for the same reason `?` is above.
-///
-/// `ctrl-f` is greyed on the same rule, against a buffer the formatter would
-/// leave alone — which an empty one is (query editor design §4.3).
-///
-/// `ctrl-e` over Contents is refused the same way, on an empty grid, and on a
-/// frame with no room to draw the form — the same promise `?` keeps above
-/// (export design §1).
+/// `ctrl-r` greys on a buffer with no statement, `ctrl-f` on one the formatter
+/// would leave alone, `ctrl-e` over an empty grid or no room for the form.
 fn liveness(state: &State, binding: &Binding) -> Liveness {
     let runs = binding.keys == [Stroke::ctrl(Key::Char('r'))];
     if runs {
@@ -903,12 +768,8 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
             return Liveness::Inert;
         };
 
-        // Greyed against the posture as well as against an empty buffer: a
-        // statement that writes on a read-only connection would be refused,
-        // and the bar may not promise what `submit` will not do. Unlike `d`
-        // this is not a property of the key — the same key runs a `SELECT`
-        // in the same frame — so the hint follows the buffer as it is typed
-        // (posture design §3).
+        // Follows the statement as typed: the same key runs a `SELECT` and is
+        // refused a `DELETE`.
         let refused =
             !state.posture().permits_mutation() && crate::model::Statement::typed(&cql).mutates();
 
@@ -934,10 +795,7 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
         return Liveness::Inert;
     }
 
-    // The three column keys are named in column mode and answer only over a
-    // page: `s` and `f` are greyed with no grid loaded, and `c` also with no
-    // filter on the column the cursor is on — a key that would clear nothing
-    // (grid sort and filter design §6).
+    // `c` also greys with no filter on the cursor's column.
     let arranges = matches!(binding.action, "sort" | "filter");
     if arranges && state.contents.loaded().is_none() {
         return Liveness::Inert;
@@ -953,12 +811,7 @@ fn liveness(state: &State, binding: &Binding) -> Liveness {
         return Liveness::Inert;
     }
 
-    // `d` names a question, so it is greyed wherever there is none to ask —
-    // read off the very derivation the key itself reads, so the bar cannot
-    // promise one `open_drop` would refuse (drop design §1). That covers the
-    // frame, which a user cannot see for themselves, and the grid's own gate:
-    // a page whose primary key is not present addresses no row, and the greyed
-    // key is where that is said (design §3.1).
+    // Reads the same derivation as `d` itself.
     let drops = binding.keys == [Stroke::key(Key::Char('d'))];
     if drops
         && (!state.geometry.drop_fits()
@@ -989,20 +842,16 @@ fn pages(binding: &Binding) -> bool {
     *binding == crate::view::hints::NEXT_PAGE || *binding == crate::view::hints::EVERY_PAGE
 }
 
-/// Whether the connection's posture forbids the binding outright. Such a hint
-/// is left off the bar rather than greyed; the palette still names it.
-///
-/// `ctrl-r` is not one: whether it is refused follows the buffer as typed.
+/// Left off the bar rather than greyed; the palette still names it. Not
+/// `ctrl-r`, which follows the buffer.
 fn refused(state: &State, binding: &Binding) -> bool {
     (binding.keys == [Stroke::key(Key::Char('d'))]
         || (binding.keys == [Stroke::key(Key::Char('i'))] && state.focus() == Panel::Contents))
         && !state.posture().permits_mutation()
 }
 
-/// Whether `n`/`N` would move `target`'s cursor this frame: whether the
-/// panel's own `next_match`, from where the cursor already sits, finds
-/// anything — which is `false` both when the term matches nothing and when
-/// Contents holds a search with no page loaded (design §5.3, §5.1).
+/// `false` when the term matches nothing, and for a Contents search with no
+/// page loaded.
 fn next_match_is_live(state: &State, target: Searched) -> bool {
     match target {
         Searched::Tables => state.schema().is_some_and(|schema| {
@@ -1054,9 +903,7 @@ fn name(press: KeyPress) -> String {
     }
 }
 
-/// Named rather than drawn, for the keys with no printable form: the arrow
-/// glyphs collide with each other, and a terminal font may draw any of them
-/// as a box (design §3).
+/// Named, not drawn: arrow glyphs collide and fonts may draw them as boxes.
 fn key_name(key: Key) -> String {
     match key {
         Key::Char(' ') => "space".to_owned(),
@@ -1080,33 +927,23 @@ fn key_name(key: Key) -> String {
     }
 }
 
-// Motion is not here, in any panel's bar: `j`/`k`, `home`/`end`, the arrows
-// and `pgup`/`pgdn` are what a user of a terminal list already reaches for,
-// and a bar that spends its width teaching them has none left for what is
-// particular to the panel (docs/shortcuts.md §2). The palette still lists
-// every one.
+// Motion is in no panel's bar: users already reach for it, and the palette
+// lists it.
 const TABLES_HINTS: &[Binding] = &[
-    // `⏎` on a keyspace folds it and on a table reads it. The bar names the
-    // focused panel and nothing finer (design §1), so one label has to cover
-    // both — "open" is true of either row, "read" of half of them.
+    // "open" is true of both a keyspace and a table row.
     Binding {
         keys: &[Stroke::key(Key::Enter)],
         action: "open",
     },
-    // Not global: it does nothing in Queries, where `/` is text (panel
-    // search design §5.3).
+    // Not global: `/` is text in Queries.
     Binding {
         keys: &[Stroke::key(Key::Char('/'))],
         action: "search",
     },
-    // Greyed rather than dropped where the statement could not run — a
-    // read-only connection, a frame with no room for the block — the same
-    // promise `ctrl-e` keeps over an empty grid (drop design §1).
     Binding {
         keys: &[Stroke::key(Key::Char('d'))],
         action: "drop",
     },
-    // Greyed on a keyspace and where the block has no room, as `d` is.
     Binding {
         keys: &[Stroke::key(Key::Char('H'))],
         action: "health",
@@ -1139,30 +976,24 @@ pub(crate) const EVERY_PAGE: Binding = Binding {
 };
 
 const CONTENTS_HINTS: &[Binding] = &[
-    // Named only where it opens: a selection, an empty grid or a frame too
-    // small for the block leaves it off (cell inspector design §6).
+    // Only where it opens.
     Binding {
         keys: &[Stroke::key(Key::Enter)],
         action: "inspect",
     },
-    // Named only while the result has more to fetch, and greyed while a page
-    // is in flight (grid paging design §6).
+    // Only while there is more to fetch; greyed while a page is in flight.
     NEXT_PAGE,
     EVERY_PAGE,
     Binding {
         keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "export",
     },
-    // The same key the tree answers, aimed at what this panel holds. Greyed
-    // wherever the rows on screen cannot be addressed by their primary key
-    // (drop design §3.1).
+    // Greyed where the rows lack an addressable primary key.
     Binding {
         keys: &[Stroke::key(Key::Char('d'))],
         action: "delete",
     },
-    // Greyed where no form could open — a typed statement's grid, a frame
-    // with no room — and left off a read-only connection, as `d` is (insert
-    // design §1).
+    // Greyed where no form could open; off on a read-only connection.
     Binding {
         keys: &[Stroke::key(Key::Char('i'))],
         action: "insert",
@@ -1181,13 +1012,7 @@ const CONTENTS_HINTS: &[Binding] = &[
     },
 ];
 
-/// What column mode adds, and what the bar names only there.
-///
-/// Three keys that address the column the cursor is on, so they are named in
-/// the one mode whose cursor *is* a column — the same rule that keeps `esc
-/// clear` off a bar with nothing to clear: a hint has to be true in the frame
-/// it is drawn in (docs/shortcuts.md §2,
-/// docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §6).
+/// Named only in column mode, whose cursor is a column.
 const CONTENTS_COLUMN_HINTS: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('s'))],
@@ -1197,8 +1022,7 @@ const CONTENTS_COLUMN_HINTS: &[Binding] = &[
         keys: &[Stroke::key(Key::Char('f'))],
         action: "filter",
     },
-    // Named apart from `esc clear`, which clears a search and a range: this
-    // one clears the filter on this column and nothing else (design §3).
+    // Clears this column's filter only, unlike `esc clear`.
     Binding {
         keys: &[Stroke::key(Key::Char('c'))],
         action: "clear filter",
@@ -1227,9 +1051,7 @@ const CONTENTS_COLUMN_HINTS: &[Binding] = &[
     },
 ];
 
-/// The Cql tab before its buffer is open. `⏎` first: typing is what the tab
-/// is for, and nothing else on screen says how to start (cql edit mode design
-/// §3).
+/// `⏎` first: nothing else says how to start typing.
 const CQL_HINTS: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Enter)],
@@ -1245,24 +1067,17 @@ const CQL_HINTS: &[Binding] = &[
     },
 ];
 
-/// The Cql tab with its buffer open.
 const QUERIES_HINTS: &[Binding] = &[
-    // First: it is what the panel is for. `⏎ newline` is what it does on the
-    // way there, and `esc done` — appended by the bar, on the frames no
-    // popup claims `esc` first — closes the buffer again.
+    // First: it is what the panel is for.
     Binding {
         keys: &[Stroke::ctrl(Key::Char('r'))],
         action: "run",
     },
-    // Unconditionally true in every frame Queries is focused, so it is named
-    // plainly rather than greyed — unlike `ctrl-r`, which lies on an empty
-    // buffer (external editor design §5).
+    // Never greyed: always true while Queries is focused.
     Binding {
         keys: &[Stroke::ctrl(Key::Char('e'))],
         action: "$EDITOR",
     },
-    // Greyed on a buffer already laid out, for the reason `ctrl-r` is greyed
-    // on an empty one (query editor design §4.3).
     Binding {
         keys: &[Stroke::ctrl(Key::Char('f'))],
         action: "format",
@@ -1273,14 +1088,6 @@ const QUERIES_HINTS: &[Binding] = &[
     },
 ];
 
-/// The Logs tab's own bar, once its trail is drawn rather than the CQL
-/// buffer beside it (query log design §5.1). It is read-only and takes no
-/// text, so it advertises like the other list panels — `/` and `v`, not
-/// `⏎ newline`, which types nothing here: `Enter` only reaches `activate`,
-/// which is gated to Tables. `esc` is not listed here either, for the reason
-/// no list panel lists it: the bar appends it itself, as `clear` or as
-/// `leave`, whichever is true of the frame (docs/shortcuts.md's Logs
-/// subsection).
 const LOGS_HINTS: &[Binding] = &[
     Binding {
         keys: &[Stroke::key(Key::Char('/'))],
@@ -1293,10 +1100,7 @@ const LOGS_HINTS: &[Binding] = &[
 ];
 
 impl Panel {
-    /// What this panel responds to.
-    ///
-    /// Exhaustive, so a fifth panel cannot compile without declaring its
-    /// bindings — the same guarantee `ALL` and `shortcut` give.
+    /// Exhaustive, so a new panel cannot compile without its bindings.
     #[must_use]
     pub const fn hints(self) -> &'static [Binding] {
         match self {
@@ -1309,15 +1113,8 @@ impl Panel {
 }
 
 impl State {
-    /// What the focused panel responds to this frame.
-    ///
-    /// A question about `State` rather than about `Panel`, for the same
-    /// reason `takes_text` moved here: the Queries panel's bindings depend on
-    /// which tab is drawn, and `Panel::hints` cannot see that (query log
-    /// design §5.1). Every other panel answers exactly what `Panel::hints`
-    /// already did — with the one further exception column mode makes over
-    /// Table contents, whose three column keys answer in that mode alone
-    /// (grid sort and filter design §6).
+    /// On `State`, not `Panel`: Queries' bindings depend on its tab, and
+    /// Contents' on its mode.
     #[must_use]
     pub fn hints(&self) -> &'static [Binding] {
         match self.focus() {
@@ -1344,7 +1141,6 @@ mod tests {
     use crate::theme::ThemeChoice;
     use crate::viewport::Cursor;
 
-    /// A frame big enough for a palette to draw in.
     fn fits() -> State {
         let mut state = State::default();
         state.geometry = Geometry::new([8, 14, 20, 1], 37, 14);
@@ -1407,11 +1203,6 @@ mod tests {
         }
     }
 
-    // I2: the Logs tab is read-only and takes no text, so its bar must not
-    // carry the Cql tab's editor bindings — `⏎ newline` types nothing there
-    // (query log design §5.1) — and it must carry what the tab actually
-    // does, the same `/`/`v` the other list panels advertise, plus the
-    // `esc leave` every panel but Tables answers to.
     #[test]
     fn the_logs_tabs_bar_advertises_a_list_not_an_editor() {
         let mut state = State::default();
@@ -1510,7 +1301,6 @@ mod tests {
         assert_eq!(bar.global.last().expect("/ is last").action, "search");
     }
 
-    /// Design §8: the overlays name the key that searches them.
     #[test]
     fn the_overlay_bars_name_the_search_key() {
         let mut state = State::default();
@@ -1524,8 +1314,6 @@ mod tests {
         );
     }
 
-    /// Design §8: a live sift shows the prompt's own bar — the two ways out
-    /// are the same two, and `q quit` goes with it, because `q` is text now.
     #[test]
     fn a_live_sift_shows_the_prompts_bar() {
         let mut state = State::default();
@@ -1539,9 +1327,6 @@ mod tests {
         assert_eq!(actions, ["apply", "cancel"]);
     }
 
-    /// Design §8: the picker's own live sift collapses its bar the same way
-    /// the palette's does — `sifting()`'s `Themes` arm, not only its
-    /// `Commands` one.
     #[test]
     fn a_live_sift_over_the_picker_shows_the_prompts_bar() {
         let mut state = State::default();
@@ -1585,9 +1370,6 @@ mod tests {
         );
     }
 
-    /// Connection picker design §5: the bar names `⏎ connect` rather than
-    /// `⏎ keep`, and no `j/k` — moving this cursor previews nothing, so the
-    /// motion is assumed as it is in every panel bar.
     #[test]
     fn the_connection_pickers_bar_names_connect_and_teaches_no_motion() {
         let mut state = State::default();
@@ -1628,9 +1410,6 @@ mod tests {
         }
     }
 
-    /// Connection picker design §3: with nothing listed, `/` searches nothing
-    /// and `⏎` opens nothing, so the bar names neither — the rule against a
-    /// hint that would do nothing this frame (design §2).
     #[test]
     fn an_empty_connection_picker_names_neither_search_nor_connect() {
         let mut state = State::default();
@@ -1652,8 +1431,6 @@ mod tests {
         );
     }
 
-    /// Overlay search design §8: a picker with a live sift is a panel that
-    /// takes text, and the two ways out are the prompt's two.
     #[test]
     fn a_live_sift_in_the_connection_picker_shows_the_prompts_bar() {
         let mut state = State::default();
@@ -1915,7 +1692,7 @@ mod tests {
         }
     }
 
-    /// The `Queries` bar with `text` in its buffer, `\n` meaning Enter.
+    /// `\n` means Enter.
     fn queries_bar(text: &str) -> HintBar {
         let mut state = fits();
         state.focus_on(Panel::Queries);
@@ -1959,9 +1736,6 @@ mod tests {
         );
     }
 
-    /// The buffer as typed, against the connection as opened: the same key in
-    /// the same frame runs a `SELECT` and would be refused a `DELETE`, so the
-    /// hint follows the text rather than the binding (posture design §3).
     #[test]
     fn the_run_hint_greys_against_a_buffer_the_posture_would_refuse() {
         for (posture, cql, expected) in [
@@ -2045,9 +1819,6 @@ mod tests {
         state
     }
 
-    /// Each half of the gate on its own, since neither is visible on screen: a
-    /// frame with no room for the block, and a cursor naming nothing (drop
-    /// design §1).
     #[test]
     fn the_drop_hint_is_live_only_where_the_key_would_open_something() {
         let loading = crate::connection::SchemaState::Loading;
@@ -2121,8 +1892,6 @@ mod tests {
         }
     }
 
-    /// The grid's own gate: with no page loaded there is no row to address,
-    /// so the key that would delete one is greyed (drop design §3.1).
     #[test]
     fn the_delete_hint_is_inert_over_a_grid_holding_no_addressable_row() {
         let mut state = connected(

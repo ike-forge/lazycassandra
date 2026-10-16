@@ -1,15 +1,7 @@
-//! The Queries panel's text buffer.
-//!
-//! Written here rather than taken from a widget crate because the domain is
-//! what builds a `Statement` from this text, gates it on `Posture`, and will
-//! match it against `Schema` for completion
-//! (docs/superpowers/specs/2026-08-09-queries-editor-design.md §1).
+//! The Queries panel's text buffer. Hand-written: the domain builds, gates and
+//! completes statements from it.
 
-/// A multi-line text buffer with one cursor.
-///
-/// Two invariants, held by every mutator rather than checked by callers: the
-/// buffer is never empty, and the cursor is always inside it. Both fields are
-/// private so neither can be broken from outside this module.
+/// Never empty, and the cursor always inside it; every mutator holds both.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Editor {
     lines: Vec<String>,
@@ -17,11 +9,8 @@ pub struct Editor {
     desired_column: usize,
 }
 
-/// Where the cursor is.
-///
-/// `column` counts `char`s. Not bytes, which would put a char-boundary
-/// invariant on every edit; not display width, which is the renderer's unit
-/// and the reason `unicode-width` is not a dependency of this crate.
+/// `column` counts `char`s: bytes would add a boundary invariant to every edit,
+/// and display width is the renderer's.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Position {
     pub line: usize,
@@ -29,8 +18,7 @@ pub struct Position {
 }
 
 impl Default for Editor {
-    /// One empty line, so there is no "no current line" state for a cursor to
-    /// point at.
+    /// One empty line, so there is always a current line.
     fn default() -> Self {
         Self {
             lines: vec![String::new()],
@@ -41,7 +29,7 @@ impl Default for Editor {
 }
 
 impl Editor {
-    /// The buffer's lines, one per screen row — the renderer does not wrap.
+    /// The renderer does not wrap.
     #[must_use]
     pub fn lines(&self) -> &[String] {
         &self.lines
@@ -52,13 +40,11 @@ impl Editor {
         self.cursor
     }
 
-    /// The buffer as one string, which is what a statement is built from.
     #[must_use]
     pub fn text(&self) -> String {
         self.lines.join("\n")
     }
 
-    /// Inserts `character` at the cursor and steps over it.
     pub fn insert(&mut self, character: char) {
         let at = self.byte_offset();
         self.line_mut().insert(at, character);
@@ -66,7 +52,6 @@ impl Editor {
         self.settle();
     }
 
-    /// Splits the line at the cursor, which lands at the start of the new one.
     pub fn insert_newline(&mut self) {
         let at = self.byte_offset();
         let tail = self.line_mut().split_off(at);
@@ -76,10 +61,6 @@ impl Editor {
         self.settle();
     }
 
-    /// Writes `text` at the cursor, `\n` splitting the line.
-    ///
-    /// What `insert` and `insert_newline` are between them, for a caller that
-    /// has a string rather than a keystroke.
     pub fn write(&mut self, text: &str) {
         for character in text.chars() {
             if character == '\n' {
@@ -90,18 +71,8 @@ impl Editor {
         }
     }
 
-    /// Writes `text` at `offset` characters into the buffer, leaving the
-    /// cursor on the character it was already on.
-    ///
-    /// The one edit that writes somewhere other than the cursor: accepting a
-    /// column offered with no table in scope also writes the `FROM` clause
-    /// that makes it resolve, and that belongs at the end of the statement
-    /// (docs/superpowers/specs/2026-08-17-completion-ranking-design.md §4).
-    ///
-    /// `offset` is at or after the cursor — the only place a clause completing
-    /// the statement under it can go — which is what makes restoring the saved
-    /// cursor right rather than approximate: nothing was written before it to
-    /// shift it.
+    /// The one edit away from the cursor, for a completion's `FROM` clause.
+    /// `offset` is at or after the cursor, so the saved cursor stays exact.
     pub fn insert_at(&mut self, offset: usize, text: &str) {
         debug_assert!(
             offset >= self.offset(),
@@ -115,44 +86,27 @@ impl Editor {
         self.settle();
     }
 
-    /// The cursor as a character offset into [`Self::text`].
-    ///
-    /// Characters, not bytes: a multi-byte character before the cursor must
-    /// not shift where a caller counting the buffer's text thinks it sits.
+    /// Characters, not bytes.
     #[must_use]
     pub fn offset(&self) -> usize {
         self.lines
             .iter()
             .take(self.cursor.line)
-            // The newline each line is followed by is a character of the text.
+            // Each line's newline counts.
             .map(|line| line.chars().count() + 1)
             .sum::<usize>()
             + self.cursor.column
     }
 
-    /// Puts the cursor at `offset`, clamped to the end of the buffer.
-    ///
-    /// [`Self::offset`]'s inverse, for a caller that found a position by
-    /// scanning [`Self::text`] rather than by moving through the buffer.
+    /// Clamped to the end.
     pub fn go_to_offset(&mut self, offset: usize) {
         self.cursor = self.position_of(offset);
         self.settle();
     }
 
-    /// Replaces the whole buffer, cursor at the end of it.
-    ///
-    /// Both invariants survive by construction: `split` on a `&str` always
-    /// yields at least one piece, so the buffer is never empty, and the cursor
-    /// is put on the last line's end. The end rather than the old offset —
-    /// that offset means nothing against text the external editor may have
-    /// rewritten entirely
-    /// (docs/superpowers/specs/2026-08-12-external-editor-design.md §3).
-    ///
-    /// One trailing line terminator, `\n` or `\r\n`, is stripped before
-    /// splitting: every POSIX editor writes one on save, and this is the
-    /// round trip back from `text()`, which never produces one — without the
-    /// strip every trip through the external editor would append a blank
-    /// line (external editor design §3).
+    /// Cursor at the end: the old offset means nothing against text an external
+    /// editor rewrote. One trailing `\n` or `\r\n` is stripped, or every editor
+    /// round trip would append a blank line.
     pub fn replace(&mut self, text: &str) {
         let text = text
             .strip_suffix("\r\n")
@@ -167,9 +121,7 @@ impl Editor {
         self.settle();
     }
 
-    /// Deletes the character before the cursor. At the start of a line that is
-    /// the line break, so the line joins the one above; at the start of the
-    /// buffer there is nothing to delete.
+    /// At a line start it joins the line above.
     pub fn backspace(&mut self) {
         if self.cursor.column > 0 {
             self.cursor.column -= 1;
@@ -185,9 +137,7 @@ impl Editor {
         self.settle();
     }
 
-    /// Deletes the character at the cursor. At the end of a line that is the
-    /// line break, so the next line comes up; at the end of the buffer there
-    /// is nothing to delete.
+    /// At a line end it joins the next line.
     pub fn delete(&mut self) {
         if self.cursor.column < self.line_len() {
             let at = self.byte_offset();
@@ -200,7 +150,6 @@ impl Editor {
         self.settle();
     }
 
-    /// Steps back one character, onto the end of the line above at column 0.
     pub fn left(&mut self) {
         if self.cursor.column > 0 {
             self.cursor.column -= 1;
@@ -212,7 +161,6 @@ impl Editor {
         self.settle();
     }
 
-    /// Steps forward one character, onto the start of the line below at end-of-line.
     pub fn right(&mut self) {
         if self.cursor.column < self.line_len() {
             self.cursor.column += 1;
@@ -224,50 +172,42 @@ impl Editor {
         self.settle();
     }
 
-    /// Moves the cursor up one line, preserving the desired column.
     pub fn up(&mut self) {
         self.go_to_line(self.cursor.line.saturating_sub(1));
     }
 
-    /// Moves the cursor down one line, preserving the desired column.
     pub fn down(&mut self) {
         self.go_to_line(self.cursor.line.saturating_add(1));
     }
 
-    /// Moves the cursor up by the given height, preserving the desired column.
     pub fn page_up(&mut self, height: usize) {
         self.go_to_line(self.cursor.line.saturating_sub(height));
     }
 
-    /// Moves the cursor down by the given height, preserving the desired column.
     pub fn page_down(&mut self, height: usize) {
         self.go_to_line(self.cursor.line.saturating_add(height));
     }
 
-    /// Moves the cursor to the start of the current line.
     pub fn line_start(&mut self) {
         self.cursor.column = 0;
         self.settle();
     }
 
-    /// The end of the cursor's line, not of the buffer — what `End` does in a
-    /// text editor, and a deliberate divergence from the other three panels
-    /// (design §3).
+    /// Line end, not buffer end, unlike the other panels: what `End` does in
+    /// every editor.
     pub fn line_end(&mut self) {
         self.cursor.column = self.line_len();
         self.settle();
     }
 
-    /// Every vertical motion. `desired_column` is read and left alone, so a
-    /// pass over a short line does not cost the column for good.
+    /// Leaves `desired_column` alone, so a short line does not cost the column.
     fn go_to_line(&mut self, line: usize) {
-        // `lines` is never empty, so this cannot underflow.
+        // `lines` is never empty.
         self.cursor.line = line.min(self.lines.len() - 1);
         self.cursor.column = self.desired_column.min(self.line_len());
     }
 
-    /// [`Self::offset`] read backwards, clamped to the end of the buffer so
-    /// an offset past it lands somewhere the cursor invariant allows.
+    /// Clamped so an offset past the end still satisfies the cursor invariant.
     #[must_use]
     pub fn position_of(&self, offset: usize) -> Position {
         let mut left = offset;
@@ -280,24 +220,18 @@ impl Editor {
             left -= len + 1;
         }
 
-        // `lines` is never empty, so this is the end of a real line.
+        // `lines` is never empty.
         Position {
             line: self.lines.len() - 1,
             column: self.lines[self.lines.len() - 1].chars().count(),
         }
     }
 
-    /// Characters on the cursor's line, which is also the largest column the
-    /// cursor may hold on it.
     fn line_len(&self) -> usize {
         self.lines[self.cursor.line].chars().count()
     }
 
-    /// The cursor's column as a byte index into its own line.
-    ///
-    /// Past the last character it is the line's length: `char_indices` has no
-    /// entry for the position after the end, which is where the cursor sits
-    /// whenever it is at end-of-line.
+    /// At end-of-line `char_indices` has no entry, so it is the line's length.
     fn byte_offset(&self) -> usize {
         let line = &self.lines[self.cursor.line];
 
@@ -310,8 +244,7 @@ impl Editor {
         &mut self.lines[self.cursor.line]
     }
 
-    /// Adopts the cursor's column as the one vertical motion should aim for.
-    /// Everything but a vertical motion calls this.
+    /// Everything but vertical motion calls this.
     fn settle(&mut self) {
         self.desired_column = self.cursor.column;
     }
@@ -321,7 +254,7 @@ impl Editor {
 mod tests {
     use super::*;
 
-    /// Types `text` from a fresh buffer, `\n` meaning Enter.
+    /// `\n` means Enter.
     fn typed(text: &str) -> Editor {
         let mut editor = Editor::default();
         for character in text.chars() {
@@ -399,7 +332,6 @@ mod tests {
         );
     }
 
-    /// Places the cursor directly, so these tests do not depend on motions.
     fn at(editor: &mut Editor, line: usize, column: usize) {
         editor.cursor = Position { line, column };
         editor.desired_column = column;

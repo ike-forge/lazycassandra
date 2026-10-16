@@ -1,11 +1,6 @@
-//! Port definitions.
-//!
-//! Defined here, implemented in `lc-outbound`, and called by neither — the
-//! effect runtime in `lc-app` drives them (architecture.md §5). That is what
-//! lets these be async while `update` stays synchronous.
-//!
-//! Every port is `dyn`-compatible so a fake can be swapped in wholesale, which
-//! is why they use `#[async_trait]` rather than native async fns in traits.
+//! Ports: defined here, implemented in `lc-outbound`, driven by `lc-app`'s
+//! effect runtime, so `update` stays synchronous (architecture.md §5).
+//! `#[async_trait]` keeps them `dyn`-compatible for fakes.
 
 use std::path::Path;
 
@@ -22,19 +17,11 @@ use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
 use crate::theme::ThemeChoice;
 
-/// A cluster, in our vocabulary rather than a driver's.
-///
-/// Returns our [`Schema`] and [`Page`]; driver types stop at the adapter, so
-/// choosing a driver (architecture.md §8) touches one crate.
+/// Driver types stop at the adapter.
 #[async_trait]
 pub trait Cluster: Send + Sync {
-    /// Opens a session to `target` and binds it to `conn`.
-    ///
-    /// The address arrives here rather than at the adapter's constructor: a
-    /// connection is chosen from the picker at runtime, so there is no one
-    /// contact point to build the adapter around. The posture that comes back
-    /// is the connection's own — nothing else knows it
-    /// (connection picker design §6).
+    /// The address arrives here: connections are chosen at runtime. The posture
+    /// returned is the connection's own.
     async fn connect(
         &self,
         conn: ConnId,
@@ -44,13 +31,8 @@ pub trait Cluster: Send + Sync {
     async fn describe(&self, conn: ConnId) -> Result<Schema, DbError>;
     async fn execute(&self, conn: ConnId, stmt: &Statement) -> Result<Page, DbError>;
 
-    /// One page of at most `page_size` rows of `stmt`, continuing from
-    /// `cursor` when there is one.
-    ///
-    /// Replaces a `fetch_page(conn, cursor)` that could not be implemented:
-    /// scylla's `query_single_page` needs the statement alongside the paging
-    /// state, and a cursor alone identifies nothing the driver can resume
-    /// (export design §6.2).
+    /// Needs the statement as well as the cursor: a paging state alone resumes
+    /// nothing.
     async fn execute_paged(
         &self,
         conn: ConnId,
@@ -59,70 +41,51 @@ pub trait Cluster: Send + Sync {
         cursor: Option<&PagingState>,
     ) -> Result<Page, DbError>;
 
-    /// What every node reports about `table`. A node that fails is a
-    /// [`crate::health::NodeOutcome`] rather than an `Err`; `Err` is for a
-    /// read that reached no node at all.
+    /// A failing node is a [`crate::health::NodeOutcome`]; `Err` means no node
+    /// was reached.
     async fn table_health(&self, conn: ConnId, table: &TableRef) -> Result<Health, DbError>;
 }
 
-/// Locates and layers configuration files (design §7).
 #[async_trait]
 pub trait ConfigSource: Send + Sync {
-    /// Never fails: a file that cannot be read or parsed produces
-    /// diagnostics and contributes nothing (design §6).
+    /// Never fails: an unreadable file yields diagnostics and contributes
+    /// nothing.
     async fn load(&self) -> (Config, Vec<Diagnostic>);
 }
 
-/// Writes one setting back into the file it was read from
-/// (theme persistence design §5).
-///
-/// A trait of its own rather than a method on [`ConfigSource`]: every run
-/// reads config at startup, one keystroke writes it, and a fake for one should
-/// not have to implement the other.
+/// Separate from [`ConfigSource`]: a fake for one need not implement the other.
 #[async_trait]
 pub trait ConfigSink: Send + Sync {
     async fn save_theme(&self, theme: &ThemeChoice) -> Result<(), ConfigWriteError>;
 }
 
-/// Resolves a credential to a value at connect time.
 #[async_trait]
 pub trait SecretResolver: Send + Sync {
     async fn resolve(&self, credential: &Credential) -> Result<String, ConfigError>;
 }
 
-/// Query history, kept between runs (query history design §1).
 #[async_trait]
 pub trait Store: Send + Sync {
-    /// Every connection's history, trimmed to `limit`. Never fails, as
-    /// [`ConfigSource::load`] does not: a file that cannot be read yields
-    /// nothing and a diagnostic.
+    /// Never fails, as [`ConfigSource::load`].
     async fn load(&self, limit: HistoryLimit) -> (Histories, Vec<Diagnostic>);
 
-    /// Replaces `connection`'s stored history, newest first, leaving every
-    /// other connection's alone.
     async fn save(&self, connection: &ConnectionName, entries: &[String])
     -> Result<(), StoreError>;
 }
 
-/// Opens a destination for an export.
-///
-/// Refusing to overwrite is this port's job rather than a separate `exists`
-/// call, which would leave a window between asking and creating
-/// (export design §6.1).
+/// Refusing to overwrite is this port's job: a separate `exists` call would
+/// race.
 #[async_trait]
 pub trait Writer: Send + Sync {
     async fn open(&self, path: &Path, overwrite: bool) -> Result<Box<dyn Sink>, ExportError>;
 }
 
-/// An open destination.
 #[async_trait]
 pub trait Sink: Send {
     async fn write(&mut self, chunk: &str) -> Result<(), ExportError>;
-    /// Flushes and closes.
     async fn finish(&mut self) -> Result<(), ExportError>;
-    /// Removes the partial file. Infallible from the caller's side: the export
-    /// has already failed, and a failure to clean up is not a second error the
-    /// user can act on (design §4).
+    /// Infallible to the caller: a cleanup failure is not an error the user can
+    /// act on.
     async fn abort(&mut self);
 }
 
@@ -138,9 +101,8 @@ pub enum ConfigError {
 pub enum ConfigWriteError {
     #[error("could not write {0}")]
     Io(String),
-    /// The file was left exactly as it was. Splicing into a document we cannot
-    /// parse would mean writing over what the user wrote (theme persistence
-    /// design §4).
+    /// Splicing into a document we cannot parse would overwrite what the user
+    /// wrote.
     #[error("{0} could not be parsed, so it was left alone: {1}")]
     Unparsable(String, String),
     #[error("nowhere to save it: neither XDG_CONFIG_HOME nor HOME is set")]

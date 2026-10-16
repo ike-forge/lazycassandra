@@ -1,12 +1,6 @@
-//! The grid's column arithmetic.
-//!
-//! Separate from [`crate::contents`] because it is arithmetic and not state:
-//! how wide a column is, how many fit from a given offset, and where the
-//! horizontal viewport has to sit to show a cell. `update` needs all four
-//! answers, and they cannot be measured in the renderer — "how many fit from
-//! offset N" varies with N, and architecture.md §3 forbids an offset-dependent
-//! measurement crossing back
-//! (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
+//! The grid's column arithmetic. Here rather than in the renderer: "how many
+//! fit from offset N" depends on N, and no offset-dependent measurement may
+//! cross back (architecture.md §3).
 
 use std::borrow::Cow;
 
@@ -16,37 +10,19 @@ use crate::cell;
 use crate::config::MaxColumnWidth;
 use crate::model::Page;
 
-/// Blank columns between cells, and between the gutter and the first column.
-///
-/// Two rather than one: a value that fills its column is ellipsised rather
-/// than padded, so a single blank leaves `…` sitting against the next
-/// column's first character and the two read as one word.
+/// Two: an ellipsised value with one blank reads as one word with the next
+/// column.
 pub const COLUMN_SPACING: u16 = 2;
 
-/// The cursor row's mark, merged into the same widget column as the
-/// row-number gutter rather than a structural column of its own — the mark
-/// costs one content column in the densest panel in the app, not two
-/// (design §4.2).
-///
-/// Defined here rather than beside the renderer's `Token::SelectionBar` so
-/// the domain's column-follow arithmetic and the renderer's layout share the
-/// one width, the same reason [`available`] exists (design §6). The renderer
-/// draws it unconditionally — a row with no cursor on it still spends the
-/// column on a blank — so [`available`] subtracts it unconditionally too.
+/// Shares the gutter's widget column. Drawn on every row, so [`available`]
+/// subtracts it unconditionally.
 pub const BAR: u16 = 1;
 
-/// The columns a heading spends on its sort and filter marks, the blank
-/// before them and the one between them included.
-///
-/// Here rather than beside the glyphs the renderer picks, for [`available`]'s
-/// reason: the width a heading needs is arithmetic the domain owns, and a
-/// renderer drawing a mark the width did not allow for would push the name
-/// out of its own column
-/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+/// The blank before the marks and the one between them included. Domain-owned
+/// so a heading never outgrows its column.
 pub const MARKS: u16 = 4;
 
-/// Each column's natural width: the widest of its values and of its heading
-/// with the marks that heading always carries.
+/// Headings count with the marks they always carry.
 #[must_use]
 pub fn natural_widths(page: &Page) -> Vec<u16> {
     page.columns
@@ -67,9 +43,7 @@ pub fn natural_widths(page: &Page) -> Vec<u16> {
         .collect()
 }
 
-/// `natural` capped at `cap`, past which a value is ellipsised and `Enter` is
-/// how it is read whole
-/// (docs/superpowers/specs/2026-09-17-cell-inspector-design.md §1).
+/// Past `cap` a value is ellipsised; `Enter` reads it whole.
 #[must_use]
 pub fn capped(natural: &[u16], cap: MaxColumnWidth) -> Vec<u16> {
     natural
@@ -78,17 +52,13 @@ pub fn capped(natural: &[u16], cap: MaxColumnWidth) -> Vec<u16> {
         .collect()
 }
 
-/// Each column's natural width, capped.
 #[must_use]
 pub fn widths(page: &Page, cap: MaxColumnWidth) -> Vec<u16> {
     capped(&natural_widths(page), cap)
 }
 
-/// The capped `widths`, widened into whatever `available` has left over once
-/// every column fits: the room is shared equally among the columns the cap
-/// truncated, none past its `natural` width, and what a column cannot take
-/// goes to the rest. Columns that do not all fit are left as they are, to be
-/// scrolled (docs/superpowers/specs/2026-09-17-cell-inspector-design.md §1).
+/// Leftover room is shared equally among truncated columns, none past natural
+/// width. Columns that do not all fit stay as they are.
 #[must_use]
 pub fn spread<'a>(widths: &'a [u16], natural: &[u16], available: u16) -> Cow<'a, [u16]> {
     let spacing = u16::try_from(widths.len().saturating_sub(1))
@@ -129,16 +99,8 @@ pub fn spread<'a>(widths: &'a [u16], natural: &[u16], available: u16) -> Cow<'a,
     Cow::Owned(spread)
 }
 
-/// The width left for value columns once the bar+gutter block and the one
-/// spacing column ahead of the first value column are taken off.
-///
-/// One home for arithmetic the domain and the renderer must agree on exactly:
-/// a disagreement scrolls the cell cursor and the drawn window to different
-/// places, and no test can see it (design §6). The bar is unconditional —
-/// the renderer draws it whether or not `gutter` is nonzero — so its column
-/// is subtracted unconditionally; only the gutter's own width is
-/// conditional on `gutter`, and the one spacing column belongs to the
-/// bar+gutter block as a whole rather than to the gutter alone.
+/// The domain and the renderer must agree exactly: a mismatch scrolls cursor
+/// and window apart invisibly.
 #[must_use]
 pub const fn available(width: u16, gutter: u16) -> u16 {
     width
@@ -147,11 +109,7 @@ pub const fn available(width: u16, gutter: u16) -> u16 {
         .saturating_sub(COLUMN_SPACING)
 }
 
-/// How many columns fit in `available`, drawing from `first`.
-///
-/// At least one whenever `first` names a column: a panel too narrow for even
-/// that one still shows what it can of it, which is more use than an empty
-/// panel.
+/// At least one: a panel too narrow for a column still shows part of it.
 #[must_use]
 pub fn fitting(widths: &[u16], first: usize, available: u16) -> usize {
     let mut used: u16 = 0;
@@ -172,7 +130,6 @@ pub fn fitting(widths: &[u16], first: usize, available: u16) -> usize {
     count
 }
 
-/// The row-number gutter's width: the digits of the last row's number.
 #[must_use]
 pub fn gutter(rows: usize) -> u16 {
     if rows == 0 {
@@ -184,35 +141,20 @@ pub fn gutter(rows: usize) -> u16 {
     u16::try_from(digits).unwrap_or(u16::MAX)
 }
 
-/// Which column the grid is drawn from.
-///
-/// Not [`crate::viewport::Scroll`]: every method there takes a `height`, because
-/// a row viewport shows a fixed number of rows whatever the offset. How many
-/// columns fit depends on which one you start from, so the window is a
-/// function of the offset rather than a constant beside it (design §5).
+/// Not [`crate::viewport::Scroll`]: how many columns fit depends on the offset.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ColumnScroll {
     first: usize,
 }
 
 impl ColumnScroll {
-    /// The leftmost column drawn.
     #[must_use]
     pub const fn first(self) -> usize {
         self.first
     }
 
-    /// Pulls a stale offset back over a panel that grew or a page that
-    /// narrowed, so the drawn window ends no later than the last column.
-    ///
-    /// [`crate::viewport::Scroll::clamp_to`] over columns, and needed for the
-    /// same reason: [`Self::follow`] only ever moves towards the cursor, so
-    /// without this a panel that shrank and grew again draws one column beside
-    /// a screen of dead space until the user presses `h` (design §5).
-    ///
-    /// Runs before `follow`, never after: it stops at the leftmost offset that
-    /// still fills the panel, which can be left of the cursor, and `follow` is
-    /// what puts the cursor back on screen from there.
+    /// [`Self::follow`] only moves toward the cursor, so without this a panel
+    /// that shrank and grew draws dead space. Runs before `follow`.
     pub fn clamp_to(&mut self, widths: &[u16], available: u16) {
         while self.first > 0
             && (self.first - 1) + fitting(widths, self.first - 1, available) >= widths.len()
@@ -221,7 +163,6 @@ impl ColumnScroll {
         }
     }
 
-    /// Moves the shortest distance that puts `column` on screen.
     pub fn follow(&mut self, column: usize, widths: &[u16], available: u16) {
         self.first = self.first.min(column);
 
@@ -429,7 +370,7 @@ mod tests {
         assert_eq!(scroll.first(), 1);
     }
 
-    /// Twelve columns of five: three fit in 19, one in 5, eleven in 75.
+    /// Three fit in 19, one in 5, eleven in 75.
     const TWELVE: [u16; 12] = [5; 12];
 
     #[test]

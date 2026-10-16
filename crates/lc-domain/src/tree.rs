@@ -1,8 +1,5 @@
-//! The Tables panel's tree: keyspaces at the root, tables under an unfolded
-//! keyspace.
-//!
-//! One flattening, used by both `update`'s motions and `view_model`, so the
-//! two cannot disagree about what row 5 is.
+//! The Tables panel's tree, flattened once so `update` and `view_model` agree
+//! on what row 5 is.
 
 use std::collections::BTreeSet;
 
@@ -11,32 +8,19 @@ use crate::search::{Direction, Search};
 use crate::selection::Selection;
 use crate::viewport::{Cursor, Scroll};
 
-/// The Tables panel's own state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TablesPanel {
-    /// Private so every motion is bounded by [`Self::rows`] rather than by a
-    /// row count a caller supplies.
+    /// Private so every motion is bounded by [`Self::rows`].
     cursor: Cursor,
-    /// The first row drawn. Moved by a wheel on its own, and pulled after a
-    /// cursor motion (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
-    /// The rows `v` has selected, if any
-    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
     pub selection: Selection,
-    /// Keyspaces showing their tables.
-    ///
-    /// Private for the reason [`Cursor`]'s index is: the only ways in are the
-    /// transitions below, so nothing can unfold a keyspace the schema lacks.
-    /// Ordered rather than hashed per conventions.md §4.
+    /// Private: only the transitions below write it, so no keyspace outside the
+    /// schema is unfolded.
     unfolded: BTreeSet<String>,
-    /// Forces a keyspace holding a match open in [`TablesPanel::rows`].
-    /// Private for the reason `unfolded` is: setting it is going to owe a
-    /// cursor clamp, and a public field would let a caller skip it (design
-    /// §2.1, §2.2).
+    /// Private: setting it owes a cursor clamp.
     search: Option<Search>,
 }
 
-/// One row of the flattened tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Node<'a> {
     Keyspace {
@@ -50,35 +34,20 @@ pub enum Node<'a> {
 }
 
 impl TablesPanel {
-    /// The search applied to [`TablesPanel::rows`], if any.
     #[must_use]
     pub fn search(&self) -> Option<&Search> {
         self.search.as_ref()
     }
 
-    /// Sets the search. Not public: [`State::apply_search`](crate::state::State::apply_search)
-    /// is the one caller, and the cursor clamp a change here owes is its job.
+    /// Not public: [`State::apply_search`](crate::state::State::apply_search)
+    /// owes the clamp.
     pub(crate) fn set_search(&mut self, search: Option<Search>) {
         self.search = search;
     }
 
-    /// The tree, flattened in display order: user keyspaces first, then the
-    /// cluster's own, each with its tables spliced in when unfolded.
-    ///
-    /// One flattening, so `update`'s motions and `view_model` cannot disagree
-    /// about what row 5 is.
-    ///
-    /// A search keeps the keyspaces it reaches — by their own name or by one
-    /// of their tables' — and drops the rest, whole
-    /// (docs/superpowers/specs/2026-08-31-tables-filter-design.md §1). A
-    /// keyspace it keeps is drawn open, because a match one keypress below a
-    /// folded keyspace is a match the panel is hiding, and holds only the
-    /// tables the term reaches
-    /// (docs/superpowers/specs/2026-09-18-tables-filter-rows-design.md §1).
-    /// The unfold set is not
-    /// written, so clearing the search restores the fold state exactly and a
-    /// live prompt cannot accumulate an unfold per prefix as the term is
-    /// typed.
+    /// A search keeps keyspaces it reaches, drawn open, holding only the tables
+    /// it reaches. The unfold set is never written, so clearing restores the
+    /// fold state exactly.
     #[must_use]
     pub fn rows<'a>(&self, schema: &'a Schema) -> Vec<Node<'a>> {
         let mut rows = Vec::new();
@@ -105,8 +74,6 @@ impl TablesPanel {
         rows
     }
 
-    /// Whether the keyspace survives the applied search: its own name or one
-    /// of its tables' matches. Everything survives when there is no search.
     fn retains(&self, keyspace: &Keyspace) -> bool {
         let Some(search) = &self.search else {
             return true;
@@ -119,12 +86,8 @@ impl TablesPanel {
                 .any(|table| search.matches(&table.name))
     }
 
-    /// Whether the search reaches this table, and so whether it is a row
-    /// under a kept keyspace. A term matching the keyspace keeps everything
-    /// inside it: it reaches the table by its qualified name, and dropping
-    /// them would draw the keyspace the term named with nothing under it and
-    /// no key that opens it — `l` and `⏎` are swallowed while a search is
-    /// applied (design §1).
+    /// A term matching the keyspace keeps every table in it: `l` and `⏎` are
+    /// swallowed under a search, so nothing else could open it.
     fn reaches(&self, keyspace: &Keyspace, table: &Table) -> bool {
         let Some(search) = &self.search else {
             return true;
@@ -133,21 +96,13 @@ impl TablesPanel {
         search.matches(&table.name) || search.matches(&keyspace.name)
     }
 
-    /// Whether a search forces this keyspace open. A keyspace with no tables
-    /// has nothing to open, whatever its name matches — the rule
-    /// `is_unfolded` already applies.
+    /// A keyspace with no tables has nothing to open.
     fn holds_a_match(&self, keyspace: &Keyspace) -> bool {
         self.search.is_some() && !keyspace.tables.is_empty() && self.retains(keyspace)
     }
 
-    /// The row `n` reaches from `from`, wrapping, or `None` when no search is
-    /// applied or nothing matches.
-    ///
-    /// `from` is exclusive, so `n` on a match goes to the next one and a lone
-    /// match is its own next (design §5.1). Derived from `rows` rather than
-    /// from a stored match list: the answer is O(rows) over data already in
-    /// memory, and a stored list would need invalidating on every schema
-    /// reload, fold and term change.
+    /// `from` is exclusive. Derived from `rows`, not a stored match list, which
+    /// every reload, fold and term change would invalidate.
     #[must_use]
     pub fn next_match(&self, schema: &Schema, from: usize, direction: Direction) -> Option<usize> {
         let search = self.search.as_ref()?;
@@ -170,44 +125,32 @@ impl TablesPanel {
         self.cursor
     }
 
-    /// For the motion and selection paths shared by every list panel, which
-    /// bound the cursor by `update`'s `row_count`.
+    /// Only for the shared list motion paths, bounded by `update`'s
+    /// `row_count`.
     pub(crate) const fn cursor_mut(&mut self) -> &mut Cursor {
         &mut self.cursor
     }
 
-    /// The selection and the cursor it extends from, borrowed together for
-    /// the visual-mode paths shared by every list panel.
+    /// Only for the shared visual-mode paths.
     pub(crate) const fn selection_and_cursor(&mut self) -> (&mut Selection, &mut Cursor) {
         (&mut self.selection, &mut self.cursor)
     }
 
-    /// Moves to `row`, or to the last row when the tree is shorter.
     pub fn go_to(&mut self, row: usize, schema: &Schema) {
         self.cursor.go_to(row, self.rows(schema).len());
     }
 
-    /// Pulls the cursor back inside a tree that shrank.
     pub fn clamp(&mut self, schema: &Schema) {
         self.cursor.clamp_to(self.rows(schema).len());
     }
 
-    /// The node the cursor is on.
     #[must_use]
     pub fn selected<'a>(&self, schema: &'a Schema) -> Option<Node<'a>> {
         self.rows(schema).into_iter().nth(self.cursor.index())
     }
 
-    /// Opens a folded keyspace, folds an open one. Does nothing on a table.
-    ///
-    /// Swallowed while a search is applied: [`Self::rows`] draws a keyspace
-    /// holding a match open regardless of the unfold set, so folding it would
-    /// change nothing on screen while still writing `unfolded` — the one
-    /// thing design §4.1 promises searching never does. This is the single
-    /// entry point for that guard, so every caller (keys, a click via
-    /// `activate`) inherits it rather than needing its own; docs/shortcuts.md
-    /// §2's rule that a panel swallows a motion it cannot honour is why the
-    /// key is dropped here instead of half-honoured.
+    /// Swallowed under a search: the keyspace is drawn open regardless, so
+    /// folding would only write `unfolded`. Every caller goes through here.
     pub fn toggle(&mut self, schema: &Schema) {
         if self.search.is_some() {
             return;
@@ -224,13 +167,7 @@ impl TablesPanel {
         }
     }
 
-    /// Opens a folded keyspace; on an open one, steps into its first table.
-    ///
-    /// Swallowed under a search for the reason [`Self::toggle`] is (design
-    /// §4.1): a keyspace holding a match is already drawn open, so there is
-    /// nothing left for this to do that stepping onto a table row would not
-    /// already offer, and unfolding any other keyspace would write a fold
-    /// state the clear has to un-write later.
+    /// Swallowed under a search, as [`Self::toggle`] is.
     pub fn open(&mut self, schema: &Schema) {
         if self.search.is_some() {
             return;
@@ -247,11 +184,7 @@ impl TablesPanel {
         }
     }
 
-    /// Folds an open keyspace; on a table, steps out to its keyspace without
-    /// folding it, so a second press folds.
-    ///
-    /// Swallowed under a search for the reason [`Self::toggle`] is (design
-    /// §4.1).
+    /// Swallowed under a search, as [`Self::toggle`] is.
     pub fn close(&mut self, schema: &Schema) {
         if self.search.is_some() {
             return;
@@ -267,8 +200,7 @@ impl TablesPanel {
         }
     }
 
-    /// A keyspace with no tables is never unfolded, whatever the set says —
-    /// which is also what makes a name left over from a previous schema inert.
+    /// Never for a keyspace with no tables, which also makes stale names inert.
     fn is_unfolded(&self, keyspace: &Keyspace) -> bool {
         !keyspace.tables.is_empty() && self.unfolded.contains(&keyspace.name)
     }
@@ -295,18 +227,13 @@ impl TablesPanel {
         }
     }
 
-    /// Whether the range covers more than the row the cursor is on.
-    ///
-    /// What makes `Enter` inert and the Table DDL panel describe nothing: both
-    /// act on one node, and a range names several
-    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §4).
+    /// `Enter` and the DDL panel act on one node.
     #[must_use]
     pub fn selects_many(&self) -> bool {
         self.selection.ranges(self.cursor.index()).rows() > 1
     }
 }
 
-/// Schema builders shared by every module in this crate that projects a tree.
 #[cfg(test)]
 pub(crate) mod tests_support {
     use super::*;
@@ -352,7 +279,6 @@ pub(crate) mod tests_support {
         )
     }
 
-    /// `(keyspace name, its table names)`.
     pub(crate) fn schema_of(keyspaces: &[(&str, &[&str])]) -> Schema {
         Schema {
             keyspaces: keyspaces
@@ -380,7 +306,6 @@ mod tests {
     use super::tests_support::schema_of;
     use super::*;
 
-    /// Every row as `(depth, name)`, which is what the assertions care about.
     fn labels(panel: &TablesPanel, schema: &Schema) -> Vec<(u8, String)> {
         panel
             .rows(schema)
@@ -681,7 +606,6 @@ mod tests {
         let schema = shop_and_logs();
         let mut panel = TablesPanel::default();
 
-        // Folded: the default. Without the search it shows two keyspaces.
         assert_eq!(panel.rows(&schema).len(), 2);
 
         panel.set_search(Search::new("order"));

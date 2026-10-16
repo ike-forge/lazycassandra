@@ -1,16 +1,12 @@
-//! Schema, with the physical layout made structural.
-//!
-//! vision.md §2 turns on the partition key being impossible to overlook, so
-//! [`PrimaryKey`] is a type that distinguishes partition from clustering
-//! columns rather than a `Vec<Column>` that has to be re-interpreted at render
-//! time (architecture.md §4).
+//! Schema, with the physical layout made structural: partition and clustering
+//! columns are separate types, not one list re-read at render time (vision.md
+//! §2).
 
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Schema {
-    /// Ordered so iteration and rendering are deterministic
-    /// (conventions.md §4).
+    /// Ordered so iteration is deterministic.
     pub keyspaces: BTreeMap<String, Keyspace>,
 }
 
@@ -23,42 +19,24 @@ pub struct Keyspace {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Replication {
-    SimpleStrategy {
-        factor: u32,
-    },
-    NetworkTopologyStrategy {
-        /// Replication factor per datacenter.
-        factors: BTreeMap<String, u32>,
-    },
-    Other {
-        class: String,
-    },
+    SimpleStrategy { factor: u32 },
+    NetworkTopologyStrategy { factors: BTreeMap<String, u32> },
+    Other { class: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Table {
     pub name: String,
     pub primary_key: PrimaryKey,
-    /// Columns stored once per partition rather than once per row.
-    ///
-    /// Separate from `regular_columns` because static-ness is a fact about
-    /// physical layout, which is the thing this model exists to keep visible.
+    /// Separate from `regular_columns`: static-ness is physical layout.
     pub static_columns: Vec<Column>,
-    /// Everything that is neither part of the primary key nor static.
     pub regular_columns: Vec<Column>,
-    /// The table's secondary indexes, by name.
-    ///
-    /// Empty on the great majority of tables, which is a fact the Indexes tab
-    /// reports rather than hides (indexes design §2).
     pub indexes: Vec<Index>,
     pub options: TableOptions,
 }
 
-/// One secondary index over a table.
-///
-/// `scylla::cluster::metadata` carries none, so this is read off
-/// `system_schema.indexes` the way clustering order and the CQL type text are
-/// (indexes design §3).
+/// The driver's metadata carries none, so this is read off
+/// `system_schema.indexes`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Index {
     pub name: String,
@@ -66,31 +44,24 @@ pub struct Index {
     pub kind: IndexKind,
 }
 
-/// Who implements an index.
-///
-/// Two arms rather than Cassandra's three kinds: `KEYS` and `COMPOSITES` say
-/// nothing [`IndexTarget`] does not already carry — a `KEYS` index is the one
-/// whose target is `keys(column)` — while a custom one names a class no
-/// target implies.
+/// Two arms, not Cassandra's three kinds: [`IndexTarget`] already says what
+/// `KEYS` vs `COMPOSITES` would.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexKind {
-    /// Cassandra's own, whichever of `KEYS` and `COMPOSITES` it recorded.
+    /// `KEYS` or `COMPOSITES`.
     Builtin,
-    /// `CUSTOM`, and the class behind it: SASI, SAI, or a third party's.
+    /// SASI, SAI, or a third party's.
     Custom { class: String },
 }
 
-/// What an index is built over.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexTarget {
-    /// The column, unquoted — the name [`Table::column`] can be asked for.
+    /// Unquoted, as [`Table::column`] is asked.
     pub column: String,
-    /// `None` where the whole column is indexed, which is every index over a
-    /// column that is not a collection.
+    /// `None` when the whole column is indexed.
     pub part: Option<CollectionPart>,
 }
 
-/// Which part of a collection column an index covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectionPart {
     Keys,
@@ -100,8 +71,7 @@ pub enum CollectionPart {
 }
 
 impl CollectionPart {
-    /// The CQL function that names it, which is also how the target was
-    /// written down.
+    /// Also how the target is written down.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -120,13 +90,8 @@ impl CollectionPart {
 }
 
 impl IndexTarget {
-    /// Reads `system_schema.indexes`' `target` option: a column name, or a
-    /// collection modality wrapping one — `keys(tags)`, `entries(prices)`.
-    ///
-    /// A target this build cannot read is kept whole as the column name. It
-    /// then draws as the cluster wrote it and matches no column, which costs
-    /// the type at the margin and nothing else — where dropping it would lose
-    /// an index the table really has.
+    /// An unreadable target is kept whole as the column name: it draws as
+    /// written and matches no column, rather than losing a real index.
     #[must_use]
     pub fn parse(target: &str) -> Self {
         let split = target
@@ -145,8 +110,6 @@ impl IndexTarget {
         }
     }
 
-    /// The target as the panel draws it: the modality, over the column's own
-    /// name rather than the quoted form the cluster reported it under.
     #[must_use]
     pub fn text(&self) -> String {
         match self.part {
@@ -156,10 +119,8 @@ impl IndexTarget {
     }
 }
 
-/// A quoted identifier's own name: the quotes off and CQL's doubling undone.
-///
-/// Cassandra writes the target with the quotes a case-sensitive column needs,
-/// and a column is stored under the name inside them.
+/// Cassandra quotes a case-sensitive target; the column is stored under the
+/// name inside.
 fn unquoted(identifier: &str) -> String {
     identifier
         .strip_prefix('"')
@@ -167,26 +128,16 @@ fn unquoted(identifier: &str) -> String {
         .map_or_else(|| identifier.to_owned(), |name| name.replace("\"\"", "\""))
 }
 
-/// Every property `system_schema.tables` reports for one table, as text.
-///
-/// Text rather than a struct of typed fields, and not by omission: the column
-/// set of `system_schema.tables` differs across Cassandra majors — 3.11 has
-/// `read_repair_chance`, 4.0 replaces it with `read_repair`, 5.0 adds
-/// `memtable` — so a fixed field list would encode a claim that is false, and
-/// would silently drop whatever the running cluster knows and we do not. The
-/// ordering below is the part that is real knowledge
-/// (docs/superpowers/specs/2026-08-09-table-metadata-design.md §3).
+/// Text, not typed fields: the column set differs across majors (3.11
+/// `read_repair_chance`, 4.0 `read_repair`, 5.0 `memtable`). The ordering is
+/// the real knowledge.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TableOptions {
     by_name: BTreeMap<String, String>,
 }
 
-/// Table options in the order the panel lists them, most worth seeing first.
-///
-/// A layout rule, not an importance rule. These are the properties whose
-/// values fit on one line, so they read as a scannable block; the three in
-/// [`BULKY`] wrap and would split it
-/// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §2).
+/// A layout rule: these fit on one line and read as a block; [`BULKY`] ones
+/// wrap.
 const RANKED: &[&str] = &[
     "default_time_to_live",
     "gc_grace_seconds",
@@ -208,12 +159,8 @@ const RANKED: &[&str] = &[
     "extensions",
 ];
 
-/// The options long enough to wrap the panel, drawn last.
-///
-/// Below the unranked tail rather than above it, so a wide option from a
-/// Cassandra major this build predates cannot land between the compact table
-/// and the blocks under it. `comment` loses the top of the panel to buy that,
-/// which is a real cost and a deliberate one (design §2).
+/// Below the unranked tail, so an unknown wide option cannot split the block
+/// above.
 const BULKY: &[&str] = &["comment", "compaction", "compression"];
 
 fn listed(name: &str) -> bool {
@@ -226,11 +173,8 @@ impl TableOptions {
         Self { by_name }
     }
 
-    /// Ranked properties first, then whatever this build has not heard of,
-    /// alphabetically, then the bulky ones.
-    ///
-    /// The middle chunk is what keeps a cluster whose properties predate or
-    /// postdate [`RANKED`] fully visible rather than half-shown.
+    /// Unknown options sort alphabetically in the middle, so newer or older
+    /// clusters stay fully visible.
     pub fn in_display_order(&self) -> impl Iterator<Item = (&str, &str)> {
         let named = |names: &'static [&'static str]| {
             names
@@ -258,15 +202,11 @@ impl TableOptions {
     }
 }
 
-/// The physical shape of a table.
-///
-/// Partition columns decide *where* a row lives; clustering columns decide
-/// *how it is ordered within* that partition. Conflating the two is the
-/// mistake the whole tool exists to prevent, so they are separate fields.
+/// Partition columns decide where a row lives, clustering columns its order
+/// within the partition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrimaryKey {
-    /// Never empty: a Cassandra table always has at least one partition
-    /// column.
+    /// Never empty.
     pub partition: Vec<Column>,
     pub clustering: Vec<ClusteringColumn>,
 }
@@ -287,13 +227,12 @@ pub enum ClusteringOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Column {
     pub name: String,
-    /// The CQL type as the cluster reports it, e.g. `frozen<list<text>>`.
+    /// As the cluster reports it, e.g. `frozen<list<text>>`.
     pub cql_type: String,
 }
 
 impl Table {
-    /// Every column: partition key, then clustering key, then static, then
-    /// regular.
+    /// Partition, clustering, static, regular.
     pub fn columns(&self) -> impl Iterator<Item = &Column> {
         self.primary_key
             .partition
@@ -303,17 +242,13 @@ impl Table {
             .chain(self.regular_columns.iter())
     }
 
-    /// The column `name` names, whatever part of the table it plays.
     #[must_use]
     pub fn column(&self, name: &str) -> Option<&Column> {
         self.columns().find(|column| column.name == name)
     }
 }
 
-/// Whether a keyspace is the cluster's own or somebody's schema.
-///
-/// Derived from the name rather than stored on [`Keyspace`], so an adapter
-/// cannot report a kind that disagrees with it.
+/// Derived from the name, so an adapter cannot report a contradicting kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KeyspaceKind {
     User,
@@ -321,8 +256,8 @@ pub enum KeyspaceKind {
 }
 
 impl KeyspaceKind {
-    /// Classifies a keyspace by name. The separator matters: `system_auth` is
-    /// Cassandra's, `systematic` is not.
+    /// The separator matters: `system_auth` is Cassandra's, `systematic` is
+    /// not.
     #[must_use]
     pub fn of(name: &str) -> Self {
         if name == "system" || name.starts_with("system_") {
@@ -334,7 +269,6 @@ impl KeyspaceKind {
 }
 
 impl Keyspace {
-    /// Whether the cluster owns this keyspace or the user does.
     #[must_use]
     pub fn kind(&self) -> KeyspaceKind {
         KeyspaceKind::of(&self.name)
@@ -342,10 +276,7 @@ impl Keyspace {
 }
 
 impl Schema {
-    /// User keyspaces first, then the cluster's own, each alphabetically.
-    ///
-    /// The alphabetical part is free: `keyspaces` is a `BTreeMap`, so two
-    /// filtered passes are cheaper and clearer than partitioning into vectors.
+    /// User keyspaces first, then the cluster's, each alphabetical.
     pub fn keyspaces_in_display_order(&self) -> impl Iterator<Item = &Keyspace> {
         let user = self
             .keyspaces
@@ -441,8 +372,7 @@ mod tests {
 
     #[test]
     fn a_property_the_ranking_has_never_heard_of_is_listed_after_the_ranked_ones() {
-        // 3.11's read repair settings, which 4.0 removed: unranked here, and
-        // still shown, because a cluster's own vocabulary outranks ours.
+        // Removed in 4.0: unranked, still shown.
         let options = options(&[
             ("read_repair_chance", "0.0"),
             ("dclocal_read_repair_chance", "0.1"),
@@ -554,8 +484,7 @@ mod tests {
 
     #[test]
     fn a_case_sensitive_target_names_the_column_the_table_stores() {
-        // Cassandra writes the target quoted, and `Table::column` is asked
-        // for the name inside the quotes.
+        // Cassandra quotes the target.
         assert_eq!(IndexTarget::parse("\"Status\"").column, "Status");
         assert_eq!(IndexTarget::parse("keys(\"Tags\")").column, "Tags");
         assert_eq!(
@@ -567,8 +496,6 @@ mod tests {
 
     #[test]
     fn a_target_this_build_cannot_read_is_kept_whole() {
-        // Dropping it would lose an index the table really has; kept, it
-        // draws as the cluster wrote it and matches no column.
         let target = IndexTarget::parse("something(a, b)");
 
         assert_eq!(target.part, None);
@@ -600,7 +527,6 @@ mod tests {
 
     #[test]
     fn a_user_keyspace_merely_starting_with_system_is_not_the_clusters() {
-        // The separator is load-bearing: `systematic` is somebody's schema.
         assert_eq!(KeyspaceKind::of("systematic"), KeyspaceKind::User);
         assert_eq!(KeyspaceKind::of("shop"), KeyspaceKind::User);
     }

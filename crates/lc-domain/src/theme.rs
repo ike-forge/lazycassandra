@@ -1,19 +1,8 @@
-//! Which theme is on.
-//!
-//! A name, never a colour: the mapping from one of these to a palette lives in
-//! `lc-inbound`, which is what keeps the domain free of a terminal
-//! (architecture.md §6).
-//!
-//! The split between [`Ours`] and [`Ported`] is what the contrast invariant is
-//! written against. A palette of ours holds 4.5:1 on every ground it declares;
-//! a ported one is its author's work and we impose nothing on it
-//! (docs/superpowers/specs/2026-08-13-colour-palettes-design.md §2).
+//! Which theme is on: a name, never a colour (architecture.md §6). [`Ours`]
+//! holds 4.5:1 contrast on every ground; [`Ported`] palettes are their authors'
+//! and we impose nothing.
 
-/// A palette written here, and held to the contrast rules.
-///
-/// Flat rather than a family crossed with a mode: nothing mandates that a
-/// family has both a light and a dark variant, and a product type would claim
-/// it does.
+/// Flat: nothing mandates that a family has both a light and a dark variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ours {
     DefaultDark,
@@ -26,7 +15,6 @@ pub enum Ours {
     QuillLight,
 }
 
-/// A palette taken from elsewhere, as its authors wrote it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ported {
     CatppuccinLatte,
@@ -35,11 +23,8 @@ pub enum Ported {
     CatppuccinMocha,
 }
 
-/// A theme compiled in, of either kind.
-///
-/// Separate from [`ThemeChoice`] so a [`crate::config::CustomTheme`] can only
-/// extend one of these — a custom theme extending another, and the cycle that
-/// permits, is unrepresentable rather than checked.
+/// Separate from [`ThemeChoice`], so custom themes extending custom themes are
+/// unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltIn {
     Ours(Ours),
@@ -70,12 +55,8 @@ impl BuiltIn {
         }
     }
 
-    /// The name a config file writes.
-    ///
-    /// An exhaustive match rather than a kebab-casing of [`Self::label`]: a
-    /// thirteenth theme cannot be added without naming its slug, and
-    /// `"Catppuccin Frappé"` is exactly what a `to_lowercase().replace(' ',
-    /// "-")` gets silently wrong.
+    /// Exhaustive rather than derived: kebab-casing gets `"Catppuccin Frappé"`
+    /// wrong.
     #[must_use]
     pub const fn slug(self) -> &'static str {
         match self {
@@ -104,12 +85,12 @@ impl From<BuiltIn> for ThemeChoice {
     }
 }
 
-/// A custom theme's name, as `[[themes]]` gives it and `theme = "…"` names it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ThemeName(std::sync::Arc<str>);
 
 impl ThemeName {
     /// # Errors
+    ///
     /// When `name` is blank or holds whitespace.
     pub fn try_new(name: &str) -> Result<Self, crate::config::OutOfRange> {
         if name.is_empty() || name.chars().any(char::is_whitespace) {
@@ -129,17 +110,12 @@ impl ThemeName {
     }
 }
 
-/// A theme the user can choose.
-///
-/// `Default` is written out rather than derived: `#[default]` may only mark a
-/// unit variant, and the default is a palette of ours by name.
+/// `Default` is hand-written: `#[default]` only marks unit variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThemeChoice {
     Ours(Ours),
     Ported(Ported),
-    /// A palette a config file supplied. A name rather than an index into the
-    /// config's list: an index would rot the moment config reload lands
-    /// (design §8).
+    /// A name, not an index, which config reload would invalidate.
     Custom(ThemeName),
 }
 
@@ -150,7 +126,6 @@ impl Default for ThemeChoice {
 }
 
 impl ThemeChoice {
-    /// The name a config file writes for this theme.
     #[must_use]
     pub fn slug(&self) -> String {
         match self {
@@ -160,8 +135,7 @@ impl ThemeChoice {
         }
     }
 
-    /// The built-in `slug` names, and `None` for anything else — including a
-    /// custom theme's name, which is resolved against the config instead.
+    /// `None` for custom names, which resolve against the config.
     #[must_use]
     pub fn builtin_from_slug(slug: &str) -> Option<BuiltIn> {
         BuiltIn::ALL
@@ -191,13 +165,9 @@ impl Ours {
         Self::QuillLight,
     ];
 
-    /// The variant declared after `self`, and `None` after the last.
-    ///
-    /// `ALL` is hand-written, and a ninth variant added without extending it
-    /// would never reach the contrast sweep. This match is exhaustive, so the
-    /// variant breaks it at compile time, and
+    /// Exhaustive, so a new variant breaks the build here and
     /// `walking_from_the_first_theme_of_ours_reaches_every_one` fails until
-    /// `ALL` names it too.
+    /// `ALL` names it.
     #[must_use]
     pub const fn next(self) -> Option<Self> {
         match self {
@@ -246,12 +216,8 @@ impl Ported {
     }
 }
 
-/// One colour role a palette fills, as `[themes.colors]` names it.
-///
-/// Mirrors `lc-inbound`'s `Palette` field for field. `Palette::set` is an
-/// exhaustive match over this, so a role here the palette does not handle
-/// fails to compile; the reverse — a new `Palette` field nobody adds here —
-/// is not caught, the same limit [`Ours::ALL`] already carries.
+/// Mirrors `lc-inbound`'s `Palette`. A role the palette lacks fails to compile;
+/// a new `Palette` field missing here is not caught.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Role {
     Base,

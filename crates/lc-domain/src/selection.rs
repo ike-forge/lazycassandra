@@ -1,10 +1,6 @@
-//! Row ranges and the multi-group selection built from them
-//! (docs/superpowers/specs/2026-08-14-multi-group-selection-design.md).
+//! Row ranges and the multi-group selection built from them.
 
-/// An inclusive run of rows, which cannot be built the wrong way round.
-///
-/// `first <= last` by construction, so nothing downstream compares the two
-/// ends before drawing between them.
+/// `first <= last` by construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
     first: usize,
@@ -12,7 +8,6 @@ pub struct Range {
 }
 
 impl Range {
-    /// The run between the two ends, in either order.
     #[must_use]
     pub const fn new(anchor: usize, cursor: usize) -> Self {
         if anchor <= cursor {
@@ -43,23 +38,15 @@ impl Range {
         self.first <= index && index <= self.last
     }
 
-    /// How many rows the run holds. Never zero — which is why this is not
-    /// `len`, whose `is_empty` counterpart would answer a question a range
-    /// cannot ask.
+    /// Never zero, hence not `len`.
     #[must_use]
     pub const fn rows(self) -> usize {
         self.last - self.first + 1
     }
 }
 
-/// Inclusive runs of rows, sorted, disjoint and never adjacent.
-///
-/// Normalised on the way in and never afterwards: [`Ranges::insert`] absorbs
-/// every group the new one overlaps *or touches*, because two groups meeting
-/// at consecutive rows are one band on screen and a set that could hold both
-/// spellings would let a renderer draw a seam nothing explains. Sorted, so a
-/// yank reads rows in the order they are drawn without sorting them itself
-/// (docs/superpowers/specs/2026-08-14-multi-group-selection-design.md §2).
+/// Sorted, disjoint and never adjacent: touching groups merge, since they draw
+/// as one band.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ranges(Vec<Range>);
 
@@ -98,7 +85,6 @@ impl Ranges {
         self.0 = kept;
     }
 
-    /// Drops the group holding `index`, answering with it.
     pub fn remove_holding(&mut self, index: usize) -> Option<Range> {
         let position = self.0.iter().position(|group| group.contains(index))?;
 
@@ -110,7 +96,6 @@ impl Ranges {
         self.0.iter().any(|group| group.contains(index))
     }
 
-    /// How many rows are selected across every group.
     #[must_use]
     pub fn rows(&self) -> usize {
         self.0.iter().map(|group| group.rows()).sum()
@@ -125,7 +110,6 @@ impl Ranges {
         self.0.iter().copied()
     }
 
-    /// Every selected row, in the order the rows are drawn.
     pub fn indices(&self) -> impl Iterator<Item = usize> + '_ {
         self.0.iter().flat_map(|group| group.first..=group.last)
     }
@@ -135,8 +119,7 @@ impl Ranges {
         self.0.first().copied()
     }
 
-    /// Pulls the groups back over a list that shrank, dropping the ones whose
-    /// first row has gone.
+    /// A group whose first row has gone is dropped.
     pub fn clamp_to(&mut self, len: usize) {
         let Some(last) = len.checked_sub(1) else {
             self.0.clear();
@@ -152,13 +135,8 @@ impl Ranges {
         }
     }
 
-    /// Every group moved `by` rows later, keeping their width and their
-    /// order.
-    ///
-    /// For a projection whose rows do not start where the ranges' own
-    /// indices do — the trail's dropped-count row is one such prefix — so
-    /// the shift lives in one place a caller cannot apply to only one of a
-    /// pair of related values (query log design §6).
+    /// For projections whose rows are offset, like the trail's dropped-count
+    /// row.
     #[must_use]
     pub fn shifted(&self, by: usize) -> Self {
         Self(
@@ -173,20 +151,9 @@ impl Ranges {
     }
 }
 
-/// The rows a panel has selected, as groups, and whether the cursor is still
-/// extending one of them
-/// (docs/superpowers/specs/2026-08-14-multi-group-selection-design.md §2).
-///
-/// While extending, the far end of the live group is the panel's own cursor
-/// rather than a second index stored here: a group that is a function of the
-/// cursor cannot fall out of step with it. Freezing is the one moment the
-/// derived group is written down, and it is written down exactly because the
-/// cursor is about to stop meaning it.
-///
-/// The anchor is kept beside the groups and outlives the extension. The two
-/// are not the same question — the groups say which rows are selected, the
-/// anchor says which row the user last pressed `v` on — and `y` sends the
-/// cursor home to the anchor (visual mode design §5.1).
+/// While extending, the live group's far end is the panel's cursor, so it
+/// cannot drift. The anchor outlives the extension: `y` sends the cursor back
+/// to it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Selection {
     groups: Ranges,
@@ -195,14 +162,11 @@ pub struct Selection {
 }
 
 impl Selection {
-    /// Opens a group at `cursor` and starts extending it, keeping what is
-    /// already held.
     pub fn start(&mut self, cursor: usize) {
         self.anchor = Some(cursor);
         self.extending = true;
     }
 
-    /// Freezes the group the cursor is making, merging it into what is held.
     pub fn stop(&mut self, cursor: usize) {
         if !self.extending {
             return;
@@ -215,14 +179,8 @@ impl Selection {
         self.extending = false;
     }
 
-    /// `v`: freeze what is being extended, drop the group under the cursor, or
-    /// open a new group there.
-    ///
-    /// The third arm pays for the first. Accumulating means `v` no longer
-    /// discards, so without a way to drop a group the only way back from a
-    /// mis-added one would be to clear everything — and the row to press it on
-    /// is the row the user is already looking at
-    /// (multi-group selection design §1).
+    /// Dropping the group under the cursor is the way back from a mis-added
+    /// one.
     pub fn toggle(&mut self, cursor: usize) {
         if self.extending {
             self.stop(cursor);
@@ -249,15 +207,12 @@ impl Selection {
         self.extending
     }
 
-    /// Whether anything is selected at all.
     #[must_use]
     pub fn is_active(&self) -> bool {
         self.extending || !self.groups.is_empty()
     }
 
-    /// The rows selected, given where the cursor is now. The one way out, so
-    /// no caller can read the groups and forget the cursor, and none is handed
-    /// a seam between a group and the extension running into it.
+    /// The one way out, so no caller reads groups without the cursor.
     #[must_use]
     pub fn ranges(&self, cursor: usize) -> Ranges {
         let mut ranges = self.groups.clone();
@@ -269,17 +224,14 @@ impl Selection {
         ranges
     }
 
-    /// The row `v` was last pressed on, which `y` sends the cursor back to.
     #[must_use]
     pub const fn anchor(&self) -> Option<usize> {
         self.anchor
     }
 
-    /// Pulls a selection back over a list that shrank.
     pub fn clamp_to(&mut self, len: usize) {
-        // Found before `self.groups` is clamped: afterwards every surviving
-        // group is a candidate to "contain" the pulled-back anchor, even one
-        // that never held it (multi-group design §2).
+        // Before clamping: afterwards a surviving group could falsely "contain"
+        // the pulled-back anchor.
         let held = self
             .anchor
             .and_then(|anchor| self.groups.groups().find(|group| group.contains(anchor)));
@@ -293,9 +245,7 @@ impl Selection {
 
         self.anchor = match self.anchor {
             Some(anchor) if self.extending => Some(anchor.min(last)),
-            // Frozen, the anchor is pulled back the same way its own group
-            // is; only that group dropping outright takes the anchor with it
-            // (design §2).
+            // Only the anchor's own group dropping takes the anchor.
             Some(anchor) => held.and_then(|group| {
                 (group.first() <= last).then(|| anchor.min(group.last().min(last)))
             }),
@@ -380,9 +330,8 @@ mod tests {
 
     #[test]
     fn clamping_away_the_group_holding_the_anchor_takes_the_anchor() {
-        // `y` sends the cursor home to the anchor. An anchor whose rows are
-        // gone would send it somewhere the user never was
-        // (multi-group selection design §3).
+        // An anchor whose rows are gone would send the cursor where the user
+        // never was.
         let mut selection = Selection::default();
         selection.start(8);
         selection.stop(9);
@@ -395,9 +344,6 @@ mod tests {
 
     #[test]
     fn clamping_a_frozen_group_pulls_its_surviving_anchor_back_too() {
-        // The group and the anchor are pulled back the same way; only a
-        // group that is dropped outright takes its anchor with it
-        // (multi-group selection design §2).
         let mut selection = Selection::default();
         selection.start(9);
         selection.stop(2);
@@ -410,10 +356,7 @@ mod tests {
 
     #[test]
     fn clamping_away_the_anchors_group_does_not_hand_it_to_a_survivor() {
-        // Two frozen groups; the anchor's own group is dropped by the clamp,
-        // but a surviving group happens to contain the pulled-back index too.
-        // The anchor must not be adopted by a group that never held it
-        // (multi-group selection design §2, §3).
+        // The anchor must not be adopted by a group that never held it.
         let mut selection = Selection::default();
         selection.start(0);
         selection.stop(4);
@@ -452,8 +395,6 @@ mod tests {
 
     #[test]
     fn dropping_the_group_holding_the_anchor_takes_the_anchor() {
-        // Homing `y` to a group the user just dropped would send the cursor
-        // where they never were (design §3).
         let mut selection = Selection::default();
         selection.toggle(2);
         selection.toggle(4);
@@ -485,9 +426,6 @@ mod tests {
 
     #[test]
     fn groups_that_overlap_or_merely_touch_become_one() {
-        // Two groups meeting at consecutive rows are one band on screen, and a
-        // set holding both spellings would let a renderer draw a seam the user
-        // cannot explain (multi-group selection design §2).
         let mut ranges = Ranges::default();
         ranges.insert(Range::new(0, 2));
         ranges.insert(Range::new(2, 4));
@@ -563,9 +501,6 @@ mod tests {
 
     #[test]
     fn clamping_drops_only_the_groups_whose_head_is_gone() {
-        // A group whose first row has gone no longer addresses anything the
-        // user pointed at; one whose tail was truncated still does (visual
-        // mode design §2, applied per group).
         let mut ranges = Ranges::default();
         ranges.insert(Range::new(0, 1));
         ranges.insert(Range::new(4, 8));

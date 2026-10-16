@@ -1,18 +1,11 @@
-//! Searching a panel: the term, where it can be applied, and the prompt that
-//! collects it.
-//!
-//! docs/superpowers/specs/2026-08-10-panel-search-design.md.
+//! Searching a panel: the term, where it applies, and the prompt that collects
+//! it.
 
 use std::ops::Range;
 
 use crate::panel::Panel;
 
-/// A search term that is applied to a panel.
-///
-/// The invariant is non-emptiness, which is what makes `Option<Search>` mean
-/// "no search" — an empty query clears rather than matching everything, and
-/// that follows from [`Search::new`] rather than from a check anyone has to
-/// remember (design §2).
+/// Non-empty, so `Option<Search>` means "no search" and an empty query clears.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Search {
     term: String,
@@ -32,27 +25,16 @@ impl Search {
         })
     }
 
-    /// Case-insensitive substring, with no metacharacters: every keystroke of
-    /// a live prompt is literal, so no half-typed query is ever an error state
-    /// the panel underneath has to render (design §2).
+    /// Case-insensitive, no metacharacters: a half-typed query is never an
+    /// error.
     #[must_use]
     pub fn matches(&self, haystack: &str) -> bool {
         !self.ranges(haystack).is_empty()
     }
 
-    /// Every occurrence, as byte ranges into `haystack` itself — sorted,
-    /// disjoint, and each a valid slice of it.
-    ///
-    /// `str::to_lowercase` is not length-preserving (`İ` folds to two chars,
-    /// `ß` stays one), so searching the folded haystack and reusing its
-    /// offsets would slice the source at a byte that is not a boundary. The
-    /// fold is therefore built per character alongside a table of where each
-    /// folded byte came from, and a hit's endpoints are mapped back through
-    /// it.
-    ///
-    /// A hit that begins or ends inside one character's expansion — `i`
-    /// against `İ` — snaps outward to that character, which is the only
-    /// thing that can be sliced.
+    /// Byte ranges into `haystack`, sorted and disjoint. `to_lowercase` is not
+    /// length-preserving (`İ` folds to two chars), so hits are mapped back
+    /// through a per-byte table, snapping outward to whole characters.
     #[must_use]
     pub fn ranges(&self, haystack: &str) -> Vec<Range<usize>> {
         let (folded, sources) = fold(haystack);
@@ -65,14 +47,8 @@ impl Search {
             let range = sources[start].start..sources[end - 1].end;
             at = end;
 
-            // The search over `folded` never revisits a byte, so its hits are
-            // already disjoint in folded space — but a hit can still snap
-            // outward into a source character an earlier hit already
-            // claimed, the way `i` matches both bytes of `İ`'s expansion at
-            // adjacent folded offsets. Comparing against only the last
-            // pushed range is enough because source ranges come out
-            // monotonic non-decreasing: each `range.start` is derived from a
-            // `folded` offset no earlier than the one before it.
+            // A hit can snap outward into a character an earlier hit claimed.
+            // Source ranges are monotonic, so checking the last one suffices.
             match ranges.last() {
                 Some(last) if last.end > range.start => {}
                 _ => ranges.push(range),
@@ -82,18 +58,14 @@ impl Search {
         ranges
     }
 
-    /// As typed, which is what the panel's marker shows (design §5.1).
+    /// As typed.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.term
     }
 }
 
-/// `haystack` folded, and where each of its bytes came from.
-///
-/// One entry per byte of the folded string, holding the source character's
-/// own range — so a folded offset maps back to a character boundary whatever
-/// the fold did to the length.
+/// One entry per folded byte: the source character's range.
 fn fold(haystack: &str) -> (String, Vec<Range<usize>>) {
     let mut folded = String::with_capacity(haystack.len());
     let mut sources = Vec::with_capacity(haystack.len());
@@ -110,14 +82,8 @@ fn fold(haystack: &str) -> (String, Vec<Range<usize>>) {
     (folded, sources)
 }
 
-/// A panel that can hold a search.
-///
-/// `Queries` means its Logs tab — the Cql tab takes text and claims `/` as a
-/// character before a search ever sees it (query log design §5.3), so a
-/// prompt targeting it is unreachable in practice rather than refused here.
-/// Keying a search off [`Panel`] instead would leave an unreachable
-/// `Panel::Queries` arm in every accessor; this makes them total, and made
-/// the compiler list every one of them when this variant landed.
+/// `Queries` means its Logs tab; the Cql tab takes `/` as text. Keyed off this
+/// rather than [`Panel`] so every accessor is total.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Searched {
     Tables,
@@ -148,7 +114,6 @@ impl Searched {
     }
 }
 
-/// Which way `n` and `N` walk the matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Forwards,
@@ -156,9 +121,7 @@ pub enum Direction {
 }
 
 impl Direction {
-    /// The next position along, wrapping. `len` is never zero at a call site
-    /// that has a match to step towards, and a zero returns zero rather than
-    /// panicking on the remainder.
+    /// A zero `len` returns zero rather than panicking.
     #[must_use]
     pub const fn step(self, at: usize, len: usize) -> usize {
         if len == 0 {
@@ -172,39 +135,28 @@ impl Direction {
     }
 }
 
-/// Where the cursor was when a prompt opened, in the units the target counts.
-///
-/// One type across the three panels rather than an enum: `column` is the
-/// grid's second cursor and is zero in a list, which is what those panels
-/// already mean by a position.
+/// One type for every panel: `column` is zero in a list.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Origin {
     pub row: usize,
     pub column: usize,
 }
 
-/// An open search prompt.
-///
-/// Lives in [`crate::overlay::Overlay`] rather than beside it, so "a palette and
-/// a prompt at once" cannot be written down — the argument that enum's own doc
-/// comment already makes about a message and a palette (design §1).
+/// Lives in [`crate::overlay::Overlay`], so a palette and a prompt at once is
+/// unrepresentable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prompt {
     target: Searched,
     query: String,
-    /// What was applied before this prompt opened, and what `esc` restores.
-    /// Live search overwrites the target's search on every keystroke, so
-    /// cancelling needs something to put back (design §3).
+    /// Live search overwrites the target's search per keystroke, so `esc` needs
+    /// this.
     previous: Option<Search>,
-    /// The target panel's cursor when the prompt opened. Every keystroke
-    /// searches from here, not from the last landing, so extending a term
-    /// does not walk the cursor forward (design §5.2).
+    /// Every keystroke searches from here, so extending a term does not walk
+    /// the cursor.
     origin: Origin,
 }
 
 impl Prompt {
-    /// Opens over `target`, remembering the search it is about to overwrite
-    /// and the cursor it is about to move.
     #[must_use]
     pub fn opened(target: Searched, previous: Option<Search>, origin: Origin) -> Self {
         Self {
@@ -215,9 +167,7 @@ impl Prompt {
         }
     }
 
-    /// Captured at open, not re-read per keystroke: `tab` is inert while a
-    /// prompt is up, so the panel being searched cannot change under a live
-    /// query (design §3.2).
+    /// `tab` is inert under a prompt, so the target cannot change.
     #[must_use]
     pub const fn target(&self) -> Searched {
         self.target
@@ -238,7 +188,6 @@ impl Prompt {
         self.origin
     }
 
-    /// What the query now means, for a caller that must apply it.
     #[must_use]
     pub fn search(&self) -> Option<Search> {
         Search::new(&self.query)
@@ -253,18 +202,12 @@ impl Prompt {
     }
 }
 
-/// A live search over an overlay's list.
-///
-/// Not a [`Prompt`]: that one targets a [`Searched`] panel and remembers the
-/// search it overwrote, and an overlay search overwrites nothing — it is
-/// applied to no one, and nothing survives the prompt closing
-/// (docs/superpowers/specs/2026-08-16-overlay-search-design.md §3).
+/// Not a [`Prompt`]: an overlay search overwrites nothing, and nothing survives
+/// it closing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sift {
     query: String,
-    /// The row the prompt opened on. Every keystroke searches from here, not
-    /// from the last landing, so extending a term does not walk the cursor
-    /// forward (panel search design §5.2).
+    /// Every keystroke searches from here.
     origin: usize,
 }
 
@@ -287,7 +230,6 @@ impl Sift {
         self.origin
     }
 
-    /// What the query now means, `None` while it is empty.
     #[must_use]
     pub fn search(&self) -> Option<Search> {
         Search::new(&self.query)
@@ -297,8 +239,7 @@ impl Sift {
         self.query.push(character);
     }
 
-    /// Reports whether anything was there to delete: a `backspace` that finds
-    /// the query already empty is what closes the prompt (design §5).
+    /// `false` on an empty query, which closes the prompt.
     pub fn pop(&mut self) -> bool {
         self.query.pop().is_some()
     }
@@ -338,17 +279,14 @@ mod tests {
 
     #[test]
     fn folding_reaches_past_ascii() {
-        // Cell values are whatever the cluster stored, so `to_lowercase`
-        // rather than `to_ascii_lowercase` (design §2).
+        // Cell values are arbitrary text, so full Unicode lowercasing.
         assert!(Search::new("é").expect("non-empty").matches("CAFÉ"));
     }
 
     #[test]
     fn the_term_and_the_haystack_fold_the_same_way() {
-        // `str::to_lowercase` is context-sensitive: a trailing Greek sigma
-        // folds to the final form `ς` rather than `σ`. Folding the term
-        // per char, like the haystack already is, keeps the two in the one
-        // mechanism so a term ending in `Σ` still finds it mid-word.
+        // Final sigma: the term is folded per char like the haystack, so `Σ`
+        // mid-word still matches.
         assert!(Search::new("ΟΣ").expect("non-empty").matches("ΟΔΟΣ"));
     }
 
@@ -381,7 +319,7 @@ mod tests {
 
     #[test]
     fn ranges_survive_a_fold_that_changes_length() {
-        // `İ` folds to two chars, so a folded offset is not a source offset.
+        // `İ` folds to two chars.
         let search = Search::new("i̇stanbul").expect("non-empty");
         let haystack = "in İstanbul";
 
@@ -393,9 +331,8 @@ mod tests {
 
     #[test]
     fn a_hit_inside_an_expansion_snaps_out_to_a_character() {
-        // `İ` lowercases to `i` and a combining dot, so `i` hits half a
-        // character; the range has to be a slice of the source, which means
-        // the whole `İ`.
+        // `i` hits half of `İ`'s expansion; the range must be the whole
+        // character.
         let search = Search::new("i").expect("non-empty");
         let haystack = "İstanbul";
 
@@ -407,8 +344,7 @@ mod tests {
 
     #[test]
     fn a_dotless_i_is_not_an_i() {
-        // U+0131 and `i` are different letters, and case folding does not
-        // merge them.
+        // U+0131 and `i` are different letters.
         let search = Search::new("i").expect("non-empty");
 
         assert!(!search.matches("kırmızı"));

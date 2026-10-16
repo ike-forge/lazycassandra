@@ -1,8 +1,5 @@
-//! One [`CqlValue`] as the text a grid draws.
-//!
-//! Rendering lives in the domain rather than the adapter so that every
-//! renderer agrees on what a blob or a collection looks like, and so the
-//! result is testable without a cluster.
+//! One [`CqlValue`] as the text a grid draws. In the domain, so every renderer
+//! agrees and it tests without a cluster.
 
 use crate::model::CqlValue;
 
@@ -10,15 +7,12 @@ const HEX: [char; 16] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ];
 
-/// The cell text for `value`.
-///
-/// Public because the adapter needs it too: a value nested inside a tuple or
-/// a UDT has to render the way it would in a column of its own.
+/// Public for the adapter: a value nested in a tuple or UDT renders as it would
+/// alone.
 #[must_use]
 pub fn text(value: &CqlValue) -> String {
     match value {
-        // Distinguishable from a text column holding the word by the faint
-        // token the projection puts on it, not by the text.
+        // Told apart from the text "null" by the faint token, not the text.
         CqlValue::Null => "null".to_owned(),
         CqlValue::Boolean(value) => value.to_string(),
         CqlValue::Int(value) => value.to_string(),
@@ -32,8 +26,7 @@ pub fn text(value: &CqlValue) -> String {
     }
 }
 
-/// `0x` and two lower-case digits per byte, the form `cqlsh` prints and CQL
-/// accepts back as a literal.
+/// The form `cqlsh` prints and CQL accepts back.
 fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(2 + bytes.len() * 2);
     out.push_str("0x");

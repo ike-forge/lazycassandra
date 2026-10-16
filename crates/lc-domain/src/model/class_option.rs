@@ -1,18 +1,8 @@
-//! `compaction` and `compression`, read as the class they name and the
-//! settings that class accepts.
-//!
-//! Both options arrive as a `map<text, text>` the adapter has already
-//! flattened to `{key: value, …}` ([`crate::cell::text`]). This module reads
-//! that back, and refuses to guess: an unknown class, an unknown key, a value
-//! that cannot be told apart from the separator, and the caller is handed
-//! `None` and draws the raw text instead. Nothing here supplies a default or
-//! drops an entry — what Cassandra reports is what the panel shows, only
-//! shorter.
+//! `compaction` and `compression` read as the class they name and its settings.
+//! Refuses to guess: anything unknown yields `None` and the raw text is drawn
+//! instead.
 
-/// Which of the two class-valued options is being read.
-///
-/// The kind is what keeps a compressor out of a `compaction` value: both key
-/// spaces are recognised by name, and without it the two would be one.
+/// Keeps a compressor's keys out of a `compaction` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassKind {
     Compaction,
@@ -20,7 +10,6 @@ pub enum ClassKind {
 }
 
 impl ClassKind {
-    /// The kind an option name carries, for the two names that carry one.
     #[must_use]
     pub fn of(option: &str) -> Option<Self> {
         match option {
@@ -44,8 +33,7 @@ impl ClassKind {
         }
     }
 
-    /// The keys every class of this kind accepts, drawn after the ones only
-    /// the named class has.
+    /// Drawn after the class's own keys.
     const fn shared(self) -> &'static [Key] {
         match self {
             Self::Compaction => COMMON,
@@ -54,42 +42,33 @@ impl ClassKind {
     }
 }
 
-/// A key of the map: the name Cassandra reports it under, the label the panel
-/// draws instead, and the unit the name states and the label therefore drops.
+/// Cassandra's name, the drawn label, and the unit the name states and the
+/// label drops.
 type Key = (&'static str, &'static str, &'static str);
 
-/// What separates two entries of a flattened map ([`crate::cell::text`]).
 const SEPARATOR: &str = ", ";
 
-/// A recognised class and every setting the value carried for it, in the order
-/// the class declares them rather than the alphabetical one the map arrives
-/// in.
+/// In the class's declared order, not the map's alphabetical one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassOption {
-    /// The class name with its package dropped: the package is the same for
-    /// every class of a kind, so it is noise on a twenty-column panel.
+    /// The package is the same for every class of a kind.
     pub class: String,
     pub settings: Vec<Setting>,
 }
 
-/// One entry of the map, under the short label its key is known by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Setting {
     pub label: &'static str,
-    /// The value exactly as reported, with the key's unit appended where the
-    /// key names one — `chunk_length_in_kb` says `kb` in its name, and the
-    /// label drops it, so the value has to carry it.
+    /// The key's unit is appended where the label dropped it.
     pub value: String,
 }
 
 struct Class {
     name: &'static str,
-    /// Class-specific keys first, so the strategy's own knobs sit next to the
-    /// name that decides what they mean.
+    /// Class-specific keys first, next to the name that gives them meaning.
     keys: &'static [Key],
 }
 
-/// Accepted by every compaction strategy, whichever one is named.
 const COMMON: &[Key] = &[
     ("tombstone_threshold", "tombstone", ""),
     ("tombstone_compaction_interval", "interval", "s"),
@@ -161,8 +140,7 @@ const COMPACTION: &[Class] = &[
             ),
         ],
     },
-    // Removed in 4.0 and still configured on 3.11 clusters this can connect
-    // to, which is the only reason it is here.
+    // Removed in 4.0; here only for 3.11 clusters.
     Class {
         name: "DateTieredCompactionStrategy",
         keys: &[
@@ -176,8 +154,6 @@ const COMPACTION: &[Class] = &[
     },
 ];
 
-/// Shared by every compressor: the chunk is what the class is configured with,
-/// whichever class it is.
 const CHUNKING: &[Key] = &[
     ("chunk_length_in_kb", "chunk", "kb"),
     ("crc_check_chance", "crc", ""),
@@ -211,13 +187,8 @@ const COMPRESSION: &[Class] = &[
 ];
 
 impl ClassOption {
-    /// `text` as a class and its settings, or `None` for anything this build
-    /// does not recognise in full.
-    ///
-    /// Partial recognition is the case worth naming: a map whose class is
-    /// known but whose keys are not entirely known is *not* shown with the
-    /// stranger dropped, because a summary that silently omits a setting is
-    /// worse than the raw map it replaced.
+    /// A known class with any unknown key is `None`: a summary that drops a
+    /// setting is worse than the raw map.
     #[must_use]
     pub fn parse(kind: ClassKind, text: &str) -> Option<Self> {
         let entries = entries(text)?;
@@ -248,13 +219,8 @@ impl ClassOption {
     }
 }
 
-/// The map's entries in the order they were written, or `None` for text that
-/// is not one entry per `, ` with `: ` between key and value.
-///
-/// A value holding either separator is indistinguishable from a further entry
-/// once the map has been flattened — `UnifiedCompactionStrategy`'s
-/// `scaling_parameters` is written `T4, T4, N` — so such a value ends here
-/// rather than being guessed at.
+/// A value containing a separator is indistinguishable from another entry
+/// (`scaling_parameters` is `T4, T4, N`), so it yields `None`.
 fn entries(text: &str) -> Option<Vec<(&str, &str)>> {
     let inner = text.strip_prefix('{')?.strip_suffix('}')?;
     if inner.is_empty() {
@@ -281,11 +247,7 @@ fn value_of<'a>(entries: &[(&'a str, &'a str)], key: &str) -> Option<&'a str> {
         .map(|(_, value)| *value)
 }
 
-/// `class` without the package its kind puts every class in.
-///
-/// A class under any other package is one this build cannot claim to know the
-/// keys of, however familiar its last segment looks — which is why a match on
-/// the short name alone is not enough.
+/// Any other package is not a class this build knows, whatever its short name.
 fn shortened(kind: ClassKind, class: &str) -> Option<&str> {
     let short = class.strip_prefix(kind.package()).unwrap_or(class);
 

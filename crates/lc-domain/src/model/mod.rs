@@ -1,7 +1,5 @@
-//! The Cassandra vocabulary, in our terms rather than a driver's.
-//!
-//! Adapters translate into these types at the boundary; driver types stop at
-//! the adapter (architecture.md §5).
+//! The Cassandra vocabulary in our terms; driver types stop at the adapter
+//! (architecture.md §5).
 
 pub mod class_option;
 pub mod error;

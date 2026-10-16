@@ -1,59 +1,36 @@
-//! The Queries panel: a buffer, and what the editor is offering to write into
-//! it.
-//!
-//! The wrapper the queries editor design §2 said would earn its name once the
-//! panel held more than text. Completion is that second thing: the popup is
-//! panel state, not buffer state — [`Editor`] is a text buffer and knows
-//! nothing of a schema — and the two have to move together, which is what this
-//! type is for (design §5.4).
+//! The Queries panel: the buffer and the completion popup, which must move
+//! together. [`Editor`] knows no schema.
 
 use crate::cql::{Completion, Span, statements};
 use crate::editor::{Editor, Position};
 use crate::model::Key;
 
-/// What an edit owes the popup that was standing over it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refresh {
-    /// The word under the cursor changed. `update` offers against it again —
-    /// only it can, since only it can reach the schema.
+    /// Only `update` can reach the schema to offer again.
     Recompute,
-    /// The cursor left the word the offers were made against, so they no
-    /// longer describe anything on screen.
     Close,
-    /// The press moved the popup and nothing else. The offers stand, and they
-    /// still describe the word they were made against.
     Hold,
 }
 
-/// Where the statement the cursor is in sits, for the band drawn over it.
-///
-/// `end` is one past the statement's last character, so a band is empty
-/// exactly when the two positions are equal — which they never are here,
-/// since a span always holds at least one piece.
+/// `end` is one past the last character; a span always holds a piece, so the
+/// band is never empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Highlight {
     pub start: Position,
     pub end: Position,
 }
 
-/// Which of the panel's two tabs is drawn.
-///
-/// An enum rather than a `bool`: the tabs differ in what they hold, not in a
-/// flag (conventions.md §1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum QueriesTab {
-    /// The CQL buffer.
     #[default]
     Cql,
-    /// The trail of what the session issued (query log design §5).
     Logs,
 }
 
 impl QueriesTab {
-    /// The tabs in the order the title strip draws them.
     pub const ALL: [Self; 2] = [Self::Cql, Self::Logs];
 
-    /// The next tab in [`QueriesTab::ALL`], wrapping.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
@@ -62,7 +39,6 @@ impl QueriesTab {
         }
     }
 
-    /// The previous tab in [`QueriesTab::ALL`], wrapping.
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
@@ -79,14 +55,13 @@ impl QueriesTab {
         }
     }
 
-    /// Both names are short enough that there is nothing left to drop.
     #[must_use]
     pub const fn short_label(self) -> &'static str {
         self.label()
     }
 
-    /// The digit that reaches this tab from anywhere. Logs needs its own: `4`
-    /// opens the buffer, which then takes a second `4` as text.
+    /// Logs needs its own: `4` opens the buffer, which then takes a second `4`
+    /// as text.
     #[must_use]
     pub const fn number(self) -> char {
         match self {
@@ -95,18 +70,14 @@ impl QueriesTab {
         }
     }
 
-    /// The tab `key` reaches, if either claims it.
     #[must_use]
     pub fn from_number(key: char) -> Option<Self> {
         Self::ALL.into_iter().find(|tab| tab.number() == key)
     }
 }
 
-/// Whether the Cql tab's buffer is taking text.
-///
-/// `4` and a click arrive on [`CqlMode::Editing`]; `Tab` and `Esc` leave the
-/// tab on [`CqlMode::Browsing`], where every global key keeps its meaning.
-/// `Enter` or `i` opens the buffer, `Esc` closes it (cql edit mode design §2).
+/// `4` and a click arrive editing; `Tab` and `Esc` leave the tab browsing,
+/// where global keys keep their meaning.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CqlMode {
     #[default]
@@ -114,8 +85,7 @@ pub enum CqlMode {
     Editing,
 }
 
-/// The drawn tab, carrying the mode only the Cql tab has, so an editing Logs
-/// tab is unrepresentable.
+/// An editing Logs tab is unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shown {
     Cql(CqlMode),
@@ -136,13 +106,11 @@ pub struct QueriesPanel {
 }
 
 impl QueriesPanel {
-    /// The buffer's lines, one per screen row.
     #[must_use]
     pub fn lines(&self) -> &[String] {
         self.buffer.lines()
     }
 
-    /// The tab the panel is showing.
     #[must_use]
     pub const fn tab(&self) -> QueriesTab {
         match self.shown {
@@ -151,7 +119,6 @@ impl QueriesPanel {
         }
     }
 
-    /// The Cql tab's mode, or `None` while Logs is drawn.
     #[must_use]
     pub const fn mode(&self) -> Option<CqlMode> {
         match self.shown {
@@ -165,8 +132,7 @@ impl QueriesPanel {
         matches!(self.shown, Shown::Cql(CqlMode::Editing))
     }
 
-    /// Draws `tab`. Arriving at the tab already drawn is not a change, so an
-    /// open buffer stays open.
+    /// Re-showing the drawn tab keeps an open buffer open.
     pub fn show(&mut self, tab: QueriesTab) {
         if self.tab() == tab {
             return;
@@ -179,15 +145,13 @@ impl QueriesPanel {
         };
     }
 
-    /// Opens the buffer for typing. Inert on the Logs tab.
     pub fn start_editing(&mut self) {
         if let Shown::Cql(mode) = &mut self.shown {
             *mode = CqlMode::Editing;
         }
     }
 
-    /// Closes the buffer. The popup goes with it: it offers against a caret
-    /// that is no longer drawn.
+    /// The popup goes too: its caret is no longer drawn.
     pub fn stop_editing(&mut self) {
         if let Shown::Cql(mode) = &mut self.shown {
             *mode = CqlMode::Browsing;
@@ -200,7 +164,6 @@ impl QueriesPanel {
         self.buffer.cursor()
     }
 
-    /// The buffer as one string, which is what a statement is built from.
     #[must_use]
     pub fn text(&self) -> String {
         self.buffer.text()
@@ -216,8 +179,7 @@ impl QueriesPanel {
         self.completion.as_ref()
     }
 
-    /// Where the statement the cursor is in sits. `None` on a buffer holding
-    /// no statement at all, which an empty one is.
+    /// `None` on a buffer with no statement.
     #[must_use]
     pub fn band(&self) -> Option<Highlight> {
         let text = self.buffer.text();
@@ -229,8 +191,6 @@ impl QueriesPanel {
         })
     }
 
-    /// The statement `ctrl-r` runs: the one the cursor is in, which is the one
-    /// [`Self::band`] is drawn over.
     #[must_use]
     pub fn statement(&self) -> Option<String> {
         let text = self.buffer.text();
@@ -238,9 +198,7 @@ impl QueriesPanel {
         Some(self.span(&text)?.of(&text))
     }
 
-    /// Moves to the start of the next or previous statement. A step off either
-    /// end stays where it is: the band is a cursor over a list, and a list's
-    /// cursor stops at its ends (docs/shortcuts.md §2).
+    /// Stops at either end, like any list cursor.
     pub fn step_statement(&mut self, forwards: bool) {
         let text = self.buffer.text();
         let spans = statements(&text);
@@ -252,8 +210,6 @@ impl QueriesPanel {
         self.go_to(&spans, target);
     }
 
-    /// Moves to the first or the last statement — `g`/`G` and `Home`/`End`,
-    /// which reach the ends of whatever list the frame is driving.
     pub fn edge_statement(&mut self, last: bool) {
         let text = self.buffer.text();
         let spans = statements(&text);
@@ -277,15 +233,12 @@ impl QueriesPanel {
         self.completion = None;
     }
 
-    /// Replaces the whole buffer, cursor at the end of it. Whatever was being
-    /// offered described text that is gone.
+    /// The popup described text that is gone.
     pub fn replace(&mut self, text: &str) {
         self.buffer.replace(text);
         self.completion = None;
     }
 
-    /// Adds `text` after what the buffer holds, a blank line between, with the
-    /// cursor at its end. An empty buffer takes `text` alone.
     pub fn append(&mut self, text: &str) {
         let current = self.text();
 
@@ -296,8 +249,7 @@ impl QueriesPanel {
         }
     }
 
-    /// Lays the buffer out. Answers whether anything changed, so a press that
-    /// formats an already-formatted buffer costs no frame.
+    /// `false` when nothing changed, so the press costs no frame.
     pub fn format(&mut self) -> bool {
         let laid_out = crate::cql::format(&self.buffer.text());
         if laid_out == self.buffer.text() {
@@ -308,12 +260,10 @@ impl QueriesPanel {
         true
     }
 
-    /// Offers `candidates`, or takes the popup down.
     pub fn offer(&mut self, completion: Option<Completion>) {
         self.completion = completion;
     }
 
-    /// Steps the popup's selection, answering whether there was one to step.
     pub fn step(&mut self, forwards: bool) -> bool {
         let Some(completion) = self.completion.as_mut() else {
             return false;
@@ -328,30 +278,16 @@ impl QueriesPanel {
         true
     }
 
-    /// Offers `key` to the buffer, answering what it did — `None` where the
-    /// key is not the editor's to claim, so it keeps its global meaning, and
-    /// for every key while the buffer is not open.
-    ///
-    /// Exhaustive over [`Key`], so a new key has to decide whether an editor
-    /// claims it rather than defaulting into one side.
+    /// `None` where the key keeps its global meaning, and for every key while
+    /// the buffer is closed. Exhaustive over [`Key`].
     pub fn edit(&mut self, key: Key, height: usize) -> Option<Refresh> {
         if !self.is_editing() {
             return None;
         }
 
-        // Above the buffer: with a popup up, these five are the popup's
-        // (design §5.5). Without one they are what they are everywhere else —
-        // `Tab` moves focus, `Enter` splits the line, `Esc` closes the buffer,
-        // `↑`/`↓` move the cursor — so none of them is claimed.
-        //
-        // `Enter` beside `Tab` because both are what accepting is spelled as
-        // in the editors the audience has met, and because a shape's caret
-        // lands mid-statement, where the next thing wanted is a name and not
-        // a line break (completion ranking design §5).
-        //
-        // The vertical arrows walk the list for the same reason, and only the
-        // vertical ones: `←`/`→` stay motions, which is what takes the popup
-        // down.
+        // With a popup up these five are its keys; otherwise none is claimed.
+        // `Enter` accepts too, since a template's caret lands where a name, not
+        // a newline, is wanted. `←`/`→` stay motions.
         if let Some(completion) = self.completion.take() {
             match key {
                 Key::Tab | Key::Enter => {
@@ -389,8 +325,7 @@ impl QueriesPanel {
         Some(Refresh::Recompute)
     }
 
-    /// A motion leaves the word the offers were made against, so it takes the
-    /// popup with it.
+    /// Leaves the word the offers were made against.
     fn moved(&mut self, motion: impl Fn(&mut Editor)) -> Refresh {
         motion(&mut self.buffer);
         self.completion = None;
@@ -406,10 +341,8 @@ impl QueriesPanel {
     }
 }
 
-/// Which statement `offset` names: the one holding it, or — for an offset in
-/// the whitespace or the comment between two — the last one beginning before
-/// it, so a cursor left past a `;` still names the statement it just closed.
-/// An offset before the first statement names that one.
+/// Between statements, the last one beginning before `offset`, so a cursor past
+/// a `;` names the statement it closed.
 fn holding(spans: &[Span], offset: usize) -> Option<usize> {
     if spans.is_empty() {
         return None;
@@ -516,8 +449,7 @@ mod tests {
         panel
     }
 
-    /// Types `text`, offering against the schema after each character — the
-    /// loop `update` runs for real.
+    /// The loop `update` runs for real.
     fn typed(text: &str) -> QueriesPanel {
         let mut panel = opened();
         let schema = schema();
@@ -638,7 +570,6 @@ mod tests {
         assert!(!panel.step(true));
     }
 
-    /// The buffer's statements, as the band would name each of them in turn.
     fn stepped(text: &str) -> Vec<String> {
         let mut panel = QueriesPanel::default();
         panel.replace(text);
@@ -741,8 +672,7 @@ mod tests {
         );
     }
 
-    /// `replace` lands the cursor at the end of the buffer, which is past the
-    /// last `;` — the position a cursor left in after typing one.
+    /// `replace` leaves the cursor past the last `;`.
     #[test]
     fn a_cursor_past_the_last_semicolon_still_names_the_statement_it_closed() {
         let mut panel = QueriesPanel::default();
@@ -751,8 +681,6 @@ mod tests {
         assert_eq!(panel.statement().as_deref(), Some("SELECT 2;"));
     }
 
-    /// A motion that lands somewhere takes the popup with it, the rule every
-    /// other motion follows: the offers described a word the cursor has left.
     #[test]
     fn a_step_that_moves_takes_the_popup_down() {
         let mut panel = typed("SELECT 1;se");

@@ -1,8 +1,5 @@
-//! The Contents panel's projection: a page of rows as a drawable grid.
-//!
-//! Unlike the other two panels this one does not follow the tree cursor, so
-//! its title is what says which table is on screen (vision.md §4, principle
-//! 8).
+//! The Contents panel's projection. It does not follow the tree cursor, so its
+//! title says which table is on screen.
 
 use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
 
@@ -22,72 +19,45 @@ use crate::style::{Segment, Severity, Token};
 
 use super::{InspectBody, InspectField, InspectValue, InspectView, PanelBody, waiting};
 
-/// One column heading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridColumn {
     pub name: String,
-    /// The column's place in the physical layout —
-    /// [`Token::PartitionKey`], [`Token::ClusteringKey`] or
-    /// [`Token::RegularColumn`]. `None` when the schema no longer has the
-    /// table, so no claim about its shape can be checked.
+    /// `None` when the schema no longer has the table.
     pub token: Option<Token>,
-    /// Character columns it is drawn in: capped by `grid.max_column_width`,
-    /// then widened into room the panel has spare. Computed here rather than in the
-    /// renderer so the fitting arithmetic can live beside the offsets it
-    /// bounds (docs/superpowers/specs/2026-08-10-table-display-design.md §6).
+    /// Capped by `grid.max_column_width`, then widened into spare room.
+    /// Computed here, beside the offsets it bounds.
     pub width: u16,
-    /// Which way this column is sorted, `None` when the grid is not sorted on
-    /// it. What the mark over the heading says, and the marks are drawn on
-    /// every column whether or not one is in force — an affordance a user can
-    /// see and click before ever pressing `s`
-    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §5).
+    /// Marks are drawn on every column, so sorting is visible before `s` is
+    /// pressed.
     pub sort: Option<Order>,
-    /// Whether a filter is narrowing the grid by this column.
     pub filtered: bool,
 }
 
-/// One value, already rendered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridCell {
     pub text: String,
-    /// `Some(Token::Faint)` for a null, which is what keeps it apart from a
-    /// text column whose value is the word "null".
+    /// `Some(Token::Faint)` for a null, apart from the text "null".
     pub token: Option<Token>,
-    /// Whether the applied search matched `text`.
-    ///
-    /// A field of its own rather than a second meaning for `token`:
-    /// overwriting the null marker on a match would lose that distinction
-    /// for exactly the cells the user went looking for (design §4.3).
+    /// Separate from `token`, so a match does not hide the null marker.
     pub matched: bool,
-    /// Whether this cell has been typed into and not yet written — `matched`'s
-    /// argument, for the same reason (cell editing design §7).
+    /// Separate from `token`, as `matched` is.
     pub dirty: bool,
 }
 
-/// How much of a result Table contents holds, drawn on its bottom border
-/// (docs/superpowers/specs/2026-09-17-grid-paging-design.md §5).
-///
-/// Three parts because the renderer drops them apart: `size` first, then the
-/// whole footer, as the border narrows.
+/// Three parts so the renderer can drop them apart as the border narrows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Footer {
-    /// Every row fetched, filtered or not: the title already says how much of
-    /// that a filter left.
+    /// Every row fetched; the title says how much a filter left.
     pub rows: String,
-    /// The estimate, from [`SIZE_SHOWN_FROM`] up, in the warning colour from
-    /// the first memory stop up.
+    /// From [`SIZE_SHOWN_FROM`] up, warning-coloured from the first memory
+    /// stop.
     pub size: Option<Segment>,
-    /// Cells typed into and not yet written, `None` while there are none
-    /// (cell editing design §7).
     pub dirty: Option<String>,
-    /// `None` once the result ended.
     pub status: Option<String>,
-    /// The key that continues a stopped `P`. Dropped first on a narrow border:
-    /// the hint bar names it too.
+    /// Dropped first on a narrow border: the hint bar names it too.
     pub hint: Option<String>,
 }
 
-/// The estimate below which the footer leaves it out.
 pub const SIZE_SHOWN_FROM: Bytes = Bytes::MB.times(10);
 
 pub(super) fn footer(state: &State) -> Option<Footer> {
@@ -120,8 +90,8 @@ pub(super) fn footer(state: &State) -> Option<Footer> {
             Paging::More { fetch, .. } => Some(match fetch {
                 Fetch::Idle => "more".to_owned(),
                 Fetch::One(_) | Fetch::All { .. } => "loading".to_owned(),
-                // A stop is a whole multiple of `MEMORY_STEP`, and the page that
-                // crossed it landed whole, so the estimate sits past it.
+                // The page that crossed a stop landed whole, so the estimate
+                // sits past it.
                 Fetch::Stopped(Stopped::Memory(at)) => {
                     format!("paused past {} MB", at.get() / Bytes::MB.get())
                 }
@@ -141,7 +111,6 @@ pub(super) fn footer(state: &State) -> Option<Footer> {
     })
 }
 
-/// `1234567` as `1,234,567`.
 fn thousands(count: usize) -> String {
     let digits = count.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
@@ -168,13 +137,6 @@ pub(super) fn title(state: &State) -> Vec<Segment> {
     }
 }
 
-/// The panel's name, then what it is showing, then how much of it.
-///
-/// The qualified name keeps the schema's own colours ([`TableRef::segments`])
-/// and a typed statement the editor's ([`crate::cql::issued`]): this panel
-/// does not follow the tree cursor, so its title is the only thing on screen
-/// saying what is up (vision.md §4, principle 8), and it says it the way the
-/// panel it came from does.
 fn named(base: &str, subject: &Subject, count: Option<String>) -> Vec<Segment> {
     let mut segments = vec![Segment::plain(format!("{base} — "))];
 
@@ -190,10 +152,8 @@ fn named(base: &str, subject: &Subject, count: Option<String>) -> Vec<Segment> {
     segments
 }
 
-/// How much of the page is on screen. Under a filter that is two numbers,
-/// not one: a grid drawn as "3 rows" with seventeen more behind a filter says
-/// the cluster returned three
-/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §3).
+/// Two numbers under a filter: "3 rows" alone would claim the cluster returned
+/// three.
 fn count(page: &GridPage) -> String {
     let shown = page.len();
 
@@ -214,12 +174,10 @@ fn rows(count: usize) -> String {
 
 pub(super) fn body(state: &State) -> PanelBody {
     match state.contents.state() {
-        // The first thing every user sees, so it names the action rather than
-        // the absence of one (vision.md §4, principle 1).
+        // Names the action rather than the absence of one.
         ContentsState::Empty => waiting("Press Enter on a table"),
         ContentsState::Loading { .. } => waiting("Loading rows…"),
-        // Quoted, not deferred to [5]-Logs: the trail keeps the history,
-        // the panel owns the reason (supersedes query log design §8).
+        // The panel owns the reason; the trail keeps the history.
         ContentsState::Failed { error, .. } => PanelBody::Notice {
             text: error.clone(),
             token: Some(Token::Severity(Severity::Danger)),
@@ -235,9 +193,7 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
         return waiting("No rows");
     }
 
-    // A filter that matched nothing is not an empty page: the panel says so
-    // in the words of the thing that emptied it, so the way back is the key
-    // that put it there (design §3).
+    // Not an empty page: names the filter, so the way back is clear.
     if grid_page.is_empty() {
         return waiting("No rows match the filter");
     }
@@ -289,8 +245,7 @@ fn grid(state: &State, subject: &Subject, grid_page: &GridPage) -> PanelBody {
                 filtered: grid_page.filter(index).is_some(),
             })
             .collect(),
-        // Unmeasured, the panel has no height to window by, and draws from
-        // the offset on.
+        // Unmeasured, there is no height to window by.
         rows: (offset..grid_page.len())
             .take(match state.geometry.height(Panel::Contents) {
                 0 => usize::MAX,
@@ -341,11 +296,8 @@ fn grid_cell(
     }
 }
 
-/// A key column's values carry the colour its heading does, so the primary key
-/// can be read off the rows themselves rather than traced back up the grid
-/// (vision.md §2). A regular column keeps `None`: body text is what every
-/// other value already is, and painting it would leave the keys with nothing
-/// to stand out against.
+/// Key values carry their heading's colour so the key reads off the rows.
+/// Regular columns stay plain, so keys stand out.
 const fn key_token(column: Option<Token>) -> Option<Token> {
     match column {
         Some(Token::PartitionKey) => Some(Token::PartitionKeyValue),
@@ -354,15 +306,8 @@ const fn key_token(column: Option<Token>) -> Option<Token> {
     }
 }
 
-/// Where a column sits in the table's physical layout, which vision.md §2
-/// exists to keep visible — here, in the grid being read, rather than a panel
-/// away.
-///
-/// A typed statement gets the same treatment as one from the tree when the
-/// resolver can name exactly one table for it and the schema has that table.
-/// A column the table does not have — an alias, an aggregate, `writetime(x)`
-/// — stays plain, because colouring it would claim it was a column of that
-/// table (cql semantics design §7).
+/// A typed statement is coloured when the resolver names exactly one table. A
+/// column the table lacks (alias, aggregate, `writetime(x)`) stays plain.
 fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str) -> Option<Token> {
     let table = table?;
     let found = schema
@@ -379,15 +324,10 @@ fn column_token(schema: Option<&Schema>, table: Option<&TableRef>, column: &str)
     {
         Some(Token::RegularColumn)
     } else {
-        // Not a column of the table the statement read: an alias, an
-        // aggregate, or a projection. `RegularColumn` here would be a claim
-        // the schema does not support.
         None
     }
 }
 
-/// The inspector's projection. Tokens are the grid's own, so a key column
-/// reads as one in both (cell inspector design §3).
 pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
     let table = grid_table(state, inspector.subject());
     let column = |name: &str| column_token(state.schema(), table.as_ref(), name);
@@ -450,8 +390,7 @@ pub(super) fn inspect(state: &State, inspector: &Inspector) -> InspectView {
     }
 }
 
-/// `name` cut to `width` cells with an ellipsis, the way the grid cuts a
-/// heading.
+/// Cut the way the grid cuts a heading.
 fn fitted(name: &str, width: usize) -> String {
     if name.width() <= width {
         return name.to_owned();
@@ -471,9 +410,7 @@ fn fitted(name: &str, width: usize) -> String {
     out
 }
 
-/// The table a grid's rows came from: the one the tree asked for, or the one
-/// a typed statement names, qualified by the keyspace on screen where the
-/// statement did not qualify it.
+/// A typed statement's unqualified table takes the keyspace on screen.
 fn grid_table(state: &State, subject: &Subject) -> Option<TableRef> {
     match subject {
         Subject::Table(table) => Some(table.clone()),
@@ -506,8 +443,6 @@ mod tests {
         panel_body(state, 2)
     }
 
-    /// The strip alone: the `[3]-` every title opens with is
-    /// `view::tests`' to pin, not this module's.
     fn contents_title(state: &State) -> String {
         view_model(state).panels[2].title.strip()
     }
@@ -525,8 +460,7 @@ mod tests {
         }
     }
 
-    /// A state showing `page` for `shop.orders`, whose schema entry has
-    /// `id` as its partition key.
+    /// `id` is the partition key.
     fn showing(page: Page) -> State {
         let mut state = tabled(&[("shop", &["orders"])]);
         let query = QueryId::next();
@@ -544,12 +478,8 @@ mod tests {
         state
     }
 
-    /// A state showing `page` for a hand-typed `cql`, against a schema whose
-    /// sole keyspace `shop` has `orders` (`id` partition key, `total`
-    /// regular column) and `customers` (`id` partition key). The tree
-    /// cursor's default index selects that one keyspace, standing in for
-    /// whichever one is on screen when the statement does not qualify its
-    /// table.
+    /// `shop` holds `orders` (`id` partition, `total` regular) and `customers`
+    /// (`id` partition).
     fn showing_typed(cql: &str, page: Page) -> State {
         let mut state = tabled(&[("shop", &["orders", "customers"])]);
         let mut schema = state.schema().cloned().expect("loaded");
@@ -583,10 +513,6 @@ mod tests {
         state
     }
 
-    /// [`showing_typed`], but against a schema whose sole keyspace is
-    /// `keyspace` — the tree cursor's default index parks it on that
-    /// keyspace, which is what an unqualified table name in `cql` resolves
-    /// against.
     fn showing_typed_in(keyspace: &str, cql: &str, page: Page) -> State {
         let mut state = tabled(&[(keyspace, &["orders"])]);
         let query = QueryId::next();
@@ -651,8 +577,6 @@ mod tests {
         state
     }
 
-    /// The panel that does not follow the tree cursor still names its table
-    /// the way the tree does, colours included (vision.md §2).
     #[test]
     fn a_titles_table_name_wears_the_schemas_own_colours() {
         let state = showing_table("shop", "orders");
@@ -682,7 +606,6 @@ mod tests {
         );
     }
 
-    /// A typed statement is coloured as the editor and the trail colour it.
     #[test]
     fn a_typed_subjects_title_is_highlighted_as_cql() {
         let mut state = tabled(&[("shop", &["orders"])]);
@@ -798,8 +721,7 @@ mod tests {
     #[test]
     fn the_header_carries_the_tables_physical_shape() {
         let mut state = tabled(&[("shop", &["orders"])]);
-        // The shared builder gives every table a single `id` partition key;
-        // this one also clusters on `at`.
+        // Clusters on `at` too.
         let mut schema = state.schema().cloned().expect("loaded");
         let table = schema
             .keyspaces
@@ -852,9 +774,6 @@ mod tests {
         );
     }
 
-    /// The resolver names the one table a typed statement read, so its grid
-    /// gets the same key colours a tree-driven one does (cql semantics
-    /// design §7).
     #[test]
     fn a_typed_select_over_one_table_colours_its_key_columns() {
         let state = showing_typed(
@@ -870,9 +789,6 @@ mod tests {
         assert_eq!(columns[1].token, Some(Token::RegularColumn));
     }
 
-    /// An ordinary SQL habit — a trailing `;` — must not silently turn the
-    /// colouring off: `sole_table` treats the placeholder scope the `;`
-    /// opens as no statement of its own.
     #[test]
     fn a_trailing_semicolon_still_colours_the_grid() {
         let state = showing_typed(
@@ -888,9 +804,6 @@ mod tests {
         assert_eq!(columns[1].token, Some(Token::RegularColumn));
     }
 
-    /// An alias, an aggregate, or `writetime(x)` matches no column of the
-    /// table the statement read — colouring it would claim it was that
-    /// column, which the resolver alone cannot know (design §7).
     #[test]
     fn an_aliased_column_claims_nothing_about_the_table() {
         let state = showing_typed(
@@ -908,9 +821,6 @@ mod tests {
         );
     }
 
-    /// A batch splits into one scope per `;`; its first scope alone names
-    /// one table, but the buffer as a whole names two, so nothing is
-    /// coloured (design §7; `sole_table`'s one-statement guard).
     #[test]
     fn a_statement_naming_two_tables_colours_nothing() {
         let state = showing_typed(
@@ -926,9 +836,6 @@ mod tests {
         assert_eq!(columns[0].token, None);
     }
 
-    /// An unqualified table name in a typed statement is read against the
-    /// keyspace the tree cursor sits on, the way completion already does
-    /// (`update::keys::complete`).
     #[test]
     fn an_unqualified_typed_select_takes_the_keyspace_on_screen() {
         let state = showing_typed_in(
@@ -944,8 +851,6 @@ mod tests {
         assert_eq!(columns[0].token, Some(Token::PartitionKey));
     }
 
-    /// A statement naming no table at all — as opposed to one the resolver
-    /// could not pin down to exactly one — still claims nothing.
     #[test]
     fn a_typed_statement_naming_no_table_colours_nothing() {
         let state = showing_typed("select 1", page_of(&["1"], &[&[CqlValue::Int(1)]]));

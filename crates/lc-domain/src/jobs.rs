@@ -1,4 +1,4 @@
-//! Writes in flight: an export, a drop, a commit — one of each at a time.
+//! Writes in flight: an export, a drop, a commit, one of each at a time.
 
 use std::path::{Path, PathBuf};
 
@@ -10,19 +10,15 @@ use crate::inspect::Inspector;
 use crate::model::{JobId, QueryId};
 use crate::update::Source;
 
-/// A running export.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportJob {
     id: JobId,
     rows: usize,
     destination: PathBuf,
-    /// Kept so `ExportError::Exists` can put the form back exactly as it was
-    /// (export design §7). Dropped on any other outcome.
+    /// So `ExportError::Exists` can reopen the form as it was.
     form: ExportForm,
-    /// Kept for the same round trip, and for the same reason the form is: what
-    /// the confirmation re-emits has to be what was attempted, not what the
-    /// panel happens to hold by the time the answer arrives — the panel stays
-    /// live for the whole of an export (final review I3).
+    /// The panel stays live during an export, so a retry must re-emit what was
+    /// attempted.
     source: Source,
 }
 
@@ -48,7 +44,6 @@ impl ExportJob {
         self.id
     }
 
-    /// Rows written so far, as the hint bar reports it.
     #[must_use]
     pub const fn rows(&self) -> usize {
         self.rows
@@ -59,27 +54,20 @@ impl ExportJob {
         &self.destination
     }
 
-    /// Applies a progress report, if it belongs to this job.
     pub fn progressed(&mut self, job: JobId, rows: usize) {
         if self.id == job {
             self.rows = rows;
         }
     }
 
-    /// The form the job was started from and the source it was started with,
-    /// consumed so a caller cannot hold both the job and its parts at once.
+    /// Consumed, so nobody holds the job and its parts at once.
     #[must_use]
     pub fn into_parts(self) -> (ExportForm, Source) {
         (self.form, self.source)
     }
 }
 
-/// A drop that has reached the cluster and not yet come back.
-///
-/// The [`QueryId`] alone would not do: the tree the target was read from is
-/// live for the whole round trip, so what the message names when the answer
-/// arrives is carried here rather than read again (the argument
-/// [`ExportJob::source`] already makes).
+/// Carries the target: the tree is live during the round trip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dropping {
     query: QueryId,
@@ -103,18 +91,12 @@ impl Dropping {
     }
 }
 
-/// A commit in flight: the query, and the table it is writing to.
-///
-/// [`Dropping`]'s shape and its reason: the page the edits were read from is
-/// live for the whole round trip, so what the message names when the answer
-/// arrives is carried here rather than read again
-/// (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5).
+/// Carries the table: the page is live during the round trip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Committing {
     query: QueryId,
     table: TableRef,
-    /// The insert form being written, kept so a refusal can give it back
-    /// (insert design §5).
+    /// Given back on refusal.
     form: Option<Box<Inspector>>,
     scope: CommitScope,
 }
@@ -130,8 +112,7 @@ impl Committing {
         }
     }
 
-    /// An `INSERT`, which lands in no row of the page: the grid is re-read
-    /// rather than patched (docs/superpowers/specs/2026-10-12-row-insert-design.md §5).
+    /// Lands in no page row, so the grid is re-read.
     #[must_use]
     pub fn inserted(query: QueryId, table: TableRef, form: Inspector) -> Self {
         Self {
@@ -147,7 +128,7 @@ impl Committing {
         self.form.is_some()
     }
 
-    /// The form that was being written, `None` for an update.
+    /// `None` for an update.
     pub fn take_form(&mut self) -> Option<Inspector> {
         self.form.take().map(|form| *form)
     }

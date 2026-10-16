@@ -1,20 +1,14 @@
-//! Laying a statement out, without claiming to have parsed it.
-//!
-//! The rewrite is total but shallow: whitespace is rebuilt from scratch,
-//! keywords are upper-cased, and a clause keyword at bracket depth zero opens
-//! a line. Nothing is reordered, nothing is dropped, and no literal, comment
-//! or name is retyped — so a buffer the scanner misreads comes back laid out
-//! oddly rather than meaning something else (design §4).
+//! Laying a statement out without parsing it: whitespace is rebuilt and
+//! keywords upper-cased, nothing reordered or dropped, so a misread buffer
+//! comes back oddly laid out rather than changed.
 
 use super::keywords;
 use super::lex::{Kind, Piece, pieces};
 
-/// The indent a continued clause wears. Two, not four: the panel is a few rows
-/// tall and every column of the line is one the statement could have used
-/// (design §4.2).
+/// Two: the panel is short and narrow.
 const INDENT: &str = "  ";
 
-/// `text`, laid out. Idempotent: formatting the result changes nothing.
+/// Idempotent.
 #[must_use]
 pub fn format(text: &str) -> String {
     let mut out = Layout::default();
@@ -26,7 +20,6 @@ pub fn format(text: &str) -> String {
     out.finish()
 }
 
-/// Whitespace is rebuilt rather than kept; everything else is written out.
 fn is_written(piece: &Piece) -> bool {
     piece.kind != Kind::Whitespace
 }
@@ -35,23 +28,20 @@ fn is_written(piece: &Piece) -> bool {
 struct Layout {
     lines: Vec<String>,
     line: String,
-    /// Bracket nesting. A clause keyword inside brackets is a function
-    /// argument or a collection's contents, not a clause.
+    /// A clause keyword inside brackets is not a clause.
     depth: usize,
-    /// Whether a `BEGIN BATCH` is open: its members are written one indent in,
-    /// so where one statement ends and the next begins is visible without
-    /// reading for the `;` (design §4.2).
+    /// Batch members are indented, so statement boundaries show without reading
+    /// for `;`.
     batched: bool,
-    /// Set by a statement's `;`; the next written piece starts after a blank
-    /// line, so separate statements read as separate queries.
+    /// A blank line between statements.
     separate: bool,
     previous: Option<Piece>,
 }
 
 impl Layout {
     fn push(&mut self, piece: &Piece) {
-        // Every rule below reads the piece as it will be written, not as it
-        // was typed: `from` opens a clause exactly as `FROM` does.
+        // Rules read the piece as written: `from` opens a clause as `FROM`
+        // does.
         let piece = &Piece {
             kind: piece.kind,
             text: Self::written(piece),
@@ -61,9 +51,8 @@ impl Layout {
             self.lines.push(String::new());
         }
 
-        // `APPLY BATCH` closes the block rather than sitting in it. The
-        // indent for its line was written when the last member's `;` wrapped,
-        // so it has to be taken back out.
+        // The indent was written when the last member's `;` wrapped; take it
+        // back.
         if piece.text == "APPLY" {
             self.batched = false;
             if self.blank() {
@@ -89,10 +78,7 @@ impl Layout {
         self.separate = piece.text == ";" && !self.batched;
     }
 
-    /// A keyword is written upper case; everything else is written as typed. A
-    /// name's case is load-bearing — CQL folds an unquoted identifier, so
-    /// `MyKs` and `myks` are the same table while `"MyKs"` is a different one
-    /// (`Statement::quoted`) — and a literal's case is its value.
+    /// A name's case is load-bearing, and a literal's case is its value.
     fn written(piece: &Piece) -> String {
         if piece.kind == Kind::Keyword {
             piece.text.to_ascii_uppercase()
@@ -101,16 +87,12 @@ impl Layout {
         }
     }
 
-    /// Whether nothing has been written to the current line. Indent is not
-    /// something written: a line holding only [`INDENT`] is still waiting for
-    /// its first word.
+    /// A line of only [`INDENT`] is still blank.
     fn blank(&self) -> bool {
         self.line.trim_start().is_empty()
     }
 
-    /// A clause opens a line — unless it is the tail of a compound one, which
-    /// is what keeps `INSERT INTO`, `DELETE FROM`, `PER PARTITION LIMIT` and
-    /// `CREATE TABLE IF NOT EXISTS` whole (design §4.1).
+    /// Compound clauses (`INSERT INTO`, `PER PARTITION LIMIT`) stay whole.
     fn breaks_before(&self, piece: &Piece) -> bool {
         if self.blank() || self.depth > 0 || piece.kind != Kind::Keyword {
             return false;
@@ -133,8 +115,6 @@ impl Layout {
             return false;
         };
 
-        // A comment written after something on its line keeps a space before
-        // it; every other rule below is about the shape of CQL itself.
         if piece.kind == Kind::Comment {
             return true;
         }
@@ -146,13 +126,8 @@ impl Layout {
         !(piece.text == "(" && previous.kind == Kind::Identifier && self.binds_brackets())
     }
 
-    /// Whether `(` straight after a name is that name's argument list.
-    ///
-    /// It is, everywhere but in the statements whose brackets hold a column
-    /// list: `count(id)` is a call and `INSERT INTO orders (id, total)` is
-    /// not, and the two are the same three pieces. The clause the line opened
-    /// with is what tells them apart — the one thing a scanner can see without
-    /// becoming a parser (design §4.1).
+    /// `count(id)` and `INSERT INTO orders (id)` are the same pieces; the
+    /// line's opening clause tells them apart.
     fn binds_brackets(&self) -> bool {
         !DEFINES
             .iter()
@@ -178,9 +153,7 @@ impl Layout {
         self.previous = Some(piece.clone());
     }
 
-    /// Closes the line and opens the next, indented or not. A line with
-    /// nothing written to it is not closed: two clause keywords in a row would
-    /// otherwise leave a blank line between them.
+    /// A blank line is not closed, so consecutive clause keywords leave no gap.
     fn wrap(&mut self, indented: bool) {
         if self.blank() {
             self.line.clear();
@@ -200,9 +173,7 @@ impl Layout {
     }
 }
 
-/// The keyword pairs that are one clause written in two words. Only pairs
-/// whose second word opens a clause on its own need listing: every other
-/// keyword continues whatever clause it is in and never breaks a line.
+/// Only pairs whose second word would open a clause alone.
 const COMPOUND: &[(&str, &str)] = &[
     ("AGGREGATE", "IF"),
     ("COLUMNFAMILY", "IF"),
@@ -220,38 +191,27 @@ const COMPOUND: &[(&str, &str)] = &[
     ("VIEW", "IF"),
 ];
 
-/// The clauses whose brackets hold a definition rather than an argument list.
 const DEFINES: &[&str] = &["ALTER", "CREATE", "DROP", "INSERT"];
 
-/// `AND` and `OR` continue the clause above rather than opening one, so they
-/// are indented under it — the shape that makes a three-condition `WHERE`
-/// readable at a glance.
 fn continues(text: &str) -> bool {
     matches!(text, "AND" | "OR")
 }
 
-/// The statement separator ends its line, and so does a comment that runs to
-/// one — anything written after it on the same line would be inside it.
+/// Anything after a line comment would be inside it.
 fn ends_a_line(piece: &Piece) -> bool {
     piece.text == ";" || (piece.kind == Kind::Comment && !piece.text.starts_with("/*"))
 }
 
-/// Nothing is written straight after these.
 fn tight_after(text: &str) -> bool {
     matches!(text, "(" | "[" | "{" | ".")
 }
 
-/// Nothing is written straight before these.
 fn tight_before(text: &str) -> bool {
     matches!(text, ")" | "]" | "}" | "." | "," | ";")
 }
 
-/// The keywords that open a clause. Every other keyword continues whatever
-/// clause it is in.
-///
-/// A list rather than [`keywords::KEYWORDS`] filtered somehow: which words
-/// open a clause is the layout's own knowledge, and the type names — `TEXT`,
-/// `INT`, `MAP` — are keywords that must never break a line.
+/// Its own list: type names like `TEXT` and `MAP` are keywords that must never
+/// break a line.
 fn is_clause(text: &str) -> bool {
     const CLAUSES: &[&str] = &[
         "ALLOW", "ALTER", "AND", "APPLY", "BEGIN", "CREATE", "DELETE", "DROP", "FROM", "GRANT",
@@ -271,8 +231,7 @@ fn is_clause(text: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Formatting is idempotent, so every expectation below is asserted twice:
-    /// once against the source and once against its own output.
+    /// Asserted twice, since formatting is idempotent.
     fn formatted(source: &str) -> String {
         let once = format(source);
         assert_eq!(format(&once), once, "formatting is idempotent");

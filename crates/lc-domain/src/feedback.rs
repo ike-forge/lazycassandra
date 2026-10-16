@@ -4,20 +4,14 @@ use crate::panel::Panel;
 use crate::selection::Ranges;
 use crate::style::Severity;
 
-/// The loader's phase.
-///
-/// Advances only while something is outstanding and resets when nothing is, so
-/// an idle frame is always the same frame rather than wherever the animation
-/// happened to stop.
+/// Resets when idle, so an idle frame is always the same frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Loader {
     frame: usize,
 }
 
 impl Loader {
-    /// Advance one frame, or fall back to rest. Reports whether the phase
-    /// moved — an idle tick that changes nothing must not cost a repaint
-    /// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §4.2).
+    /// `false` when nothing moved: an idle tick must not cost a repaint.
     pub const fn advance(&mut self, working: bool) -> bool {
         let next = if working {
             self.frame.wrapping_add(1)
@@ -29,25 +23,15 @@ impl Loader {
         moved
     }
 
-    /// Unbounded: the renderer folds it into the widget's own cycle, whose
-    /// length is the widget's business rather than the domain's.
+    /// Unbounded: the widget owns its cycle length.
     #[must_use]
     pub const fn frame(self) -> usize {
         self.frame
     }
 }
 
-/// The afterglow a `y` leaves on what it copied
-/// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §6.1).
-///
-/// A yank spends the selection, so without this the only sign it happened
-/// would be a band disappearing. The flash holds what was taken, brightly,
-/// for long enough to read and no longer.
-///
-/// It carries the rectangle rather than reading the selection back, because by
-/// the time it is drawn there is no selection left to read. `rows` and
-/// `columns` follow the view model's convention: empty on an axis is the
-/// whole of it, which is what row mode and column mode take.
+/// A yank spends the selection, so this carries the rectangle it took. Empty on
+/// an axis means all of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flash {
     panel: Panel,
@@ -56,12 +40,7 @@ pub struct Flash {
     remaining: usize,
 }
 
-/// How long the afterglow lasts, counted in [`crate::Msg::Tick`]s.
-///
-/// Elapsed time reaches the domain only as ticks, so a duration is a count
-/// here: twelve of `lc-app`'s forty-millisecond ticks, a little under half a
-/// second. Long enough to catch the eye, short enough that it is over before
-/// the next key.
+/// Twelve 40 ms ticks: just under half a second.
 pub const FLASH_TICKS: usize = 12;
 
 impl Flash {
@@ -75,9 +54,7 @@ impl Flash {
         }
     }
 
-    /// Burns one tick. Reports whether the frame changed — which only the tick
-    /// that puts the flash out does, so a flash costs two repaints rather than
-    /// one per tick ([`Loader::advance`]'s rule).
+    /// `true` only on the tick that ends it, so a flash costs two repaints.
     pub const fn spend(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
         self.remaining == 0
@@ -99,9 +76,8 @@ impl Flash {
     }
 }
 
-/// A line of feedback for an action that finished, or a chord that is bound
-/// but has nothing to do, where silence would read as a dead key. Not a modal: it asks nothing and leaves
-/// on its own, counted in ticks as [`Flash`] is.
+/// For a finished action, or a bound chord with nothing to do, where silence
+/// would read as a dead key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toast {
     severity: Severity,
@@ -109,7 +85,7 @@ pub struct Toast {
     remaining: usize,
 }
 
-/// Three seconds of [`crate::Msg::Tick`]s at `lc-app`'s forty milliseconds.
+/// Three seconds at 40 ms ticks.
 pub const TOAST_TICKS: usize = 75;
 
 impl Toast {
@@ -122,7 +98,7 @@ impl Toast {
         }
     }
 
-    /// As [`Flash::spend`]: true only on the tick that ends it.
+    /// `true` only on the tick that ends it.
     pub const fn spend(&mut self) -> bool {
         self.remaining = self.remaining.saturating_sub(1);
         self.remaining == 0

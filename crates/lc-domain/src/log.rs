@@ -1,11 +1,5 @@
 //! The Logs tab's state: a bounded trail of what the session issued and what
 //! came back.
-//!
-//! A module of its own for the reason [`crate::tree`], [`crate::contents`]
-//! and [`crate::ddl`] are ones — per-panel state with a vocabulary of its own
-//! rather than another field on `State` (architecture.md §11).
-//!
-//! Full design: docs/superpowers/specs/2026-08-19-query-log-design.md.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -17,14 +11,9 @@ use crate::selection::Selection;
 use crate::style::{Segment, Severity};
 use crate::viewport::{Cursor, Scroll};
 
-/// Entries the trail retains. Past this the oldest is dropped and counted.
-///
-/// A ring rather than an unbounded `Vec`: a session left open against a
-/// scripted workload has no ceiling otherwise, and "the process grows until it
-/// is killed" is not a behaviour worth a longer scrollback (design §3.2).
+/// A ring: a long scripted session would otherwise grow without bound.
 pub const LOG_CAPACITY: usize = 500;
 
-/// The trail, and the cursor reading it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Log {
     entries: VecDeque<Entry>,
@@ -32,13 +21,10 @@ pub struct Log {
     pub cursor: Cursor,
     pub scroll: Scroll,
     pub selection: Selection,
-    /// Private for the reason [`crate::ddl::DdlPanel`]'s is: setting it owes
-    /// the repair [`crate::state::State::apply_search`] carries out, and a
-    /// public field would let a caller skip it.
+    /// Private: setting it owes [`crate::state::State::apply_search`]'s repair.
     search: Option<Search>,
 }
 
-/// One thing the session did, and how it turned out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     at: Stamp,
@@ -46,22 +32,16 @@ pub struct Entry {
     outcome: Outcome,
 }
 
-/// An entry's first row: what was done.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
-    /// Highlighted once, at push, and normalised to one logical line —
-    /// re-lexing every retained statement per frame is the wrong shape, and
-    /// what ran is the statement rather than its indentation (design §3).
+    /// Highlighted once at push: re-lexing every entry per frame is the wrong
+    /// shape.
     Statement(Vec<Segment>),
     Sentence(String),
 }
 
-/// An entry's second row: how it turned out.
-///
-/// [`Outcome::Pending`] carries what will complete it rather than the entry
-/// carrying it, which is what makes a pending entry nothing can complete —
-/// and a completed entry holding a dangling trace — unrepresentable
-/// (design §2).
+/// [`Outcome::Pending`] carries its trace, so a pending entry nothing can
+/// complete is unrepresentable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Pending {
@@ -75,15 +55,12 @@ pub enum Outcome {
         detail: String,
     },
     Cancelled,
-    /// A statement `update` refused before it could become an `Effect` —
-    /// today only [`Posture::ReadOnly`](crate::Posture) (architecture.md §4).
-    /// Born complete: nothing was issued, so there is nothing to wait for.
+    /// Born complete: nothing was issued.
     Rejected {
         reason: String,
     },
 }
 
-/// What a pending entry is waiting on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trace {
     Connect(ConnId),
@@ -93,7 +70,6 @@ pub enum Trace {
 }
 
 impl Log {
-    /// Appends an entry, dropping the oldest if the ring is full.
     pub fn push(&mut self, entry: Entry) {
         if self.entries.len() == LOG_CAPACITY {
             self.entries.pop_front();
@@ -102,11 +78,8 @@ impl Log {
         self.entries.push_back(entry);
     }
 
-    /// Rewrites the outcome of the entry pending on `trace`.
-    ///
-    /// A no-op where no entry is pending on it: the entry may have aged out of
-    /// the ring, or the trace may already have been answered — a late result
-    /// for a cancelled query must not resurrect it (architecture.md §3).
+    /// A no-op when nothing is pending on it, so a late result cannot resurrect
+    /// an entry.
     pub fn complete(&mut self, trace: Trace, outcome: Outcome) {
         let pending = self.entries.iter_mut().rev().find(|entry| {
             matches!(entry.outcome, Outcome::Pending { trace: waiting } if waiting == trace)
@@ -117,9 +90,7 @@ impl Log {
         }
     }
 
-    /// Moves the entry pending on `from` to wait on `to` instead: a read that
-    /// skipped an empty page is still the one statement (grid paging design
-    /// §2).
+    /// A read that skipped an empty page is still one statement.
     pub fn retrace(&mut self, from: Trace, to: Trace) {
         let pending = self.entries.iter_mut().rev().find(
             |entry| matches!(entry.outcome, Outcome::Pending { trace: waiting } if waiting == from),
@@ -130,7 +101,6 @@ impl Log {
         }
     }
 
-    /// The trail, oldest first.
     #[must_use]
     pub fn entries(&self) -> impl DoubleEndedIterator<Item = &Entry> {
         self.entries.iter()
@@ -146,49 +116,39 @@ impl Log {
         self.entries.is_empty()
     }
 
-    /// Entries the ring has evicted. Drawn as a row of its own rather than
-    /// letting the panel present a truncated history as a complete one
-    /// (design §6).
+    /// Drawn as a row, so a truncated history never reads as complete.
     #[must_use]
     pub const fn dropped(&self) -> usize {
         self.dropped
     }
 
-    /// Moves to the next entry, stopping on the last one.
     pub fn down(&mut self) {
         self.cursor.down(self.entries.len());
     }
 
-    /// Moves to the previous entry, stopping on the first one.
     pub const fn up(&mut self) {
         self.cursor.up();
     }
 
-    /// Moves to the first entry.
     pub const fn to_start(&mut self) {
         self.cursor.to_start();
     }
 
-    /// Moves to the last entry.
     pub fn to_end(&mut self) {
         self.cursor.to_end(self.entries.len());
     }
 
-    /// The search painted over the trail, if any.
     #[must_use]
     pub fn search(&self) -> Option<&Search> {
         self.search.as_ref()
     }
 
-    /// Sets the search. Not public: [`State::apply_search`](crate::state::State::apply_search)
-    /// is the one caller, and the repair a change here owes is its job.
+    /// Not public: [`State::apply_search`](crate::state::State::apply_search)
+    /// owes the repair.
     pub(crate) fn set_search(&mut self, search: Option<Search>) {
         self.search = search;
     }
 
-    /// The entry `n` reaches from `from`, wrapping. Matched against
-    /// [`Subject::text`] — what a search is matched against, by that method's
-    /// own doc comment.
     #[must_use]
     pub fn next_match(&self, from: usize, direction: Direction) -> Option<usize> {
         let search = self.search.as_ref()?;
@@ -233,8 +193,6 @@ impl Entry {
 }
 
 impl Subject {
-    /// The subject as one string — what a search is matched against and what a
-    /// yank puts on the clipboard.
     #[must_use]
     pub fn text(&self) -> String {
         match self {
@@ -245,11 +203,7 @@ impl Subject {
 }
 
 impl Outcome {
-    /// How the outcome row is drawn.
-    ///
-    /// Derived rather than stored beside the outcome: a field would make
-    /// "succeeded, in red" representable, and the renderer would then need a
-    /// precedence rule the domain never stated (conventions.md §1).
+    /// Derived, so "succeeded, in red" is unrepresentable.
     #[must_use]
     pub const fn severity(&self) -> Severity {
         match self {
@@ -344,10 +298,7 @@ mod tests {
         assert_eq!(log.cursor.index(), 0);
     }
 
-    // `push` pops from the front and then always pushes back, so the ring's
-    // length never shrinks — a full ring stays full, it does not make room.
-    // A cursor already inside it therefore cannot be pushed out of bounds by
-    // eviction, which is why there is no clamp in `push` to test.
+    // A full ring stays full, so eviction cannot push the cursor out of bounds.
     #[test]
     fn eviction_leaves_the_cursor_addressable_and_the_ring_at_capacity() {
         let mut log = Log::default();
@@ -399,9 +350,6 @@ mod tests {
         assert_eq!(log.len(), 3, "completion rewrites, it does not append");
     }
 
-    // A result whose entry has aged out of the ring must not resurrect it. The
-    // same rule `update` applies to a result for a cancelled QueryId
-    // (architecture.md §3).
     #[test]
     fn a_completion_for_an_evicted_entry_does_nothing() {
         let query = QueryId::next();
@@ -444,8 +392,7 @@ mod tests {
         );
     }
 
-    // The connection and the schema read are two entries on one ConnId, and
-    // they resolve separately (query log design §3).
+    // The connection and the schema read are two entries on one ConnId.
     #[test]
     fn two_pending_entries_on_one_connection_complete_independently() {
         let conn = ConnId::next();

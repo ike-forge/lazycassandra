@@ -1,8 +1,5 @@
-//! What each connection has been asked, newest first.
-//!
-//! Held for the session and keyed by connection name rather than [`ConnId`]:
-//! an id is minted per connect, so reconnecting to the same cluster would
-//! otherwise start from nothing.
+//! What each connection has been asked, newest first. Keyed by name, not
+//! [`ConnId`], so a reconnect keeps it.
 //!
 //! [`ConnId`]: crate::model::ConnId
 
@@ -11,20 +8,15 @@ use std::collections::BTreeMap;
 use crate::config::{ConnectionName, HistoryLimit};
 use crate::cql::fold;
 
-/// One connection's statements, most recent first, none twice in a row.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct History {
     entries: Vec<String>,
 }
 
 impl History {
-    /// Remembers `statement` as the newest entry.
-    ///
-    /// A statement that differs from the newest only in what CQL does not
-    /// distinguish (keyword and name case) replaces it instead of repeating;
-    /// an older repeat is a new entry. A blank statement is not an entry. The
-    /// oldest entries past `limit` fall off. Answers whether anything
-    /// changed, so an exact repeat of the newest entry costs no write.
+    /// A case-only variant of the newest replaces it; a blank statement is
+    /// ignored. `false` when nothing changed, so an exact repeat costs no
+    /// write.
     pub fn record(&mut self, statement: &str, limit: HistoryLimit) -> bool {
         let statement = statement.trim();
 
@@ -49,8 +41,7 @@ impl History {
     }
 }
 
-/// Every connection's [`History`]. A `BTreeMap` so nothing depends on hash
-/// order (conventions.md §4).
+/// Ordered, for determinism.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Histories(BTreeMap<ConnectionName, History>);
 
@@ -67,10 +58,8 @@ impl Histories {
             .record(statement, limit)
     }
 
-    /// Replaces `connection`'s entries with `stored`, newest first as a store
-    /// keeps them, under the same rules as [`History::record`] — so a file
-    /// edited by hand, or written under a larger limit, still yields a list
-    /// the picker can rely on.
+    /// Same rules as [`History::record`], so a hand-edited file still yields a
+    /// valid list.
     pub fn restore(&mut self, connection: &ConnectionName, stored: &[String], limit: HistoryLimit) {
         let mut history = History::default();
 
@@ -81,15 +70,13 @@ impl Histories {
         self.0.insert(connection.clone(), history);
     }
 
-    /// `connection`'s entries, newest first; none for one never asked anything.
     #[must_use]
     pub fn of(&self, connection: &ConnectionName) -> &[String] {
         self.0.get(connection).map_or(&[], History::entries)
     }
 }
 
-/// An entry as one line: a pick list has a row per statement, and a statement
-/// laid out over several lines would take several.
+/// One row per statement.
 #[must_use]
 pub fn one_line(statement: &str) -> String {
     statement.split_whitespace().collect::<Vec<_>>().join(" ")

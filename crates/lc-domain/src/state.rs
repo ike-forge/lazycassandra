@@ -31,69 +31,36 @@ pub struct State {
     pub tables: TablesPanel,
     pub contents: ContentsPanel,
     pub ddl: DdlPanel,
-    /// The Queries panel: its buffer, and whatever completion is being
-    /// offered into it (query editor design §5.4).
     pub queries: QueriesPanel,
-    /// The Logs tab: a bounded trail of what the session issued and what came
-    /// back (query log design §3).
     pub log: Log,
-    /// What each connection has been asked from the Queries buffer, for
-    /// `ctrl-g` (query history design §1).
     pub histories: Histories,
-    /// What the last frame turned out to be, so a motion knows how far a page
-    /// is and where the end is.
+    /// So a motion knows how far a page is.
     pub geometry: Geometry,
-    /// A message or the command palette, drawn over the panels until it is
-    /// dismissed.
     pub overlay: Option<Overlay>,
-    /// Queries issued and not yet resolved. A result whose id is absent here
-    /// was cancelled, and is dropped rather than applied.
+    /// A result whose id is absent was cancelled, and is dropped.
     pub in_flight: BTreeMap<QueryId, Statement>,
-    /// How far into its cycle the loader is. Elapsed time reaches the domain
-    /// only as [`crate::Msg::Tick`], so this is the whole of what the renderer
-    /// is told about it.
     pub loader: Loader,
-    /// What the last `y` copied, lit for as long as [`Flash`] lasts. `None`
-    /// once it has faded or the next key has ended it.
     pub flash: Option<Flash>,
-    /// The modal button the pointer is holding down.
     pub held: Option<crate::pointer::Held>,
-    /// A one-line answer to a key that did nothing, for as long as [`Toast`]
-    /// lasts.
     pub toast: Option<Toast>,
-    /// Set when something changed that the next frame must show. Avoids
-    /// repainting on every keypress of a held-down `j` (architecture.md §3).
+    /// Avoids repainting on every repeat of a held key.
     pub dirty: bool,
     pub should_quit: bool,
-    /// The theme in force. A name; `lc-inbound` owns what it looks like.
+    /// A name; `lc-inbound` owns what it looks like.
     pub theme: ThemeChoice,
-    /// The wall-clock as of the last tick, which is what a log entry stamps
-    /// itself from. Refreshing it never marks dirty: a tick that changes
-    /// nothing must not cost a frame (query log design §4).
+    /// Refreshing it never marks dirty.
     pub now: Stamp,
-    /// The configuration the tool started on. Most of it has no consumer yet
-    /// (design §11); it is held rather than dropped so those follow-ups have
-    /// somewhere to read from.
+    /// Mostly unconsumed yet; held so follow-ups have somewhere to read from.
     pub config: Config,
-    /// The process's working directory, for the export form's prefilled path.
-    /// Passed in by `lc-app` at startup: the domain cannot read it and must
-    /// not learn how (export design §2.1).
+    /// Passed in by `lc-app`: the domain reads no environment.
     pub cwd: PathBuf,
-    /// Where the global config file goes, which the picker names when there
-    /// are no connections to list. Passed in by `lc-app` for `cwd`'s reason:
-    /// the domain cannot read the environment and must not learn how. `None`
-    /// when neither `$XDG_CONFIG_HOME` nor `$HOME` is set, and there is no
-    /// path to name (connection picker design §3).
+    /// Passed in by `lc-app`. `None` without `$XDG_CONFIG_HOME` or `$HOME`.
     pub config_home: Option<PathBuf>,
-    /// The one export in flight, if any. One at a time (export design §5).
+    /// One at a time.
     pub export: Option<ExportJob>,
-    /// The one drop in flight, if any. One at a time for the reason an export
-    /// is, and for one more: a second would race the schema reload the first
-    /// owes (drop design §1, §4).
+    /// One at a time: a second would race the schema reload the first owes.
     pub dropping: Option<Dropping>,
-    /// The one commit in flight, if any. One at a time for the drop's reason:
-    /// a second would race the first's write back into the page
-    /// (cell editing design §5).
+    /// One at a time: a second would race the first's write-back.
     pub committing: Option<Committing>,
 }
 
@@ -103,13 +70,8 @@ impl State {
         self.focus
     }
 
-    /// Moves focus, dropping the selection of the panel being left.
-    ///
-    /// A selection says what the next command acts on and the next command
-    /// acts on what has focus, so two panels holding one say two things and
-    /// `y` answers only one of them. The field is private so this is the only
-    /// way to change focus and the rule cannot be forgotten by a seventh path
-    /// (multi-group selection design §4).
+    /// Private focus makes this the only way to change it: two panels holding
+    /// selections would make `y` ambiguous.
     pub fn focus_on(&mut self, panel: Panel) {
         if self.focus == panel {
             return;
@@ -122,9 +84,8 @@ impl State {
                 self.contents.rows.clear();
                 self.contents.columns.clear();
             }
-            // The panel's unfocused height is a function of its buffer
-            // (layout.rs), so an unfocused Logs tab would be sized by
-            // something it is not drawing (query log design §5.2).
+            // The panel's unfocused height follows its buffer, so Logs must not
+            // stay drawn unfocused.
             Panel::Queries => {
                 self.show_queries_tab(QueriesTab::Cql);
                 self.queries.stop_editing();
@@ -134,21 +95,9 @@ impl State {
         self.focus = panel;
     }
 
-    /// Draws `tab` on the Queries panel, dropping what only makes sense while
-    /// the Logs tab is the one being drawn.
-    ///
-    /// The one chokepoint for leaving the Logs tab, whether that is
-    /// `focus_on` reverting it or `Tab`/`BackTab` walking the panel's own
-    /// strip past it: a search left applied would keep the hint bar
-    /// advertising `n`/`esc clear` while the Cql buffer takes text, and
-    /// `escape` would spend a press clearing it instead of leaving the
-    /// buffer — a lie the same rule that governs every other hint exists to
-    /// prevent (`view/hints.rs`'s own "a bar that lies is worse than no
-    /// bar"). A held selection is the same problem `focus_on`'s doc comment
-    /// already states for every other panel: it says what the next `y`
-    /// answers, and a trail the ring has moved on from by the time Logs is
-    /// shown again is not what a stale selection still names (query log
-    /// design §5.1, §5.2).
+    /// The one chokepoint for leaving Logs: a search left applied would keep
+    /// `n`/`esc clear` on the bar over a buffer that takes text, and a
+    /// selection would name a trail that has moved on.
     pub(crate) fn show_queries_tab(&mut self, tab: QueriesTab) {
         if self.queries.tab() == QueriesTab::Logs && tab != QueriesTab::Logs {
             self.log.set_search(None);
@@ -158,17 +107,13 @@ impl State {
         self.queries.show(tab);
     }
 
-    /// Whether the focused panel is taking text this frame.
-    ///
-    /// A question about `State` rather than about `Panel`: the Queries panel
-    /// takes text only while its Cql buffer is open (cql edit mode design §2).
+    /// Queries takes text only while its Cql buffer is open.
     #[must_use]
     pub fn takes_text(&self) -> bool {
         self.focus() == Panel::Queries && self.queries.is_editing()
     }
 
-    /// Posture of the current connection, or the safe default when there is
-    /// none.
+    /// The safe default without a connection.
     #[must_use]
     pub const fn posture(&self) -> Posture {
         match &self.connection {
@@ -180,7 +125,6 @@ impl State {
         }
     }
 
-    /// The statements the connection in use has been asked, newest first.
     #[must_use]
     pub fn history(&self) -> &[String] {
         match &self.connection {
@@ -192,7 +136,6 @@ impl State {
         }
     }
 
-    /// The connection a statement would run on.
     #[must_use]
     pub const fn conn_id(&self) -> Option<ConnId> {
         match &self.connection {
@@ -204,7 +147,6 @@ impl State {
         }
     }
 
-    /// The cluster's shape, once it has arrived.
     #[must_use]
     pub const fn schema(&self) -> Option<&Schema> {
         match &self.connection {
@@ -216,13 +158,8 @@ impl State {
         }
     }
 
-    /// The keyspace the tree cursor is on, which is the one on screen.
-    ///
-    /// The single answer to "which keyspace is the user looking at": the
-    /// editor completes an unqualified name against it (`update::keys::complete`)
-    /// and the grid reads a typed statement's unqualified table against it
-    /// (`view::contents`), and two derivations of one rule would be two
-    /// things to keep in step (cql semantics design §7).
+    /// The one answer to "which keyspace is on screen", shared by completion
+    /// and the grid.
     #[must_use]
     pub fn visible_keyspace(&self) -> Option<String> {
         let schema = self.schema()?;
@@ -232,11 +169,8 @@ impl State {
         })
     }
 
-    /// The tree's state and the schema it is a tree of.
-    ///
-    /// One method rather than two accessors because the borrow checker cannot
-    /// split `&mut self` across separate `tables()` and `schema()` calls, and
-    /// every transition needs both.
+    /// One method: the borrow checker cannot split `&mut self` across two
+    /// accessors.
     pub fn tables_and_schema(&mut self) -> Option<(&mut TablesPanel, &Schema)> {
         match &self.connection {
             ConnectionState::Connected(Connection {
@@ -247,7 +181,6 @@ impl State {
         }
     }
 
-    /// Moves the tree cursor to `row`, bounded by the tree as it is drawn.
     /// Does nothing before the schema has loaded.
     pub fn move_tree_cursor(&mut self, row: usize) {
         if let Some((tables, schema)) = self.tables_and_schema() {
@@ -259,34 +192,21 @@ impl State {
         self.dirty = true;
     }
 
-    /// Replaces whatever toast is up.
     pub fn notify(&mut self, severity: Severity, message: impl Into<String>) {
         self.toast = Some(Toast::new(severity, message));
         self.dirty = true;
     }
 
-    /// Whether the tool is waiting on the cluster for anything.
-    ///
-    /// What the loader animates for, and the only thing that makes a tick
-    /// worth a repaint.
+    /// What the loader animates for, and the only thing that makes a tick worth
+    /// a repaint.
     #[must_use]
     pub fn is_working(&self) -> bool {
         self.is_reading_health() || Panel::ALL.iter().any(|&panel| self.is_working_in(panel))
     }
 
-    /// Whether `panel` is the one waiting on the cluster.
-    ///
-    /// The wait is attributed to the panel whose content it will fill, because
-    /// that is where the loader is drawn: the tree is what a schema read
-    /// populates, and the grid is what every statement lands in — including
-    /// one submitted from Queries, which puts its result in Contents
-    /// (`submit_into_contents`). Ddl reads off a loaded schema and issues
-    /// nothing of its own, so it never waits.
-    ///
-    /// Queries waits on its own trail rather than on `in_flight`: a connect
-    /// or a schema read is a pending entry too, and the Logs tab's `⋯
-    /// running` animation exists to distinguish a hung wait from a fast one
-    /// (query log design §6), not only for a query the panel itself issued.
+    /// The wait belongs to the panel its result fills: Queries' statements land
+    /// in Contents. Queries itself waits on its trail, so the Logs tab animates
+    /// every pending entry.
     #[must_use]
     pub fn is_working_in(&self, panel: Panel) -> bool {
         match panel {
@@ -308,14 +228,11 @@ impl State {
         }
     }
 
-    /// Whether the health block is waiting on its read, which turns the
-    /// loader on its border.
     #[must_use]
     pub fn is_reading_health(&self) -> bool {
         matches!(&self.overlay, Some(Overlay::Health(panel)) if panel.is_loading())
     }
 
-    /// The search applied to `target`, if any.
     #[must_use]
     pub fn search(&self, target: Searched) -> Option<&Search> {
         match target {
@@ -326,17 +243,8 @@ impl State {
         }
     }
 
-    /// Applies `search` to `target`, and repairs what it invalidates.
-    ///
-    /// Not a `&mut Option<Search>` handed out: repairing what a search
-    /// invalidates — a cursor left pointing past the rows the panel now has —
-    /// belongs here rather than to every caller that sets one. Tables is the
-    /// only target whose row count a search can still move: no search drops
-    /// a row (design §4.1), but forcing one keyspace open while another
-    /// falls back closed changes how many rows are on screen between two
-    /// calls here, so Tables' cursor still needs the clamp. DDL, Table
-    /// contents and the trail never move a row for a search, so none of the
-    /// three clamps anything here — see their own arms below.
+    /// Repairs what a search invalidates. Only Tables needs a clamp: forcing
+    /// keyspaces open changes its row count.
     pub fn apply_search(&mut self, target: Searched, search: Option<Search>) {
         match target {
             Searched::Tables => {
@@ -346,31 +254,16 @@ impl State {
                 }
                 self.tables.selection.clear();
             }
-            // No repair here: a search never drops a DDL row (design §4.2),
-            // so neither the row count nor the line count is a search's to
-            // invalidate. What repair is still owed runs elsewhere, the same
-            // way it does for any other change to the panel (design §3.3).
-            // The offset is counted in wrapped lines, a width-dependent
-            // count only the renderer can produce, so it waits on the next
-            // `Msg::Measured` rather than being clamped against a stale
-            // count here. The cursor counts rows, and `clamp_lists`, run in
-            // `update`'s epilogue, clamps it against `view::ddl_rows` on
-            // every message — search included — so the clamp this arm would
-            // otherwise owe is already covered before the frame is drawn.
+            // A search drops no DDL row. The line offset waits on
+            // `Msg::Measured`, and `clamp_lists` covers the cursor.
             Searched::Ddl => {
                 self.ddl.set_search(search);
                 self.ddl.selection.clear();
             }
-            // No range repair here either: this search only flags matching
-            // cells and never renumbers a row, so a range still addresses
-            // exactly what it did before the search changed.
+            // Only flags cells, so ranges still address what they did.
             Searched::Contents => self.contents.set_search(search),
-            // Same shape as DDL, and for the same reason: the trail is a
-            // list of rows a search only flags, never drops or reorders, so
-            // there is nothing here for a cursor clamp to repair — but a
-            // fresh search is a fresh look at the list, so the row-based
-            // selection it might be mid-building does not survive it either
-            // (query log design §5.3).
+            // Flags, never drops, so no clamp; but a fresh search ends a
+            // selection being built.
             Searched::Queries => {
                 self.log.set_search(search);
                 self.log.selection.clear();

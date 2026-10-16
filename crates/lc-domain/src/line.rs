@@ -1,14 +1,8 @@
-//! One line of editable text with a cursor into it.
-//!
-//! Shared by the two overlays that take a single line: the export form's
-//! destination path (export design §2.1) and the drop confirmation's typed
-//! name (drop design §2.1).
+//! One editable line with a cursor, for the export path and the typed drop
+//! name.
 
-/// The cursor counts characters, not bytes, so no motion can leave it inside
-/// one — the invariant that keeps every slice below safe. Neither
-/// [`crate::editor::Editor`] (multi-line, and a panel's) nor
-/// [`crate::search::Prompt`] (appends at the end only) fits a field that
-/// arrives prefilled and is edited in the middle (export design §2.1).
+/// The cursor counts characters, which keeps every slice on a boundary. Neither
+/// `Editor` nor `Prompt` fits a prefilled field edited mid-line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Line {
     text: String,
@@ -16,7 +10,7 @@ pub struct Line {
 }
 
 impl Line {
-    /// Opens with the cursor at the end, where the filename is.
+    /// Cursor at the end, where the filename is.
     #[must_use]
     pub fn new(text: String) -> Self {
         let cursor = text.chars().count();
@@ -24,26 +18,23 @@ impl Line {
         Self { text, cursor }
     }
 
-    /// The line as typed.
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
-    /// A character index, which is what a renderer measures a column with.
+    /// A character index.
     #[must_use]
     pub const fn cursor(&self) -> usize {
         self.cursor
     }
 
-    /// Types `character` at the cursor, which moves past it.
     pub fn insert(&mut self, character: char) {
         let at = self.byte_offset(self.cursor);
         self.text.insert(at, character);
         self.cursor += 1;
     }
 
-    /// `Backspace`: takes the character behind the cursor, if there is one.
     pub fn delete_back(&mut self) {
         if self.cursor == 0 {
             return;
@@ -54,7 +45,6 @@ impl Line {
         self.text.remove(at);
     }
 
-    /// `Delete`: takes the character under the cursor, if there is one.
     pub fn delete_forward(&mut self) {
         if self.cursor >= self.len() {
             return;
@@ -64,35 +54,28 @@ impl Line {
         self.text.remove(at);
     }
 
-    /// Puts the cursor before character `cursor`, or at the end if there are
-    /// fewer: where a pointer pressed the field.
+    /// Clamped to the end.
     pub fn set_cursor(&mut self, cursor: usize) {
         self.cursor = cursor.min(self.len());
     }
 
-    /// `←`, stopping at the start.
     pub const fn left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
     }
 
-    /// `→`, stopping one past the last character, where typing appends.
     pub fn right(&mut self) {
         self.cursor = self.cursor.saturating_add(1).min(self.len());
     }
 
-    /// `Home`.
     pub const fn home(&mut self) {
         self.cursor = 0;
     }
 
-    /// `End`.
     pub fn end(&mut self) {
         self.cursor = self.len();
     }
 
-    /// Replaces the trailing extension, if there is one. A path with no
-    /// extension gains none: the export form's format radio rewrites what is
-    /// there rather than asserting what should be (export design §2.1).
+    /// A path with no extension gains none.
     pub fn set_extension(&mut self, extension: &str) {
         let last_separator = self.text.rfind(['/', '\\']).map_or(0, |at| at + 1);
         let Some(dot) = self.text[last_separator..]
@@ -111,7 +94,6 @@ impl Line {
         self.text.chars().count()
     }
 
-    /// The byte offset of character `index`, or the end of the string.
     fn byte_offset(&self, index: usize) -> usize {
         self.text
             .char_indices()

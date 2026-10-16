@@ -1,6 +1,4 @@
-//! Writing the uncommitted edits: the statement they become, and the
-//! confirmation that has to be answered before it runs
-//! (docs/superpowers/specs/2026-09-18-cell-editing-design.md §5, §6).
+//! Writing uncommitted edits: the statement and its confirmation.
 
 use crate::contents::TableRef;
 use crate::edit::CommitScope;
@@ -9,28 +7,19 @@ use crate::model::Statement;
 use crate::style::Segment;
 use crate::viewport::Scroll;
 
-/// The open commit confirmation.
-///
-/// Answered with `y`/`n` alone: an `UPDATE` is a
-/// [`crate::model::StatementKind::Write`], so the typed spelling the drop
-/// confirmation raises on a protected connection does not apply (design §5).
+/// `y`/`n` only: an `UPDATE` is a `Write`, so no typed spelling.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommitPrompt {
     table: TableRef,
     statement: Statement,
     rows: usize,
     cells: usize,
-    /// The insert form this was opened over, which `n` and `Esc` hand back:
-    /// a form filled in by hand is not something to lose to a mistyped key
-    /// (insert design §4).
+    /// Handed back on `n` and `Esc`: a hand-filled form is not lost to a
+    /// mistyped key.
     form: Option<Box<Inspector>>,
     scope: CommitScope,
-    /// The block scrolls: thirty edited rows is thirty-plus lines of CQL, and
-    /// a confirmation that clips the statement it is asking about is worse
-    /// than no preview at all (design §5).
-    ///
-    /// An offset with no cursor, unlike the inspector's: there is no line
-    /// here to be *on*, only a body to read.
+    /// The block scrolls, since a clipped statement is worse than no preview.
+    /// No cursor: nothing to be on.
     scroll: Scroll,
 }
 
@@ -48,7 +37,6 @@ impl CommitPrompt {
         }
     }
 
-    /// The confirmation over one `INSERT`, remembering the form it came from.
     #[must_use]
     pub fn inserting(table: TableRef, statement: Statement, form: Inspector) -> Self {
         let cells = form.typed().count();
@@ -59,12 +47,11 @@ impl CommitPrompt {
         }
     }
 
-    /// The form to go back to on cancel, `None` for a commit of edits.
+    /// `None` for a commit of edits.
     pub fn take_form(&mut self) -> Option<Inspector> {
         self.form.take().map(|form| *form)
     }
 
-    /// Narrows what answering `y` writes back into the page.
     #[must_use]
     pub fn scoped(self, scope: CommitScope) -> Self {
         Self { scope, ..self }
@@ -85,14 +72,8 @@ impl CommitPrompt {
         &self.table
     }
 
-    /// The statement as the block draws it: laid out, coloured, one line
-    /// each.
-    ///
-    /// Laid out for the preview alone — [`Self::statement`] keeps the CQL the
-    /// builders spelled. [`crate::cql::format`] rewrites from a scan rather
-    /// than a parse, and a scan it gets wrong rewrites a literal into an
-    /// expression; what the user is asked to approve may be re-laid, what the
-    /// cluster is sent may not (cell editing design §5).
+    /// Formatted for display only: [`Self::statement`] keeps the builders' CQL,
+    /// since a misread scan could rewrite a literal.
     #[must_use]
     pub fn lines(&self) -> Vec<Vec<Segment>> {
         crate::cql::highlight(&crate::cql::format(&self.statement.cql))
@@ -127,15 +108,10 @@ impl CommitPrompt {
         self.scroll.to_end(lines, height);
     }
 
-    /// Pulls the offset back over a body that rewrapped shorter, as the
-    /// inspector's does.
     pub const fn clamp_to(&mut self, lines: usize, height: usize) {
         self.scroll.clamp_to(lines, height);
     }
 
-    /// What the border says it is about: the count first, in the colours the
-    /// tree gives the table's name — the drop confirmation's rule, and its
-    /// reason (drop design §2).
     #[must_use]
     pub fn title(&self) -> Vec<Segment> {
         let mut segments = vec![Segment::plain(if self.form.is_some() {
@@ -158,11 +134,7 @@ impl CommitPrompt {
     }
 }
 
-/// The quit warning: what would be lost, and nothing else.
-///
-/// A variant of its own rather than a [`crate::overlay::Message`] with a flag:
-/// the type says "answering this ends the process", which is the argument
-/// `Overlay::Fatal` already makes (query log design §7).
+/// Not a `Message`: answering it ends the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Discard {
     cells: usize,
@@ -175,7 +147,6 @@ impl Discard {
         Self { cells, rows }
     }
 
-    /// The sentence the block asks its question under.
     #[must_use]
     pub fn message(&self) -> String {
         format!(
@@ -189,8 +160,7 @@ impl Discard {
     }
 }
 
-/// The noun for a count, so "1 rows" is never drawn — `drop`'s `rows`, over
-/// two nouns.
+/// Never "1 rows".
 fn noun(count: usize, one: &'static str, many: &'static str) -> &'static str {
     if count == 1 { one } else { many }
 }

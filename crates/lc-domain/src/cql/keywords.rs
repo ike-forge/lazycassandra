@@ -1,13 +1,8 @@
-//! The words CQL reserves, and the ones it does not but a reader still reads
-//! as grammar.
-//!
-//! One flat set rather than a reserved/non-reserved split: the highlighter and
-//! the completer both want "is this grammar or a name", and CQL's own split is
-//! about what may be used unquoted as an identifier — a question neither of
-//! them asks (docs/superpowers/specs/2026-08-16-query-editor-design.md §2).
+//! Words CQL reserves, plus those a reader still reads as grammar. One flat
+//! set: CQL's reserved split is about unquoted identifiers, which neither the
+//! highlighter nor the completer asks.
 
-/// Every keyword, upper case and sorted, so [`is_keyword`] can bisect and
-/// completion can walk it in one order on every machine (conventions.md §4).
+/// Upper case and sorted, for bisection and a stable completion order.
 pub(crate) const KEYWORDS: &[&str] = &[
     "ADD",
     "AGGREGATE",
@@ -132,14 +127,8 @@ pub(crate) const KEYWORDS: &[&str] = &[
     "WITH",
 ];
 
-/// The subset of [`KEYWORDS`] that names a column's type, upper case and
-/// sorted for the same reason.
-///
-/// A subset rather than a table of its own: a type is grammar wherever it
-/// appears, so the highlighter and [`is_keyword`] must keep reading it as
-/// such. What this table adds is the completer's answer to `Expect::Type`,
-/// where `INSERT` and `INTO` are noise and `INT` is not
-/// (docs/superpowers/specs/2026-08-16-query-editor-design.md §6).
+/// A subset of [`KEYWORDS`], so types stay grammar everywhere; this is what
+/// `Expect::Type` offers.
 pub(crate) const TYPES: &[&str] = &[
     "ASCII",
     "BIGINT",
@@ -169,22 +158,9 @@ pub(crate) const TYPES: &[&str] = &[
     "VARINT",
 ];
 
-/// The grammar a column position can take, sorted, and a subset of
-/// [`KEYWORDS`].
-///
-/// A select list, a `WHERE` list, a `SET` list and a table body all stay
-/// `Expect::Column` until a keyword ends them, so the popup there has to offer
-/// the words that continue or end one. It should offer nothing else: `SELECT
-/// de` reaching `DECIMAL`, `DELETE` and `DESCRIBE` is the defect
-/// [`crate::cql::complete`]'s type list already avoids by offering types
-/// alone — a position that cannot take a word should not offer it
-/// (completion ranking design §2.2).
-///
-/// The union over every clause that holds a column, not one set per clause:
-/// `ASC` belongs to an `ORDER BY` and `VALUES` to an `INSERT`, and telling
-/// them apart needs a resolver that carries which clause a column list is in.
-/// The union is what the four positions share today, and it is already a third
-/// of the table.
+/// The words that continue or end a column list, and nothing else. A union
+/// across clauses: splitting per clause would need the resolver to carry which
+/// clause it is in.
 pub(crate) const COLUMN_WORDS: &[&str] = &[
     "ADD",
     "ALLOW",
@@ -225,12 +201,8 @@ pub(crate) const COLUMN_WORDS: &[&str] = &[
     "WITH",
 ];
 
-/// The options a `WITH` clause takes, sorted, in the lower case Cassandra
-/// spells them and stores them in `system_schema`.
-///
-/// Not keywords: `comment` and `caching` are ordinary identifiers everywhere
-/// else, and a table may hold a column called either. They are grammar only
-/// in the one position `Expect::Property` marks.
+/// Not keywords: `comment` and `caching` are ordinary identifiers outside
+/// `WITH`.
 pub(crate) const PROPERTIES: &[&str] = &[
     "additional_write_policy",
     "bloom_filter_fp_chance",
@@ -252,18 +224,13 @@ pub(crate) const PROPERTIES: &[&str] = &[
     "speculative_retry",
 ];
 
-/// The three words CQL spells as keywords but means as values. They are
-/// [`crate::style::Token::Literal`] rather than
-/// [`crate::style::Token::Keyword`]: `null` is what is in the column, not what
-/// the statement is doing (design §2.1).
+/// Keywords that mean values, so drawn as literals.
 pub(crate) const VALUE_WORDS: &[&str] = &["FALSE", "NAN", "NULL", "TRUE"];
 
-/// Whether `word`, in any case, is grammar.
 pub(crate) fn is_keyword(word: &str) -> bool {
     lookup(KEYWORDS, word)
 }
 
-/// Whether `word`, in any case, is one of the three value spellings.
 pub(crate) fn is_value_word(word: &str) -> bool {
     lookup(VALUE_WORDS, word)
 }

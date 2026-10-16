@@ -1,30 +1,19 @@
 //! The four panels, in frame order.
 
-/// Panels are places: fixed positions, navigated with predictable motions
-/// (vision.md §4, principle 4).
-///
-/// Declaration order is column order — top-left, bottom-left, top-right,
-/// bottom-right — and it is the order everything else follows: the number
-/// each panel answers to, and the walk `Tab` takes. One order on screen, in
-/// the titles and under the fingers.
+/// Declaration order is column order, and every other order follows it:
+/// numbers, titles, the `Tab` walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Panel {
-    /// Keyspace → table tree.
     #[default]
     Tables,
-    /// `CREATE TABLE` for the selected table.
     Ddl,
-    /// Rows of the selected table.
     Contents,
-    /// Statement entry and session log.
     Queries,
 }
 
 impl Panel {
-    /// Every panel, in column order.
     pub const ALL: [Self; 4] = [Self::Tables, Self::Ddl, Self::Contents, Self::Queries];
 
-    /// The next panel in [`Panel::ALL`], wrapping.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
@@ -35,7 +24,6 @@ impl Panel {
         }
     }
 
-    /// The previous panel in [`Panel::ALL`], wrapping.
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
@@ -46,13 +34,8 @@ impl Panel {
         }
     }
 
-    /// The digit that focuses this panel from anywhere.
-    ///
-    /// Drawn at the head of the panel's own title, so the binding is on
-    /// screen rather than in a manual (vision.md §4, principle 1). A digit
-    /// rather than a letter of the name: a letter has to be learned per
-    /// panel, while four digits in frame order are one rule
-    /// (docs/shortcuts.md §4).
+    /// Digits rather than name letters: four digits in frame order are one
+    /// rule.
     #[must_use]
     pub const fn number(self) -> char {
         match self {
@@ -63,7 +46,6 @@ impl Panel {
         }
     }
 
-    /// The panel `key` focuses, if any panel claims it.
     #[must_use]
     pub fn from_number(key: char) -> Option<Self> {
         Self::ALL.into_iter().find(|panel| panel.number() == key)
@@ -77,7 +59,7 @@ mod tests {
     #[test]
     fn all_panels_are_listed_in_column_order_and_none_is_missing() {
         for panel in Panel::ALL {
-            // A new variant fails to compile here until it is added to ALL.
+            // A new variant fails to compile here until added to `ALL`.
             let expected_position = match panel {
                 Panel::Tables => 0,
                 Panel::Ddl => 1,
@@ -104,8 +86,7 @@ mod tests {
 
     #[test]
     fn the_cycle_walks_the_numbers_and_wraps() {
-        // Pinned against ALL rather than restated, so the two orderings
-        // cannot drift apart when a panel is added.
+        // Pinned against `ALL`, not restated.
         let walked: Vec<Panel> =
             std::iter::successors(Some(Panel::ALL[0]), |panel| Some(panel.next()))
                 .take(Panel::ALL.len())

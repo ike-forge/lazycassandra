@@ -1,10 +1,5 @@
-//! The Table DDL panel's projection: what the Tables cursor is on, described.
-//!
-//! A table leads with its physical shape and follows with the properties
-//! `system_schema.tables` reports; a keyspace shows its replication. Nothing
-//! selected shows nothing — the connection's state is the Tables panel's job
-//! to narrate, and saying it twice in one sidebar is noise
-//! (docs/superpowers/specs/2026-08-09-table-metadata-design.md §1).
+//! The Table DDL panel's projection of what the Tables cursor is on. Nothing
+//! selected shows nothing: the Tables panel already narrates the connection.
 
 use crate::ddl::DdlTab;
 use crate::model::{
@@ -19,17 +14,13 @@ use crate::tree::Node;
 
 use super::PanelBody;
 
-/// The groups the panel draws, identity first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Details {
     pub sections: Vec<Section>,
 }
 
 impl Details {
-    /// Every row the panel describes, in the order it draws them — which is
-    /// the order the cursor walks. A heading is not a row: it labels the group
-    /// beneath it, and there is nothing a cursor on one could mean
-    /// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §3).
+    /// The order the cursor walks. Headings are not rows.
     pub fn rows(&self) -> impl Iterator<Item = &DetailRow> {
         self.sections.iter().flat_map(|section| section.rows.iter())
     }
@@ -40,36 +31,21 @@ impl Details {
     }
 }
 
-/// One labelled group of rows.
-///
-/// Grouping is structural rather than a blank-line marker in a flat list, so
-/// the vertical rhythm cannot be forgotten or emitted twice, and a group with
-/// nothing in it — a table with no clustering columns — disappears by being
-/// empty rather than by a projection remembering to skip it.
+/// Structural grouping: an empty group disappears without a projection
+/// remembering to skip it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
-    /// `Partition Key`, `Clustering Key`, `Options`, `Replication`. `None` for
-    /// the identity group, whose two rows name themselves — a heading over
-    /// `Keyspace` and `Table` could only restate them.
+    /// `None` for the identity group, whose rows name themselves.
     pub heading: Option<Heading>,
-    /// What the group is, which decides both the blank line above it and
-    /// whether its rows read as key structure.
     pub group: Group,
-    /// Styles the rows beneath the heading, and nothing else. `None` where the
-    /// group names no schema concept: an option is not key structure and must
-    /// not read as any.
+    /// `None` where the group names no schema concept, so options never read as
+    /// key structure.
     pub token: Option<Token>,
     pub rows: Vec<DetailRow>,
 }
 
-/// A group's label and the colour it is drawn in.
-///
-/// The token is separate from [`Section::token`] because a heading is coloured
-/// by what it names while its rows are coloured by what they are: `Partition
-/// Key` wears the key's own colour, and a heading naming no schema concept —
-/// `Options`, `Replication`, the column count — wears [`Token::Section`],
-/// which its rows must not inherit
-/// (docs/superpowers/specs/2026-08-13-colour-palettes-design.md §4.1).
+/// Separate from [`Section::token`]: a heading is coloured by what it names,
+/// its rows by what they are.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Heading {
     pub text: String,
@@ -85,70 +61,49 @@ impl Heading {
     }
 }
 
-/// Which part of the panel a section belongs to.
-///
-/// The panel reads as three groups — what the rows are about, what the table
-/// *is*, then what it is configured to do — and the blank line between them
-/// follows from a change of group rather than from a projection remembering to
-/// emit one in the right place
-/// (docs/superpowers/specs/2026-08-09-visual-polish-design.md §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
-    /// Which keyspace, and which of its tables, the rest of the panel is about.
     Identity,
-    /// The physical shape: which columns decide placement and ordering.
     Shape,
-    /// What the schema reports about it: table options, replication.
     Settings,
-    /// The secondary indexes, one block each (indexes design §2).
-    ///
-    /// A group of its own rather than [`Group::Shape`]: the key it sits under
-    /// on the Indexes tab is shape, the indexes over it are what was built on
-    /// top, and the blank line between the two follows from the change of
-    /// group the way every other one does.
+    /// Apart from [`Group::Shape`], so the blank line between key and indexes
+    /// follows from the group change.
     Indexes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetailRow {
-    /// A key column under the heading that already says which key it is part
-    /// of: name and CQL type on one line, the type pushed right.
     KeyColumn {
         name: String,
-        /// `None` for a partition column, which has no ordering of its own.
+        /// `None` for a partition column.
         order: Option<ClusteringOrder>,
         cql_type: String,
     },
-    /// A column in the Table columns tab, where nothing above it says what
-    /// part of the table it plays — so the row carries its own kind, and the
-    /// renderer marks it (design §5).
+    /// Carries its own kind: nothing above it in the Columns tab says what part
+    /// it plays.
     Column {
         name: String,
         cql_type: String,
         kind: ColumnKind,
     },
-    /// A property: name on its own line, value indented beneath it.
-    Property { name: String, value: String },
-    /// A property whose value named a class this build knows in full, drawn as
-    /// that class and the settings it carried rather than as the flattened map
-    /// the cluster reported.
-    ///
-    /// The map is kept alongside as `raw`: it is what a yank owes the
-    /// clipboard and what a search has to match, neither of which may be
-    /// narrowed to the abbreviation the panel happens to draw.
+    Property {
+        name: String,
+        value: String,
+    },
+    /// `raw` keeps the reported map: a yank and a search must not be narrowed
+    /// to the abbreviation drawn.
     ClassProperty {
         name: String,
         class: String,
         settings: Vec<Setting>,
         raw: String,
     },
-    /// What the panel is describing: a fixed label and the name it carries,
-    /// drawn in the colour and behind the icon that name wears in the Tables
-    /// tree (docs/superpowers/specs/2026-08-12-ddl-identity-rows-design.md §2).
-    Identity { kind: IdentityKind, name: String },
+    Identity {
+        kind: IdentityKind,
+        name: String,
+    },
 }
 
-/// Which name an [`DetailRow::Identity`] row carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityKind {
     Keyspace,
@@ -173,10 +128,7 @@ impl IdentityKind {
     }
 }
 
-/// What a column is to its table.
-///
-/// The four are exhaustive over [`Table`]'s own fields, so a column cannot be
-/// listed under a kind the schema does not model.
+/// Exhaustive over [`Table`]'s fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnKind {
     Partition,
@@ -186,10 +138,7 @@ pub enum ColumnKind {
 }
 
 impl ColumnKind {
-    /// Whether the column is part of the primary key, which is the one thing
-    /// the renderer marks with a glyph — the rest of what a kind means travels
-    /// as its [`token`](Self::token)
-    /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §5).
+    /// The one thing marked with a glyph; the rest travels as the token.
     #[must_use]
     pub const fn is_key(self) -> bool {
         matches!(self, Self::Partition | Self::Clustering)
@@ -213,11 +162,7 @@ pub(super) fn body(state: &State) -> PanelBody {
     }
 }
 
-/// What the Tables cursor is on, described — or nothing, when the cursor is
-/// on nothing.
-///
-/// A range covering more than one row also answers `None`: the panel
-/// describes one node, and a range names several (design §4).
+/// A range of several rows also answers `None`.
 pub(super) fn of(state: &State) -> Option<Details> {
     if state.tables.selects_many() {
         return None;
@@ -235,11 +180,7 @@ pub(super) fn of(state: &State) -> Option<Details> {
     Some(details)
 }
 
-/// The tabs the panel offers for what is selected.
-///
-/// A keyspace has no columns, so the strip does not draw a tab that could only
-/// say so — an empty tab teaches the wrong thing about what it is
-/// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §6).
+/// No Columns tab for a keyspace: an empty tab teaches the wrong thing.
 pub(super) fn tabs_for(state: &State) -> &'static [DdlTab] {
     if describes_a_table(state) {
         &DdlTab::ALL
@@ -248,12 +189,7 @@ pub(super) fn tabs_for(state: &State) -> &'static [DdlTab] {
     }
 }
 
-/// The tab the panel draws, which is the one it holds only where that tab
-/// exists for what is selected.
-///
-/// The held tab is left alone rather than reset: stepping from a table onto
-/// its keyspace and back is navigation, and it may not cost the user the tab
-/// they were reading.
+/// The held tab is not reset, so stepping to the keyspace and back keeps it.
 pub(super) fn shown_tab(state: &State) -> DdlTab {
     let tab = state.ddl.tab();
 
@@ -293,8 +229,7 @@ fn scrolled(state: &State, details: Details) -> PanelBody {
 }
 
 impl DetailRow {
-    /// Whether `n` stops on this row — not whether it is drawn: every row is
-    /// drawn regardless of a search (design §4.2).
+    /// Every row is drawn regardless; this decides where `n` stops.
     #[must_use]
     pub(crate) fn matches(&self, search: &Search) -> bool {
         match self {
@@ -302,21 +237,16 @@ impl DetailRow {
                 search.matches(name) || search.matches(cql_type)
             }
             Self::Property { name, value } => search.matches(name) || search.matches(value),
-            // Against the map as reported, not against the abbreviation: a
-            // term the panel no longer draws is still a term the option holds.
+            // Against the reported map: a term the abbreviation dropped is
+            // still in the option.
             Self::ClassProperty { name, raw, .. } => search.matches(name) || search.matches(raw),
-            // The label is not matched, for the reason a section heading is
-            // not: `Keyspace` and `Table` are the same two words on every
-            // table and would tell `n` nothing about where it stops.
+            // Labels are the same on every table and would tell `n` nothing.
             Self::Identity { name, .. } => search.matches(name),
         }
     }
 }
 
-/// The row `n` reaches from `from`, wrapping (design §5.1).
-///
-/// Over `Details::rows`, which is the sequence the panel draws and the
-/// sequence its cursor counts, so the two cannot disagree about what row 5 is.
+/// Over `Details::rows`, the sequence the cursor counts.
 #[must_use]
 pub(crate) fn next_match(
     details: &Details,
@@ -335,9 +265,6 @@ pub(crate) fn next_match(
         .find(|at| rows[*at].matches(search))
 }
 
-/// One table option, read as a class where its name says it carries one and
-/// this build recognises the value in full, and left as the reported text
-/// everywhere else.
 fn option_row((name, value): (&str, &str)) -> DetailRow {
     let parsed = ClassKind::of(name).and_then(|kind| ClassOption::parse(kind, value));
 
@@ -355,7 +282,6 @@ fn option_row((name, value): (&str, &str)) -> DetailRow {
     )
 }
 
-/// The keyspace a panel is about, and the table when one is selected.
 fn identity(keyspace: &Keyspace, table: Option<&Table>) -> Section {
     let row = |kind: IdentityKind, name: &str| DetailRow::Identity {
         kind,
@@ -372,7 +298,6 @@ fn identity(keyspace: &Keyspace, table: Option<&Table>) -> Section {
     }
 }
 
-/// The columns that decide where a row lives, under the heading that says so.
 fn partition_section(table: &Table) -> Section {
     Section {
         heading: Some(Heading::new("Partition Key", Token::PartitionKey)),
@@ -391,7 +316,6 @@ fn partition_section(table: &Table) -> Section {
     }
 }
 
-/// The columns that order a partition, under the heading that says so.
 fn clustering_section(table: &Table) -> Section {
     Section {
         heading: Some(Heading::new("Clustering Key", Token::ClusteringKey)),
@@ -428,13 +352,8 @@ fn of_table(keyspace: &Keyspace, table: &Table) -> Details {
     }
 }
 
-/// How the table can be looked up: the primary key in the two blocks the DDL
-/// tab already draws it in, then one block per secondary index.
-///
-/// The key leads because it is the index every table has — a lookup naming no
-/// part of it is what the indexes below exist to make possible — and it is
-/// drawn in the same shape, so the tab reads as one list of ways in
-/// (indexes design §2).
+/// The primary key leads, drawn as the DDL tab draws it, so the tab reads as
+/// one list of ways in.
 fn indexes_of(keyspace: &Keyspace, table: &Table) -> Details {
     let mut sections = populated([
         identity(keyspace, Some(table)),
@@ -447,8 +366,6 @@ fn indexes_of(keyspace: &Keyspace, table: &Table) -> Details {
     Details { sections }
 }
 
-/// One section per index, headed by its name — or the one section that says
-/// there are none.
 fn index_sections(table: &Table) -> Vec<Section> {
     if table.indexes.is_empty() {
         return vec![no_indexes()];
@@ -466,11 +383,7 @@ fn index_sections(table: &Table) -> Vec<Section> {
         .collect()
 }
 
-/// The target at the top, and the class where one is named.
-///
-/// The kind itself is not a row: `KEYS` and `COMPOSITES` are what the target
-/// already says, and the arm carrying anything a reader cannot see is the
-/// custom one (indexes design §3).
+/// The kind is not a row: the target already says `KEYS` or `COMPOSITES`.
 fn index_rows(table: &Table, index: &Index) -> Vec<DetailRow> {
     let target = DetailRow::KeyColumn {
         name: index.target.text(),
@@ -492,12 +405,8 @@ fn index_rows(table: &Table, index: &Index) -> Vec<DetailRow> {
     std::iter::once(target).chain(class).collect()
 }
 
-/// What a table with no secondary index shows.
-///
-/// A row rather than a bare heading, and a heading rather than nothing at all:
-/// the tab is offered on every table, "none" is the answer a reader came for
-/// as often as a list is, and a heading with nothing under it reads as a panel
-/// that failed to load rather than as a table with no index.
+/// A row, not a bare heading: a heading with nothing under it reads as a failed
+/// load.
 fn no_indexes() -> Section {
     Section {
         heading: Some(Heading::new("Indexes", Token::Section)),
@@ -510,11 +419,7 @@ fn no_indexes() -> Section {
     }
 }
 
-/// Every column the table has, in [`Table::columns`] order, as one flat list.
-///
-/// Flat rather than grouped by kind: the group headings would restate the DDL
-/// tab's own top half, and the point of this tab is the whole column set in one
-/// scan — the kind travels with each row instead (design §5).
+/// Flat: headings would repeat the DDL tab; the kind travels with each row.
 fn columns_of(keyspace: &Keyspace, table: &Table) -> Details {
     let row = |column: &Column, kind: ColumnKind| DetailRow::Column {
         name: column.name.clone(),
@@ -577,8 +482,7 @@ fn of_keyspace(keyspace: &Keyspace) -> Details {
     }
 }
 
-/// Named as `system_schema.keyspaces.replication` names them, so what the panel
-/// shows is what `DESCRIBE` and every Cassandra document call the same thing.
+/// Named as `system_schema.keyspaces.replication` names them.
 fn replication_rows(replication: &Replication) -> Vec<DetailRow> {
     let property = |name: &str, value: String| DetailRow::Property {
         name: name.to_owned(),
@@ -637,7 +541,6 @@ mod tests {
         details
     }
 
-    /// The headings the panel draws, which the identity group has none of.
     fn headings(details: &Details) -> Vec<&str> {
         details
             .sections
@@ -651,7 +554,6 @@ mod tests {
             .collect()
     }
 
-    /// The identity rows, as the `(label, name)` pairs they draw as.
     fn identity_rows(details: &Details) -> Vec<(&str, &str)> {
         details
             .rows()
@@ -682,7 +584,6 @@ mod tests {
         }
     }
 
-    /// `shop.orders_by_customer`, with the fixture's own shape.
     fn orders() -> Table {
         Table {
             name: "orders_by_customer".to_owned(),
@@ -710,8 +611,6 @@ mod tests {
         }
     }
 
-    /// A one-keyspace schema holding `table`, with the keyspace unfolded and
-    /// the cursor on the table.
     fn browsing(table: Table) -> State {
         let keyspace = Keyspace {
             name: "shop".to_owned(),
@@ -728,8 +627,6 @@ mod tests {
         state
     }
 
-    /// The fixture with something in every column kind, so the Table columns
-    /// tab has all four to list.
     fn every_kind() -> Table {
         Table {
             static_columns: vec![column("region", "text")],
@@ -743,8 +640,6 @@ mod tests {
         state
     }
 
-    /// The fixture with one index per shape an index has: a plain column, a
-    /// collection modality, and a custom implementation.
     fn indexed() -> Table {
         Table {
             regular_columns: vec![column("status", "text"), column("tags", "set<text>")],
@@ -823,8 +718,8 @@ mod tests {
 
     #[test]
     fn an_index_over_a_column_the_table_no_longer_has_keeps_its_row() {
-        // A schema read that raced a `DROP` … `ADD`: the index is real, and
-        // the type at the margin is the only thing missing.
+        // A schema read that raced a `DROP` … `ADD`: the type is the only thing
+        // missing.
         let table = Table {
             indexes: vec![Index {
                 name: "orders_by_gone".to_owned(),
@@ -1137,7 +1032,6 @@ mod tests {
         }
     }
 
-    /// The fixture table carrying `options` instead of its own.
     fn configured(pairs: &[(&str, &str)]) -> Table {
         Table {
             options: options(pairs),

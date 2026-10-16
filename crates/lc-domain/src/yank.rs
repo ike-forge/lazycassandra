@@ -1,9 +1,5 @@
-//! One row as a CSV line
-//! (docs/superpowers/specs/2026-08-13-yank-design.md §2).
-//!
-//! Pure projections from a row to a line: no `State`, no panel, no clipboard.
-//! The panels differ in what their fields are, not in how a field is escaped,
-//! and one encoder is what keeps that true.
+//! Rows as CSV lines. One encoder, so the panels differ only in what their
+//! fields are.
 
 use crate::cell;
 use crate::log::Entry;
@@ -13,9 +9,7 @@ use crate::tree::Node;
 use crate::view::logs::outcome_text;
 use crate::view::{ColumnKind, DetailRow};
 
-/// `fields` as one CSV line: RFC 4180 as far as a single line goes, and
-/// without the trailing newline that would make a paste into a shell submit
-/// itself (design §2).
+/// No trailing newline: a paste into a shell must not submit itself.
 #[must_use]
 pub(crate) fn line(fields: &[String]) -> String {
     fields
@@ -25,9 +19,7 @@ pub(crate) fn line(fields: &[String]) -> String {
         .join(",")
 }
 
-/// A grid row, every column of it — including the ones the horizontal
-/// viewport has scrolled off-screen, and untruncated: what is drawn is a
-/// window, what is yanked is the row (design §2.1).
+/// Every column, untruncated: the drawn grid is a window.
 #[must_use]
 pub fn grid_row(row: &Row) -> String {
     let fields: Vec<String> = row.values.iter().map(value).collect();
@@ -35,11 +27,7 @@ pub fn grid_row(row: &Row) -> String {
     line(&fields)
 }
 
-/// One cell, raw: a lone value has no delimiter to protect, so the encoder
-/// would only add characters the user then deletes (design §3).
-///
-/// `None` for a null, so "a null is inert" lives in the type rather than in a
-/// check at the call site (design §4).
+/// Raw: a lone value has no delimiter to protect. `None` for a null.
 #[must_use]
 pub fn grid_cell(value: &CqlValue) -> Option<String> {
     match value {
@@ -48,8 +36,7 @@ pub fn grid_cell(value: &CqlValue) -> Option<String> {
     }
 }
 
-/// One column of a page, top to bottom, as one CSV line — no heading, because
-/// a heading is not a value (design §1).
+/// No heading: it is not a value.
 #[must_use]
 pub fn grid_column(rows: &[Row], column: usize) -> String {
     let fields: Vec<String> = rows
@@ -70,9 +57,7 @@ pub fn detail_row(row: &DetailRow) -> String {
             cql_type,
         } => {
             let mut fields = vec![name.clone(), cql_type.clone()];
-            // Two fields or three, decided by the variant's own `Option`: a
-            // partition column has no ordering, and padding it to a fixed
-            // arity would put back the field the type removed (design §2.3).
+            // A partition column has no ordering field.
             if let Some(order) = order {
                 fields.push(ordering(*order).to_owned());
             }
@@ -84,15 +69,13 @@ pub fn detail_row(row: &DetailRow) -> String {
             kind,
         } => vec![name.clone(), cql_type.clone(), part(*kind).to_owned()],
         DetailRow::Property { name, value } => vec![name.clone(), value.clone()],
-        // The map as the cluster reported it, not the summary drawn over it:
-        // what a yank is for is pasting back into CQL.
+        // The raw map: a yank is pasted back into CQL.
         DetailRow::ClassProperty { name, raw, .. } => vec![name.clone(), raw.clone()],
     };
 
     line(&fields)
 }
 
-/// The tree node, in the form every CQL statement takes it in (design §2.4).
 #[must_use]
 pub fn node(node: &Node<'_>) -> String {
     let fields = match node {
@@ -105,10 +88,7 @@ pub fn node(node: &Node<'_>) -> String {
     line(&fields)
 }
 
-/// An entry's two rows joined — the statement and its outcome — which is
-/// what makes it paste into a ticket (query log design §5.3). `outcome_text`
-/// is the string the projection draws the outcome row with, not a second
-/// spelling of it.
+/// Joined statement and outcome, for pasting into a ticket.
 #[must_use]
 pub fn log_entry(entry: &Entry) -> String {
     format!(
@@ -118,16 +98,12 @@ pub fn log_entry(entry: &Entry) -> String {
     )
 }
 
-/// Several lines as one payload: no trailing newline, for the reason a single
-/// line has none — a paste into a shell must not submit itself
-/// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §5).
+/// No trailing newline: a paste into a shell must not submit itself.
 #[must_use]
 pub fn lines(items: impl Iterator<Item = String>) -> String {
     items.collect::<Vec<_>>().join("\n")
 }
 
-/// A block of the page: one line per selected row, holding the selected
-/// columns and no others (multi-group selection design §5).
 #[must_use]
 pub fn grid_block(rows: &[Row], selected: &Ranges, columns: &Ranges) -> String {
     lines(selected.indices().filter_map(|index| {
@@ -142,12 +118,8 @@ pub fn grid_block(rows: &[Row], selected: &Ranges, columns: &Ranges) -> String {
     }))
 }
 
-/// One line per selected column, each being that column's values top to
-/// bottom.
-///
-/// Not the block read row-wise: a column already yanks as its values in order
-/// (yank design §1), and a set of columns is that, once per column, left to
-/// right (multi-group selection design §5).
+/// A column already yanks as its values in order; a set of columns repeats
+/// that.
 #[must_use]
 pub fn grid_columns(rows: &[Row], columns: &Ranges) -> String {
     lines(columns.indices().map(|column| grid_column(rows, column)))
@@ -161,9 +133,7 @@ fn escaped(field: &str) -> String {
     }
 }
 
-/// A null yanks as nothing rather than as the `null` the grid draws: the grid
-/// can tell the two apart with a muted token and a CSV line cannot, so a text
-/// column holding the word would otherwise yank identically (design §2.1).
+/// A null yanks as nothing: CSV cannot tell it from the text "null".
 fn value(value: &CqlValue) -> String {
     match value {
         CqlValue::Null => String::new(),
@@ -494,10 +464,7 @@ mod tests {
         );
     }
 
-    /// Unreachable through the driver — every row of a `Page` carries one
-    /// value per column — but `grid_column` takes a slice and cannot check
-    /// that. Dropping the row would shorten the line with nothing to account
-    /// for it (design §5).
+    /// A short row contributes an empty field rather than shortening the line.
     #[test]
     fn a_row_too_short_contributes_an_empty_field() {
         let rows = vec![
@@ -612,9 +579,7 @@ mod tests {
 
     #[test]
     fn a_block_of_two_groups_yanks_one_line_per_row_with_no_separator() {
-        // The groups leave no trace in the output: a separator would be this
-        // program describing its own selection to a spreadsheet that did not
-        // ask (multi-group selection design §5).
+        // The groups leave no trace in the output.
         let rows = sample_rows(4, 2);
         let mut selected = Ranges::of(Range::new(0, 0));
         selected.insert(Range::new(3, 3));

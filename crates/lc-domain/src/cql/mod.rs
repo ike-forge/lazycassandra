@@ -1,11 +1,6 @@
-//! CQL as the editor needs it: coloured, formatted, completed, and split into
-//! the statements a run acts on.
-//!
-//! All four read the same scan of the buffer ([`lex`]), so the word the
-//! highlighter paints as grammar is the word the formatter uppercases, the
-//! word completion offers, and the word that opens a statement — answers that
-//! could otherwise drift apart
-//! (docs/superpowers/specs/2026-08-16-query-editor-design.md §2).
+//! CQL as the editor needs it: highlighted, formatted, completed, and split
+//! into statements. All four read the same scan, so they cannot disagree about
+//! a word.
 
 mod complete;
 mod format;
@@ -24,10 +19,7 @@ use crate::style::{Segment, Token};
 use lex::Kind;
 use resolve::resolve;
 
-/// `cql` with everything CQL treats as case-insensitive lower-cased: keywords
-/// and unquoted names. String literals, quoted names and comments keep their
-/// case, so two statements are the same statement exactly when their folds
-/// are equal.
+/// Statements are the same exactly when their folds are equal.
 #[must_use]
 pub fn fold(cql: &str) -> String {
     lex::pieces(cql)
@@ -40,18 +32,9 @@ pub fn fold(cql: &str) -> String {
         .collect()
 }
 
-/// The one table `cql` names, for a caller that has CQL text and no pieces
-/// of its own — `view` must not reach into [`lex`], which is private to this
-/// module.
-///
-/// `None` where the buffer resolves to anything other than exactly one
-/// `SELECT` naming exactly one table: a `BEGIN BATCH` splits into one scope
-/// per `;`, so its first scope alone can name one table while the buffer as
-/// a whole names several, and a caller that only checked `tables_at(0)`
-/// would be fooled by it. The verb matters for the same reason the count
-/// does — an `INSERT INTO shop.orders` names a table it wrote and never
-/// read, so its columns say nothing about the rows on screen
-/// (cql semantics design §7).
+/// Exactly one `SELECT` naming one table: a batch's first scope can name one
+/// while the buffer names several, and an `INSERT`'s table is not where rows
+/// came from.
 #[must_use]
 pub fn sole_table(cql: &str) -> Option<Name> {
     let scanned = lex::pieces(cql);
@@ -67,11 +50,7 @@ pub fn sole_table(cql: &str) -> Option<Name> {
     }
 }
 
-/// `text` as one styled line per buffer line, in order.
-///
-/// Exactly as many lines out as `text` has: a caller drawing them beside a
-/// cursor counted in buffer lines cannot be handed a different count
-/// (design §3).
+/// Exactly one line out per buffer line.
 #[must_use]
 pub fn highlight(text: &str) -> Vec<Vec<Segment>> {
     let scanned = lex::pieces(text);
@@ -96,15 +75,8 @@ pub fn highlight(text: &str) -> Vec<Vec<Segment>> {
     lines
 }
 
-/// `text` as the trail logs it: one line, highlighted once.
-///
-/// Collapses whitespace between tokens to a single space and drops comments
-/// — but never touches the inside of a token, so a string literal spanning
-/// several source lines, or holding a run of spaces, survives byte for byte.
-/// Working from the lexer's pieces rather than the raw text is what makes
-/// that possible: a comment or a run of whitespace is a token in its own
-/// right here, never a substring of one that carries meaning
-/// (query log design §3, §6).
+/// Works from tokens, so whitespace collapses only between them and literals
+/// survive byte for byte.
 #[must_use]
 pub fn issued(text: &str) -> Vec<Segment> {
     let scanned = lex::pieces(text);
@@ -133,9 +105,7 @@ pub fn issued(text: &str) -> Vec<Segment> {
     line
 }
 
-/// Adjacent runs of one meaning are drawn as one span. The renderer splits
-/// what it draws again — against a search term, and against the horizontal
-/// offset — and every extra seam is another place that split has to land.
+/// Fewer seams for the renderer's own splits to land on.
 fn push(line: &mut Vec<Segment>, text: &str, token: Option<Token>) {
     match line.last_mut() {
         Some(last) if last.token == token => last.text.push_str(text),
@@ -146,13 +116,7 @@ fn push(line: &mut Vec<Segment>, text: &str, token: Option<Token>) {
     }
 }
 
-/// Punctuation and whitespace carry no meaning of their own: `,` in a select
-/// list is the panel's text colour, the way a panel's name is the panel's
-/// name (style.rs's [`Segment`] doc).
-///
-/// A name's role outranks its kind: the tree, the DDL panel and the editor
-/// spend one colour on a keyspace and another on a table
-/// (cql semantics design §4).
+/// A name's role outranks its kind.
 const fn token(kind: Kind, role: Option<Role>) -> Option<Token> {
     match kind {
         Kind::Keyword => Some(Token::Keyword),
@@ -167,17 +131,8 @@ const fn token(kind: Kind, role: Option<Role>) -> Option<Token> {
     }
 }
 
-/// The opening word of every statement in `text`, upper-cased, in order.
-///
-/// The word a statement is *classified* by, which is why it is scanned rather
-/// than split off the front: a leading comment is not a verb, and `;` inside a
-/// string is not a separator — both of which a `split_whitespace` on the raw
-/// buffer gets wrong, and getting them wrong is a write reaching a connection
-/// that forbade one (posture design §2).
-///
-/// One entry per statement, so a buffer holding several is classified by all
-/// of them. A statement with no word in it at all — trailing whitespace past
-/// the last `;` — contributes nothing.
+/// Scanned, not split: a leading comment is not a verb and a `;` in a string is
+/// not a separator. Getting either wrong lets a write past a read-only posture.
 #[must_use]
 pub(crate) fn opening_words(text: &str) -> Vec<String> {
     let mut words = Vec::new();
@@ -326,10 +281,7 @@ mod tests {
         name.map(|name| (name.keyspace, name.table))
     }
 
-    /// A trailing `;` opens a scope on the chance something follows it
-    /// (`Machine::end_statement`), but nothing here ever does — that
-    /// placeholder must not count as a second statement and defeat the
-    /// one-statement guard below.
+    /// A trailing `;` opens a placeholder scope that must not count.
     #[test]
     fn a_trailing_semicolon_still_names_the_one_table() {
         assert_eq!(
@@ -354,7 +306,7 @@ mod tests {
 
     #[test]
     fn a_statement_that_is_not_a_select_names_no_sole_table() {
-        // Each names exactly one table, and none of them read a row from it.
+        // Each names one table but reads no row from it.
         assert_eq!(sole_table("insert into shop.orders (id) values (1)"), None);
         assert_eq!(sole_table("truncate shop.orders"), None);
         assert_eq!(sole_table("update shop.orders set total = 1"), None);
@@ -391,10 +343,7 @@ mod tests {
         resolve(&lex::pieces(cql)).statements()
     }
 
-    /// A stray word after a `;` is a second statement the resolver could not
-    /// follow, not an empty tail: `Verb::Unread` alone could not tell the
-    /// two apart, since a bare identifier reaches neither `keyword()` nor
-    /// `record()` either.
+    /// A bare identifier reaches neither `keyword()` nor `record()`.
     #[test]
     fn a_stray_word_after_a_semicolon_is_a_second_statement_not_an_empty_tail() {
         assert_eq!(sole_table("select * from a; notacommand"), None);

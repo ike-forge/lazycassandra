@@ -1,7 +1,4 @@
-//! The Logs tab's projection: one row per entry, each drawn on two lines.
-//!
-//! One module per panel that has content, because each projection brings its
-//! own vocabulary (view/mod.rs).
+//! The Logs tab's projection: one row per entry, two lines each.
 
 use std::time::Duration;
 
@@ -11,19 +8,13 @@ use crate::state::State;
 use crate::style::{Segment, Severity, Token};
 use crate::view::PanelBody;
 
-/// The pending outcome's text, before `lc-inbound` animates its leading
-/// glyph frame by frame (design §6). Exposed rather than a private literal
-/// so the renderer can find the row to animate without a second, drifting
-/// copy of this string — the domain still carries no frame counter of its
-/// own; this is only the sentinel it draws in place of one.
+/// The sentinel `lc-inbound` animates; public so the renderer never keeps a
+/// second copy.
 pub const RUNNING: &str = "⋯ running";
 
-/// One entry as a renderer needs it: the time already formatted, so the
-/// renderer never has to know how a [`Stamp`](crate::clock::Stamp) is spelled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogRow {
-    /// `None` on the row reporting what the ring dropped, which happened at no
-    /// one time.
+    /// `None` on the dropped-count row.
     pub at: Option<String>,
     pub subject: Vec<Segment>,
     pub outcome: Vec<Segment>,
@@ -54,11 +45,8 @@ pub(crate) fn log_body(state: &State) -> PanelBody {
     let rows = dropped.into_iter().chain(log.entries().map(row)).collect();
     let flash = super::flash_over(state, Panel::Queries);
 
-    // The cursor and the selection both index entries, but a dropped-count
-    // row is prepended to `rows` once the ring has evicted — every row
-    // index handed to the renderer has to move past it together, or one
-    // shifts and the other silently does not. `flash`'s frozen rows were
-    // spanned in that same entry space, so they take the same shift.
+    // A dropped-count row is prepended once the ring evicts, so every entry
+    // index shifts past it together.
     PanelBody::Log {
         rows,
         selected: log.cursor.index() + leading,
@@ -95,10 +83,8 @@ fn outcome(outcome: &Outcome) -> Vec<Segment> {
     vec![Segment::styled(outcome_text(outcome), token)]
 }
 
-/// The outcome row's text. Written once and called from both the projection
-/// above and the yank line [`crate::yank::log_entry`] builds, so the two
-/// cannot drift into two spellings of the same outcome (query log design
-/// §5.3).
+/// Shared with [`crate::yank::log_entry`], so the two cannot spell an outcome
+/// differently.
 pub(crate) fn outcome_text(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Pending { .. } => RUNNING.to_owned(),
@@ -109,8 +95,7 @@ pub(crate) fn outcome_text(outcome: &Outcome) -> String {
     }
 }
 
-/// Milliseconds up to a second, then seconds to one decimal. A trail is read,
-/// not measured against.
+/// A trail is read, not measured against.
 fn elapsed(took: Duration) -> String {
     if took < Duration::from_secs(1) {
         format!("{}ms", took.as_millis())
@@ -187,8 +172,6 @@ mod tests {
         assert!(crate::style::text(&rows[0].outcome).contains("running"));
     }
 
-    // The trail says what it lost rather than presenting a truncated history
-    // as a complete one (query log design §6).
     #[test]
     fn an_evicting_trail_opens_with_what_it_dropped() {
         let mut log = Log::default();
@@ -224,9 +207,6 @@ mod tests {
         assert!(crate::style::text(&rows[0].outcome).contains("1.4s"));
     }
 
-    // The cursor indexes entries; `rows` gains a leading row once the ring
-    // has evicted, so `selected` must shift with it or every selection would
-    // point one row too early.
     #[test]
     fn a_selected_row_accounts_for_the_row_the_drop_count_added() {
         let mut log = Log::default();
@@ -251,9 +231,6 @@ mod tests {
         );
     }
 
-    // `ranges` is entry-indexed exactly as `selected` is, and a
-    // half-applied fix — shifting one and not the other — would be silent
-    // until Task 12 lit a yank's afterglow from it.
     #[test]
     fn a_held_range_accounts_for_the_row_the_drop_count_added() {
         let mut log = Log::default();
@@ -264,7 +241,7 @@ mod tests {
                 Outcome::Cancelled,
             ));
         }
-        // Entries 0..=2, the oldest three survivors, hold subjects "3","4","5".
+        // Entries 0..=2, the oldest three survivors, hold "3","4","5".
         log.selection.start(0);
         log.selection.stop(2);
 
@@ -280,10 +257,6 @@ mod tests {
         );
     }
 
-    // A yank's afterglow draws from the rows it froze at yank time, not from
-    // the live selection — which a yank has already spent by the time this is
-    // projected — and takes the same dropped-count shift every other range
-    // does (Task 12).
     #[test]
     fn a_flash_over_the_trail_lights_the_rows_it_was_lit_with() {
         let mut log = Log::default();

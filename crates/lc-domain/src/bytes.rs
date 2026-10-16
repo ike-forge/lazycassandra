@@ -2,7 +2,6 @@
 
 use std::fmt;
 
-/// A count of bytes, measured or estimated.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Bytes(u64);
 
@@ -42,8 +41,8 @@ impl std::iter::Sum for Bytes {
     }
 }
 
-/// The largest 1024-based unit that keeps a whole part, to one decimal:
-/// `812 B`, `1.2 KB`, `3.4 MB`, `1.1 GB`.
+/// The largest 1024-based unit keeping a whole part, to one decimal: `812 B`,
+/// `1.2 KB`.
 impl fmt::Display for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0 < UNIT {
@@ -64,7 +63,7 @@ impl fmt::Display for Bytes {
     }
 }
 
-/// `bytes / unit` in tenths, rounded half up.
+/// Tenths, rounded half up.
 const fn tenths(bytes: u64, unit: u64) -> u64 {
     (bytes.saturating_mul(10).saturating_add(unit / 2)) / unit
 }

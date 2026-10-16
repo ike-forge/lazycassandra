@@ -1,7 +1,5 @@
-//! The pure core of `LazyCassandra`.
-//!
-//! Holds the state, the messages that change it, and the effects that change
-//! anything else. No I/O, no runtime, no terminal — see architecture.md §2.
+//! The pure core: state, the messages that change it, and the effects that
+//! change anything else. No I/O, no runtime, no terminal (architecture.md §2).
 
 pub mod bytes;
 pub mod cell;

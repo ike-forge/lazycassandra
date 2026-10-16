@@ -1,20 +1,10 @@
-//! The wall-clock, as the domain is allowed to know it.
-//!
-//! The domain reads no clock and must not learn how (architecture.md §2). A
-//! [`Stamp`] is a value `lc-outbound` builds and hands in — through
-//! [`Msg::Tick`](crate::Msg::Tick), or through
-//! [`init`](crate::init) for the entries pushed before any tick has arrived
-//! (query log design §4, §4.1).
+//! The wall-clock as the domain may know it: a [`Stamp`] handed in through
+//! [`Msg::Tick`](crate::Msg::Tick) or [`init`](crate::init), never read
+//! (architecture.md §2).
 
 use std::fmt;
 
-/// A time of day, to the second.
-///
-/// Three integers rather than a preformatted `String`: it is `Copy`, so
-/// refreshing [`State::now`](crate::State::now) twenty-five times a second
-/// allocates nothing, and a domain holding `"14:02:09"` that cannot say what
-/// hour that is has escaped its own type system for no gain
-/// (conventions.md §1).
+/// `Copy`, so refreshing it 25 times a second allocates nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Stamp {
     hour: u8,

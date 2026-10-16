@@ -1,24 +1,18 @@
 //! Bounded motion over a list: a cursor, a scroll offset, and the span a
 //! wrapped row occupies.
 
-/// A selection into a list, which cannot be moved past either end.
-///
-/// The index is private on purpose: an out-of-range selection cannot be
-/// constructed from outside this module, so a renderer never has to defend
-/// against one (conventions.md §1).
+/// Private index: an out-of-range selection is unconstructible.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Cursor {
     index: usize,
 }
 
 impl Cursor {
-    /// The selected row.
     #[must_use]
     pub const fn index(self) -> usize {
         self.index
     }
 
-    /// Moves to the next row, stopping on the last one.
     pub const fn down(&mut self, len: usize) {
         let last = len.saturating_sub(1);
         if self.index < last {
@@ -28,12 +22,10 @@ impl Cursor {
         }
     }
 
-    /// Moves to the previous row, stopping on the first one.
     pub const fn up(&mut self) {
         self.index = self.index.saturating_sub(1);
     }
 
-    /// Pulls the selection back inside a list that shrank.
     pub const fn clamp_to(&mut self, len: usize) {
         let last = len.saturating_sub(1);
         if self.index > last {
@@ -41,18 +33,15 @@ impl Cursor {
         }
     }
 
-    /// Moves to `index`, or to the last row when the list is shorter.
     pub const fn go_to(&mut self, index: usize, len: usize) {
         self.index = index;
         self.clamp_to(len);
     }
 
-    /// Moves a screen down, stopping on the last row.
     pub const fn page_down(&mut self, len: usize, height: usize) {
         self.go_to(self.index.saturating_add(height), len);
     }
 
-    /// Moves a screen up, stopping on the first row.
     pub const fn page_up(&mut self, height: usize) {
         self.index = self.index.saturating_sub(height);
     }
@@ -66,45 +55,32 @@ impl Cursor {
     }
 }
 
-/// Where a selected row was drawn, counted in the lines a viewport scrolls
-/// over.
-///
-/// The Table DDL panel is the one place a cursor and an offset count in
-/// different units: the cursor walks described rows, the offset walks the
-/// wrapped lines they occupy, and only the renderer knows the conversion
-/// (docs/superpowers/specs/2026-08-10-ddl-selection-design.md §5.4).
+/// The Table DDL panel's cursor counts rows while its offset counts wrapped
+/// lines; only the renderer converts.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Span {
-    /// The first line the row occupies.
     pub first: usize,
-    /// How many it occupies. Zero means no row was drawn.
+    /// Zero means no row was drawn.
     pub lines: usize,
 }
 
-/// A viewport offset over a document of known length.
-///
-/// The offset is private for the reason [`Cursor`]'s index is: every motion
-/// re-establishes `offset <= len - height` here, so a renderer is never
-/// handed one that points past the end.
+/// Private: every motion keeps `offset <= len - height`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Scroll {
     offset: usize,
 }
 
 impl Scroll {
-    /// The first line drawn.
     #[must_use]
     pub const fn offset(self) -> usize {
         self.offset
     }
 
-    /// Moves down a line, stopping with the last line at the bottom of the
-    /// panel rather than dragging it to the top.
+    /// Stops with the last line at the bottom.
     pub const fn down(&mut self, len: usize, height: usize) {
         self.go_to(self.offset.saturating_add(1), len, height);
     }
 
-    /// Moves up a line, stopping at the top.
     pub const fn up(&mut self) {
         self.offset = self.offset.saturating_sub(1);
     }
@@ -125,17 +101,11 @@ impl Scroll {
         self.go_to(len, len, height);
     }
 
-    /// Pulls a stale offset back over a document that shrank or a panel that
-    /// grew.
     pub const fn clamp_to(&mut self, len: usize, height: usize) {
         self.go_to(self.offset, len, height);
     }
 
-    /// Pulls the viewport the shortest distance that puts `index` inside it.
-    ///
-    /// What makes a selection stay visible now that the renderer no longer
-    /// arranges it — `update` applies this to whichever cursor moved
-    /// (docs/superpowers/specs/2026-08-09-list-viewport-design.md §3).
+    /// Applied by `update` to whichever cursor moved.
     pub const fn follow(&mut self, index: usize, height: usize) {
         if index < self.offset {
             self.offset = index;
@@ -144,12 +114,8 @@ impl Scroll {
         }
     }
 
-    /// Pulls the viewport the shortest distance that puts `span` inside it.
-    ///
-    /// [`Self::follow`]'s counterpart for a selection that occupies more than
-    /// one line. A span taller than the panel cannot be made to fit, so its
-    /// first line goes to the top: a property drawn tail-first has its name
-    /// scrolled off, which is the half that says what the tail is.
+    /// A span taller than the panel goes top-first, keeping the name that
+    /// explains the rest.
     pub const fn follow_span(&mut self, span: Span, height: usize) {
         if span.lines == 0 || height == 0 {
             return;

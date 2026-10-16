@@ -1,27 +1,15 @@
-//! The shapes a statement comes in, offered whole.
-//!
-//! A keyword completion saves the rest of one word; a template saves the rest
-//! of the statement. They are offered only where a statement begins, which is
-//! the one position at which the whole shape is still undecided
-//! (docs/superpowers/specs/2026-08-17-completion-ranking-design.md §3).
+//! Statement shapes, offered whole where a statement begins.
 
-/// One statement skeleton.
-///
-/// Split at the first hole rather than carrying a caret offset beside the
-/// text: a caret cannot then point outside what was typed, and the two halves
-/// are what `accept` walks anyway (conventions.md §1).
+/// Split at the first hole, so the caret cannot point outside the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Template {
-    /// What the popup draws: the statement's shape, each hole an empty `<>`.
+    /// Each hole an empty `<>`.
     pub label: &'static str,
-    /// Typed before the cursor lands.
     pub head: &'static str,
-    /// Typed after it.
     pub tail: &'static str,
 }
 
 impl Template {
-    /// The word a prefix is matched against — the statement's opening keyword.
     pub(crate) fn keyword(self) -> &'static str {
         self.head
             .split_once(' ')
@@ -32,22 +20,14 @@ impl Template {
         format!("{}{}", self.head, self.tail)
     }
 
-    /// How far into [`Self::text`] the cursor lands, in characters.
     pub(crate) fn caret(self) -> usize {
         self.head.chars().count()
     }
 }
 
-/// Every shape offered, in the order a popup lists them.
-///
-/// The data statements first, then the schema ones, because the panel exists
-/// to read rows (vision.md §5.1). No function, aggregate or materialised view:
-/// each is a body of code or a second query rather than a shape, and a
-/// skeleton would be a worse start than an empty line.
-///
-/// `BEGIN BATCH` is the outer wrapper alone. What goes between its two lines
-/// is a statement in its own right, and the popup offers those on the line the
-/// caret lands on.
+/// Data statements first: the panel exists to read rows. No functions,
+/// aggregates or views: a skeleton of a code body is worse than an empty line.
+/// `BEGIN BATCH` is the wrapper alone.
 pub(crate) const TEMPLATES: &[Template] = &[
     Template {
         label: "SELECT <> FROM <>",
@@ -133,9 +113,7 @@ mod tests {
         }
     }
 
-    /// The label draws holes because the text leaves them: a skeleton that
-    /// typed everything it drew would be a keyword completion with a longer
-    /// name.
+    /// A template that typed everything it drew would be a keyword completion.
     #[test]
     fn every_label_marks_a_hole_and_the_caret_lands_in_the_first_one() {
         for template in TEMPLATES {

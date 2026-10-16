@@ -1,9 +1,5 @@
-//! The Contents panel's state: one table's rows, and how far along asking for
-//! them we are.
-//!
-//! A module of its own for the reason [`crate::tree`] is one — per-panel state
-//! with its own vocabulary rather than another field on `State`
-//! (architecture.md §11).
+//! The Contents panel's state: one table's rows, and how far along fetching
+//! them is.
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -19,57 +15,33 @@ use crate::selection::Selection;
 use crate::style::{Segment, Token};
 use crate::viewport::{Cursor, Scroll};
 
-/// The Contents panel's own state.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ContentsPanel {
     pub cursor: Cursor,
-    /// The selected column. With [`ContentsPanel::cursor`] it names one cell,
-    /// which is what a future delete or edit acts on
-    /// (docs/superpowers/specs/2026-08-10-table-display-design.md §2).
     pub column: Cursor,
-    /// How the two cursors above are drawn
-    /// (docs/superpowers/specs/2026-08-13-selection-modes-design.md §2).
     pub mode: SelectionMode,
-    /// The first row drawn (docs/superpowers/specs/2026-08-09-list-viewport-design.md §1).
     pub scroll: Scroll,
-    /// The first column drawn (docs/superpowers/specs/2026-08-10-table-display-design.md §5).
     pub column_scroll: ColumnScroll,
-    /// The rows `v` has selected, and the columns — which of the two `v`
-    /// extends is what [`SelectionMode`] answers
-    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
     pub rows: Selection,
     pub columns: Selection,
-    /// Private for the reason [`crate::tree::TablesPanel`]'s unfold set is:
-    /// the only ways in are the transitions below.
+    /// Private: the transitions below are the only ways in.
     state: ContentsState,
-    /// Flags the cells the applied search matches; the grid keeps every row
-    /// (design §4.3). Private for uniformity with the other two panels'
-    /// searches, not because setting it here owes a repair — Contents narrows
-    /// nothing, so there is no clamp to skip.
     search: Option<Search>,
-    /// The insert form of a write the cluster refused, for `i` to give back
-    /// (docs/superpowers/specs/2026-10-12-row-insert-design.md §5).
+    /// The insert form of a write the cluster refused, for `i` to give back.
     draft: Option<Inspector>,
 }
 
-/// Which of the grid's two cursors is painted, and how.
-///
-/// Changes nothing but the highlight: both cursors move on the same keys in
-/// every mode, so no key changes meaning and docs/shortcuts.md §2 stands
-/// (design §3).
+/// Changes only the highlight: both cursors move on the same keys in every
+/// mode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SelectionMode {
-    /// The whole row. The default: reading a table is reading rows, and a cell
-    /// cursor is what you cycle to once you have a cell in mind (design §2).
     #[default]
     Row,
-    /// The cell, over a faint wash across its row and its column.
     Cell,
     Column,
 }
 
 impl SelectionMode {
-    /// The next mode `m` reaches, wrapping.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
@@ -80,10 +52,8 @@ impl SelectionMode {
     }
 }
 
-/// How far along the panel's one request is.
-///
-/// The [`QueryId`] sits inside `Loading` rather than beside it, so "waiting on
-/// nothing in particular" cannot be represented.
+/// The [`QueryId`] sits inside `Loading`, so "waiting on nothing" is
+/// unrepresentable.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum ContentsState {
     #[default]
@@ -91,8 +61,8 @@ pub enum ContentsState {
     Loading {
         query: QueryId,
         subject: Subject,
-        /// Kept to resume from: a cursor alone names nothing the driver can
-        /// continue (architecture.md §5).
+        /// Kept to resume from: a paging cursor alone names nothing the driver
+        /// can continue.
         stmt: Statement,
     },
     Loaded {
@@ -102,15 +72,11 @@ pub enum ContentsState {
     },
     Failed {
         subject: Subject,
-        /// Drawn in the panel rather than only in the trail: the sentence
-        /// that says what to fix belongs where the failure is
-        /// (supersedes query log design §8).
+        /// Drawn in the panel: the fix belongs where the failure is.
         error: String,
     },
 }
 
-/// Whether the cluster holds rows past the ones loaded, and what is fetching
-/// them (docs/superpowers/specs/2026-09-17-grid-paging-design.md §2).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Paging {
     Ended,
@@ -121,7 +87,6 @@ pub enum Paging {
     },
 }
 
-/// What `p` or `P` has in flight, or where `P` last stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fetch {
     Idle,
@@ -130,18 +95,15 @@ pub enum Fetch {
     All { query: QueryId, stops: Stops },
 }
 
-/// Where a running `P` stops: the next multiple of each step above where it
-/// was pressed (design §3).
+/// The next multiple of each step above where `P` was pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stops {
     bytes: Bytes,
     rows: usize,
 }
 
-/// Estimated memory between two memory stops.
 pub const MEMORY_STEP: Bytes = Bytes::MB.times(100);
 
-/// Rows between two row stops.
 pub const ROW_STEP: usize = 1_000_000;
 
 impl Stops {
@@ -152,7 +114,6 @@ impl Stops {
         }
     }
 
-    /// The stop a grid of `bytes` and `rows` has reached, memory first.
     const fn reached(self, bytes: Bytes, rows: usize) -> Option<Stopped> {
         if bytes.get() >= self.bytes.get() {
             Some(Stopped::Memory(self.bytes))
@@ -164,7 +125,6 @@ impl Stops {
     }
 }
 
-/// The stop a `P` halted at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stopped {
     Memory(Bytes),
@@ -172,8 +132,7 @@ pub enum Stopped {
 }
 
 impl Bytes {
-    /// What `row` is estimated to hold. Never recomputed: a page's estimate is
-    /// added as it lands (design §3).
+    /// Never recomputed: a page's estimate is added as it lands.
     #[must_use]
     pub fn of_row(row: &Row) -> Self {
         Self::new(ROW_OVERHEAD + row.values.iter().map(value_bytes).sum::<u64>())
@@ -202,8 +161,6 @@ fn value_bytes(value: &CqlValue) -> u64 {
     VALUE_OVERHEAD + payload
 }
 
-/// A page the panel wants fetched under `query`, continuing `stmt` from
-/// `cursor`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Continue {
     pub query: QueryId,
@@ -211,30 +168,21 @@ pub struct Continue {
     pub cursor: PagingState,
 }
 
-/// What a page did to the panel.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Landed {
-    /// Not the panel's query.
     Elsewhere,
-    /// The read's first rows, or its end.
     Read,
-    /// An empty first page with a successor, followed under a new query
-    /// rather than shown (design §1).
+    /// Followed under a new query rather than shown.
     Skipped(Continue),
-    /// A later page, appended, and the one to fetch next if one is due.
     Appended(Option<Continue>),
 }
 
-/// What a failure for the panel's query cost it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
-    /// The read never showed a row.
     Read,
-    /// A later page: the rows already loaded stay.
     Page,
 }
 
-/// Which way a sorted column is read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Order {
     Descending,
@@ -250,12 +198,7 @@ impl Order {
     }
 }
 
-/// The column a grid is sorted on, and which way.
-///
-/// One column at a time: sorting a second replaces the first rather than
-/// adding a tiebreak, so what the arrow over a heading claims is the whole
-/// order and not a term in it
-/// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §2).
+/// One column at a time, so the heading arrow states the whole order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sort {
     pub column: usize,
@@ -263,9 +206,8 @@ pub struct Sort {
 }
 
 impl Sort {
-    /// The state `s` on `column` reaches when the sort key is pressed there:
-    /// unsorted, descending, ascending, unsorted (design §2). Landing on
-    /// another column starts that column's own cycle from the top.
+    /// Unsorted, descending, ascending, unsorted; another column starts its own
+    /// cycle.
     #[must_use]
     fn next(sort: Option<Self>, column: usize) -> Option<Self> {
         let order = match sort {
@@ -280,51 +222,24 @@ impl Sort {
     }
 }
 
-/// A page, the column widths measured from it, and the arrangement the user
-/// is reading it through.
-///
-/// One type rather than two fields because measuring is expensive and the
-/// answer never changes: [`crate::grid::widths`] runs [`crate::cell::text`]
-/// over every cell, which hex-expands a whole blob to 2n characters purely to
-/// count them. `update`'s epilogue and every drawn frame each wanted that
-/// answer, so an idle tick over a page of blobs allocated megabytes to reach
-/// the conclusion that nothing had moved — the cost
-/// [`crate::feedback::Loader`]'s repaint rule exists to avoid.
-///
-/// The widths are a pure function of the page and are built with it, so the
-/// cache has no way to go stale. That is why there is no public constructor
-/// taking both. They are measured over the whole page and not over
-/// [`GridPage::order`]: a filter that narrowed the columns it left standing
-/// would resize the grid under every keystroke of the prompt that typed it
-/// (design §5).
-///
-/// The sort and the filters live here rather than on [`ContentsPanel`] so
-/// that they cannot outlive the page they address: a filter on column 3 says
-/// nothing about the next statement's third column, and a new page replaces
-/// this whole value (design §3).
+/// Widths are cached with the page: measuring hex-expands every blob, and every
+/// frame wanted it. Measured over the whole page, not the filtered order, so
+/// typing a filter does not resize the grid. Sort and filters live here so a
+/// new page discards them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GridPage {
     page: Page,
     widths: Vec<u16>,
-    /// [`GridPage::widths`] uncapped, which is what the room a panel has
-    /// left is shared out by.
+    /// Uncapped, for sharing out a panel's spare room.
     natural: Vec<u16>,
     sort: Option<Sort>,
-    /// One slot per column of the page, so a filter is addressed by the
-    /// column index the grid already counts in and no lookup can name a
-    /// column the page does not have.
+    /// One slot per page column, so no filter can name a column the page lacks.
     filters: Vec<Option<Search>>,
-    /// Which rows of [`GridPage::page`] are drawn, in the order they are
-    /// drawn. The one place the arrangement is resolved: every reader counts
-    /// rows in this, so a cursor, a yank and an export cannot disagree about
-    /// which row is the third one (design §4).
+    /// The one place the arrangement is resolved: cursor, yank and export all
+    /// count rows in this.
     order: Vec<usize>,
     bytes: Bytes,
-    /// Cells typed into and not yet written, keyed by page row rather than by
-    /// drawn position. Here for the sort's and the filters' reason: an edit
-    /// addresses the page it was made on, and a new page replaces this whole
-    /// value — so a re-read discards them, which is the honest outcome
-    /// (cell editing design §4).
+    /// Keyed by page row, not drawn position; a re-read discards them.
     edits: Edits,
 }
 
@@ -348,20 +263,17 @@ impl GridPage {
         }
     }
 
-    /// Every row fetched, filtered or not — what the footer counts.
+    /// Every row fetched, filtered or not.
     #[must_use]
     pub fn fetched(&self) -> usize {
         self.page.rows.len()
     }
 
-    /// The memory the fetched rows are estimated to hold.
     #[must_use]
     pub const fn bytes(&self) -> Bytes {
         self.bytes
     }
 
-    /// Adds `rows` past the last one, widening columns they overflow and
-    /// placing each under the sort and filters standing (design §4).
     fn append(&mut self, rows: Vec<Row>, cap: MaxColumnWidth) {
         let added = Page {
             columns: self.page.columns.clone(),
@@ -393,9 +305,8 @@ impl GridPage {
         }
     }
 
-    /// Places `added` into the sorted order without re-sorting what is there:
-    /// each lands after every row it ties with, which is where a stable sort
-    /// of the whole grid would put a row that arrived last.
+    /// Each lands after every row it ties with, where a stable sort of the
+    /// whole grid would put it.
     fn merge(&mut self, sort: Sort, added: Vec<usize>) {
         let key = |at: usize| {
             self.page.rows[at]
@@ -428,19 +339,13 @@ impl GridPage {
         &self.page
     }
 
-    /// The uncommitted edits standing on this page.
     #[must_use]
     pub const fn edits(&self) -> &Edits {
         &self.edits
     }
 
-    /// The value the `index`th drawn row's `column`th cell says — the edit
-    /// where there is one, and what the cluster sent otherwise.
-    ///
-    /// The one answer every reader takes, so the grid, the inspector, a yank,
-    /// an export and a search cannot disagree about what a cell says — the
-    /// rule [`Self::order`] already sets for which row is the third one
-    /// (design §4).
+    /// The edit where there is one. Every reader goes through here so they
+    /// agree on what a cell says.
     #[must_use]
     pub fn value(&self, index: usize, column: usize) -> Option<&CqlValue> {
         let at = *self.order.get(index)?;
@@ -451,8 +356,6 @@ impl GridPage {
         })
     }
 
-    /// Whether the `index`th drawn row's `column`th cell has been typed into
-    /// and not yet written.
     #[must_use]
     pub fn is_edited(&self, index: usize, column: usize) -> bool {
         self.order
@@ -460,9 +363,6 @@ impl GridPage {
             .is_some_and(|at| self.edits.get(*at, column).is_some())
     }
 
-    /// The rows as the grid draws them — the arrangement applied and every
-    /// edit in place. What a yank and an export of the fetched rows copy:
-    /// both copy what is on screen (design §4).
     #[must_use]
     pub fn drawn_rows(&self) -> Vec<Row> {
         (0..self.order.len())
@@ -474,11 +374,7 @@ impl GridPage {
             .collect()
     }
 
-    /// Records `edited` over the `index`th drawn row's `column`th cell.
-    ///
-    /// An edit naming the value already there records nothing and clears what
-    /// was: an edit that restores what it started from is not an edit
-    /// (design §1).
+    /// An edit back to the original value clears the mark.
     pub fn set_edit(&mut self, index: usize, column: usize, edited: Edited) {
         let Some(&at) = self.order.get(index) else {
             return;
@@ -493,14 +389,8 @@ impl GridPage {
         self.edits.set(at, column, kept);
     }
 
-    /// Writes every edit into the rows themselves and drops them: what the
-    /// cluster has now taken is what the page holds.
-    ///
-    /// The page is not re-read — a re-read costs the user their place, their
-    /// paging and their arrangement, and these are exactly the values the
-    /// cluster was sent (design §5). The arrangement is left alone for the
-    /// same reason it was left alone while they were dirty: re-sorting here
-    /// would move the row out from under the cursor that edited it.
+    /// No re-read and no re-sort: either would move the row from under the
+    /// cursor that edited it.
     pub fn commit_edits(&mut self, scope: CommitScope) {
         for ((row, column), edited) in self.edits.drain_in(scope) {
             if let Some(cell) = self
@@ -514,16 +404,13 @@ impl GridPage {
         }
     }
 
-    /// Each column's capped width, measured as rows land.
     #[must_use]
     pub fn widths(&self) -> &[u16] {
         &self.widths
     }
 
-    /// Each column's drawn width in a grid body `grid_width` characters wide,
-    /// and the width the columns have there. The one answer the column
-    /// follow, the projection and the renderer draw by: two would scroll the
-    /// cursor and the drawn window apart (table display design §6).
+    /// The one answer the column follow, projection and renderer share; two
+    /// would drift apart.
     #[must_use]
     pub fn drawn(&self, grid_width: usize) -> (Cow<'_, [u16]>, u16) {
         let width = u16::try_from(grid_width).unwrap_or(u16::MAX);
@@ -535,20 +422,17 @@ impl GridPage {
         )
     }
 
-    /// The column the grid is sorted on, if any.
     #[must_use]
     pub const fn sort(&self) -> Option<Sort> {
         self.sort
     }
 
-    /// The filter standing on `column`, if any.
     #[must_use]
     pub fn filter(&self, column: usize) -> Option<&Search> {
         self.filters.get(column)?.as_ref()
     }
 
-    /// How many rows the arrangement leaves — what a cursor is bounded by,
-    /// and what the title counts.
+    /// Rows the arrangement leaves.
     #[must_use]
     pub fn len(&self) -> usize {
         self.order.len()
@@ -559,33 +443,27 @@ impl GridPage {
         self.order.is_empty()
     }
 
-    /// Whether anything was filtered out, which is what lets the title say
-    /// how much of the page it is showing.
     #[must_use]
     pub fn is_filtered(&self) -> bool {
         self.filters.iter().any(Option::is_some)
     }
 
-    /// The rows the arrangement leaves, in the order they are drawn.
     #[must_use]
     pub fn rows(&self) -> impl ExactSizeIterator<Item = &Row> {
         self.order.iter().map(|at| &self.page.rows[*at])
     }
 
-    /// The page row the `index`th drawn row is, which is what edits are keyed
-    /// by.
+    /// The page row the `index`th drawn row is; edits are keyed by it.
     #[must_use]
     pub fn page_row(&self, index: usize) -> Option<usize> {
         self.order.get(index).copied()
     }
 
-    /// The `index`th drawn row, counted the way the cursor counts.
     #[must_use]
     pub fn row(&self, index: usize) -> Option<&Row> {
         self.page.rows.get(*self.order.get(index)?)
     }
 
-    /// Steps `column` through the sort cycle (design §2).
     pub fn cycle_sort(&mut self, column: usize) {
         if column >= self.page.columns.len() {
             return;
@@ -595,7 +473,6 @@ impl GridPage {
         self.arrange();
     }
 
-    /// Applies `filter` to `column`, `None` clearing it.
     pub fn set_filter(&mut self, column: usize, filter: Option<Search>) {
         let Some(slot) = self.filters.get_mut(column) else {
             return;
@@ -605,14 +482,8 @@ impl GridPage {
         self.arrange();
     }
 
-    /// Rebuilds [`GridPage::order`]: every row that satisfies every filter,
-    /// in the sorted order.
-    ///
-    /// Sorted by the text the grid draws rather than by the value's own type,
-    /// which is what "lexicographic" means here: a column holds one CQL type,
-    /// so an order over the drawn text is an order the user can read off the
-    /// screen. The sort is stable, so rows the key cannot separate keep the
-    /// order the cluster returned them in (design §2).
+    /// Sorted by drawn text: a column holds one CQL type, so that order is
+    /// readable off the screen. Stable, so ties keep the cluster's order.
     fn arrange(&mut self) {
         let mut order: Vec<usize> = (0..self.page.rows.len())
             .filter(|at| self.kept(*at))
@@ -629,9 +500,8 @@ impl GridPage {
                         .unwrap_or_default()
                 })
                 .collect();
-            // Sorted alongside its keys rather than by a comparator that
-            // re-renders a cell on every comparison: `cell::text` allocates,
-            // and a blob column would hex-expand once per comparison.
+            // Keys are rendered once: `cell::text` allocates and hex-expands
+            // blobs.
             let mut paired: Vec<(String, usize)> = keys.into_iter().zip(order).collect();
             paired.sort_by(|(left, _), (right, _)| sort.order.compare(left, right));
             order = paired.into_iter().map(|(_, at)| at).collect();
@@ -640,8 +510,7 @@ impl GridPage {
         self.order = order;
     }
 
-    /// Whether row `at` satisfies every filter standing. Several filters are
-    /// conjunctive: each one narrows what the ones before it left (design §3).
+    /// Filters are conjunctive.
     fn kept(&self, at: usize) -> bool {
         let row = &self.page.rows[at];
 
@@ -657,28 +526,20 @@ impl GridPage {
     }
 }
 
-/// An open filter prompt: the column it will narrow, and the term typed so
-/// far.
-///
-/// A modal of its own rather than a second [`crate::search::Prompt`]: a
-/// search flags cells and keeps every row, and this drops the rows it does
-/// not match — the two mean different things and must not share a key or a
-/// type (design §3). The term is applied when the prompt closes rather than
-/// on each keystroke, because a hard filter re-seats the cursor and rebuilds
-/// the grid under the hands typing it.
+/// Not a [`crate::search::Prompt`]: a search flags cells and keeps rows, a
+/// filter drops rows. Applied on close, since a hard filter rebuilds the grid
+/// under the typing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Filter {
     column: usize,
-    /// The column's name, for the modal's own title. Captured at open: the
-    /// prompt claims every key, so the page underneath cannot change while it
-    /// is up.
+    /// Captured at open: the prompt claims every key, so the page cannot change
+    /// under it.
     name: String,
     query: String,
 }
 
 impl Filter {
-    /// Opens over `column`, seeded with the filter already standing there —
-    /// which is what makes deleting the text the way to clear one (design §3).
+    /// Seeded with the standing filter, so deleting the text clears it.
     #[must_use]
     pub fn opened(column: usize, name: &str, standing: Option<&Search>) -> Self {
         Self {
@@ -703,9 +564,7 @@ impl Filter {
         &self.query
     }
 
-    /// What the query now means: `None` for an empty one, which clears the
-    /// filter rather than matching everything — [`Search::new`]'s own
-    /// invariant, and the reason this reuses it.
+    /// `None` for an empty query, which clears the filter.
     #[must_use]
     pub fn search(&self) -> Option<Search> {
         Search::new(&self.query)
@@ -720,11 +579,7 @@ impl Filter {
     }
 }
 
-/// Which table a request was about.
-///
-/// Owned rather than borrowed from the `Schema`: a result outlives the reload
-/// that dropped its table, and a page that says which table it came from is
-/// merely stale where a cleared panel would lose the user's place.
+/// Owned: a result outlives the schema reload that dropped its table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRef {
     pub keyspace: String,
@@ -740,17 +595,12 @@ impl TableRef {
         }
     }
 
-    /// `keyspace.table`, for a panel title.
     #[must_use]
     pub fn qualified(&self) -> String {
         format!("{}.{}", self.keyspace, self.table)
     }
 
-    /// [`TableRef::qualified`] in the colours the tree spends on the two
-    /// names, with the dot faint between them. A system keyspace is faint on
-    /// both halves, exactly as its rows are (`view::tables`) — a title is one
-    /// more place a schema name is written, and it reads as one there too
-    /// (vision.md §2).
+    /// A system keyspace is faint on both halves, as in the tree.
     #[must_use]
     pub fn segments(&self) -> Vec<Segment> {
         let (keyspace, table) = match KeyspaceKind::of(&self.keyspace) {
@@ -766,11 +616,6 @@ impl TableRef {
     }
 }
 
-/// What a page in the Contents panel is about.
-///
-/// The panel shows one grid whichever way the request was made — the tree's
-/// `Enter`, or `ctrl-r` over the editor
-/// (docs/superpowers/specs/2026-08-10-query-execution-design.md §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
     Table(TableRef),
@@ -778,11 +623,7 @@ pub enum Subject {
 }
 
 impl Subject {
-    /// What the panel's title says it is showing.
-    ///
-    /// Every run of whitespace in a typed statement collapses to one space,
-    /// newlines included, so a buffer written over four lines still titles the
-    /// panel in one. Clipping to the frame is the renderer's job.
+    /// Whitespace runs collapse, so a multi-line buffer titles in one line.
     #[must_use]
     pub fn label(&self) -> String {
         match self {
@@ -791,7 +632,6 @@ impl Subject {
         }
     }
 
-    /// The table whose layout a page's columns can be checked against —
     /// `None` for a typed statement, whose columns belong to no one table.
     #[must_use]
     pub const fn table(&self) -> Option<&TableRef> {
@@ -808,26 +648,17 @@ impl ContentsPanel {
         &self.state
     }
 
-    /// The search flagging matching cells, if any. Narrows nothing: every row
-    /// the cluster returned is still drawn (design §4.3).
+    /// Flags matching cells; every row is still drawn.
     #[must_use]
     pub fn search(&self) -> Option<&Search> {
         self.search.as_ref()
     }
 
-    /// Sets the search. Not public, for uniformity with
-    /// [`crate::tree::TablesPanel::set_search`]: [`State::apply_search`](crate::state::State::apply_search)
-    /// is the one caller, and there is no repair this owes — Contents has no
-    /// clamp to keep in step with the search the way Tables' cursor does.
     pub(crate) fn set_search(&mut self, search: Option<Search>) {
         self.search = search;
     }
 
-    /// The cell `n` reaches from `from`, as `(row, column)`, wrapping.
-    ///
-    /// Row-major: across the row first, then down. Both cursors move, so the
-    /// cell cursor lands on the cell that matched — which is the reason the
-    /// panel has two (design §5.1).
+    /// Row-major. Both cursors move, so the cell cursor lands on the match.
     #[must_use]
     pub fn next_match(&self, from: (usize, usize), direction: Direction) -> Option<(usize, usize)> {
         let search = self.search.as_ref()?;
@@ -835,9 +666,7 @@ impl ContentsPanel {
             return None;
         };
         let columns = page.page().columns.len();
-        // Over the arrangement rather than the page: `n` walks the grid as it
-        // is drawn, so a row a filter dropped is not a match to land on
-        // (grid sort and filter design §4).
+        // Over the arrangement: a row a filter dropped is not a match.
         let len = page.len().checked_mul(columns)?;
 
         if len == 0 {
@@ -859,8 +688,6 @@ impl ContentsPanel {
             .map(|at| (at / columns, at % columns))
     }
 
-    /// The query this panel is waiting on, if any: the read, or a page `p`
-    /// or `P` asked for.
     #[must_use]
     pub const fn outstanding(&self) -> Option<QueryId> {
         match &self.state {
@@ -887,8 +714,6 @@ impl ContentsPanel {
         }
     }
 
-    /// Where the loaded result stands against the cluster, `None` with
-    /// nothing loaded.
     #[must_use]
     pub const fn paging(&self) -> Option<&Paging> {
         match &self.state {
@@ -897,13 +722,11 @@ impl ContentsPanel {
         }
     }
 
-    /// Whether `p` and `P` have a page to ask for, whatever is in flight.
     #[must_use]
     pub const fn has_more(&self) -> bool {
         matches!(self.paging(), Some(Paging::More { .. }))
     }
 
-    /// Whether `p` or `P` would ask for one now.
     #[must_use]
     pub const fn can_fetch(&self) -> bool {
         matches!(
@@ -915,7 +738,6 @@ impl ContentsPanel {
         )
     }
 
-    /// Whether `P` is running.
     #[must_use]
     pub const fn fetching_all(&self) -> bool {
         matches!(
@@ -927,13 +749,10 @@ impl ContentsPanel {
         )
     }
 
-    /// `p`: the next page, under `query`, whatever stop `P` last reached.
     pub fn fetch_one(&mut self, query: impl FnOnce() -> QueryId) -> Option<Continue> {
         self.fetch(|_| Fetch::One(query()))
     }
 
-    /// `P`: pages until the result ends or the next stop above the grid as it
-    /// stands is reached.
     pub fn fetch_all(&mut self, query: impl FnOnce() -> QueryId) -> Option<Continue> {
         self.fetch(|page| Fetch::All {
             query: query(),
@@ -968,8 +787,7 @@ impl ContentsPanel {
         })
     }
 
-    /// `Esc` over a running `P`: the page in flight still lands, and nothing
-    /// follows it. Reports whether there was one to stop.
+    /// The page in flight still lands; nothing follows it.
     pub fn stop_fetching(&mut self) -> bool {
         let Some(Paging::More { fetch, .. }) = self.paging_mut() else {
             return false;
@@ -982,8 +800,7 @@ impl ContentsPanel {
         true
     }
 
-    /// Ends the loaded result where it stands, answering with the page that
-    /// was in flight. A cursor is only good on the session that issued it.
+    /// A paging cursor is only good on the session that issued it.
     pub fn end_paging(&mut self) -> Option<QueryId> {
         let paging = self.paging_mut()?;
         let flying = match paging {
@@ -998,8 +815,7 @@ impl ContentsPanel {
         flying
     }
 
-    /// Puts a loaded result with more to fetch in `fetch` over `bytes` of
-    /// estimate, which no fast test can afford to fetch for real.
+    /// Fakes an estimate no fast test can afford to fetch.
     #[cfg(test)]
     pub(crate) fn pretend(&mut self, bytes: Bytes, to: Fetch) {
         if let ContentsState::Loaded {
@@ -1020,10 +836,8 @@ impl ContentsPanel {
         }
     }
 
-    /// Starts waiting on `query`, discarding whatever was showing.
     pub fn requested(&mut self, query: QueryId, subject: Subject, stmt: Statement) {
-        // What was typed addressed the rows of the old content (insert design
-        // §5).
+        // What was typed addressed the old content's rows.
         self.draft = None;
         self.state = ContentsState::Loading {
             query,
@@ -1038,19 +852,15 @@ impl ContentsPanel {
         self.columns = Selection::default();
     }
 
-    /// Keeps `form` for the next `i`, in place of any held.
     pub fn keep_draft(&mut self, form: Inspector) {
         self.draft = Some(form);
     }
 
-    /// The draft, handed over: whoever opens it owns it, and puts it back if
-    /// the write fails again.
+    /// Whoever opens it puts it back if the write fails again.
     pub fn take_draft(&mut self) -> Option<Inspector> {
         self.draft.take()
     }
 
-    /// Applies a page, if it is one the panel is waiting on, its columns
-    /// capped at `cap`. `query` names the page that follows, when one does.
     pub fn page_ready(
         &mut self,
         landed: QueryId,
@@ -1087,8 +897,8 @@ impl ContentsPanel {
                     next,
                 } = page;
                 // An empty page can still have a successor: Cassandra ends a
-                // page on what it scanned, not on what matched a filter or
-                // survived tombstones.
+                // page on what it scanned, not what matched or survived
+                // tombstones.
                 let paging = match next {
                     Some(cursor) if rows.is_empty() => {
                         *outstanding = query();
@@ -1137,9 +947,8 @@ impl ContentsPanel {
                 let row = grid.order.get(self.cursor.index()).copied();
                 grid.append(page.rows, cap);
 
-                // Rows only arrive past the end of an unsorted grid, so what
-                // the cursor and a range address stays put; under a sort they
-                // move (design §4).
+                // Unsorted, rows only arrive past the end, so cursor and ranges
+                // stay put; sorted, they move.
                 if grid.sort.is_some() {
                     if let Some(at) =
                         row.and_then(|row| grid.order.iter().position(|at| *at == row))
@@ -1197,8 +1006,7 @@ impl ContentsPanel {
         }
     }
 
-    /// Records a request that never became a query, because the domain
-    /// refused it before it could.
+    /// A request the domain refused before it became a query.
     pub fn refused(&mut self, subject: Subject, error: &DbError) {
         self.state = ContentsState::Failed {
             subject,
@@ -1212,7 +1020,6 @@ impl ContentsPanel {
         self.columns = Selection::default();
     }
 
-    /// Records a failure, if it belongs to the query being waited on.
     pub fn failed(&mut self, query: QueryId, error: &DbError) -> Option<Failure> {
         if self.outstanding() != Some(query) {
             return None;
@@ -1237,9 +1044,7 @@ impl ContentsPanel {
         }
     }
 
-    /// The rows on screen, for a cursor that must not run past them — what
-    /// the arrangement left, not what the cluster returned
-    /// (grid sort and filter design §4).
+    /// What the arrangement left, not what the cluster returned.
     #[must_use]
     pub fn row_count(&self) -> usize {
         match &self.state {
@@ -1248,8 +1053,6 @@ impl ContentsPanel {
         }
     }
 
-    /// The loaded page, for the readers that count rows in the order it is
-    /// drawn: the projection, a yank, an export.
     #[must_use]
     pub const fn loaded(&self) -> Option<&GridPage> {
         match &self.state {
@@ -1258,8 +1061,6 @@ impl ContentsPanel {
         }
     }
 
-    /// The loaded page, for the two writers that change a cell rather than
-    /// read one: the edit `⏎` accepts and the write-back a commit does.
     pub const fn loaded_mut(&mut self) -> Option<&mut GridPage> {
         match &mut self.state {
             ContentsState::Loaded { page, .. } => Some(page),
@@ -1267,12 +1068,7 @@ impl ContentsPanel {
         }
     }
 
-    /// Steps `column` through the sort cycle, dropping the ranges `v` held.
-    ///
-    /// A range names rows by where they are drawn, so carrying one across a
-    /// re-ordering would address rows the user never chose — the argument `m`
-    /// already makes for the ranges it drops
-    /// (grid sort and filter design §4).
+    /// Drops `v`'s ranges: they name rows by drawn position.
     pub fn cycle_sort(&mut self, column: usize) {
         if let ContentsState::Loaded { page, .. } = &mut self.state {
             page.cycle_sort(column);
@@ -1280,8 +1076,7 @@ impl ContentsPanel {
         }
     }
 
-    /// Applies `filter` to `column`, `None` clearing it. Drops the ranges `v`
-    /// held, for [`ContentsPanel::cycle_sort`]'s reason.
+    /// Drops `v`'s ranges, as [`ContentsPanel::cycle_sort`] does.
     pub fn set_filter(&mut self, column: usize, filter: Option<Search>) {
         if let ContentsState::Loaded { page, .. } = &mut self.state {
             page.set_filter(column, filter);
@@ -1289,13 +1084,11 @@ impl ContentsPanel {
         }
     }
 
-    /// The filter standing on `column`, if any.
     #[must_use]
     pub fn filter(&self, column: usize) -> Option<&Search> {
         self.loaded()?.filter(column)
     }
 
-    /// The columns on screen, for a cursor that must not run past them.
     #[must_use]
     pub fn column_count(&self) -> usize {
         match &self.state {
@@ -1349,10 +1142,8 @@ mod tests {
         (panel, query)
     }
 
-    /// Two columns, three rows, with matches for `"ali"` at `(0, 1)` and
-    /// `(2, 1)` only — `(0, 0)` deliberately does not match, so a forward
-    /// search from it and a forward search from the last match can be
-    /// compared for equality.
+    /// `(0, 0)` does not match `"ali"`, so searches from it and from the last
+    /// match compare equal.
     fn loaded_panel() -> ContentsPanel {
         let (mut panel, query) = loading();
         panel.page_ready(
@@ -1794,9 +1585,6 @@ mod tests {
         assert_eq!(mode, SelectionMode::Row, "the third press comes home");
     }
 
-    /// The mode is how the user reads a grid, not something about this page.
-    /// `requested` clears the cursors because a new page has different rows to
-    /// point at; it has no reason to un-choose the way they are drawn.
     #[test]
     fn a_new_request_keeps_the_mode_and_clears_the_cursors() {
         let mut panel = ContentsPanel {
@@ -1834,9 +1622,8 @@ mod tests {
         assert!(!panel.columns.is_active());
     }
 
-    /// Three rows over two columns, with a `name` column whose lexicographic
-    /// order is not the order the cluster returned and a `city` column two of
-    /// the three share — so a sort and a filter each have something to do.
+    /// `name` is out of lexicographic order and two rows share a `city`, so
+    /// sort and filter both have work.
     fn arranged() -> ContentsPanel {
         let (mut panel, query) = loading();
         panel.page_ready(
@@ -2062,14 +1849,12 @@ mod tests {
         }
     }
 
-    /// A loaded grid of `rows` with a page left to fetch.
     fn pageable(rows: i64) -> ContentsPanel {
         let (mut panel, query) = loading();
         panel.page_ready(query, more(rows), MaxColumnWidth::default(), QueryId::next);
         panel
     }
 
-    /// Lands `page` on whatever the panel is waiting on.
     fn land(panel: &mut ContentsPanel, page: Page) -> Landed {
         let query = panel.outstanding().expect("a page is outstanding");
         panel.page_ready(query, page, MaxColumnWidth::default(), QueryId::next)

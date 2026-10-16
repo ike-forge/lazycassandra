@@ -1,8 +1,5 @@
-//! The merged, validated configuration.
-//!
-//! Total by construction: `Option` lives in `lc-outbound`'s wire structs and
-//! stops there, so nothing downstream has to ask whether a setting was stated
-//! (docs/superpowers/specs/2026-08-14-configuration-design.md §7).
+//! The merged, validated configuration. `Option` stops at `lc-outbound`'s wire
+//! structs, so nothing here asks whether a setting was stated.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -12,7 +9,6 @@ use crate::posture::Posture;
 use crate::style::Severity;
 use crate::theme::{Role, ThemeChoice, ThemeName};
 
-/// A value a config file stated that no constructor would accept.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{value} is not a valid {what}: {expected}")]
 pub struct OutOfRange {
@@ -29,6 +25,7 @@ macro_rules! bounded {
 
         impl $name {
             /// # Errors
+            ///
             /// When `value` falls outside the range.
             pub fn try_new(value: $inner) -> Result<Self, OutOfRange> {
                 if ($lo..=$hi).contains(&value) {
@@ -56,16 +53,14 @@ macro_rules! bounded {
     };
 }
 
-// 30 holds a millisecond timestamp and stops short of a uuid's 36
-// (cell inspector design §1).
+// 30 holds a millisecond timestamp and stops short of a uuid's 36.
 bounded!(MaxColumnWidth, u16, "max_column_width", 1, 512, 30);
 bounded!(PageRows, u32, "page_rows", 1, 100_000, 200);
 bounded!(PageSize, u32, "page_size", 1, 100_000, 5_000);
 bounded!(HistoryLimit, u32, "limit", 0, 10_000, 100);
 
 impl HistoryLimit {
-    /// Zero keeps nothing, for connections whose statements should not be
-    /// written down.
+    /// Zero keeps nothing.
     #[must_use]
     pub const fn is_off(self) -> bool {
         self.0 == 0
@@ -73,23 +68,15 @@ impl HistoryLimit {
 }
 bounded!(Millis, u32, "milliseconds", 1, 600_000, 5_000);
 
-/// Infallible: the two share one range, so every grid page size is one the
-/// driver takes.
+/// The two share one range.
 impl From<PageRows> for PageSize {
     fn from(rows: PageRows) -> Self {
         Self(rows.0)
     }
 }
 
-/// The three shares `lc-inbound`'s layout is built from.
-///
-/// One type rather than three newtypes: a partial set of shares is
-/// meaningless — there is no useful value for a sidebar share alone with no
-/// `ddl` or `queries` to go with it — so the unit type makes a partial set
-/// unconstructable and the fallback atomic. Each share is still validated
-/// independently, against the literal `5..=95`, not against the floors
-/// `layout.rs` declares — that is follow-up work (design §7, §11.8); this
-/// type does not yet make the three shares jointly valid.
+/// One type: a partial set of shares is meaningless. Each share is checked
+/// against `5..=95` alone, not jointly against `layout.rs`'s floors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PanelRatios {
     sidebar: u16,
@@ -99,6 +86,7 @@ pub struct PanelRatios {
 
 impl PanelRatios {
     /// # Errors
+    ///
     /// When any share falls outside 5..=95.
     pub fn try_new(sidebar: u16, ddl: u16, queries: u16) -> Result<Self, OutOfRange> {
         for (what, value) in [
@@ -148,14 +136,14 @@ impl Default for PanelRatios {
     }
 }
 
-/// A connection's name, which is also the key §5's merge unions on.
+/// Also the key the merge unions on.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ConnectionName(Arc<str>);
 
 impl ConnectionName {
     /// # Errors
-    /// When `name` is blank or holds whitespace — it is a merge key and an
-    /// identifier the user types, not a description.
+    ///
+    /// When `name` is blank or holds whitespace.
     pub fn try_new(name: &str) -> Result<Self, OutOfRange> {
         if name.is_empty() || name.chars().any(char::is_whitespace) {
             return Err(OutOfRange {
@@ -174,8 +162,7 @@ impl ConnectionName {
     }
 }
 
-/// A colour as a config file states it. Not `ratatui::Color`: `lc-outbound`
-/// parses the hex and never sees a terminal (design §8).
+/// Not `ratatui::Color`: `lc-outbound` never sees a terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb {
     pub red: u8,
@@ -187,8 +174,8 @@ impl Rgb {
     /// Parses `#rrggbb`.
     ///
     /// # Errors
-    /// When the string is not seven characters beginning with `#`, or holds a
-    /// non-hex digit.
+    ///
+    /// When the string is not `#` and six hex digits.
     pub fn parse(hex: &str) -> Result<Self, OutOfRange> {
         let out_of_range = || OutOfRange {
             what: "colour",
@@ -216,11 +203,8 @@ impl Rgb {
     }
 }
 
-/// What is painted behind everything.
-///
-/// `Terminal` is not a colour — it means paint nothing, which is the only
-/// mechanism that lets a translucent or blurred terminal show through
-/// (design §4).
+/// `Terminal` paints nothing, which is what lets a translucent terminal show
+/// through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Background {
     #[default]
@@ -229,8 +213,6 @@ pub enum Background {
     Fixed(Rgb),
 }
 
-/// Whether Nerd Font glyphs are drawn. An enum rather than a `bool`, per
-/// conventions.md §1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Icons {
     #[default]
@@ -238,7 +220,6 @@ pub enum Icons {
     Off,
 }
 
-/// Whether pointer events are captured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mouse {
     #[default]
@@ -246,7 +227,6 @@ pub enum Mouse {
     Off,
 }
 
-/// The consistency level the driver requests for every statement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Consistency {
     Any,
@@ -261,7 +241,6 @@ pub enum Consistency {
     LocalOne,
 }
 
-/// The wire compression the driver negotiates with the cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Compression {
     None,
@@ -270,11 +249,8 @@ pub enum Compression {
     Snappy,
 }
 
-/// Where a credential comes from.
-///
-/// `Command` was removed rather than renamed: a committed project file naming
-/// a shell command means cloning a repository and running the tool executes a
-/// stranger's command (design §2.2). Nothing here executes anything.
+/// No `Command` source: a committed project file would make cloning and running
+/// the tool execute a stranger's command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Credential {
     Literal(String),
@@ -282,18 +258,9 @@ pub enum Credential {
     File(PathBuf),
 }
 
-/// Which nodes the driver opens connections to.
-///
-/// `Cluster` is what a driver does by default: dial a contact point, read
-/// `system.peers`, then pool to every node it names. Those names are `inet`
-/// columns — raw addresses, never hostnames — so a cluster reached through a
-/// tunnel reports addresses that only resolve inside the cluster, and every
-/// peer beyond the tunnelled one is permanently down.
-///
-/// `ContactPoints` is the escape hatch: use exactly the hosts stated here and
-/// ignore the topology. It costs token-aware routing, which a browsing tool
-/// does not spend, and it buys a working session over a single
-/// `kubectl port-forward`.
+/// `system.peers` reports raw addresses, so behind a tunnel every peer but the
+/// tunnelled one is unreachable. `ContactPoints` uses only the stated hosts and
+/// gives up token-aware routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Discovery {
     #[default]
@@ -302,8 +269,7 @@ pub enum Discovery {
 }
 
 impl Discovery {
-    /// How a config file spells this, and the one spelling — the same rule
-    /// [`Posture::label`] follows.
+    /// The one spelling a config file uses.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -313,56 +279,40 @@ impl Discovery {
     }
 }
 
-/// What a cluster running `PasswordAuthenticator` is told.
-///
-/// One type rather than independent `Option` fields on [`ConnectionConfig`]:
-/// a username with no password authenticates nothing and a password with no
-/// username names nobody, so a pair is stated whole or not at all
-/// (conventions.md §1). `Cqlshrc` is the same pair sourced from a file cqlsh
-/// already owns, which is why it is a variant here rather than a third
-/// [`Credential`] — a cqlsh configuration supplies both halves, and
-/// `Credential` names only a password.
+/// A pair, stated whole or not at all. `Cqlshrc` supplies both halves, so it is
+/// a variant here rather than a [`Credential`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Credentials {
     Stated {
         username: String,
         password: Credential,
     },
-    /// A `cqlshrc`, read at connect time. Held as written rather than
-    /// canonicalised: `~` is expanded where the file is read, so the domain
-    /// neither reads an environment nor holds a path that depends on one.
+    /// Held as written: `~` is expanded where the file is read.
     Cqlshrc(PathBuf),
 }
 
-/// How the server's certificate is judged.
-///
-/// `ChainOnly` exists because self-hosted clusters routinely issue node
-/// certificates with no SAN for the address a client dials; the chain is still
-/// checked, the name is not.
+/// `ChainOnly`: self-hosted clusters often issue node certificates with no SAN
+/// for the dialled address.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Verification {
-    /// Chain and the name against the address dialled.
     #[default]
     Full,
-    /// Chain and the name against this one, not the address dialled.
+    /// Chain, and the name against this one rather than the address dialled.
     Named(String),
     ChainOnly,
-    /// Nothing checked. Traffic is encrypted but the peer is unauthenticated.
+    /// Encrypted, but the peer is unauthenticated.
     Off,
 }
 
-/// Which certificate authorities the server's chain may end at.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Trust {
     #[default]
     System,
-    /// A PEM bundle, held as written; `~` is expanded where it is read.
+    /// Held as written; `~` is expanded where it is read.
     CaFile(PathBuf),
 }
 
-/// A certificate and key the client presents, for a cluster with
-/// `require_client_auth`. Both paths or neither: a certificate without its key
-/// proves nothing.
+/// Both paths or neither: a certificate without its key proves nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientIdentity {
     pub cert: PathBuf,
@@ -376,19 +326,16 @@ pub struct TlsSettings {
     pub verification: Verification,
 }
 
-/// Whether the transport is encrypted.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Tls {
     #[default]
     Off,
     On(TlsSettings),
-    /// Whatever the `cqlshrc` at this path says (`[connection] ssl` and
-    /// `[ssl]`), read at connect time like its credentials. Plaintext when it
-    /// says nothing.
+    /// Read at connect time, like its credentials. Plaintext when it says
+    /// nothing.
     Cqlshrc(PathBuf),
 }
 
-/// One cluster to connect to, as a config file names it under `[[connections]]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionConfig {
     pub name: ConnectionName,
@@ -400,27 +347,19 @@ pub struct ConnectionConfig {
     pub tls: Tls,
 }
 
-/// How the Contents grid renders and pages what it reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GridConfig {
     pub max_column_width: MaxColumnWidth,
-    /// Rows per page read into the grid
-    /// (docs/superpowers/specs/2026-09-17-grid-paging-design.md §1).
     pub page_rows: PageRows,
 }
 
-/// How many statements each connection remembers; zero disables the history.
+/// Zero disables the history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HistoryConfig {
     pub limit: HistoryLimit,
 }
 
-/// Driver-level settings applied to every connection.
-///
-/// Global rather than per-connection: nothing in the design so far calls for
-/// one cluster to page or time out differently from another, so there is
-/// only one of these per [`Config`] rather than one per
-/// [`ConnectionConfig`].
+/// Global: nothing yet calls for per-connection paging or timeouts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DriverConfig {
     pub page_size: PageSize,
@@ -430,21 +369,15 @@ pub struct DriverConfig {
     pub compression: Compression,
 }
 
-/// Where a grid export is written.
-///
-/// Both fields are `Option` rather than defaulted: there is no export
-/// feature yet to give a bare `path` or `prefix` meaning, so an unstated
-/// value stays absent instead of being guessed at.
+/// Parsed but not consumed: the export form prefills from the working
+/// directory.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExportConfig {
     pub path: Option<PathBuf>,
     pub prefix: Option<String>,
 }
 
-/// A palette a config file supplies.
-///
-/// `extends` is a [`BuiltIn`] rather than a [`ThemeChoice`], so a custom theme
-/// extending another custom theme — and the cycle that permits — is
+/// `extends` is a [`BuiltIn`], so theme chains and their cycles are
 /// unrepresentable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomTheme {
@@ -453,7 +386,6 @@ pub struct CustomTheme {
     pub colors: BTreeMap<Role, Rgb>,
 }
 
-/// The merged, validated result of layering every config source.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
     pub theme: ThemeChoice,
@@ -466,15 +398,12 @@ pub struct Config {
     pub driver: DriverConfig,
     pub export: ExportConfig,
     pub themes: Vec<CustomTheme>,
-    /// Ordered as design §5 defines: global order first, then local-only
-    /// entries, with a name in both keeping its global position. Left to the
-    /// merge it would be incidental, and every test asserting on it a coin
-    /// flip.
+    /// Global order first, then local-only entries; a name in both keeps its
+    /// global position.
     pub connections: Vec<ConnectionConfig>,
     pub default_connection: Option<ConnectionName>,
 }
 
-/// The file a layer was read from, quoted by every diagnostic it produces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Origin(Arc<str>);
 
@@ -490,19 +419,18 @@ impl Origin {
     }
 }
 
-/// A position in a config file, one-based, as a user's editor counts.
+/// One-based, as an editor counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub line: usize,
     pub column: usize,
 }
 
-/// Something a config file said that was dropped, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub origin: Origin,
-    /// Absent for an unknown key: the `serde` flatten that captures one keeps
-    /// the name and not the position (design §6).
+    /// Absent for an unknown key: the `serde` flatten keeps the name, not the
+    /// position.
     pub span: Option<Span>,
     pub severity: Severity,
     pub message: String,

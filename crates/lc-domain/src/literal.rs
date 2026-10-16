@@ -1,41 +1,21 @@
-//! Spelling a value the cluster returned back into the CQL literal that
-//! addresses it (docs/superpowers/specs/2026-08-31-drop-design.md §3.1).
-//!
-//! The one direction the program has never had to go. Reading needs only a
-//! rendering a human can see ([`crate::cell`]); a `WHERE` clause needs a
-//! literal the *cluster* will read back as the same value, and being wrong
-//! about that deletes the wrong row.
-//!
-//! So this is a whitelist, keyed on the column's declared CQL type as well as
-//! on the value's variant, and it answers `None` for everything it is not
-//! sure of. A refusal costs a greyed key; a wrong guess costs data. That is
-//! the same conservative direction `Statement::typed`'s sniffer already takes
-//! for the other reason (query execution design §4).
+//! Spelling a value the cluster returned back into a CQL literal that addresses
+//! it. A whitelist: `None` for anything uncertain, because a refusal costs a
+//! greyed key and a wrong guess deletes the wrong row.
 
 use crate::model::CqlValue;
 
-/// The literal for `value` under a column declared `cql_type`, or `None`
-/// where this program cannot spell one it is sure of.
-///
-/// The type matters because [`CqlValue`] is lossy on purpose: `varint`,
-/// `decimal`, `date`, `time`, `timestamp` and `inet` all arrive as
-/// [`CqlValue::Text`] carrying the driver's own rendering (`lc-outbound`'s
-/// `value.rs`), and quoting is right for four of those and wrong for two.
-/// The variant alone cannot tell them apart.
+/// The type matters: `varint`, `decimal`, `date`, `time`, `timestamp` and
+/// `inet` all arrive as [`CqlValue::Text`], and quoting is right for four of
+/// them only.
 #[must_use]
 pub fn of(cql_type: &str, value: &CqlValue) -> Option<String> {
     match (normalised(cql_type).as_str(), value) {
-        // The three text types, and — after them — the four whose value has a
-        // string form CQL parses back to the same value, each arriving as the
-        // driver's rendering of exactly that form. One arm, because the
-        // literal is the same shape; the list is the knowledge.
+        // Types whose string form CQL parses back to the same value.
         (
             "text" | "varchar" | "ascii" | "inet" | "date" | "time" | "timestamp",
             CqlValue::Text(text),
         ) => Some(quoted(text)),
-        // A `timestamp` a fake hands over as the model's own variant. The
-        // real adapter renders one as text above; both spell the same
-        // instant, and a count of milliseconds is a timestamp literal.
+        // A fake's timestamp; the real adapter renders one as text.
         ("timestamp", CqlValue::Timestamp(millis)) => Some(millis.to_string()),
         ("uuid" | "timeuuid", CqlValue::Uuid(uuid)) => Some(uuid.clone()),
         ("tinyint" | "smallint" | "int" | "bigint", CqlValue::Int(number)) => {
@@ -43,30 +23,15 @@ pub fn of(cql_type: &str, value: &CqlValue) -> Option<String> {
         }
         ("boolean", CqlValue::Boolean(flag)) => Some(flag.to_string()),
         ("blob", CqlValue::Blob(bytes)) => Some(hex(bytes)),
-        // Everything else is refused, and the notable refusals are
-        // deliberate rather than missing:
-        //
-        // `float`/`double`, because a key column compared for equality
-        // against a literal this program re-spelled is a row it might not
-        // find — and might find instead of its neighbour.
-        //
-        // `varint`/`decimal`, because they arrive as text and would have to
-        // be written bare, which means trusting a rendering this program did
-        // not produce to be a bare number.
-        //
-        // `null`, because no primary key column may hold one; a row that
-        // somehow shows one is a row this program will not write a `WHERE`
-        // for.
-        //
-        // The collections and `counter`, because none of them can be part of
-        // a primary key at all.
+        // Refused on purpose: `float`/`double` may not compare equal after
+        // re-spelling; `varint`/`decimal` would mean trusting a rendering as a
+        // bare number; no key holds `null`; collections and `counter` cannot be
+        // keys.
         _ => None,
     }
 }
 
-/// The type as a whitelist spells it: lower case, and with a `frozen<…>`
-/// wrapper taken off. `system_schema` reports what was declared, and a
-/// declaration's case is the user's.
+/// Lower case, `frozen<…>` removed: `system_schema` reports the declared case.
 pub(crate) fn normalised(cql_type: &str) -> String {
     let trimmed = cql_type.trim().to_ascii_lowercase();
 
@@ -76,9 +41,7 @@ pub(crate) fn normalised(cql_type: &str) -> String {
         .map_or(trimmed.clone(), |inner| inner.trim().to_owned())
 }
 
-/// A CQL string literal. The single quote is the only character with a
-/// meaning inside one, and it is escaped by doubling — the rule
-/// `Statement::quoted` follows for identifiers, with the other quote.
+/// A single quote is escaped by doubling.
 pub(crate) fn quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
@@ -174,8 +137,7 @@ mod tests {
 
     #[test]
     fn a_type_and_a_variant_that_disagree_spell_nothing() {
-        // The schema says one thing and the page holds another: whichever is
-        // wrong, guessing is what this module exists not to do.
+        // Schema and page disagree: guessing is what this module refuses.
         assert_eq!(of("int", &CqlValue::Text("7".to_owned())), None);
         assert_eq!(of("text", &CqlValue::Int(7)), None);
     }

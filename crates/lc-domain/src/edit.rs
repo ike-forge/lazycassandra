@@ -1,13 +1,6 @@
-//! Typing a value back: what a column accepts, and the uncommitted set that
-//! holds it until `ctrl-s`
-//! (docs/superpowers/specs/2026-09-18-cell-editing-design.md).
-//!
-//! [`crate::literal`] run backwards, and deliberately not the same whitelist.
-//! That one re-spells a rendering *the driver produced*, so it refuses
-//! `float`, `double`, `varint` and `decimal`: a key compared for equality
-//! against a number this program re-spelled is a row it might not find. Here
-//! the text is the user's own and authoritative, so those four are accepted
-//! — the refusal was never about the type (design §3).
+//! Typing a value back, and the uncommitted set holding it until `ctrl-s`.
+//! Unlike [`crate::literal`], `float`, `double`, `varint` and `decimal` are
+//! accepted: the text is the user's own, not a re-spelling of the driver's.
 
 use std::collections::BTreeMap;
 
@@ -15,11 +8,8 @@ use crate::line::Line;
 use crate::literal;
 use crate::model::CqlValue;
 
-/// A value the user typed, under the column's declared type.
-///
-/// One type rather than two fields, so the drawn value and the literal cannot
-/// drift: [`parse`] is the only constructor and produces both at once from
-/// one reading of the text (design §3).
+/// [`parse`] is the only constructor, so the drawn value and the literal cannot
+/// drift.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Edited {
     value: CqlValue,
@@ -27,25 +17,19 @@ pub struct Edited {
 }
 
 impl Edited {
-    /// What the grid and the inspector draw, and what a clean cell is
-    /// compared against.
+    /// Also what a clean cell is compared against.
     #[must_use]
     pub const fn value(&self) -> &CqlValue {
         &self.value
     }
 
-    /// The CQL literal a `SET` clause spells this with.
     #[must_use]
     pub fn literal(&self) -> &str {
         &self.literal
     }
 }
 
-/// Whether a column declared `cql_type` can be typed into at all — §2's type
-/// gate, asked before a field is opened rather than after one is filled.
-///
-/// A column this refuses is refused with a message naming the type, so it is
-/// read by the refusal as well as by the gate.
+/// Asked before a field opens.
 #[must_use]
 pub fn editable(cql_type: &str) -> bool {
     matches!(
@@ -72,9 +56,7 @@ pub fn editable(cql_type: &str) -> bool {
     )
 }
 
-/// Whether the empty string is a value of a column declared `cql_type`, as
-/// opposed to the absence of one. Only the three free-text types: an empty
-/// `date` is the cluster's to reject, and no other type has one.
+/// Only the free-text types; an empty `date` is the cluster's to reject.
 #[must_use]
 pub fn takes_empty(cql_type: &str) -> bool {
     matches!(
@@ -83,20 +65,12 @@ pub fn takes_empty(cql_type: &str) -> bool {
     )
 }
 
-/// `text` read as a value of a column declared `cql_type`, or `None` where it
-/// is not one.
-///
-/// `None` means two different things to two different callers and neither has
-/// to tell them apart: [`editable`] has already answered "can this column be
-/// typed into", so a `None` here is always "that is not a `<type>`".
+/// [`editable`] has already been asked, so `None` always means "not a
+/// `<type>`".
 #[must_use]
 pub fn parse(cql_type: &str, text: &str) -> Option<Edited> {
     let (value, literal) = match literal::normalised(cql_type).as_str() {
-        // The string types and the four whose value has a string form CQL
-        // parses back to the same value. Not validated beyond being text: a
-        // malformed `date` is the cluster's to reject, and a client-side
-        // date parser is a second opinion about a format this program does
-        // not own.
+        // Not validated beyond being text: the cluster owns those formats.
         "text" | "varchar" | "ascii" | "inet" | "date" | "time" | "timestamp" => {
             (CqlValue::Text(text.to_owned()), literal::quoted(text))
         }
@@ -108,10 +82,8 @@ pub fn parse(cql_type: &str, text: &str) -> Option<Edited> {
             let number: i64 = text.trim().parse().ok()?;
             (CqlValue::Int(number), number.to_string())
         }
-        // Spelled verbatim rather than re-rendered from the parse: `1.50`
-        // and `1e3` are literals CQL reads, and a round trip through `f64`
-        // would write back `1.5` and `1000` — and would lose a `varint` or
-        // `decimal` too wide for one.
+        // Verbatim: an `f64` round trip would rewrite `1.50` and `1e3`, and
+        // lose wide `varint` and `decimal`.
         "varint" | "decimal" | "float" | "double" => {
             let number = text.trim();
             let parsed: f64 = number.parse().ok()?;
@@ -139,8 +111,7 @@ pub fn parse(cql_type: &str, text: &str) -> Option<Edited> {
     Some(Edited { value, literal })
 }
 
-/// 8-4-4-4-12 lower-case hex, the one form the driver renders and CQL reads
-/// bare.
+/// Lower-case 8-4-4-4-12, the form CQL reads bare.
 fn is_uuid(text: &str) -> bool {
     let groups: Vec<&str> = text.split('-').collect();
 
@@ -151,8 +122,7 @@ fn is_uuid(text: &str) -> bool {
             .all(|group| group.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-/// `0x` and an even number of hex digits, the form [`crate::cell`] draws a
-/// blob in and CQL accepts back. `0x` alone is the empty blob.
+/// `0x` alone is the empty blob.
 fn hex(text: &str) -> Option<Vec<u8>> {
     let digits = text
         .strip_prefix("0x")
@@ -169,12 +139,10 @@ fn hex(text: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// Which of a page's uncommitted edits a commit writes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CommitScope {
     #[default]
     All,
-    /// The edits of one page row, by page index (see [`Edits`]).
     Row(usize),
 }
 
@@ -188,19 +156,13 @@ impl CommitScope {
     }
 }
 
-/// The cells of one page that have been typed into and not yet written.
-///
-/// Keyed by `(page row index, column index)` rather than by drawn position:
-/// `GridPage::order` changes under a sort, a filter and an appended page, and
-/// an edit must not migrate to a different row when the user sorts
-/// (design §4).
+/// Keyed by page row, not drawn position, so a sort or filter cannot move an
+/// edit to another row.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Edits(BTreeMap<(usize, usize), Edited>);
 
 impl Edits {
-    /// Records `edited` at `(row, column)`, or clears what is there when
-    /// `edited` is `None` — which is how an edit that restores the value it
-    /// started from leaves no mark (design §1).
+    /// `None` clears, so an edit back to the original leaves no mark.
     pub fn set(&mut self, row: usize, column: usize, edited: Option<Edited>) {
         match edited {
             Some(edited) => {
@@ -222,24 +184,17 @@ impl Edits {
         self.0.is_empty()
     }
 
-    /// Cells typed into, which is what the footer and the quit warning count.
     #[must_use]
     pub fn cells(&self) -> usize {
         self.0.len()
     }
 
-    /// Rows holding at least one of them.
     #[must_use]
     pub fn rows(&self) -> usize {
         self.by_row().count()
     }
 
-    /// The edits grouped by page row, in page order, each row's columns in
-    /// column order — which is the order the statement reads in (design §5).
-    ///
-    /// `BTreeMap`'s own key order does both: `(row, column)` sorts by row and
-    /// then by column, so the grouping is a fold over a sorted range rather
-    /// than a second index.
+    /// `(row, column)` key order already groups by row in column order.
     pub fn by_row(&self) -> impl Iterator<Item = (usize, Vec<(usize, &Edited)>)> {
         let mut grouped: Vec<(usize, Vec<(usize, &Edited)>)> = Vec::new();
 
@@ -253,7 +208,6 @@ impl Edits {
         grouped.into_iter()
     }
 
-    /// Cells typed into within `scope`.
     #[must_use]
     pub fn cells_in(&self, scope: CommitScope) -> usize {
         self.0.keys().filter(|(row, _)| scope.admits(*row)).count()
@@ -263,8 +217,7 @@ impl Edits {
         self.0.clear();
     }
 
-    /// Every edit within `scope`, for writing into the page once the cluster
-    /// has taken them. The rest stay dirty.
+    /// The rest stay dirty.
     pub fn drain_in(
         &mut self,
         scope: CommitScope,
@@ -277,28 +230,20 @@ impl Edits {
     }
 }
 
-/// The open field: the column being typed into, the text so far, and whether
-/// it parses.
-///
-/// The column's declared type is captured rather than looked up per
-/// keystroke: the overlay claims every key, so the schema underneath cannot
-/// change while the field is up — the argument [`crate::contents::Filter`]
-/// makes for capturing the column's name.
+/// The type is captured: the overlay claims every key, so the schema cannot
+/// change underneath.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     column: usize,
     name: String,
     cql_type: String,
     line: Line,
-    /// Whether the text has changed since the field opened, so an empty field
-    /// that was typed to empty can be told from one never touched
-    /// (insert design §3).
+    /// Tells a field typed to empty from one never touched.
     touched: bool,
 }
 
 impl Field {
-    /// Opens over `column`, seeded with the text the cell draws — so `⏎`
-    /// straight away is a no-op rather than a blanking (design §1).
+    /// Seeded with the cell's text, so an immediate `⏎` is a no-op.
     #[must_use]
     pub fn opened(column: usize, name: &str, cql_type: &str, text: String) -> Self {
         Self {
@@ -343,14 +288,11 @@ impl Field {
         &mut self.line
     }
 
-    /// What `⏎` would accept, `None` while the text is not a value of this
-    /// column's type.
     #[must_use]
     pub fn parsed(&self) -> Option<Edited> {
         parse(&self.cql_type, self.line.text())
     }
 
-    /// Why `⏎` is greyed, `None` while it is not.
     #[must_use]
     pub fn error(&self) -> Option<String> {
         self.parsed()
@@ -385,8 +327,7 @@ mod tests {
 
     #[test]
     fn the_types_that_arrive_as_text_are_quoted_and_not_second_guessed() {
-        // A client-side date parser is a second opinion about a format this
-        // program does not own; the cluster rejects what it will not take.
+        // The cluster owns date formats.
         assert_eq!(
             parsed("date", "2026-01-01"),
             Some((
@@ -409,8 +350,7 @@ mod tests {
 
     #[test]
     fn a_number_this_program_did_not_render_is_spelled_verbatim() {
-        // The whole difference from `literal::of`: the text is the user's, so
-        // a round trip through `f64` would write back `1.5` for `1.50`.
+        // Unlike `literal::of`: the text is the user's, so no `f64` round trip.
         assert_eq!(
             parsed("decimal", "1.50"),
             Some((CqlValue::Float(1.5), "1.50".to_owned()))

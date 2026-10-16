@@ -1,27 +1,15 @@
-//! One row's primary key, spelled as the `WHERE` clause that addresses it
-//! (docs/superpowers/specs/2026-08-31-drop-design.md §3.1).
-//!
-//! Shared by the two statements that address a row they did not write: `d`'s
-//! `DELETE` and `ctrl-s`'s `UPDATE`
-//! (docs/superpowers/specs/2026-09-18-cell-editing-design.md §2).
+//! One row's primary key as the `WHERE` that addresses it, for `d`'s `DELETE`
+//! and `ctrl-s`'s `UPDATE`.
 
 use crate::model::{Row, Table};
 
-/// Every key column, in key order, paired with the CQL literal that addresses
-/// it.
-///
-/// Private field and one fallible constructor, which is the whole point: a
-/// key holding a value [`crate::literal`] could not spell cannot be built,
-/// so [`crate::model::Statement::delete_row`] is total and no `WHERE` clause
-/// is ever written from a guess (drop design §3.1).
+/// The one fallible constructor means no `WHERE` is ever written from a guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowKey(Vec<(String, String)>);
 
 impl RowKey {
-    /// `row`'s key, or `None` where any key column is missing from the page
-    /// or holds a value with no literal.
-    ///
-    /// `key` is `(column name, declared CQL type)` in key order.
+    /// `None` where any key column is missing or unspellable. `key` is `(name,
+    /// declared type)` in key order.
     #[must_use]
     pub fn of(key: &[(&str, &str)], columns: &[String], row: &Row) -> Option<Self> {
         key.iter()
@@ -35,19 +23,13 @@ impl RowKey {
             .map(Self)
     }
 
-    /// `(column, literal)` in key order.
     #[must_use]
     pub fn pairs(&self) -> &[(String, String)] {
         &self.0
     }
 }
 
-/// `table`'s primary key as [`RowKey::of`] takes it: partition columns, then
-/// clustering ones, each with its declared CQL type.
-///
-/// Empty only for a table the schema reports without one, which
-/// [`RowKey::of`] would then accept for every row — so both callers refuse an
-/// empty key rather than address a row by nothing.
+/// Empty only for a schema reported without a key, which callers refuse.
 #[must_use]
 pub fn columns(table: &Table) -> Vec<(&str, &str)> {
     table

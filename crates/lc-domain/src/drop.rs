@@ -1,12 +1,4 @@
-//! Taking something away: what is aimed at, and the confirmation that has to
-//! be answered before the statement runs
-//! (docs/superpowers/specs/2026-08-31-drop-design.md).
-//!
-//! One key, `d`, and one overlay for the three things it can aim at: a
-//! keyspace and a table from the tree, and rows from the grid. They differ in
-//! the statement they run and in what has to be typed to run it, which is
-//! exactly what [`Target`] and [`Answer`] carry — not in anything the key
-//! dispatch, the renderer or the round trip has to know about separately.
+//! Dropping a keyspace or table, or deleting rows, behind a confirmation.
 
 use crate::contents::TableRef;
 use crate::key::{self, RowKey};
@@ -15,18 +7,12 @@ use crate::model::{KeyspaceKind, Row, Statement, Table};
 use crate::posture::Posture;
 use crate::style::{Segment, Token};
 
-/// What `d` is aimed at.
-///
-/// The three things the two panels can name, and nothing else: a
-/// confirmation is opened from a cursor sitting on one of them, so a target
-/// that names none cannot be written down (design §1).
+/// Only what a cursor can sit on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Keyspace(String),
     Table(TableRef),
-    /// Rows of one table, each addressed by its whole primary key. Never
-    /// empty: the grid's cursor is always on a row, so a target with nothing
-    /// in it is not a state [`Target::rows`] can produce.
+    /// Never empty: the grid's cursor is always on a row.
     Rows {
         table: TableRef,
         keys: Vec<RowKey>,
@@ -34,13 +20,8 @@ pub enum Target {
 }
 
 impl Target {
-    /// The rows of `table` at `selected`, or `None` where this program cannot
-    /// address one of them — the "primary key known and present" gate
-    /// (design §3.1).
-    ///
-    /// `schema_table` is the same table as `table`, read from the loaded
-    /// schema: the primary key is a fact about the schema, and the page on
-    /// screen only carries the columns a `SELECT` happened to return.
+    /// `None` where any row lacks an addressable primary key. `schema_table`
+    /// supplies the key: the page only has the columns a `SELECT` returned.
     #[must_use]
     pub fn rows<'a>(
         table: &TableRef,
@@ -64,9 +45,6 @@ impl Target {
         })
     }
 
-    /// How many rows answering the confirmation would delete. `None` where
-    /// the target is not rows — the count is what the block draws, and a
-    /// keyspace has none (design §2).
     #[must_use]
     pub fn row_count(&self) -> Option<usize> {
         match self {
@@ -75,7 +53,6 @@ impl Target {
         }
     }
 
-    /// The statement answering the confirmation runs.
     #[must_use]
     pub fn statement(&self) -> Statement {
         match self {
@@ -90,11 +67,8 @@ impl Target {
         }
     }
 
-    /// What a typed confirmation has to match, and what the block asks for.
-    ///
-    /// Verbatim rather than folded: `system_schema` reports names in their
-    /// true form, so typing what is on screen is the whole of the rule
-    /// (design §2.1).
+    /// Verbatim: `system_schema` reports true-case names, so typing what is on
+    /// screen is the rule.
     #[must_use]
     pub fn name(&self) -> &str {
         match self {
@@ -103,7 +77,6 @@ impl Target {
         }
     }
 
-    /// `keyspace` or `keyspace.table`, as the trail and a message name it.
     #[must_use]
     pub fn qualified(&self) -> String {
         match self {
@@ -120,8 +93,6 @@ impl Target {
         }
     }
 
-    /// What the block's border says it is about, in the colours the tree
-    /// gives the same names ([`TableRef::segments`]).
     #[must_use]
     pub fn title(&self) -> Vec<Segment> {
         match self {
@@ -141,9 +112,8 @@ impl Target {
                 segments.extend(table.segments());
                 segments
             }
-            // The count is in the border rather than only in the body: it is
-            // the one fact that changes what answering this costs, and the
-            // border is the line the eye lands on first (design §2).
+            // The count is in the border: it is what changes the cost of
+            // answering.
             Self::Rows { table, keys } => {
                 let mut segments = vec![Segment::plain(format!(
                     "Delete {} {} from ",
@@ -157,25 +127,18 @@ impl Target {
     }
 }
 
-/// The noun for a count, so "1 rows" is never drawn.
+/// Never "1 rows".
 fn rows(count: usize) -> &'static str {
     if count == 1 { "row" } else { "rows" }
 }
 
-/// How the confirmation has to be answered before the statement runs.
-///
-/// An enum rather than an `Option<Line>` beside a flag: "typed, and also
-/// answerable with `y`" is not a state, and the renderer reads which of the
-/// two questions is being asked rather than inferring it (design §2).
+/// "Typed, and also answerable with `y`" is unrepresentable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
-    /// `y` runs it, `n` and `Esc` abandon it.
     YesNo,
-    /// The target's name has to be typed back, then `⏎`.
     Typed(Line),
 }
 
-/// The open drop confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropPrompt {
     target: Target,
@@ -183,18 +146,12 @@ pub struct DropPrompt {
 }
 
 impl DropPrompt {
-    /// Opens over `target`, asking whichever question `posture` and the
-    /// target between them call for (design §2).
-    ///
-    /// A keyspace is always typed because of what it takes with it, and a
-    /// protected connection raises a table to the same bar — this is
-    /// [`Posture::requires_confirmation`]'s first caller.
+    /// A keyspace is always typed; a protected connection raises a table to the
+    /// same bar.
     #[must_use]
     pub fn opened(target: Target, posture: Posture) -> Self {
-        // The posture rule is applied to exactly the statements it names —
-        // `Posture::Protected` is about *destructive* statements, and a row
-        // delete is a `Write` (`Statement::delete_row`). Read off the
-        // statement rather than restated here, so the two cannot drift.
+        // Read off the statement: `Protected` is about destructive statements,
+        // and a row delete is a `Write`.
         let destructive = target.statement().kind.is_destructive();
         let typed = matches!(target, Target::Keyspace(_))
             || (posture.requires_confirmation() && destructive);
@@ -217,7 +174,6 @@ impl DropPrompt {
         &self.answer
     }
 
-    /// The line a typed confirmation is being typed into, if this is one.
     #[must_use]
     pub const fn typed(&self) -> Option<&Line> {
         match &self.answer {
@@ -233,16 +189,13 @@ impl DropPrompt {
         }
     }
 
-    /// Whether `⏎` would run it: whether what has been typed is the name
-    /// that was asked for. Always `false` on a [`Answer::YesNo`]
-    /// confirmation, which `⏎` does not answer at all.
+    /// Always `false` for [`Answer::YesNo`].
     #[must_use]
     pub fn confirmed(&self) -> bool {
         self.typed()
             .is_some_and(|line| line.text() == self.target.name())
     }
 
-    /// Whether this confirmation claims printable keys as text (design §2.1).
     #[must_use]
     pub const fn takes_text(&self) -> bool {
         matches!(self.answer, Answer::Typed(_))
@@ -309,8 +262,7 @@ mod tests {
 
     #[test]
     fn a_name_is_matched_verbatim_rather_than_folded() {
-        // CQL folds an unquoted identifier and `system_schema` does not, so
-        // the field asks for what the tree draws (design §2.1).
+        // The field asks for what the tree draws, not the folded name.
         let mut prompt = DropPrompt::opened(Target::Keyspace("MyKs".to_owned()), Posture::Writable);
         typing(&mut prompt, "myks");
 

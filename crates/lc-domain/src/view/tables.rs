@@ -1,5 +1,3 @@
-//! The Tables panel's projection: the keyspace/table tree as drawable rows.
-
 use crate::connection::{ConnectionState, SchemaState};
 use crate::feedback::Flash;
 use crate::model::{KeyspaceKind, Schema};
@@ -10,25 +8,17 @@ use crate::tree::{Node, TablesPanel};
 
 use super::{PanelBody, PanelTitle, waiting};
 
-/// One row of the Tables tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeRow {
     pub label: String,
-    /// What the row names, and where it sits under its keyspace. Not derivable
-    /// from [`TreeRow::token`]: a system keyspace and its tables are both
-    /// [`Token::Faint`].
+    /// Not derivable from `token`: a system keyspace and its tables are both
+    /// faint.
     pub kind: RowKind,
-    /// [`Token::Faint`] for the cluster's own keyspaces and their tables.
-    /// A user keyspace and a user table are told apart, which is the
-    /// distinction the panel exists for.
     pub token: Token,
 }
 
-/// What a tree row names.
-///
-/// A table carries whether it is the last one drawn under its keyspace, which
-/// is what decides the limb the renderer draws it on
-/// (docs/superpowers/specs/2026-08-12-nerd-font-icons-design.md §9).
+/// A table carries whether it is the last under its keyspace, which picks its
+/// limb glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
     Keyspace,
@@ -42,18 +32,9 @@ impl RowKind {
     }
 }
 
-/// The panel's name, and which connection its keyspaces came from.
-///
-/// The connection is named in the picker's spelling and drawn in the picker's
-/// colours, because a posture that read one way in the list it was chosen
-/// from and another on the border would be two facts rather than one
-/// (posture design §1). Until this, nothing on screen said which cluster a
-/// `d` or a typed `INSERT` would reach (posture design, opening) — the border
-/// says it for as long as the connection is open.
-///
-/// `Tables` alone is the short form, so a sidebar too narrow for the badge
-/// drops it whole rather than clipping a posture down to a word that reads
-/// like a different one.
+/// The connection in the picker's spelling and colours, so the posture reads
+/// the same everywhere. Too narrow for the badge, it drops whole: half a
+/// posture can read as another.
 pub(super) fn title(state: &State, number: char) -> PanelTitle {
     const BASE: &str = "Tables";
     let short = vec![Segment::plain(BASE)];
@@ -76,23 +57,14 @@ pub(super) fn title(state: &State, number: char) -> PanelTitle {
 
 pub(super) fn body(state: &State) -> PanelBody {
     match &state.connection {
-        // `Failed` joins `Disconnected` here: the modal owns the failure and
-        // the trail owns the detail (query log design §7), so the panel goes
-        // back to being about keyspaces.
+        // The modal owns the failure, the trail the detail.
         ConnectionState::Disconnected | ConnectionState::Failed(_) => waiting("Not connected"),
-        // The picker is what fills this panel, and it is either up or one
-        // `ctrl-o` away — so the panel says what to do rather than reporting
-        // a disconnection the user has not attempted yet
-        // (connection picker design §3).
+        // The picker is up or one `ctrl-o` away, so say what to do.
         ConnectionState::Unchosen => waiting("No connection chosen"),
         ConnectionState::Connecting { .. } => waiting("Connecting…"),
         ConnectionState::Connected(connection) => match &connection.schema {
             SchemaState::Loading => waiting("Loading schema…"),
-            // The read is over and it failed — "Loading schema…" would claim
-            // it is still in progress, which is affirmatively false rather
-            // than the neutral empty state the panel owes here, the same way
-            // `ConnectionState::Failed` joins `Disconnected` on "Not
-            // connected" above (final review M3).
+            // The read is over; "Loading schema…" would be false.
             SchemaState::Failed(_) => waiting("No schema"),
             SchemaState::Loaded(schema) => tree(
                 &state.tables,
@@ -117,10 +89,7 @@ fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<&Flash>) -> PanelBo
         .collect();
 
     if rows.is_empty() {
-        // A search that kept nothing is not a cluster without keyspaces, and
-        // an empty panel with the term on its border would leave the reader
-        // to work out which of the two they are looking at
-        // (docs/superpowers/specs/2026-08-31-tables-filter-design.md §2).
+        // A search that kept nothing is not an empty cluster.
         return waiting(if tables.search().is_some() {
             "No match"
         } else {
@@ -140,10 +109,8 @@ fn tree(tables: &TablesPanel, schema: &Schema, flash: Option<&Flash>) -> PanelBo
     }
 }
 
-/// `followed` says whether the next row drawn is another table of the same
-/// keyspace — the only thing a table row needs in order to know it is the last
-/// of its own, because a keyspace's tables are contiguous and a keyspace row
-/// ends the run.
+/// A keyspace's tables are contiguous, so `followed` is all a row needs to know
+/// it is last.
 fn tree_row(node: &Node<'_>, followed: bool) -> TreeRow {
     let (keyspace, label, kind) = match node {
         Node::Keyspace { keyspace, .. } => (*keyspace, keyspace.name.clone(), RowKind::Keyspace),
@@ -194,9 +161,6 @@ mod tests {
         }))
     }
 
-    /// Which cluster the panel is showing, and what it permits, is the one
-    /// thing the posture design left unsaid outside a refusal (posture
-    /// design, opening).
     #[test]
     fn the_border_names_the_connection_and_its_posture() {
         let title = tables_title(&open("local", Posture::ReadOnly));
@@ -231,8 +195,6 @@ mod tests {
         );
     }
 
-    /// A sidebar on its floor cannot hold the badge, and half a posture reads
-    /// as a different one — so the name goes whole or not at all.
     #[test]
     fn a_narrow_border_falls_back_to_the_panels_name_alone() {
         let title = tables_title(&open("local", Posture::ReadOnly));
@@ -251,9 +213,8 @@ mod tests {
                 name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             }),
         ] {
-            // Including `Connecting`, which holds a name: the posture is the
-            // cluster's answer, not the config's claim, and it has not
-            // arrived yet.
+            // Including `Connecting`: the posture is the cluster's answer and
+            // has not arrived.
             assert_eq!(tables_title(&state).text(), "[1]-Tables");
         }
     }
@@ -291,8 +252,6 @@ mod tests {
         );
     }
 
-    // The panel is about keyspaces. The modal owns the failure and the trail
-    // owns the detail (query log design §7).
     #[test]
     fn a_failed_connection_does_not_spend_the_panel_on_its_error() {
         let body = tables_body(&state_with(ConnectionState::Failed(DbError::Timeout)));
@@ -456,9 +415,6 @@ mod tests {
         };
         assert!(!text.contains("unauthorized"), "{text}");
         assert_eq!(token, Some(Token::Muted));
-        // The read is over; a schema that failed to load is not one that is
-        // still loading — "Loading schema…" would be affirmatively false,
-        // not the neutral empty state the panel owes (final review M3).
         assert_ne!(text, "Loading schema…", "{text}");
     }
 

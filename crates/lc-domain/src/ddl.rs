@@ -1,40 +1,22 @@
-//! The DDL panel's state: a cursor over the rows it describes, a
-//! viewport over the lines they wrapped to, and the search painted over them.
-//!
-//! A module of its own for the reason [`crate::tree`] and [`crate::contents`]
-//! are ones — per-panel state with its own vocabulary rather than another
-//! field on `State` (architecture.md §11).
+//! The DDL panel's state: a cursor over rows, a viewport over the lines they
+//! wrapped to, and a search.
 
 use crate::search::Search;
 use crate::selection::Selection;
 use crate::viewport::{Cursor, Scroll};
 
-/// Which of the panel's tabs is drawn.
-///
-/// An enum rather than a `bool` on the panel: the tabs differ in what they
-/// describe, not in a flag, and the next one (views) is an arm here rather
-/// than a third boolean (conventions.md §1).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DdlTab {
-    /// The physical shape and the table's options.
     #[default]
     Ddl,
-    /// Every column the table has, whatever part of the key it plays.
     Columns,
-    /// How the table can be looked up: its primary key, then one block per
-    /// secondary index (indexes design §2).
     Indexes,
 }
 
 impl DdlTab {
-    /// The tabs in the order the title strip draws them.
     pub const ALL: [Self; 3] = [Self::Ddl, Self::Columns, Self::Indexes];
 
-    /// The next tab in [`DdlTab::ALL`], wrapping.
-    ///
-    /// A tab has no key of its own: the panel's number reaches the panel and,
-    /// pressed again, walks its tabs — so a reader who knows how to arrive
-    /// already knows how to look at the rest (docs/shortcuts.md §4).
+    /// No key per tab: the panel's number, pressed again, walks them.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
@@ -44,7 +26,6 @@ impl DdlTab {
         }
     }
 
-    /// The previous tab in [`DdlTab::ALL`], wrapping.
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
@@ -63,13 +44,7 @@ impl DdlTab {
         }
     }
 
-    /// The label a border too narrow for the full strip falls back to.
-    ///
-    /// Three tabs no longer fit a sidebar of the usual width, so this is the
-    /// rung that keeps every tab named there rather than dropping two of them
-    /// for the one being drawn — which is what the rung was kept for
-    /// (docs/superpowers/specs/2026-08-12-ddl-tabs-design.md §4). `DDL` has
-    /// nothing left to drop and stays whole.
+    /// Three tabs no longer fit a usual sidebar. `DDL` has nothing to drop.
     #[must_use]
     pub const fn short_label(self) -> &'static str {
         match self {
@@ -80,45 +55,27 @@ impl DdlTab {
     }
 }
 
-/// The DDL panel's own state.
-///
-/// The cursor and the viewport count in different units — see
-/// [`Span`](crate::viewport::Span) — which is why this panel is not in `update`'s
-/// `LISTS` and follows a span rather than an index.
+/// Not in `update`'s `LISTS`: cursor and viewport count different units, so it
+/// follows a span.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DdlPanel {
     pub cursor: Cursor,
     pub scroll: Scroll,
-    /// The rows `v` has selected, if any
-    /// (docs/superpowers/specs/2026-08-14-visual-mode-design.md §3).
     pub selection: Selection,
-    /// Private for the reason the search is: a tab change owes a cursor and a
-    /// viewport that address the rows of the tab now drawn, and a public field
-    /// would let a caller skip that repair.
+    /// Private: a tab change owes a cursor and viewport reset.
     tab: DdlTab,
-    /// Private for the reason [`crate::tree::TablesPanel`]'s search is:
-    /// setting it is going to owe a repair, and a public field would let a
-    /// caller skip it (design §2.1, §2.2).
+    /// Private: setting it owes a repair.
     search: Option<Search>,
 }
 
 impl DdlPanel {
-    /// The tab the panel is showing.
     #[must_use]
     pub const fn tab(&self) -> DdlTab {
         self.tab
     }
 
-    /// Draws `tab`, putting the cursor and the viewport back at the top when
-    /// that is a change.
-    ///
-    /// The tabs describe different rows, so a cursor carried across would
-    /// land on a row the user never chose — and on a shorter tab, past the end
-    /// until the next `Msg::Measured` clamped it. The same argument holds for
-    /// a range: it addresses rows of the tab that drew it, so it does not
-    /// survive the tab that follows. Arriving at the tab already drawn is not
-    /// a change: `a` is how focus comes back to the panel, and it may not
-    /// cost the user the row they were reading or the range they had marked.
+    /// A cursor or range carried across would address rows of another tab.
+    /// Re-showing the drawn tab is not a change.
     pub fn show(&mut self, tab: DdlTab) {
         if self.tab == tab {
             return;
@@ -130,14 +87,13 @@ impl DdlPanel {
         self.selection.clear();
     }
 
-    /// The search painted over the panel's body, if any.
     #[must_use]
     pub fn search(&self) -> Option<&Search> {
         self.search.as_ref()
     }
 
-    /// Sets the search. Not public: [`State::apply_search`](crate::state::State::apply_search)
-    /// is the one caller, and the repair a change here owes is its job.
+    /// Not public: [`State::apply_search`](crate::state::State::apply_search)
+    /// owes the repair.
     pub(crate) fn set_search(&mut self, search: Option<Search>) {
         self.search = search;
     }
@@ -191,8 +147,7 @@ mod tests {
 
     #[test]
     fn showing_the_tab_already_drawn_leaves_the_cursor_and_the_viewport_alone() {
-        // The key that reaches a tab is pressed to arrive, not to start over:
-        // from the DDL tab, `d` is how focus returns to the panel.
+        // Pressed to arrive, not to start over.
         let mut panel = DdlPanel::default();
         panel.cursor.go_to(4, 8);
         panel.scroll.down(40, 10);
@@ -227,8 +182,7 @@ mod tests {
 
     #[test]
     fn a_tab_change_leaves_the_search_where_it_was() {
-        // The search is applied to the panel, not to a tab: it paints
-        // whichever rows the panel is drawing, and clearing it is `Esc`'s job.
+        // Applied to the panel, not a tab.
         let mut panel = DdlPanel::default();
         panel.set_search(Search::new("id"));
 

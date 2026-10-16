@@ -1,38 +1,26 @@
-//! CQL, split into the runs a reader distinguishes.
-//!
-//! A scanner and not a parser. It answers "what kind of run is this" for every
-//! byte of the buffer, which is all the highlighter needs and all the
-//! formatter is allowed to assume — a formatter that reordered a clause it had
-//! mis-parsed would rewrite the user's statement into a different one, and
-//! `Statement::typed` is a sniffer for the same reason
-//! (design §2).
+//! CQL split into the runs a reader distinguishes. A scanner, not a parser: a
+//! formatter that reordered a misparsed clause would change the statement.
 
 use super::keywords;
 
-/// What one run of source is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Keyword,
-    /// A name: a keyspace, a table, a column, a function, a bind marker.
     Identifier,
-    /// A string, a number, a uuid, a blob, or one of `true`/`false`/`null`.
     Literal,
     Comment,
-    /// Everything left: operators, brackets, commas, the statement separator.
     Punctuation,
     Whitespace,
 }
 
-/// One run, kept whole. `text` is the source verbatim — the formatter rewrites
-/// only the case of a [`Kind::Keyword`], and nothing else is retyped.
+/// `text` is verbatim; the formatter only recases keywords.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Piece {
     pub kind: Kind,
     pub text: String,
 }
 
-/// `text` as its runs, in order and losing nothing: concatenating every
-/// `Piece::text` reproduces the input.
+/// Lossless: concatenating every `Piece::text` reproduces the input.
 pub(crate) fn pieces(text: &str) -> Vec<Piece> {
     let source: Vec<char> = text.chars().collect();
     let mut pieces = Vec::new();
@@ -50,8 +38,7 @@ pub(crate) fn pieces(text: &str) -> Vec<Piece> {
     pieces
 }
 
-/// The run starting at `at`, as its kind and its length in characters. Never
-/// zero: every branch consumes at least the character it looked at.
+/// Never zero.
 fn run(source: &[char], at: usize) -> (Kind, usize) {
     let first = source[at];
 
@@ -74,9 +61,8 @@ fn run(source: &[char], at: usize) -> (Kind, usize) {
         return (Kind::Identifier, quoted(source, at, '"'));
     }
 
-    // Before the word run below: a uuid may open with a hex letter, and the
-    // word run would otherwise swallow its first group and leave the dashes
-    // as operators — which the formatter then spaces out as subtraction.
+    // Before words: a uuid may open with a hex letter, and its dashes would
+    // otherwise format as subtraction.
     if first.is_ascii_hexdigit()
         && let Some(len) = uuid(source, at)
     {
@@ -104,8 +90,7 @@ fn run(source: &[char], at: usize) -> (Kind, usize) {
         return (kind, len);
     }
 
-    // `:name` and `?` are bind markers, which name a value the way a column
-    // does; `$$…$$` is CQL's other string form.
+    // `:name` and `?` are bind markers; `$$…$$` is CQL's other string form.
     if first == ':'
         && at + 1 < source.len()
         && (source[at + 1].is_alphabetic() || source[at + 1] == '_')
@@ -121,8 +106,7 @@ fn run(source: &[char], at: usize) -> (Kind, usize) {
     (Kind::Punctuation, 1)
 }
 
-/// A `--` or `//` comment to the end of its line, or a `/* */` block to its
-/// terminator or to the end of the buffer.
+/// An unterminated block runs to the end of the buffer.
 fn comment(source: &[char], at: usize) -> Option<usize> {
     let pair = (source[at], *source.get(at + 1)?);
 
@@ -142,11 +126,8 @@ fn comment(source: &[char], at: usize) -> Option<usize> {
     }
 }
 
-/// A run delimited by `quote`, in which the delimiter doubled is the delimiter
-/// itself — CQL's only escape, in both its string and its identifier form. An
-/// unterminated run reaches the end of the buffer rather than resynchronising:
-/// a buffer being typed into is unterminated for as long as it takes to type
-/// the closing quote.
+/// A doubled delimiter is the delimiter. Unterminated runs reach the end of the
+/// buffer: that is every buffer mid-typing.
 fn quoted(source: &[char], at: usize, quote: char) -> usize {
     let mut end = at + 1;
 
@@ -177,8 +158,7 @@ fn dollar_quoted(source: &[char], at: usize) -> usize {
     source.len() - at
 }
 
-/// A number, or a uuid — which starts with a digit as often as not, and whose
-/// hyphens would otherwise scan as three subtractions.
+/// A uuid's hyphens would otherwise scan as subtractions.
 fn number(source: &[char], at: usize) -> usize {
     if source[at] == '0' && matches!(source.get(at + 1), Some('x' | 'X')) {
         return while_matching(source, at + 2, char::is_alphanumeric) + 2;
@@ -205,8 +185,6 @@ fn number(source: &[char], at: usize) -> usize {
     end - at
 }
 
-/// 8-4-4-4-12 hexadecimal, and nothing else: a shape this exact cannot be
-/// mistaken for an expression.
 fn uuid(source: &[char], at: usize) -> Option<usize> {
     const GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
     let mut end = at;
@@ -227,7 +205,7 @@ fn uuid(source: &[char], at: usize) -> Option<usize> {
         }
     }
 
-    // A longer word starting with a uuid is a word, not a uuid.
+    // A longer word starting with a uuid is a word.
     if source
         .get(end)
         .is_some_and(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
@@ -317,9 +295,7 @@ mod tests {
 
     #[test]
     fn an_unterminated_string_runs_to_the_end_rather_than_resynchronising() {
-        // The state of every buffer between the opening quote and the closing
-        // one, which is a state the user types through on the way to a valid
-        // statement.
+        // Every buffer between the quotes is in this state while typing.
         assert_eq!(kinds("WHERE a = 'ab"), {
             vec![
                 (Kind::Keyword, "WHERE".to_owned()),
@@ -365,8 +341,8 @@ mod tests {
         );
     }
 
-    /// `timeuuid` version 1 puts the timestamp's high nibbles first, so a
-    /// uuid from `now()` opens with a letter about as often as with a digit.
+    /// Version 1 puts the timestamp's high nibbles first, so `now()` uuids
+    /// often open with a letter.
     #[test]
     fn a_uuid_opening_with_a_hex_letter_is_one_literal_too() {
         assert_eq!(

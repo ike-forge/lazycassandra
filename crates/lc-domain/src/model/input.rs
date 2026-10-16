@@ -1,9 +1,5 @@
-//! Keyboard input, in domain terms.
-//!
-//! Deliberately not `crossterm::event::KeyEvent`: `lc-domain` must not depend
-//! on a terminal library (architecture.md §2). `lc-inbound` translates
-//! crossterm events into these, the same way it translates [`crate::style`]
-//! tokens the other way.
+//! Keyboard input in domain terms; `lc-domain` must not depend on a terminal
+//! library (architecture.md §2).
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyPress {
@@ -40,7 +36,6 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
-    /// Nothing held — what a bare key press carries.
     pub const NONE: Self = Self {
         ctrl: false,
         alt: false,
@@ -57,11 +52,8 @@ impl KeyPress {
         }
     }
 
-    /// `key` with ctrl held.
-    ///
-    /// A binding of its own, never a modifier on the plain key's meaning —
-    /// `handle_key` refuses ctrl wholesale except for the arms that name it
-    /// (shortcuts.md §2).
+    /// A binding of its own: `handle_key` refuses ctrl except where an arm
+    /// names it.
     #[must_use]
     pub const fn ctrl(key: Key) -> Self {
         Self {

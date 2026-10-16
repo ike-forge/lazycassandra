@@ -1,5 +1,4 @@
-//! Exporting a result set: what it covers, where it goes, and the bytes it
-//! becomes (docs/superpowers/specs/2026-08-14-export-design.md).
+//! Exporting a result set: scope, destination, and encoding (export design).
 
 use std::fmt::Write as _;
 use std::num::NonZeroUsize;
@@ -13,13 +12,9 @@ use crate::style::Segment;
 use crate::update::Source;
 use crate::yank;
 
-/// The form's path field. Re-exported rather than moved wholesale, so a
-/// reader of the form finds it where the form is: the type is shared with the
-/// drop confirmation's typed name (drop design §2.1), which is why it lives
-/// in [`crate::line`].
+/// Shared with the drop confirmation's typed name.
 pub use crate::line::Line;
 
-/// What an export is written as.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Format {
     #[default]
@@ -28,8 +23,6 @@ pub enum Format {
 }
 
 impl Format {
-    /// The extension the destination path carries, and the one the format
-    /// radio rewrites when it changes.
     #[must_use]
     pub const fn extension(self) -> &'static str {
         match self {
@@ -38,8 +31,7 @@ impl Format {
         }
     }
 
-    /// The other one. Exhaustive rather than a boolean flip, so a third
-    /// format fails to compile here first.
+    /// Exhaustive, so a third format fails to compile here.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
@@ -57,12 +49,8 @@ impl Format {
     }
 }
 
-/// Turns pages into the text a file holds, one chunk at a time.
-///
-/// Stateful for one reason: a JSON array needs a separator between objects and
-/// the paging loop cannot know whether another page follows until the cluster
-/// has answered. Counting what has been written puts the comma before each
-/// object but the first, which needs no lookahead.
+/// Stateful only to put a comma before each JSON object but the first: the
+/// paging loop cannot know whether another page follows.
 #[derive(Debug, Clone)]
 pub struct Encoder {
     format: Format,
@@ -75,7 +63,6 @@ impl Encoder {
         Self { format, written: 0 }
     }
 
-    /// What precedes the first row: a header row, or the opening bracket.
     pub fn start(&mut self, columns: &[String]) -> String {
         match self.format {
             Format::Csv => format!("{}\n", yank::line(columns)),
@@ -83,8 +70,6 @@ impl Encoder {
         }
     }
 
-    /// `rows` as text, ready to append to whatever `start` and earlier chunks
-    /// produced.
     pub fn chunk(&mut self, columns: &[String], rows: &[Row]) -> String {
         let mut out = String::new();
 
@@ -107,9 +92,7 @@ impl Encoder {
         out
     }
 
-    /// What follows the last row. A CSV is finished when its last line is; a
-    /// JSON array is not a document until it is closed. An empty array has no
-    /// row to put a newline after, so it closes on the same line it opened.
+    /// An empty array closes on the line it opened.
     pub fn finish(&mut self) -> String {
         match self.format {
             Format::Csv => String::new(),
@@ -119,9 +102,7 @@ impl Encoder {
     }
 }
 
-/// One row as a JSON object. A row shorter than the column list — which a
-/// driver should not produce and a fake can — pads with `null` rather than
-/// dropping the key, so every object in the array has the same shape.
+/// A short row pads with `null`, so every object has the same shape.
 fn json_object(columns: &[String], row: &Row) -> String {
     let fields: Vec<String> = columns
         .iter()
@@ -136,15 +117,13 @@ fn json_object(columns: &[String], row: &Row) -> String {
     format!("{{{}}}", fields.join(","))
 }
 
-/// A value as JSON. Exhaustive over [`CqlValue`], so a new variant has to
-/// decide here whether it has a JSON type of its own.
+/// Exhaustive, so a new variant must decide its JSON type.
 fn json_value(value: &CqlValue) -> String {
     match value {
         CqlValue::Null => "null".to_owned(),
         CqlValue::Boolean(flag) => flag.to_string(),
         CqlValue::Int(number) => number.to_string(),
-        // JSON can spell neither NaN nor an infinity, and a document holding
-        // one is not a document.
+        // JSON cannot spell NaN or infinity.
         CqlValue::Float(number) if !number.is_finite() => "null".to_owned(),
         CqlValue::Float(number) => {
             let rendered = number.to_string();
@@ -155,8 +134,7 @@ fn json_value(value: &CqlValue) -> String {
                 format!("{rendered}.0")
             }
         }
-        // No JSON type of its own: a blob, a uuid, a timestamp and the
-        // collections travel as the text the grid already draws.
+        // No JSON type: travel as the text the grid draws.
         CqlValue::Text(_)
         | CqlValue::Blob(_)
         | CqlValue::Uuid(_)
@@ -167,8 +145,7 @@ fn json_value(value: &CqlValue) -> String {
     }
 }
 
-/// A JSON string literal, escaped as RFC 8259 requires. Control characters
-/// below 0x20 have no literal spelling and take the `\uXXXX` form.
+/// Control characters below 0x20 take the `\uXXXX` form.
 fn json_string(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
@@ -191,20 +168,16 @@ fn json_string(text: &str) -> String {
     out
 }
 
-/// How much of the result an export covers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Scope {
-    /// Re-run the statement with no limit of ours and page to the end.
+    /// Re-run with no limit of ours.
     #[default]
     Whole,
-    /// The rows the panel is showing.
     Fetched,
-    /// The first N rows of the statement, N typed into the form.
     First,
 }
 
 impl Scope {
-    /// In the order the form draws them.
     const ALL: [Self; 3] = [Self::Fetched, Self::Whole, Self::First];
 
     fn step(self, forwards: bool) -> Self {
@@ -219,29 +192,18 @@ impl Scope {
     }
 }
 
-/// What the rows field holds before anything is typed.
 const DEFAULT_ROWS: &str = "1000";
 
-/// The rows in memory, and whether the statement has more behind them.
-///
-/// An enum rather than a count and a flag: "everything, and there is more"
-/// cannot be written down.
+/// "Everything, and there is more" is unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fetched {
-    /// The result ended in what was fetched, so both scopes would write the
-    /// same file.
+    /// Both scopes would write the same file.
     Everything(usize),
     Some(usize),
 }
 
 impl Fetched {
-    /// What the panel holds: `fetched` is what the cluster returned and
-    /// `drawn` what the filters left of it.
-    ///
-    /// A filter makes the two scopes differ even where the result ended: the
-    /// whole table and the rows on screen are different files as soon as one
-    /// row is hidden, so a filtered grid always offers the Fetched scope
-    /// (docs/superpowers/specs/2026-08-31-grid-sort-filter-design.md §4).
+    /// A filter makes the scopes differ even when the result ended.
     #[must_use]
     pub const fn of_drawn(paging: &Paging, fetched: usize, drawn: usize) -> Self {
         if matches!(paging, Paging::Ended) && drawn == fetched {
@@ -264,8 +226,6 @@ impl Fetched {
     }
 }
 
-/// A place on the form a pointer can press that is not a button: what the
-/// press chooses, and where in the text it landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Path { cursor: usize },
@@ -274,19 +234,15 @@ pub enum Field {
     Rows { cursor: usize },
 }
 
-/// Where `Tab` is in the form.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Stop {
-    /// First, and where the form opens: the destination is the one thing
-    /// every export needs, and the one stop where a printable key is text
-    /// (design §2).
+    /// The one stop where a printable key is text.
     #[default]
     Path,
     Format,
     /// Skipped while both scopes would write the same file.
     Scope,
-    /// The first-N scope's count. Skipped unless that scope is chosen; text,
-    /// digits only.
+    /// Skipped unless that scope is chosen; digits only.
     Rows,
     Export,
 }
@@ -314,39 +270,25 @@ impl Stop {
         }
     }
 
-    /// Whether this stop claims printable keys as text.
     #[must_use]
     pub const fn takes_text(self) -> bool {
         matches!(self, Self::Path | Self::Rows)
     }
 }
 
-/// What the form is asking before it will act, as the form draws it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Confirm {
-    /// The destination exists. `Esc` goes back to the form (design §7).
     Overwrite,
 }
 
-/// A question the form is asking, and the export answering it runs.
-///
-/// [`Confirm`] is this without its payload — what a renderer needs and all it
-/// needs. The payload is the point: the panel underneath is live for the whole
-/// of an export, so the rows and the statement the refused attempt was made
-/// with are carried here rather than read again from a Contents panel the user
-/// is free to move meanwhile (final review I3).
-///
-/// Carries the [`JobId`] the refused attempt logged its pending trail entry
-/// under, alongside the source: a retry reuses it rather than minting a
-/// fresh one, so the trail keeps one entry for one export rather than
-/// stranding the first as permanently `⋯ running` (final review I4).
+/// Carries the refused attempt's source and `JobId`: the panel may have moved
+/// on, and a retry must close the same trail entry.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pending {
     Overwrite(Box<Source>, JobId),
 }
 
 impl Pending {
-    /// The question, without what answering it would write.
     #[must_use]
     pub const fn confirm(&self) -> Confirm {
         match self {
@@ -354,7 +296,6 @@ impl Pending {
         }
     }
 
-    /// What answering it writes.
     #[must_use]
     pub fn source(&self) -> &Source {
         match self {
@@ -362,7 +303,6 @@ impl Pending {
         }
     }
 
-    /// The trail entry the refused attempt is still pending on.
     #[must_use]
     pub const fn job(&self) -> JobId {
         match self {
@@ -371,10 +311,8 @@ impl Pending {
     }
 }
 
-/// How many characters of a typed statement the title shows.
 const TITLE_LIMIT: usize = 100;
 
-/// The open export form.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExportForm {
     subject: Subject,
@@ -388,10 +326,7 @@ pub struct ExportForm {
 }
 
 impl ExportForm {
-    /// Opens over `subject`, prefilling the path from `cwd`.
-    ///
-    /// `cwd` is passed rather than read: the domain cannot reach the process's
-    /// working directory and must not learn how (design §2.1).
+    /// `cwd` is passed in: the domain reads no environment.
     #[must_use]
     pub fn opened(subject: Subject, fetched: Fetched, cwd: &Path) -> Self {
         let format = Format::default();
@@ -443,7 +378,6 @@ impl ExportForm {
         &mut self.rows
     }
 
-    /// What the rows field says, if it says a positive number.
     #[must_use]
     pub fn row_limit(&self) -> Option<NonZeroUsize> {
         self.rows.text().parse().ok()
@@ -459,31 +393,25 @@ impl ExportForm {
         self.fetched
     }
 
-    /// The question up in front of the form, if there is one.
     #[must_use]
     pub fn confirm(&self) -> Option<Confirm> {
         self.pending.as_ref().map(Pending::confirm)
     }
 
-    /// What answering that question would export.
     #[must_use]
     pub const fn pending(&self) -> Option<&Pending> {
         self.pending.as_ref()
     }
 
-    /// Puts a question in front of the form, holding what answering it runs.
     pub fn ask(&mut self, pending: Pending) {
         self.pending = Some(pending);
     }
 
-    /// `Esc` from the confirmation: the question goes, and the export it was
-    /// holding goes with it — a source with nothing asking about it is what
-    /// this type exists to prevent (design §7).
+    /// The held export goes with the question.
     pub fn dismiss(&mut self) {
         self.pending = None;
     }
 
-    /// Whether the fetched-rows scope can be chosen at all (design §3).
     #[must_use]
     pub const fn fetched_enabled(&self) -> bool {
         !self.fetched.complete()
@@ -515,8 +443,7 @@ impl ExportForm {
         }
     }
 
-    /// `Space`. Reports whether the export should run — true only from
-    /// [`Stop::Export`].
+    /// True only from [`Stop::Export`].
     pub fn activate(&mut self) -> bool {
         match self.stop {
             Stop::Scope => {
@@ -532,8 +459,7 @@ impl ExportForm {
         }
     }
 
-    /// A press on `field`: the `Tab` that reaches it and the key that answers
-    /// it, in one. A scope the form does not offer is not there to press.
+    /// A scope the form does not offer cannot be pressed.
     pub fn press(&mut self, field: Field) {
         match field {
             Field::Path { cursor } => {
@@ -559,14 +485,12 @@ impl ExportForm {
         }
     }
 
-    /// The button's stop, which a press on it has to stand on for `Enter` to
-    /// run the export.
+    /// A press must stand on the button for `Enter` to run it.
     pub const fn focus_button(&mut self) {
         self.stop = Stop::Export;
     }
 
-    /// `j`/`↓` inside a radio group. The groups have two options each, so a
-    /// move in either direction reaches the same place a toggle does.
+    /// Two options per group, so a move equals a toggle.
     pub fn down(&mut self) {
         self.move_within_group(true);
     }
@@ -575,9 +499,7 @@ impl ExportForm {
         self.move_within_group(false);
     }
 
-    /// The scope options as the form words them: visible, whole, and the
-    /// text before the first-N field. Where the result ended in what was
-    /// fetched the first is the only one drawn, as a sentence.
+    /// Where the result ended, the first is the only one drawn, as a sentence.
     #[must_use]
     pub fn scope_labels(&self) -> [String; 3] {
         let what = if self.subject.table().is_some() {
@@ -597,10 +519,6 @@ impl ExportForm {
         ]
     }
 
-    /// What the form's border says it is about (design §1).
-    ///
-    /// The table's name keeps the schema's colours the tree and the Table
-    /// contents title give it ([`TableRef::segments`]).
     #[must_use]
     pub fn title(&self) -> Vec<Segment> {
         match &self.subject {
@@ -636,7 +554,6 @@ impl ExportForm {
     }
 }
 
-/// The default filename, without an extension.
 fn stem(subject: &Subject) -> String {
     match subject {
         Subject::Table(table) => table.qualified(),
@@ -644,8 +561,7 @@ fn stem(subject: &Subject) -> String {
     }
 }
 
-/// `label` cut to [`TITLE_LIMIT`] characters, ellipsised. Cutting on a
-/// character boundary rather than a byte one: a CQL literal can hold anything.
+/// On a character boundary: a CQL literal can hold anything.
 fn cut(label: &str) -> String {
     if label.chars().count() <= TITLE_LIMIT {
         return label.to_owned();
@@ -719,9 +635,6 @@ mod tests {
         );
     }
 
-    /// The comma goes *before* each object but the first, so a chunk never has
-    /// to know whether another one follows it — which the paging loop cannot
-    /// tell it until the cluster has already answered.
     #[test]
     fn json_separates_objects_across_chunk_boundaries() {
         let mut encoder = Encoder::new(Format::Json);
@@ -760,16 +673,12 @@ mod tests {
         assert_eq!(json_value(&CqlValue::Null), "null");
     }
 
-    /// JSON has no spelling for either, and a document holding `NaN` is not a
-    /// document. `null` is the only honest answer.
     #[test]
     fn a_float_json_cannot_write_becomes_null() {
         assert_eq!(json_value(&CqlValue::Float(f64::NAN)), "null");
         assert_eq!(json_value(&CqlValue::Float(f64::INFINITY)), "null");
     }
 
-    /// A blob, a uuid, a timestamp and a collection have no JSON type of their
-    /// own, so they travel as the text the grid already draws.
     #[test]
     fn everything_without_a_json_type_travels_as_the_text_the_grid_draws() {
         let blob = CqlValue::Blob(vec![0xde, 0xad]);
@@ -864,8 +773,6 @@ mod tests {
         assert_eq!(line.cursor(), 2);
     }
 
-    /// The cursor counts characters, not bytes: a path can hold anything a
-    /// filesystem accepts, and slicing one mid-character panics.
     #[test]
     fn a_multi_byte_character_is_one_step_and_one_delete() {
         let mut line = Line::new("aéb".to_owned());
@@ -885,8 +792,6 @@ mod tests {
         assert_eq!(line.text(), "/home/ike/shop.orders.json");
     }
 
-    /// A path the user has retyped to end in nothing keeps ending in nothing:
-    /// the rewrite replaces an extension, it does not append one (design §2.1).
     #[test]
     fn setting_the_extension_leaves_a_path_that_has_none_alone() {
         let mut line = Line::new("/dev/stdout".to_owned());
@@ -895,7 +800,6 @@ mod tests {
         assert_eq!(line.text(), "/dev/stdout");
     }
 
-    /// A dot in a directory name is not an extension.
     #[test]
     fn a_dot_before_the_last_separator_is_not_an_extension() {
         let mut line = Line::new("/home/v1.2/orders".to_owned());
@@ -904,9 +808,6 @@ mod tests {
         assert_eq!(line.text(), "/home/v1.2/orders");
     }
 
-    /// A leading dot is part of the name, not an extension separator: a
-    /// destination field that rewrote `.bashrc` to `.json` would destroy the
-    /// filename the user typed.
     #[test]
     fn a_dotfile_has_no_extension_to_replace() {
         let mut line = Line::new("/home/ike/.bashrc".to_owned());
@@ -1030,8 +931,6 @@ mod tests {
         }
     }
 
-    /// Everything already fetched means the two scopes would write the same
-    /// file, and one of the two is the honest name for it (design §3).
     #[test]
     fn a_result_that_is_already_complete_disables_the_fetched_scope() {
         let mut form = form(Fetched::Everything(137));
@@ -1068,8 +967,6 @@ mod tests {
         );
     }
 
-    /// A typed statement may carry its own LIMIT, so "the whole table" would
-    /// be a claim about something that is not a table (design §3).
     #[test]
     fn a_typed_subject_names_its_whole_scope_a_query_result() {
         let form = ExportForm::opened(
@@ -1151,8 +1048,6 @@ mod tests {
         );
     }
 
-    /// Cutting on a byte boundary would panic; cutting on a character one
-    /// cannot.
     #[test]
     fn a_query_title_cuts_on_a_character_boundary() {
         let cql = format!("SELECT '{}'", "é".repeat(200));

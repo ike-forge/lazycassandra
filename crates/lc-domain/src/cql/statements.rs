@@ -1,19 +1,10 @@
-//! The buffer, split into the statements a run acts on.
-//!
-//! A third reader of the scan [`lex`](super::lex) already produced, beside the
-//! highlighter and [`resolve`](super::resolve): a `;` outside a batch ends a
-//! statement, and `BEGIN … APPLY BATCH` is one statement rather than the
-//! several scopes `resolve` splits it into. The protocol carries one statement
-//! per request, and half a batch is not one
-//! (cql statement selection design §3).
+//! The buffer split into runnable statements. Unlike
+//! [`resolve`](super::resolve), a batch is one statement: the protocol sends
+//! one per request.
 
 use super::lex::{Kind, pieces};
 
-/// One runnable statement, as the characters it spans.
-///
-/// `end` is one past the last character, and both count `char`s — the unit
-/// `Editor` counts its cursor in, so an offset means the same thing on both
-/// sides of the panel.
+/// Counts `char`s, as `Editor`'s cursor does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
@@ -21,19 +12,14 @@ pub struct Span {
 }
 
 impl Span {
-    /// The statement itself, cut out of the buffer it was found in.
     #[must_use]
     pub fn of(self, text: &str) -> String {
         text.chars().take(self.end).skip(self.start).collect()
     }
 }
 
-/// Every statement in `text`, in the order they are written.
-///
-/// Whitespace and comments between statements fall outside every span: a span
-/// is the statement, so the band drawn over one and the text sent for it are
-/// the same run of characters. A trailing `;` belongs to the statement it
-/// terminates.
+/// Whitespace and comments between statements fall outside every span. A
+/// trailing `;` belongs to its statement.
 #[must_use]
 pub fn statements(text: &str) -> Vec<Span> {
     let mut spans = Vec::new();
@@ -125,8 +111,7 @@ mod tests {
         );
     }
 
-    /// The comment opens the statement's span where it precedes a keyword on
-    /// the same run: it is not between statements, it is inside one.
+    /// A comment before a keyword on the same run is inside the statement.
     #[test]
     fn a_comment_inside_a_statement_is_part_of_it() {
         assert_eq!(

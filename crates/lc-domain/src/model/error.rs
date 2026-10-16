@@ -1,7 +1,5 @@
-//! Failures that come back from a cluster.
-//!
-//! Typed and matched on, never a panic and never an early return that unwinds
-//! the loop (architecture.md §12). A failed query is a message like any other.
+//! Failures from a cluster: typed and matched on, never a panic
+//! (architecture.md §12).
 
 use thiserror::Error;
 

@@ -1,13 +1,8 @@
-//! CQL statements.
-//!
-//! Every action the tool takes is expressible as CQL and is shown before it
-//! runs (vision.md §4, principle 3), so a statement is a first-class value
-//! that can be previewed, logged, and copied — not a string assembled at the
-//! point of execution.
+//! CQL statements as values: every action is shown before it runs (vision.md
+//! §4, principle 3).
 
 use std::fmt::Write as _;
 
-/// A statement plus what it is allowed to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Statement {
     pub cql: String,
@@ -18,14 +13,12 @@ pub struct Statement {
 pub enum StatementKind {
     Read,
     Write,
-    /// `DROP`, `TRUNCATE`, and friends. Gated by posture *and* by typed
-    /// confirmation (vision.md §4, principle 6).
+    /// Gated by posture and by typed confirmation (vision.md §4, principle 6).
     Destructive,
     Schema,
 }
 
 impl StatementKind {
-    /// Whether executing this changes anything on the cluster.
     #[must_use]
     pub const fn mutates(self) -> bool {
         matches!(self, Self::Write | Self::Destructive | Self::Schema)
@@ -37,11 +30,6 @@ impl StatementKind {
     }
 }
 
-/// One row of an `UPDATE`: the columns it assigns, then the key columns that
-/// address it, both `(column, literal)`.
-///
-/// A named type because the pair is the vocabulary [`Statement::update_rows`]
-/// is written in, not merely a tuple it happens to take.
 pub type UpdatedRow = (Vec<(String, String)>, Vec<(String, String)>);
 
 impl Statement {
@@ -50,8 +38,7 @@ impl Statement {
         self.kind.mutates()
     }
 
-    /// Every column of one table, unbounded: the grid pages it and export
-    /// streams it (grid paging design §1).
+    /// Unbounded: the grid pages it and export streams it.
     #[must_use]
     pub fn select_all(keyspace: &str, table: &str) -> Self {
         Self {
@@ -60,8 +47,8 @@ impl Statement {
         }
     }
 
-    /// One table, gone. Quoted for [`quoted`]'s reason: a name read back
-    /// from the cluster is only safe to interpolate quoted (drop design §3).
+    /// Quoted: a name read back from the cluster is only safe to interpolate
+    /// quoted.
     #[must_use]
     pub fn drop_table(keyspace: &str, table: &str) -> Self {
         Self {
@@ -70,7 +57,6 @@ impl Statement {
         }
     }
 
-    /// One keyspace and every table in it.
     #[must_use]
     pub fn drop_keyspace(keyspace: &str) -> Self {
         Self {
@@ -79,17 +65,9 @@ impl Statement {
         }
     }
 
-    /// One row, addressed by its whole primary key.
-    ///
-    /// `key` is `(column, literal)` in key order — partition columns then
-    /// clustering ones — already spelled by [`crate::literal`], which is
-    /// what makes this total: a key it could not spell never becomes one of
-    /// these (drop design §3.1).
-    ///
-    /// [`StatementKind::Write`] rather than `Destructive`, and deliberately:
-    /// `kind_of` classifies a typed `DELETE` the same way, and the two must
-    /// not disagree about one verb. The confirmation this runs behind is
-    /// owed to the key that opened it, not to the kind (drop design §2).
+    /// `key` arrives spelled by [`crate::literal`] in key order. `Write`, not
+    /// `Destructive`, because `kind_of` classifies a typed `DELETE` so; its
+    /// confirmation belongs to the key that opened it.
     #[must_use]
     pub fn delete_row(keyspace: &str, table: &str, key: &[(String, String)]) -> Self {
         Self {
@@ -103,15 +81,8 @@ impl Statement {
         }
     }
 
-    /// Several rows, as one batch.
-    ///
-    /// Logged, which is the expensive one: a confirmation that said "3 rows"
-    /// promises three rows, and an unlogged batch that half-applies has told
-    /// the user something untrue. The count is bounded by what the grid
-    /// holds, so the batchlog write it costs is bounded too.
-    ///
-    /// A single key produces [`Self::delete_row`] instead — a batch of one
-    /// is a batch the user has to read past to see what it does.
+    /// Logged: an unlogged batch that half-applies breaks the "3 rows" the
+    /// confirmation promised. A single key is a bare `DELETE`.
     #[must_use]
     pub fn delete_rows(keyspace: &str, table: &str, keys: &[Vec<(String, String)>]) -> Self {
         if let [only] = keys {
@@ -136,16 +107,7 @@ impl Statement {
         }
     }
 
-    /// One row's named columns, set to the literals given, addressed by its
-    /// whole primary key.
-    ///
-    /// `sets` and `key` are both `(column, literal)`, already spelled by
-    /// [`crate::edit`] and [`crate::literal`] respectively — which is what
-    /// makes this total, the same way [`Self::delete_row`] is
-    /// (cell editing design §5).
-    ///
-    /// [`StatementKind::Write`], as `kind_of` classifies a typed `UPDATE`:
-    /// the builders and the sniffer must not disagree about one verb.
+    /// `Write`, as `kind_of` classifies a typed `UPDATE`.
     #[must_use]
     pub fn update_row(
         keyspace: &str,
@@ -165,13 +127,7 @@ impl Statement {
         }
     }
 
-    /// One row, from every column the user filled in, in the order given.
-    ///
-    /// `values` is `(column, literal)`, spelled by [`crate::edit`]. A column
-    /// left out is left unset rather than written as `null`, which would
-    /// store a tombstone (insert design §3).
-    ///
-    /// [`StatementKind::Write`], as `kind_of` classifies a typed `INSERT`.
+    /// An omitted column is left unset; writing `null` would store a tombstone.
     #[must_use]
     pub fn insert_row(keyspace: &str, table: &str, values: &[(String, String)]) -> Self {
         let columns: Vec<String> = values.iter().map(|(column, _)| quoted(column)).collect();
@@ -189,10 +145,8 @@ impl Statement {
         }
     }
 
-    /// Several rows, as one batch — [`Self::delete_rows`]' rule and its
-    /// reason: a confirmation that said "3 rows" has promised three rows, and
-    /// an unlogged batch that half-applies has told the user something
-    /// untrue. A single row is a bare `UPDATE`.
+    /// Logged, for [`Self::delete_rows`]' reason. A single row is a bare
+    /// `UPDATE`.
     #[must_use]
     pub fn update_rows(keyspace: &str, table: &str, rows: &[UpdatedRow]) -> Self {
         if let [(sets, key)] = rows {
@@ -218,15 +172,8 @@ impl Statement {
         }
     }
 
-    /// A statement typed by hand, classified by the verb that opens it.
-    ///
-    /// A sniffer rather than a parser, but a scanning one: the verb is read
-    /// off [`crate::cql::opening_words`], so a leading comment is skipped and
-    /// a `;` inside a string does not split a statement. Every statement in
-    /// the buffer is classified and the most restricted kind wins, so a
-    /// `SELECT` typed ahead of a `DROP` does not launder it
-    /// (docs/superpowers/specs/2026-08-10-query-execution-design.md §4,
-    /// posture design §2).
+    /// Every statement in the buffer is classified and the most restricted
+    /// wins, so a `SELECT` ahead of a `DROP` cannot launder it.
     #[must_use]
     pub fn typed(cql: &str) -> Self {
         Self {
@@ -236,16 +183,11 @@ impl Statement {
     }
 }
 
-/// CQL folds an unquoted identifier to lower case, and `system_schema` reports
-/// names in their true form — so a name read back from the cluster is only
-/// safe to interpolate quoted. An embedded quote is doubled, as CQL requires.
+/// `system_schema` reports true-case names, which CQL would fold unquoted.
 fn quoted(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
-/// The `WHERE` clause addressing one row: every key column, in key order,
-/// joined with `AND`. The names are quoted for [`quoted`]'s reason; the
-/// values arrive already spelled.
 fn restriction(key: &[(String, String)]) -> String {
     key.iter()
         .map(|(column, literal)| format!("{} = {literal}", quoted(column)))
@@ -253,8 +195,6 @@ fn restriction(key: &[(String, String)]) -> String {
         .join(" AND ")
 }
 
-/// The `SET` clause: every column assigned, in the order given. The names are
-/// quoted for [`quoted`]'s reason; the values arrive already spelled.
 fn assignments(sets: &[(String, String)]) -> String {
     sets.iter()
         .map(|(column, literal)| format!("{} = {literal}", quoted(column)))
@@ -262,35 +202,16 @@ fn assignments(sets: &[(String, String)]) -> String {
         .join(", ")
 }
 
-/// Every verb that opens a statement changing nothing on the cluster.
-///
-/// The allowlist is the whole gate: a verb absent from it is mutating, so
-/// being wrong here costs an error message and being wrong the other way
-/// costs a write the posture was set to prevent (design §4, posture design
-/// §2). The list is closed and short by design — CQL grows verbs, and a new
-/// one arriving is refused on a read-only connection until someone decides
-/// it belongs here.
-///
-/// `USE` changes the session's keyspace rather than the cluster, and
-/// `DESCRIBE`/`LIST` read schema and permissions back.
+/// The allowlist is the whole gate: an unknown verb counts as mutating.
 const READING: &[&str] = &["SELECT", "USE", "DESCRIBE", "DESC", "LIST"];
 
-/// Every verb that removes data or a schema object outright. Gated by posture
-/// *and* by typed confirmation (vision.md §4, principle 6).
-///
-/// `DROP` covers every object it can name — keyspace, table, index, type,
-/// view, role, function — because the first word is what the gate reads.
+/// Gated by posture and typed confirmation. `DROP` covers every object it can
+/// name.
 const DESTRUCTIVE: &[&str] = &["DROP", "TRUNCATE"];
 
-/// Every verb that changes schema, cluster metadata or permissions rather
-/// than rows: `CREATE`/`ALTER` over any object, and the two that move
-/// privileges around.
-///
-/// `ALTER TABLE … ADD` is here rather than under a fourth kind: adding a
-/// column is a schema change whichever clause spells it.
+/// `ALTER TABLE … ADD` is a schema change whichever clause spells it.
 const SCHEMA: &[&str] = &["CREATE", "ALTER", "GRANT", "REVOKE"];
 
-/// The kind a verb opens, with an unrecognised one mutating.
 fn kind_of_verb(verb: &str) -> StatementKind {
     if READING.contains(&verb) {
         StatementKind::Read
@@ -299,15 +220,12 @@ fn kind_of_verb(verb: &str) -> StatementKind {
     } else if SCHEMA.contains(&verb) {
         StatementKind::Schema
     } else {
-        // `INSERT`, `UPDATE`, `DELETE`, `BEGIN`/`APPLY` around a batch, and
-        // every verb this table has not learned.
+        // Includes every verb this table has not learned.
         StatementKind::Write
     }
 }
 
-/// How far a kind is trusted, least to most restricted. A buffer holding
-/// several statements takes the highest of theirs: a `SELECT` typed ahead of
-/// a `DROP` must not launder it (posture design §2).
+/// Least to most restricted.
 const fn severity(kind: StatementKind) -> u8 {
     match kind {
         StatementKind::Read => 0,
@@ -317,10 +235,7 @@ const fn severity(kind: StatementKind) -> u8 {
     }
 }
 
-/// The kind of a buffer: the most restricted kind among the statements in it.
-///
-/// A buffer with no statement in it at all classifies as [`StatementKind::Write`]
-/// — the same conservative direction an unknown verb takes.
+/// An empty buffer classifies as `Write`, like an unknown verb.
 fn kind_of(cql: &str) -> StatementKind {
     crate::cql::opening_words(cql)
         .iter()
@@ -343,8 +258,7 @@ mod tests {
 
     #[test]
     fn a_name_that_is_not_all_lower_case_survives_the_round_trip() {
-        // Unquoted, CQL would fold this to `myks` and the statement would name
-        // a keyspace that does not exist.
+        // Unquoted, CQL would fold this to `myks`.
         assert_eq!(
             Statement::select_all("MyKs", "Orders").cql,
             "SELECT * FROM \"MyKs\".\"Orders\""
@@ -403,8 +317,6 @@ mod tests {
 
     #[test]
     fn an_unknown_verb_is_treated_as_mutating() {
-        // The conservative direction: a verb this table has not learned is
-        // refused on a read-only connection rather than waved through it.
         assert!(Statement::typed("REBUILD INDEX shop.orders").mutates());
         assert!(Statement::typed("").mutates());
     }
@@ -485,8 +397,6 @@ mod tests {
         }
     }
 
-    // A read typed ahead of a write is the whole reason the buffer is
-    // classified statement by statement rather than by its first word.
     #[test]
     fn a_buffer_takes_the_most_restricted_kind_in_it() {
         assert_eq!(
@@ -555,8 +465,6 @@ mod tests {
         assert_eq!(keyspace.kind, StatementKind::Destructive);
     }
 
-    /// The builders and the sniffer must not disagree about what a verb is:
-    /// the posture guard reads `kind` whichever of the two produced it.
     #[test]
     fn a_built_statement_classifies_as_its_own_cql_would() {
         for built in [

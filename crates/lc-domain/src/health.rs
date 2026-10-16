@@ -1,5 +1,4 @@
-//! A table's health as each node reports it, and the tree the block draws it
-//! as (docs/superpowers/specs/2026-10-13-table-health-design.md).
+//! A table's health as each node reports it, and the tree the block draws.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -11,41 +10,35 @@ use crate::style::Severity;
 use crate::viewport::Cursor;
 
 /// Cassandra 4.0's `compaction_large_partition_warning_threshold_mb` default,
-/// for a node that configures no large-partition threshold at all.
+/// for a node that sets none.
 const LARGE_PARTITION: f64 = 100.0 * 1024.0 * 1024.0;
 
-/// What every node said about one table.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Health {
     pub nodes: Vec<NodeReport>,
 }
 
-/// One node's answer, under the name it gives itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeReport {
     pub address: String,
     pub datacenter: Option<String>,
     pub version: Option<String>,
-    /// What gossip on a reached node says about this one. `None` where no
-    /// reached node has `system_views.gossip_info` (before 5.0).
+    /// `None` before 5.0, which has no `system_views.gossip_info`.
     pub gossip: Option<Gossip>,
     pub outcome: NodeOutcome,
 }
 
-/// One node's gossip state, as the node that answered hears it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gossip {
-    /// The first word of the gossip `STATUS`: `NORMAL`, `LEAVING`,
-    /// `shutdown`…
+    /// The first word of gossip `STATUS`.
     pub status: String,
-    /// Bytes the node holds across every table.
+    /// Across every table.
     pub load: Option<f64>,
 }
 
 impl Gossip {
-    /// Gossip spells a drained or stopped node `shutdown`; a node that died
-    /// without saying so still reads `NORMAL` until it is removed, and only
-    /// the failure detector, which CQL does not expose, knows otherwise.
+    /// A node that died silently still reads `NORMAL`; only the failure
+    /// detector, which CQL does not expose, knows.
     fn severity(&self) -> Option<Severity> {
         if self.status.eq_ignore_ascii_case("NORMAL") {
             None
@@ -63,17 +56,15 @@ pub enum NodeOutcome {
         readings: Readings,
         thresholds: Thresholds,
     },
-    /// Older than 4.0: no `system_views` to read.
+    /// Before 4.0: no `system_views`.
     Unsupported,
     Failed(String),
-    /// Named in a reached node's `system.peers_v2` and never asked: behind
-    /// `discovery = "contact-points"` every request lands on the tunnelled
-    /// node, and a virtual table answers only for the node it is read on.
+    /// Behind `discovery = "contact-points"` every request lands on the
+    /// tunnelled node, and a virtual table answers only for its own node.
     Unreached,
 }
 
-/// The metrics a node reported, each in its metric's [`Unit`]. A metric
-/// missing here is one the node's version does not expose.
+/// A missing metric is one the node's version lacks.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Readings(BTreeMap<Metric, f64>);
 
@@ -88,13 +79,12 @@ impl Readings {
     }
 }
 
-/// A node's own limits, from `system_views.settings`. `None` where the node
-/// leaves one unset or disabled.
+/// `None` where unset or disabled.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Thresholds {
     pub tombstone_warn: Option<f64>,
     pub tombstone_failure: Option<f64>,
-    /// In bytes.
+    /// Bytes.
     pub large_partition: Option<f64>,
 }
 
@@ -128,7 +118,7 @@ impl Category {
     }
 }
 
-/// Declaration order is the order the block lists them in.
+/// Declaration order is display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Metric {
     DiskUsed,
@@ -154,7 +144,6 @@ pub enum Metric {
     SnapshotSize,
 }
 
-/// What a metric's value counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unit {
     Bytes,
@@ -165,7 +154,6 @@ pub enum Unit {
     Age,
 }
 
-/// How a metric's node values become the one its own row carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Aggregate {
     Total,
@@ -292,8 +280,8 @@ impl Metric {
         }
     }
 
-    /// Partitions take the worst rather than the total: each node counts the
-    /// replicas it holds, so a sum counts every partition once per replica.
+    /// Partitions take the worst: each node counts its replicas, so a sum
+    /// overcounts.
     #[must_use]
     pub const fn aggregate(self) -> Aggregate {
         match self {
@@ -322,7 +310,6 @@ impl Metric {
     }
 }
 
-/// `value` in `unit`, as the block draws it.
 #[must_use]
 pub fn format(unit: Unit, value: f64) -> String {
     match unit {
@@ -370,11 +357,9 @@ fn age(age: Duration) -> String {
     }
 }
 
-/// One thing worth an operator's attention, on one node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Warning {
-    /// The metric it is about, so its rows can carry the mark too; `None` for
-    /// a node that answered nothing.
+    /// `None` for a node that answered nothing.
     pub metric: Option<Metric>,
     pub node: String,
     pub severity: Severity,
@@ -382,7 +367,6 @@ pub struct Warning {
 }
 
 impl Health {
-    /// Every warning, in node order and then metric order.
     #[must_use]
     pub fn warnings(&self) -> Vec<Warning> {
         let (answered, known) = self.coverage();
@@ -406,7 +390,6 @@ impl Health {
             .collect()
     }
 
-    /// How many nodes answered, of every node known to the cluster.
     #[must_use]
     pub fn coverage(&self) -> (usize, usize) {
         let answered = self
@@ -417,7 +400,6 @@ impl Health {
         (answered, self.nodes.len())
     }
 
-    /// The aggregate of `metric` over every node that reported it.
     #[must_use]
     pub fn aggregate(&self, metric: Metric) -> Option<f64> {
         metric
@@ -425,7 +407,7 @@ impl Health {
             .of(self.nodes.iter().filter_map(|node| node.reading(metric)))
     }
 
-    /// Whether any node failed to answer, which is what opens `Nodes`.
+    /// What opens `Nodes`.
     #[must_use]
     pub fn any_unanswered(&self) -> bool {
         self.nodes
@@ -547,7 +529,6 @@ impl NodeReport {
     }
 }
 
-/// A heading at the margin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Section {
     Warnings,
@@ -566,7 +547,6 @@ impl Section {
     }
 }
 
-/// A row that folds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Fold {
     Section(Section),
@@ -582,16 +562,13 @@ impl Fold {
     }
 }
 
-/// What a row of the tree is, and so where `h` takes the cursor from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {
     Heading(Section),
     Metric(Metric),
-    /// A row with nothing under it, and the row it hangs from.
     Leaf(Fold),
 }
 
-/// Where a row sits, which is what decides the limbs drawn before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Indent {
     Root,
@@ -609,22 +586,17 @@ impl Indent {
     }
 }
 
-/// One drawn row. The view lifts it as it is: the domain has already said
-/// what each cell holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub place: Place,
     pub indent: Indent,
-    /// `Some(open)` on a row that folds.
     pub fold: Option<bool>,
     pub label: String,
     pub value: String,
-    /// The aggregate a metric's row carries, or what a node is running.
     pub note: String,
     pub severity: Option<Severity>,
 }
 
-/// Whether the read has come back.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Report {
     Loading,
@@ -632,7 +604,6 @@ pub enum Report {
     Loaded(Health),
 }
 
-/// The open block: one table, one read, and the reader's place in the tree.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HealthPanel {
     table: TableRef,
@@ -643,8 +614,8 @@ pub struct HealthPanel {
 }
 
 impl HealthPanel {
-    /// Waiting on `request`, with the tree's default folds already chosen so
-    /// the first frame after the answer lands needs no decision.
+    /// Default folds are chosen now, so the first answered frame needs no
+    /// decision.
     #[must_use]
     pub fn new(table: TableRef, request: QueryId) -> Self {
         let open = std::iter::once(Section::Warnings)
@@ -698,7 +669,6 @@ impl HealthPanel {
         };
     }
 
-    /// The tree as it stands, empty until the read lands.
     #[must_use]
     pub fn rows(&self) -> Vec<Row> {
         match &self.report {
@@ -707,7 +677,6 @@ impl HealthPanel {
         }
     }
 
-    /// Moves onto `row`, answering whether the tree has one there.
     pub fn select(&mut self, row: usize) -> bool {
         let len = self.rows().len();
         if row >= len {
@@ -741,7 +710,6 @@ impl HealthPanel {
         self.cursor.to_end(self.rows().len());
     }
 
-    /// `⏎`: folds an open row and unfolds a folded one.
     pub fn toggle(&mut self) {
         if let Some(fold) = self.fold_here()
             && !self.open.remove(&fold)
@@ -750,8 +718,6 @@ impl HealthPanel {
         }
     }
 
-    /// `l`: unfolds a folded row, and steps onto the first row under an open
-    /// one.
     pub fn step_in(&mut self) {
         let Some(fold) = self.fold_here() else {
             return;
@@ -770,7 +736,6 @@ impl HealthPanel {
         }
     }
 
-    /// `h`: folds an open row, and steps out to the row above it otherwise.
     pub fn step_out(&mut self) {
         let rows = self.rows();
         let Some(row) = rows.get(self.cursor.index()) else {
@@ -858,7 +823,6 @@ fn tree(health: &Health, open: &BTreeSet<Fold>) -> Vec<Row> {
     rows
 }
 
-/// Pushes a section's heading, and answers whether it is open.
 fn heading(
     rows: &mut Vec<Row>,
     open: &BTreeSet<Fold>,

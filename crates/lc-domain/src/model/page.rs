@@ -1,8 +1,5 @@
-//! One page of a result set.
-//!
-//! Paging is incremental by construction: a [`Page`] carries the cursor needed
-//! to ask for the next one, and nothing here assumes the whole result set fits
-//! in memory (vision.md §5.1).
+//! One page of a result set, carrying the cursor for the next: nothing assumes
+//! the whole result fits in memory.
 
 use crate::model::value::CqlValue;
 
@@ -19,7 +16,7 @@ pub struct Row {
     pub values: Vec<CqlValue>,
 }
 
-/// The cluster's opaque cursor. Never interpreted, only handed back.
+/// Opaque: never interpreted, only handed back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PagingState(pub Vec<u8>);
 
