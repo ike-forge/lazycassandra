@@ -184,16 +184,16 @@ mod tests {
     fn a_wide_frame_shows_every_hint() {
         assert_eq!(
             drawn(Panel::Tables, 90),
-            " ⏎ open | H health | / search | v select"
+            " ⏎ open | H health | / search | v select | y copy"
         );
     }
 
     #[test]
     fn hints_are_dropped_whole_and_lowest_value_first() {
         // No geometry here fits a palette, so `?` never joins the bar.
-        assert_eq!(drawn(Panel::Tables, 36), " ⏎ open | / search | v select");
-        assert_eq!(drawn(Panel::Tables, 25), " ⏎ open | v select");
-        assert_eq!(drawn(Panel::Tables, 15), " v select");
+        assert_eq!(drawn(Panel::Tables, 36), " ⏎ open | v select | y copy");
+        assert_eq!(drawn(Panel::Tables, 25), " ⏎ open | y copy");
+        assert_eq!(drawn(Panel::Tables, 15), " y copy");
         assert_eq!(drawn(Panel::Tables, 6), "");
     }
 
@@ -229,18 +229,19 @@ mod tests {
 
         assert_eq!(
             drawn(90),
-            " ⏎ open | H health | / search | v select | ? commands"
+            " ⏎ open | H health | / search | v select | y copy | ? commands"
         );
         assert_eq!(
-            drawn(42),
-            " ⏎ open | / search | v select | ? commands",
+            drawn(51),
+            " ⏎ open | / search | v select | y copy | ? commands",
             "panel hints go first, down to the first"
         );
         assert_eq!(
-            drawn(31),
-            " ⏎ open | v select | ? commands",
+            drawn(40),
+            " ⏎ open | v select | y copy | ? commands",
             "the common tail goes from the left"
         );
+        assert_eq!(drawn(29), " ⏎ open | y copy | ? commands");
         assert_eq!(drawn(20), " ⏎ open | ? commands");
         assert_eq!(drawn(11), " ? commands");
     }
@@ -249,7 +250,7 @@ mod tests {
     fn the_widest_bar_still_fits_the_narrowest_legal_frame() {
         assert_eq!(
             drawn(Panel::Tables, 40),
-            " ⏎ open | H health | / search | v select"
+            " ⏎ open | / search | v select | y copy"
         );
     }
 

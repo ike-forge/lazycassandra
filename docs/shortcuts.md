@@ -1181,7 +1181,7 @@ a binding only this file knows about.
 
 **The panel bar reads specific to common.** The panel's own bindings come
 first; the keys that mean the same in every panel that has them close the bar,
-in the order `/`, `n`, `v`, the `esc` rung, `?`. `tab` and `q` are off it: the
+in the order `/`, `n`, `v`, `y`, the `esc` rung, `?`. `tab` and `q` are off it: the
 numbers in the titles already teach the panels, and `?` finds both. `?` is the
 last hint a narrowing frame drops, and is off the bar while a Cql buffer is
 open, where it is text. The overlays' bars still name `q`.

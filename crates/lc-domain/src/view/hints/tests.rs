@@ -57,10 +57,7 @@ fn the_bar_carries_the_focused_panels_bindings_and_the_common_ones() {
 
     assert_eq!(bar.panel[0].keys, "⏎");
     assert_eq!(bar.panel[0].action, "open");
-    assert_eq!(
-        bar.global.last().expect("v select is last").action,
-        "select"
-    );
+    assert_eq!(bar.global.last().expect("y copy is last").action, "copy");
 }
 
 #[test]

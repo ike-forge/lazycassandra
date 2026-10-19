@@ -64,7 +64,7 @@ fn the_narrowest_frame_still_draws_the_bar() {
 
     assert_eq!(
         row(&buffer, 11).trim_end(),
-        " ⏎ open | H health | / search | v select",
+        " ⏎ open | / search | v select | y copy",
         "the row the loader gave up goes back to the hints"
     );
 }

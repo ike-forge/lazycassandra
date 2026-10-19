@@ -151,7 +151,12 @@ fn panel_bar(state: &State) -> HintBar {
     let target = Searched::of(state.focus()).filter(|target| state.search(*target).is_some());
     let next_match =
         target.map(|target| rendered_live(&NEXT_MATCH, next_match_is_live(state, target)));
-    let mut common: Vec<Hint> = [search, next_match, select].into_iter().flatten().collect();
+    // `y` and `v` are bound in the same panels.
+    let copy = select.as_ref().map(|_| rendered(&COPY));
+    let mut common: Vec<Hint> = [search, next_match, select, copy]
+        .into_iter()
+        .flatten()
+        .collect();
     if state.focus() == Panel::Contents && crate::update::has_uncommitted(state) {
         panel.push(rendered(&COMMIT_HINT));
     }
