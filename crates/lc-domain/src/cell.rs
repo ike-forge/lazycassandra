@@ -2,6 +2,7 @@
 //! agrees and it tests without a cluster.
 
 use crate::model::CqlValue;
+use unicode_width::UnicodeWidthChar;
 
 const HEX: [char; 16] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
@@ -29,11 +30,25 @@ pub fn text(value: &CqlValue) -> String {
 /// [`text`] made safe to draw. A raw ESC, `\n` or `\t` reaches the terminal as
 /// a command or a line break and shifts every cell after it; yank and export
 /// keep [`text`].
+///
+/// Past one combining mark per base, terminals give each further mark a cell
+/// of its own while ratatui budgets the cluster one, so the row outgrows its
+/// width and the next row shifts.
 #[must_use]
 pub fn display(value: &CqlValue) -> String {
+    let mut marks = 0;
+
     text(value)
         .chars()
         .filter(|character| !joins(*character))
+        .filter(|character| {
+            marks = if character.width() == Some(0) {
+                marks + 1
+            } else {
+                0
+            };
+            marks <= 1
+        })
         .map(visible)
         .collect()
 }
@@ -133,6 +148,13 @@ mod tests {
             CqlValue::Text("👩\u{200d}👩\u{200d}👧 🏴\u{e0067}\u{e0062}\u{e007f}".to_owned());
 
         assert_eq!(display(&sequences), "👩👩👧 🏴");
+    }
+
+    #[test]
+    fn display_keeps_one_combining_mark_per_base() {
+        let stacked = CqlValue::Text("e\u{301} a\u{301}\u{302}\u{303}\u{304}".to_owned());
+
+        assert_eq!(display(&stacked), "e\u{301} a\u{301}");
     }
 
     #[test]
