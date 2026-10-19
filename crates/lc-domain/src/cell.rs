@@ -31,7 +31,22 @@ pub fn text(value: &CqlValue) -> String {
 /// keep [`text`].
 #[must_use]
 pub fn display(value: &CqlValue) -> String {
-    text(value).chars().map(visible).collect()
+    text(value)
+        .chars()
+        .filter(|character| !joins(*character))
+        .map(visible)
+        .collect()
+}
+
+/// ZWJ and tag characters build one-cell emoji (family, subdivision flags)
+/// that terminals without sequence support draw as every part, so the line
+/// outgrows the width ratatui budgeted and wraps. Dropped, the parts draw
+/// at their own two columns everywhere.
+fn joins(character: char) -> bool {
+    matches!(
+        character,
+        '\u{200d}' | '\u{e0001}' | '\u{e0020}'..='\u{e007f}'
+    )
 }
 
 /// C0 controls take their Unicode control picture, which is one column wide.
@@ -113,8 +128,16 @@ mod tests {
     }
 
     #[test]
+    fn display_splits_sequences_a_terminal_may_draw_part_by_part() {
+        let sequences =
+            CqlValue::Text("👩\u{200d}👩\u{200d}👧 🏴\u{e0067}\u{e0062}\u{e007f}".to_owned());
+
+        assert_eq!(display(&sequences), "👩👩👧 🏴");
+    }
+
+    #[test]
     fn display_leaves_ordinary_text_alone() {
-        let text_value = CqlValue::Text("全角 é 👩‍👩‍👧".to_owned());
+        let text_value = CqlValue::Text("全角 é 👩 e\u{301}".to_owned());
 
         assert_eq!(display(&text_value), text(&text_value));
     }
