@@ -32,6 +32,10 @@ posture = "writable"
 # publishes `datacenter1` (docker/compose.yaml).
 datacenter = "datacenter1"
 
+# Past the 5 s default, so `edge_cases.busy_wait` can run long enough to cancel.
+[driver]
+request_timeout_ms = 120000
+
 # The TLS + password fixture (`mise run db:tls:up`, port 9142). Run from the
 # repository root: the paths are relative to it.
 [[connections]]

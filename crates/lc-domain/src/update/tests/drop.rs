@@ -631,3 +631,18 @@ fn a_completed_delete_re_reads_the_grid_rather_than_the_schema() {
         Some((Severity::Info, "deleted 1 row from shop.orders"))
     );
 }
+
+#[test]
+fn ctrl_c_on_a_running_drop_frees_the_job_and_warns_it_may_still_land() {
+    let mut state = on_table();
+    press(&mut state, Key::Char('d'));
+    press(&mut state, Key::Char('y'));
+
+    ctrl(&mut state, Key::Char('c'));
+
+    assert!(state.dropping.is_none());
+    let Some(Overlay::Message(message)) = &state.overlay else {
+        panic!("the drop's outcome is unknown, which is worth reading");
+    };
+    assert!(message.message.contains("may still have been applied"));
+}

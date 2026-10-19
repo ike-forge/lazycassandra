@@ -28,6 +28,7 @@ text anywhere: the ctrl layer is dispatched above the panel that takes text
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
 | `ctrl-o` | Open the connection picker: every `[[connections]]` a config defines. |
+| `ctrl-c` | Cancel every query in flight: the read, a page, a drop or a commit. The task is aborted and the panel says `cancelled`; a late answer is dropped. The cluster is not told, so a write may still land, and the drop or commit says so. |
 | `/`¹ | Search the focused panel. |
 | `n`¹ | Move to the next match of the focused panel's search, wrapping. |
 | `N`¹ | Move to the previous match of the focused panel's search, wrapping. |
@@ -369,6 +370,7 @@ read.
 | `dropped …`, `deleted …`, `committed N cells to …` | The cluster accepted the statement. |
 | `edit staged, close the inspector and ctrl-s to commit` | An inspector edit is accepted and leaves a mark. |
 | `stopped fetching pages` | `Esc` ends a running `P`. |
+| `cancelled`, `nothing is running` | `ctrl-c` aborted what was in flight, or found nothing. |
 | `history not saved, see the logs` | The history file could not be written. Also a trail line. |
 | `nothing to commit`, `nothing to export`, `nothing in the history yet`, `history is disabled` | A bound chord with nothing to act on. |
 | `a drop is already running`, `a commit is already running`, `an export is already running` | The chord's job is still outstanding. |

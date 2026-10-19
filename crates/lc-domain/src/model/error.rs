@@ -23,6 +23,13 @@ pub enum DbError {
     #[error("statement is not permitted on a read-only connection")]
     ReadOnly,
 
+    #[error("cancelled")]
+    Cancelled,
+
+    /// The cluster is not told, so the write may still land.
+    #[error("cancelled before the cluster answered; it may still have been applied")]
+    CancelledWrite,
+
     #[error("{0}")]
     Other(String),
 }

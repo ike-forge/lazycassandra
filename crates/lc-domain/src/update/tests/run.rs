@@ -464,3 +464,71 @@ fn an_open_palette_swallows_ctrl_r() {
     );
     assert_eq!(state.contents.outstanding(), None);
 }
+
+#[test]
+fn ctrl_c_cancels_a_running_read_and_says_so_in_the_panel() {
+    let mut state = read_shop_orders();
+    press(&mut state, Key::Enter);
+    let read = state.contents.outstanding().expect("the read is in flight");
+
+    let effects = ctrl(&mut state, Key::Char('c'));
+
+    assert_eq!(effects, vec![Effect::Cancel(read)]);
+    assert!(state.in_flight.is_empty());
+    assert!(matches!(
+        state.contents.state(),
+        ContentsState::Failed { error, .. } if error.contains("cancelled")
+    ));
+    assert_eq!(
+        state.log.entries().last().map(Entry::outcome),
+        Some(&Outcome::Cancelled)
+    );
+}
+
+#[test]
+fn a_late_page_for_a_cancelled_read_is_dropped() {
+    let mut state = read_shop_orders();
+    press(&mut state, Key::Enter);
+    let read = state.contents.outstanding().expect("the read is in flight");
+    ctrl(&mut state, Key::Char('c'));
+
+    update(
+        &mut state,
+        Msg::PageReady {
+            query: read,
+            page: Box::new(page_of(3)),
+            took: Duration::ZERO,
+        },
+    );
+
+    assert!(matches!(
+        state.contents.state(),
+        ContentsState::Failed { .. }
+    ));
+}
+
+#[test]
+fn ctrl_c_with_nothing_running_effects_nothing() {
+    let mut state = read_shop_orders();
+
+    let effects = ctrl(&mut state, Key::Char('c'));
+
+    assert!(effects.is_empty());
+    assert!(state.toast.is_some(), "the press is acknowledged");
+}
+
+#[test]
+fn ctrl_c_cancels_a_page_and_keeps_the_rows_loaded() {
+    let mut state = contents_showing_more(3);
+    press(&mut state, Key::Char('p'));
+    let page = state.contents.outstanding().expect("a page in flight");
+
+    let effects = ctrl(&mut state, Key::Char('c'));
+
+    assert_eq!(effects, vec![Effect::Cancel(page)]);
+    assert_eq!(state.contents.row_count(), 3);
+    assert!(
+        state.contents.can_fetch(),
+        "the page can be asked for again"
+    );
+}

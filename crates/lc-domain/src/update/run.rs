@@ -84,6 +84,29 @@ pub(super) fn query_failed(state: &mut State, query: QueryId, error: &DbError) -
     effects
 }
 
+/// A cancelled page keeps the rows already loaded.
+pub(super) fn cancel(state: &mut State) -> Vec<Effect> {
+    let running: Vec<QueryId> = state.in_flight.keys().copied().collect();
+    if running.is_empty() {
+        state.notify(Severity::Info, "nothing is running");
+        return Vec::new();
+    }
+
+    let mut effects = Vec::new();
+    for query in running {
+        state.in_flight.remove(&query);
+        state.log.complete(Trace::Query(query), Outcome::Cancelled);
+        state.contents.failed(query, &DbError::Cancelled);
+        effects.extend(finish_drop(state, query, Some(&DbError::CancelledWrite)));
+        effects.extend(finish_commit(state, query, Some(&DbError::CancelledWrite)));
+        effects.push(Effect::Cancel(query));
+    }
+    state.notify(Severity::Info, "cancelled");
+    state.mark_dirty();
+
+    effects
+}
+
 pub(super) fn activate(state: &mut State) -> Vec<Effect> {
     if state.tables.selects_many() {
         return Vec::new();
