@@ -283,15 +283,13 @@ fn grid_cell(
     search: Option<&Search>,
     dirty: bool,
 ) -> GridCell {
-    let text = cell::text(value);
-
     GridCell {
-        matched: search.is_some_and(|search| search.matches(&text)),
+        matched: search.is_some_and(|search| search.matches(&cell::text(value))),
         token: match value {
             CqlValue::Null => Some(Token::Faint),
             _ => key_token(column),
         },
-        text,
+        text: cell::display(value),
         dirty,
     }
 }

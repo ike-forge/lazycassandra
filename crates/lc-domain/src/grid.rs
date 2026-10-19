@@ -33,7 +33,7 @@ pub fn natural_widths(page: &Page) -> Vec<u16> {
                 .rows
                 .iter()
                 .filter_map(|row| row.values.get(index))
-                .map(|value| cell::text(value).width())
+                .map(|value| cell::display(value).width())
                 .chain(std::iter::once(name.width() + usize::from(MARKS)))
                 .max()
                 .unwrap_or(1);
