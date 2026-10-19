@@ -1,7 +1,8 @@
 //! Performs the effects `update` returned, as tokio tasks whose results
 //! re-enter through the keystroke channel.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use lc_domain::config::{ConnectionConfig, ConnectionName, DriverConfig};
 use lc_domain::contents::TableRef;
@@ -9,13 +10,33 @@ use lc_domain::model::{ConnId, DbError, Page, QueryId};
 use lc_domain::ports::{Cluster, ConfigSink, Store, Writer};
 use lc_domain::{Effect, Msg};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::AbortHandle;
 
 use crate::input::Incoming;
+
+/// The queries whose tasks can still be aborted.
+#[derive(Clone, Default)]
+pub(crate) struct Running(Arc<Mutex<HashMap<QueryId, AbortHandle>>>);
+
+impl Running {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<QueryId, AbortHandle>> {
+        // Poisoned only by a panic between an insert and a remove; the map is
+        // still sound.
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn abort(&self, query: QueryId) {
+        if let Some(handle) = self.lock().remove(&query) {
+            handle.abort();
+        }
+    }
+}
 
 /// `OpenEditor` is run by the main loop. `Quit` needs nothing: `update` set
 /// `should_quit`.
 pub(crate) fn run(
     tx: &UnboundedSender<Incoming>,
+    running: &Running,
     cluster: &Arc<dyn Cluster>,
     writer: &Arc<dyn Writer>,
     sink: &Arc<dyn ConfigSink>,
@@ -33,11 +54,9 @@ pub(crate) fn run(
 
         Effect::Execute { conn, query, stmt } => {
             let (cluster, conn, stmt) = (Arc::clone(cluster), *conn, stmt.as_ref().clone());
-            answer(
-                tx,
-                *query,
-                async move { cluster.execute(conn, &stmt).await },
-            );
+            answer(tx, running, *query, async move {
+                cluster.execute(conn, &stmt).await
+            });
         }
 
         Effect::ExecutePaged {
@@ -54,7 +73,7 @@ pub(crate) fn run(
                 *page_size,
                 cursor.clone(),
             );
-            answer(tx, *query, async move {
+            answer(tx, running, *query, async move {
                 cluster
                     .execute_paged(conn, &stmt, page_size, cursor.as_ref())
                     .await
@@ -118,8 +137,9 @@ pub(crate) fn run(
             table,
         } => load_health(tx, cluster, *conn, *request, table.clone()),
 
-        Effect::Cancel(_) | Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {
-        }
+        Effect::Cancel(query) => running.abort(*query),
+
+        Effect::RecordHistory(_) | Effect::OpenEditor { .. } | Effect::Quit => {}
     }
 }
 
@@ -190,13 +210,18 @@ fn load_health(
     });
 }
 
+/// Aborting drops the call, so nothing is sent: `update` already forgot the id.
 fn answer(
     tx: &UnboundedSender<Incoming>,
+    running: &Running,
     query: QueryId,
     call: impl Future<Output = Result<Page, DbError>> + Send + 'static,
 ) {
-    let tx = tx.clone();
-    tokio::spawn(async move {
+    let (tx, registry) = (tx.clone(), running.clone());
+    // Held across the spawn so a task that finishes at once removes an entry
+    // that is already there.
+    let mut handles = running.lock();
+    let task = tokio::spawn(async move {
         let started = std::time::Instant::now();
         let result = call.await;
         let took = started.elapsed();
@@ -208,9 +233,11 @@ fn answer(
             },
             Err(error) => Msg::Failed { query, error, took },
         };
+        registry.lock().remove(&query);
         // A closed channel means the main loop has ended.
         let _sent = tx.send(msg.into());
     });
+    handles.insert(query, task.abort_handle());
 }
 
 /// Silent on success. Its own `async fn` so both outcomes test without a racing
@@ -270,6 +297,26 @@ mod tests {
 
     fn theme() -> ThemeChoice {
         ThemeChoice::Ours(Ours::QuillDark)
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_query_never_answers() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let running = Running::default();
+        let query = QueryId::next();
+        let (started, hold) = tokio::sync::oneshot::channel::<()>();
+        answer(&tx, &running, query, async move {
+            let _held = started;
+            std::future::pending().await
+        });
+
+        running.abort(query);
+
+        // The aborted future drops its sender, which is the only observable
+        // sign it was torn down.
+        assert!(hold.await.is_err());
+        assert!(rx.try_recv().is_err());
+        assert!(running.lock().is_empty());
     }
 
     #[tokio::test]

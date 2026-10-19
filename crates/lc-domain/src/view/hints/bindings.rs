@@ -119,6 +119,8 @@ pub(super) const COMPLETE: Binding = Binding::new(&[TAB, ENTER], "complete");
 pub(super) const CLEAR: Binding = Binding::new(&[ESC], "clear");
 /// [`CLEAR`] wins where both apply: one key, one hint.
 pub(super) const LEAVE: Binding = Binding::new(&[ESC], "leave");
+/// Only while something is in flight.
+pub(super) const ABORT: Binding = Binding::new(&[ctrl('c')], "cancel");
 pub(super) const STOP: Binding = Binding::new(&[ESC], "stop");
 /// Not [`LEAVE`]: closing the buffer keeps focus.
 pub(super) const DONE: Binding = Binding::new(&[ESC], "done");

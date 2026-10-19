@@ -65,7 +65,8 @@ use navigation::{Step, focus_by_number, go_left, go_right, show_tab, walk_landin
 use pointer::handle_pointer;
 pub use run::submit;
 use run::{
-    activate, every_page, next_page, page_ready, query_failed, read, run, submit_into_contents,
+    activate, cancel, every_page, next_page, page_ready, query_failed, read, run,
+    submit_into_contents,
 };
 use search::restore_origin;
 use themes::{restore_theme, theme_save_failed};

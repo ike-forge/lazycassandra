@@ -49,6 +49,16 @@ lazycassandra --connection local-tls
 
 `tests/tls.rs` runs against the same node.
 
+To exercise cancellation, run this from Queries (`4`, `ctrl-r`) and press
+`ctrl-c` while it spins:
+
+```sql
+SELECT edge_cases.busy_wait(k, 30000) FROM edge_cases.t LIMIT 1;
+```
+
+`busy_wait` needs the UDF and timeout settings in `docker/compose.yaml`; an
+existing fixture picks them up with `mise run db:up`.
+
 If port 9042 is occupied, set `LC_CASSANDRA_PORT` for the fixture tasks and
 update the config's `hosts` entry to match. That variable configures the
 fixture and integration tests, not the application.

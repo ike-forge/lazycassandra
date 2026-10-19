@@ -7,7 +7,7 @@ mod bindings;
 mod tests;
 
 use bindings::{
-    CLEAR, CLEAR_FILTER, CLOSE, COMMIT, COMMIT_HINT, COMMIT_ROW, COMPLETE, CONNECTIONS,
+    ABORT, CLEAR, CLEAR_FILTER, CLOSE, COMMIT, COMMIT_HINT, COMMIT_ROW, COMPLETE, CONNECTIONS,
     CONNECTIONS_GLOBAL, COPY, COPY_LINE, DELETE, DELETE_TYPED, DELETE_YES_NO, DIAGNOSTICS_GLOBAL,
     DISCARD, DONE, DROP, DROP_TYPED, DROP_YES_NO, EDIT, ENTER, EVERY_PAGE, EXPORT,
     EXPORT_OVERWRITE, EXPORT_ROWS, FIELD, FILTER, FORMAT, HEALTH, HEALTH_GLOBAL, HEALTH_OF,
@@ -166,6 +166,9 @@ fn panel_bar(state: &State) -> HintBar {
         && state.geometry.history_rows() > 0
     {
         panel.push(rendered(&HISTORY_HINT));
+    }
+    if !state.in_flight.is_empty() {
+        panel.push(rendered(&ABORT));
     }
     if state.focus() == Panel::Contents && state.contents.fetching_all() {
         common.push(rendered(&STOP));

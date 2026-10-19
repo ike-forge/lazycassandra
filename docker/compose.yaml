@@ -6,12 +6,22 @@ services:
     container_name: lc-cassandra
     # `materialized_views_enabled` ships as false. The `shop` keyspace has one,
     # so the flag is flipped before the real entrypoint reads cassandra.yaml.
+    # `edge_cases.busy_wait` needs UDFs on and a server that outlasts it: the
+    # UDF fail timeout (1.5 s) and the read timeouts (5-10 s) all sit below a
+    # minute.
     command:
       - bash
       - -c
       - |
-        sed -i 's/^materialized_views_enabled: false/materialized_views_enabled: true/' \
+        sed -i \
+          -e 's/^materialized_views_enabled: false/materialized_views_enabled: true/' \
+          -e 's/^user_defined_functions_enabled: false/user_defined_functions_enabled: true/' \
+          -e 's/^read_request_timeout: .*/read_request_timeout: 120000ms/' \
+          -e 's/^range_request_timeout: .*/range_request_timeout: 120000ms/' \
+          -e 's/^request_timeout: .*/request_timeout: 120000ms/' \
           /etc/cassandra/cassandra.yaml
+        printf 'user_defined_functions_fail_timeout: 120000ms\nuser_defined_functions_warn_timeout: 100000ms\n' \
+          >> /etc/cassandra/cassandra.yaml
         exec docker-entrypoint.sh cassandra -f
     environment:
       CASSANDRA_CLUSTER_NAME: lazycassandra-fixture

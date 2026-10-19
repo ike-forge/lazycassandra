@@ -138,6 +138,7 @@ async fn run(
     options: &cli::Options,
 ) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
+    let running = effects::Running::default();
     let suspension = input::Suspension::default();
     input::spawn_reader(tx.clone(), suspension.clone());
     spawn_ticker(tx.clone());
@@ -173,7 +174,7 @@ async fn run(
     let mut measured: Option<Geometry> = None;
 
     for effect in &startup {
-        effects::run(&tx, &cluster, &writer, &sink, &store, effect);
+        effects::run(&tx, &running, &cluster, &writer, &sink, &store, effect);
     }
 
     let rendered = draw(&mut terminal, &state, &themes)?;
@@ -204,7 +205,7 @@ async fn run(
                         continue;
                     }
 
-                    effects::run(&tx, &cluster, &writer, &sink, &store, &effect);
+                    effects::run(&tx, &running, &cluster, &writer, &sink, &store, &effect);
                 }
             }
 
