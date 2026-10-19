@@ -26,6 +26,31 @@ pub fn text(value: &CqlValue) -> String {
     }
 }
 
+/// [`text`] made safe to draw. A raw ESC, `\n` or `\t` reaches the terminal as
+/// a command or a line break and shifts every cell after it; yank and export
+/// keep [`text`].
+#[must_use]
+pub fn display(value: &CqlValue) -> String {
+    text(value).chars().map(visible).collect()
+}
+
+/// C0 controls take their Unicode control picture, which is one column wide.
+/// The rest (C1, bidi overrides and isolates) reorder or move the cursor with
+/// nothing to show for it.
+fn visible(character: char) -> char {
+    match character {
+        '\0'..='\u{1f}' => char::from_u32(0x2400 + u32::from(character)).unwrap_or('\u{fffd}'),
+        '\u{7f}' => '\u{2421}',
+        '\u{80}'..='\u{9f}'
+        | '\u{61c}'
+        | '\u{200e}'
+        | '\u{200f}'
+        | '\u{202a}'..='\u{202e}'
+        | '\u{2066}'..='\u{2069}' => '\u{fffd}',
+        other => other,
+    }
+}
+
 /// The form `cqlsh` prints and CQL accepts back.
 fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(2 + bytes.len() * 2);
@@ -71,6 +96,27 @@ mod tests {
             text(&CqlValue::Timestamp(1_700_000_000_000)),
             "1700000000000"
         );
+    }
+
+    #[test]
+    fn display_replaces_what_would_move_the_terminal() {
+        let hostile = CqlValue::Text("a\x1b[2Jb\nc\td\u{7f}e\u{202e}f\u{85}".to_owned());
+
+        assert_eq!(
+            display(&hostile),
+            "a\u{241b}[2Jb\u{240a}c\u{2409}d\u{2421}e\u{fffd}f\u{fffd}"
+        );
+        assert_eq!(
+            text(&hostile).chars().count(),
+            display(&hostile).chars().count()
+        );
+    }
+
+    #[test]
+    fn display_leaves_ordinary_text_alone() {
+        let text_value = CqlValue::Text("全角 é 👩‍👩‍👧".to_owned());
+
+        assert_eq!(display(&text_value), text(&text_value));
     }
 
     #[test]
