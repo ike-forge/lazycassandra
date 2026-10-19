@@ -231,9 +231,10 @@ fn a_failed_page_keeps_the_grid_and_says_so_in_the_trail() {
 #[test]
 fn the_bar_names_paging_only_while_there_is_more() {
     let named = |state: &State| {
-        crate::view::hints::bar(state)
-            .panel
+        let bar = crate::view::hints::bar(state);
+        bar.panel
             .into_iter()
+            .chain(bar.global)
             .map(|hint| (format!("{} {}", hint.keys, hint.action), hint.liveness))
             .collect::<Vec<_>>()
     };

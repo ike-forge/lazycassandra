@@ -20,23 +20,19 @@ const fn ctrl(character: char) -> Stroke {
 
 pub(super) const PALETTE: Stroke = key('?');
 
-/// Repeated in every bar: a user who never presses `tab` cannot find the other
-/// panels. The bar drops from the left as the frame narrows, so order is
-/// survival order; [`QUIT`] goes last.
-pub(crate) const GLOBAL: &[Binding] = &[
-    Binding::new(&[TAB], "panel"),
-    Binding::new(&[PALETTE], "commands"),
-];
+/// Closes the common tail: the one hint that finds every other binding. Panel
+/// numbers in the titles already teach `1`-`5`, so `tab` is off the bar.
+pub(crate) const GLOBAL: &[Binding] = &[Binding::new(&[PALETTE], "commands")];
 
-/// Not in [`GLOBAL`]: in a panel that takes text `q` types itself.
+/// Only the overlay bars name it; the palette lists it for the panels.
 pub(crate) const QUIT: Binding = Binding::new(&[key('q')], "quit");
 
 pub(super) const CLOSE: Binding = Binding::new(&[ESC], "close");
 const CANCEL: Binding = Binding::new(&[ESC], "cancel");
 const NO: Binding = Binding::new(&[key('n'), ESC], "cancel");
 /// Not global: `/` is text in Queries.
-const SEARCH: Binding = Binding::new(&[key('/')], "search");
-const SELECT: Binding = Binding::new(&[key('v')], "select");
+pub(super) const SEARCH: Binding = Binding::new(&[key('/')], "search");
+pub(super) const SELECT: Binding = Binding::new(&[key('v')], "select");
 
 /// `esc` is named only here among the globals: with the palette open it always
 /// closes it. `⏎ run` first, so it is dropped first.
@@ -117,8 +113,7 @@ pub(super) const EXPORT_OVERWRITE: &[Binding] = &[
 /// Empty panel group: the focused panel responds to nothing under a prompt.
 pub(super) const SEARCH_GLOBAL: &[Binding] = &[Binding::new(&[ENTER], "apply"), CANCEL];
 
-/// Only while a popup is up; the `tab panel` and `⏎ newline` hints drop for
-/// those frames.
+/// Only while a popup is up; the `⏎ newline` hint drops for those frames.
 pub(super) const COMPLETE: Binding = Binding::new(&[TAB, ENTER], "complete");
 
 pub(super) const CLEAR: Binding = Binding::new(&[ESC], "clear");

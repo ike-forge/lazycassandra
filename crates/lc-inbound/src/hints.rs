@@ -10,9 +10,9 @@ const INDENT: &str = " ";
 /// Narrow: the bar is the densest row on screen.
 const SEPARATOR: &str = " | ";
 
-/// The export count goes first, then panel hints right to left, then `tab
-/// panel`; `q quit` goes last, since a user who reads one hint needs the way
-/// out.
+/// The export count goes first, then panel hints right to left, then the
+/// common tail left to right; `? commands` goes last, since a user who reads
+/// one hint needs the way to the rest.
 pub(crate) fn line(bar: &HintBar, width: u16, theme: Theme) -> Line<'static> {
     let panel: Vec<Segment> = bar.panel.iter().map(Segment::new).collect();
     let global: Vec<Segment> = bar.global.iter().map(Segment::new).collect();
@@ -184,16 +184,16 @@ mod tests {
     fn a_wide_frame_shows_every_hint() {
         assert_eq!(
             drawn(Panel::Tables, 90),
-            " ⏎ open | / search | H health | v select | tab panel | q quit"
+            " ⏎ open | H health | / search | v select"
         );
     }
 
     #[test]
     fn hints_are_dropped_whole_and_lowest_value_first() {
         // No geometry here fits a palette, so `?` never joins the bar.
-        assert_eq!(drawn(Panel::Tables, 36), " ⏎ open | tab panel | q quit");
-        assert_eq!(drawn(Panel::Tables, 25), " ⏎ open | q quit");
-        assert_eq!(drawn(Panel::Tables, 15), " q quit");
+        assert_eq!(drawn(Panel::Tables, 36), " ⏎ open | / search | v select");
+        assert_eq!(drawn(Panel::Tables, 25), " ⏎ open | v select");
+        assert_eq!(drawn(Panel::Tables, 15), " v select");
         assert_eq!(drawn(Panel::Tables, 6), "");
     }
 
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_after_tab_panel() {
+    fn a_frame_with_room_for_the_palette_shows_its_hint_and_drops_it_last() {
         let mut state = State::default();
         state.geometry = fitting_geometry();
         let bar = view_model(&state).hints;
@@ -229,44 +229,40 @@ mod tests {
 
         assert_eq!(
             drawn(90),
-            " ⏎ open | / search | H health | v select | tab panel | ? commands | q quit"
+            " ⏎ open | H health | / search | v select | ? commands"
         );
         assert_eq!(
-            drawn(46),
-            " ⏎ open | tab panel | ? commands | q quit",
-            "tab panel is still here alongside ? commands"
+            drawn(42),
+            " ⏎ open | / search | v select | ? commands",
+            "panel hints go first, down to the first"
         );
         assert_eq!(
-            drawn(37),
-            " ⏎ open | ? commands | q quit",
-            "tab panel goes first as the frame narrows"
+            drawn(31),
+            " ⏎ open | v select | ? commands",
+            "the common tail goes from the left"
         );
-        assert_eq!(
-            drawn(26),
-            " ⏎ open | q quit",
-            "? commands goes next; q quit is still the last one out"
-        );
+        assert_eq!(drawn(20), " ⏎ open | ? commands");
+        assert_eq!(drawn(11), " ? commands");
     }
 
     #[test]
     fn the_widest_bar_still_fits_the_narrowest_legal_frame() {
-        // Two panel hints and the global tail a 40-column frame holds.
         assert_eq!(
             drawn(Panel::Tables, 40),
-            " ⏎ open | / search | tab panel | q quit"
+            " ⏎ open | H health | / search | v select"
         );
     }
 
     #[test]
-    fn a_closed_buffer_names_the_way_in_and_keeps_quit() {
+    fn a_closed_buffer_names_the_way_in_and_out() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " ⏎ edit | ctrl-r run | ctrl-e $EDITOR | esc leave | tab panel | q quit"
+            " ⏎ edit | ctrl-r run | ctrl-e $EDITOR | esc leave"
         );
     }
 
     #[test]
-    fn the_editor_names_its_own_keys_and_drops_the_quit_it_no_longer_has() {
+    fn the_editor_names_its_own_keys_and_nothing_it_types_over() {
         let mut state = State::default();
         state.focus_on(Panel::Queries);
         state.queries.start_editing();
@@ -277,7 +273,7 @@ mod tests {
                 .iter()
                 .map(|span| span.content.as_ref())
                 .collect::<String>(),
-            " ctrl-r run | ctrl-e $EDITOR | ctrl-f format | ⏎ newline | esc done | tab panel"
+            " ctrl-r run | ctrl-e $EDITOR | ctrl-f format | ⏎ newline | esc done"
         );
     }
 

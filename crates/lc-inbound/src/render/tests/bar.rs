@@ -59,12 +59,12 @@ fn an_overlay_sift_draws_its_prompt_on_the_hint_bar() {
 }
 
 #[test]
-fn a_narrow_frame_drops_hints_rather_than_the_bar() {
+fn the_narrowest_frame_still_draws_the_bar() {
     let buffer = draw(40, 12);
 
     assert_eq!(
         row(&buffer, 11).trim_end(),
-        " ⏎ open | / search | tab panel | q quit",
+        " ⏎ open | H health | / search | v select",
         "the row the loader gave up goes back to the hints"
     );
 }

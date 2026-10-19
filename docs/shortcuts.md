@@ -944,8 +944,8 @@ is edited with the keys below, and `ctrl-e` is the way to any other editor.
 is drawn. All five are exceptions to §2's *the same key means the same thing
 in every panel*, taken for the reason `Home` and `End` already diverge here: it
 is what the key does in every editor the audience has met. None is invisible —
-the popup is on screen with a row selected, and the bar swaps `tab panel` and
-`⏎ newline` for `tab ⏎ complete` in exactly the frames the swap is true.
+the popup is on screen with a row selected, and the bar swaps `⏎ newline` for
+`tab ⏎ complete` in exactly the frames the swap is true.
 `Esc`'s second press still closes the buffer, so its hint stays true either way.
 The arrows need no swap of their own: a list with a row selected is what a
 reader already presses them in, and *down one row* is what the palette calls
@@ -1160,8 +1160,8 @@ popup down, and in every other frame all three mean what they mean everywhere.
 `↑`/`↓` join them there — they walk the popup while one is up and move the
 cursor otherwise — and are the mildest of the five: what they move is still the
 row list on screen.
-The condition is on screen — the popup itself — and the bar drops `tab panel`
-and `⏎ newline` for exactly those frames rather than name something the next
+The condition is on screen — the popup itself — and the bar drops `⏎ newline`
+for exactly those frames rather than name something the next
 keystroke will not do.
 
 **A binding must be visible.** vision.md §4, principle 1: discoverability is
@@ -1178,6 +1178,13 @@ prompt.
 It stays out of Tables with neither an overlay up nor a search applied, where
 it still does nothing at all, and naming it there would be a lie. A binding that is in none of a title, the bar, or the palette is
 a binding only this file knows about.
+
+**The panel bar reads specific to common.** The panel's own bindings come
+first; the keys that mean the same in every panel that has them close the bar,
+in the order `/`, `n`, `v`, the `esc` rung, `?`. `tab` and `q` are off it: the
+numbers in the titles already teach the panels, and `?` finds both. `?` is the
+last hint a narrowing frame drops, and is off the bar while a Cql buffer is
+open, where it is text. The overlays' bars still name `q`.
 
 **Motion is assumed, not taught.** `j`/`k`, `h`/`l`, `Home`/`End`, the arrows
 and `PageUp`/`PageDown` are off every panel's bar: a user of a terminal list

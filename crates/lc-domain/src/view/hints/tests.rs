@@ -49,7 +49,7 @@ fn a_key_with_no_printable_form_is_named_rather_than_drawn() {
 }
 
 #[test]
-fn the_bar_carries_the_focused_panels_bindings_and_the_global_ones() {
+fn the_bar_carries_the_focused_panels_bindings_and_the_common_ones() {
     let mut state = State::default();
     state.focus_on(Panel::Tables);
 
@@ -57,19 +57,19 @@ fn the_bar_carries_the_focused_panels_bindings_and_the_global_ones() {
 
     assert_eq!(bar.panel[0].keys, "⏎");
     assert_eq!(bar.panel[0].action, "open");
-    assert_eq!(bar.global.last().expect("q quit is last").action, "quit");
+    assert_eq!(
+        bar.global.last().expect("v select is last").action,
+        "select"
+    );
 }
 
 #[test]
-fn no_panel_contributes_an_empty_group_the_reader_has_to_interpret() {
+fn every_panel_draws_a_bar() {
     for panel in Panel::ALL {
         let mut state = fits();
         state.focus_on(panel);
 
-        assert!(
-            !bar(&state).panel.is_empty(),
-            "{panel:?} would draw a group with nothing in it"
-        );
+        assert!(!bar(&state).global.is_empty(), "{panel:?} draws no hints");
     }
 }
 
@@ -87,19 +87,19 @@ fn the_logs_tabs_bar_advertises_a_list_not_an_editor() {
         bar.panel
     );
     assert!(
-        bar.panel.iter().any(|hint| hint.action == "leave"),
+        bar.global.iter().any(|hint| hint.action == "leave"),
         "esc leaves the panel here as it does on Cql: {:?}",
-        bar.panel
+        bar.global
     );
     assert!(
-        bar.panel.iter().any(|hint| hint.action == "search"),
+        bar.global.iter().any(|hint| hint.action == "search"),
         "/ search is genuinely bound here: {:?}",
-        bar.panel
+        bar.global
     );
     assert!(
-        bar.panel.iter().any(|hint| hint.action == "select"),
+        bar.global.iter().any(|hint| hint.action == "select"),
         "v select is genuinely bound here: {:?}",
-        bar.panel
+        bar.global
     );
 }
 
@@ -117,26 +117,19 @@ fn a_panel_that_takes_text_does_not_claim_q_quits() {
         "q types a q in the editor, and a bar that lies is worse than no bar"
     );
     assert!(
-        bar.global.iter().any(|hint| hint.action == "panel"),
-        "tab is still the way out"
+        bar.global.iter().all(|hint| hint.action != "commands"),
+        "? types a ? in the editor"
     );
+    assert!(bar.global.iter().any(|hint| hint.action == "done"));
 }
 
 #[test]
-fn the_bar_names_the_palette_between_panel_and_quit() {
-    let global = bar(&fits()).global;
-    let position = |action: &str| {
-        global
-            .iter()
-            .position(|hint| hint.action == action)
-            .unwrap_or_else(|| panic!("{action} is on the bar"))
-    };
-
-    assert!(
-        position("commands") > position("panel"),
-        "? outlives tab panel"
+fn the_bar_ends_on_the_palette() {
+    assert_eq!(
+        bar(&fits()).global.last().map(|hint| hint.action),
+        Some("commands"),
+        "? outlives every other hint"
     );
-    assert!(position("quit") > position("commands"), "q quit outlives ?");
 }
 
 #[test]
@@ -361,7 +354,7 @@ fn the_bar_names_search_in_every_panel_that_can_hold_a_search() {
         state.focus_on(panel);
 
         assert!(
-            bar(&state).panel.iter().any(|hint| hint.keys == "/"),
+            bar(&state).global.iter().any(|hint| hint.keys == "/"),
             "{panel:?} responds to / and must say so"
         );
     }
@@ -372,20 +365,20 @@ fn the_bar_does_not_name_search_in_queries() {
     let mut state = fits();
     state.focus_on(Panel::Queries);
 
-    assert!(bar(&state).panel.iter().all(|hint| hint.keys != "/"));
+    assert!(bar(&state).global.iter().all(|hint| hint.keys != "/"));
 }
 
 #[test]
 fn the_bar_names_esc_clear_only_where_a_search_is_applied() {
     let mut state = fits();
     state.focus_on(Panel::Tables);
-    assert!(bar(&state).panel.iter().all(|hint| hint.action != "clear"));
+    assert!(bar(&state).global.iter().all(|hint| hint.action != "clear"));
 
     state.apply_search(Searched::Tables, Search::new("o"));
 
     assert!(
         bar(&state)
-            .panel
+            .global
             .iter()
             .any(|hint| hint.keys == "esc" && hint.action == "clear"),
         "in this frame pressing esc unconditionally does something"
@@ -398,7 +391,7 @@ fn the_bar_names_n_only_where_a_search_is_applied() {
     state.focus_on(Panel::Tables);
     assert!(
         bar(&state)
-            .panel
+            .global
             .iter()
             .all(|hint| hint.action != "next match")
     );
@@ -407,14 +400,14 @@ fn the_bar_names_n_only_where_a_search_is_applied() {
 
     assert!(
         bar(&state)
-            .panel
+            .global
             .iter()
             .any(|hint| hint.keys == "n" && hint.action == "next match")
     );
 }
 
 fn next_match_hint(bar: &HintBar) -> &Hint {
-    bar.panel
+    bar.global
         .iter()
         .find(|hint| hint.action == "next match")
         .expect("a search is applied, so the hint is named")
@@ -514,7 +507,7 @@ fn the_queries_bar_names_the_editor_binding_after_run() {
 }
 
 #[test]
-fn a_closed_buffer_names_the_way_in_first_and_still_offers_quit() {
+fn a_closed_buffer_names_the_way_in_first_and_leaves_with_esc() {
     let mut state = fits();
     state.focus_on(Panel::Queries);
 
@@ -526,8 +519,7 @@ fn a_closed_buffer_names_the_way_in_first_and_still_offers_quit() {
             .map(|hint| (hint.keys.as_str(), hint.action)),
         Some(("⏎", "edit"))
     );
-    assert!(bar.global.iter().any(|hint| hint.action == "quit"));
-    assert!(bar.panel.iter().any(|hint| hint.action == "leave"));
+    assert!(bar.global.iter().any(|hint| hint.action == "leave"));
 }
 
 #[test]
@@ -536,7 +528,7 @@ fn an_open_buffer_names_esc_as_done_rather_than_leave() {
     state.focus_on(Panel::Queries);
     state.queries.start_editing();
 
-    let panel = bar(&state).panel;
+    let panel = bar(&state).global;
 
     assert!(
         panel
@@ -651,7 +643,7 @@ fn the_bar_names_esc_while_a_range_stands() {
     let bar = bar(&state);
 
     assert!(
-        bar.panel.iter().any(|hint| hint.keys == "esc"),
+        bar.global.iter().any(|hint| hint.keys == "esc"),
         "under a live range, pressing esc unconditionally does something"
     );
 }
@@ -661,7 +653,7 @@ fn the_bar_leaves_esc_off_a_panel_with_neither_a_range_nor_a_search() {
     let mut state = fits();
     state.focus_on(Panel::Tables);
 
-    assert!(!bar(&state).panel.iter().any(|hint| hint.keys == "esc"));
+    assert!(!bar(&state).global.iter().any(|hint| hint.keys == "esc"));
 }
 
 fn hint(state: &State, action: &str) -> Liveness {

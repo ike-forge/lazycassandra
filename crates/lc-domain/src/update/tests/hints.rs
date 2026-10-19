@@ -59,12 +59,8 @@ fn every_global_hint_does_something_in_every_panel() {
             .map(|hint| hint.action)
             .collect();
 
-        // `q` and `?` are conditional on the bar, not the binding set.
-        let claimed = crate::view::hints::GLOBAL
-            .iter()
-            .chain((!state.takes_text()).then_some(&crate::view::hints::QUIT));
-
-        for binding in claimed {
+        // `?` is conditional on the bar, not the binding set.
+        for binding in crate::view::hints::GLOBAL {
             if !shown.contains(&binding.action) {
                 continue;
             }

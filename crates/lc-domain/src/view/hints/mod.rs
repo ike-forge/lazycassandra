@@ -12,10 +12,10 @@ use bindings::{
     DISCARD, DONE, DROP, DROP_TYPED, DROP_YES_NO, EDIT, ENTER, EVERY_PAGE, EXPORT,
     EXPORT_OVERWRITE, EXPORT_ROWS, FIELD, FILTER, FORMAT, HEALTH, HEALTH_GLOBAL, HEALTH_OF,
     HISTORY, HISTORY_GLOBAL, HISTORY_HINT, INSERT, INSERT_ROW, INSPECT_GLOBAL, INSPECT_ROW, LEAVE,
-    MOVE, NEXT_MATCH, NEXT_OPTION, NEXT_PAGE, PALETTE, PALETTE_GLOBAL, RUN, SEARCH_GLOBAL, SORT,
-    STOP, TAB, TOGGLE, UNSET,
+    MOVE, NEXT_MATCH, NEXT_OPTION, NEXT_PAGE, PALETTE_GLOBAL, RUN, SEARCH, SEARCH_GLOBAL, SELECT,
+    SORT, STOP, TOGGLE, UNSET,
 };
-pub(crate) use bindings::{GLOBAL, QUIT, THEMES, THEMES_GLOBAL};
+pub(crate) use bindings::{GLOBAL, THEMES, THEMES_GLOBAL};
 
 use crate::drop::DropPrompt;
 use crate::export::{ExportForm, Stop};
@@ -123,43 +123,35 @@ fn overlay_bar(state: &State) -> Option<HintBar> {
     })
 }
 
+/// Panel-specific hints first, then the common tail: `/`, `n`, `v`, the `esc`
+/// rung, `?`. The tail is what survives a narrow frame, `?` longest.
 fn panel_bar(state: &State) -> HintBar {
-    // `?` is dropped where no palette fits, matched by key so a reorder of
-    // `GLOBAL` cannot drop the wrong one. `tab` accepts a completion while a
-    // popup is up.
     let completing = state.queries.completion().is_some() && state.takes_text();
-    let fits = state.geometry.command_rows() > 0;
-    let mut global: Vec<Hint> = GLOBAL
-        .iter()
-        .filter(|binding| fits || !binding.keys.contains(&PALETTE))
-        .filter(|binding| !completing || !binding.keys.contains(&TAB))
-        .map(rendered)
-        .collect();
-    if !state.takes_text() {
-        global.push(rendered(&QUIT));
-    }
-
-    // `⏎ newline` drops while `⏎` accepts a completion.
-    let mut panel: Vec<Hint> = state
+    let mut panel = Vec::new();
+    let (mut search, mut select) = (None, None);
+    for binding in state
         .hints()
         .iter()
         .filter(|binding| !completing || !binding.keys.contains(&ENTER))
         .filter(|binding| !refused(state, binding))
         .filter(|binding| **binding != INSPECT_ROW || crate::update::inspection(state).is_some())
         .filter(|binding| !pages(binding) || state.contents.has_more())
-        .map(|binding| rendered_live(binding, live(state, binding)))
-        .collect();
+    {
+        let hint = rendered_live(binding, live(state, binding));
+        match *binding {
+            SEARCH => search = Some(hint),
+            SELECT => select = Some(hint),
+            _ => panel.push(hint),
+        }
+    }
     if completing {
         panel.insert(0, rendered(&COMPLETE));
     }
 
     let target = Searched::of(state.focus()).filter(|target| state.search(*target).is_some());
-    if let Some(target) = target {
-        panel.push(rendered_live(
-            &NEXT_MATCH,
-            next_match_is_live(state, target),
-        ));
-    }
+    let next_match =
+        target.map(|target| rendered_live(&NEXT_MATCH, next_match_is_live(state, target)));
+    let mut common: Vec<Hint> = [search, next_match, select].into_iter().flatten().collect();
     if state.focus() == Panel::Contents && crate::update::has_uncommitted(state) {
         panel.push(rendered(&COMMIT_HINT));
     }
@@ -171,18 +163,23 @@ fn panel_bar(state: &State) -> HintBar {
         panel.push(rendered(&HISTORY_HINT));
     }
     if state.focus() == Panel::Contents && state.contents.fetching_all() {
-        panel.push(rendered(&STOP));
+        common.push(rendered(&STOP));
     } else if state.takes_text() {
-        panel.push(rendered(&DONE));
+        common.push(rendered(&DONE));
     } else if target.is_some() || selected(state) {
-        panel.push(rendered(&CLEAR));
+        common.push(rendered(&CLEAR));
     } else if state.focus() != Panel::default() {
-        panel.push(rendered(&LEAVE));
+        common.push(rendered(&LEAVE));
+    }
+
+    // `?` is text in an open buffer; dropped where no palette fits.
+    if !state.takes_text() && state.geometry.command_rows() > 0 {
+        common.extend(GLOBAL.iter().map(rendered));
     }
 
     HintBar {
         panel,
-        global,
+        global: common,
         export: None,
     }
 }
