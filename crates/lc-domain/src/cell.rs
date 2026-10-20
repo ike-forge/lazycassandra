@@ -2,6 +2,8 @@
 //! agrees and it tests without a cluster.
 
 use crate::model::CqlValue;
+use unicode_normalization::UnicodeNormalization;
+use unicode_width::UnicodeWidthChar;
 
 const HEX: [char; 16] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
@@ -29,9 +31,19 @@ pub fn text(value: &CqlValue) -> String {
 /// [`text`] made safe to draw. A raw ESC, `\n` or `\t` reaches the terminal as
 /// a command or a line break and shifts every cell after it; yank and export
 /// keep [`text`].
+///
+/// Nothing zero-width is drawn either. The `ConPTY` that Alacritty ships on
+/// Windows (`OpenConsole` 1.24) repaints a line by writing it whole and letting
+/// the terminal wrap, and it measures any combining mark, ZWSP or ZWJ sequence
+/// differently from the terminal, so the wrap lands off and every line below
+/// shifts. NFC first, so a decomposed accent survives as one character.
 #[must_use]
 pub fn display(value: &CqlValue) -> String {
-    text(value).chars().map(visible).collect()
+    text(value)
+        .nfc()
+        .map(visible)
+        .filter(|character| character.width() != Some(0))
+        .collect()
 }
 
 /// C0 controls take their Unicode control picture, which is one column wide.
@@ -113,8 +125,37 @@ mod tests {
     }
 
     #[test]
+    fn display_splits_sequences_a_terminal_may_draw_part_by_part() {
+        let sequences =
+            CqlValue::Text("👩\u{200d}👩\u{200d}👧 🏴\u{e0067}\u{e0062}\u{e007f}".to_owned());
+
+        assert_eq!(display(&sequences), "👩👩👧 🏴");
+    }
+
+    #[test]
+    fn display_composes_a_decomposed_accent() {
+        let decomposed = CqlValue::Text("e\u{301}".to_owned());
+
+        assert_eq!(display(&decomposed), "\u{e9}");
+    }
+
+    #[test]
+    fn display_drops_marks_with_no_composed_form() {
+        let stacked = CqlValue::Text("x\u{301}\u{302} \u{e01}\u{e31}".to_owned());
+
+        assert_eq!(display(&stacked), "x \u{e01}");
+    }
+
+    #[test]
+    fn display_drops_zero_width_spaces() {
+        let spaced = CqlValue::Text("a\u{200b}b\u{feff}c".to_owned());
+
+        assert_eq!(display(&spaced), "abc");
+    }
+
+    #[test]
     fn display_leaves_ordinary_text_alone() {
-        let text_value = CqlValue::Text("全角 é 👩‍👩‍👧".to_owned());
+        let text_value = CqlValue::Text("全角 \u{e9} 👩 \u{5d1}".to_owned());
 
         assert_eq!(display(&text_value), text(&text_value));
     }

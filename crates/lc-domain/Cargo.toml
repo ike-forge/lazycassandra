@@ -17,6 +17,8 @@ thiserror.workspace = true
 # architecture.md §2's rule holds. The grid's column widths are computed here
 # rather than in the renderer because the offsets they bound live here.
 unicode-width.workspace = true
+# Tables again, no I/O.
+unicode-normalization.workspace = true
 
 [lints]
 workspace = true
