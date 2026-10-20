@@ -52,13 +52,18 @@ fn a_cell_inspector_edits_the_column_the_cursor_was_on() {
 }
 
 #[test]
-fn e_on_a_row_skips_the_key_columns_to_the_first_editable_field() {
+fn e_on_a_row_opens_the_inspector_on_the_first_editable_field_without_editing() {
     let mut state = editable_grid(1);
 
     press(&mut state, Key::Char('e'));
 
-    assert!(field_text(&state).is_some());
+    assert!(matches!(state.overlay, Some(Overlay::Inspect(_))));
+    assert_eq!(field_text(&state), None);
     assert_eq!(refusal(&state), None);
+
+    press(&mut state, Key::Char('e'));
+
+    assert!(field_text(&state).is_some());
 }
 
 #[test]

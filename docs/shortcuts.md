@@ -727,7 +727,7 @@ below.
 | Key | Action |
 |---|---|
 | `Enter` | Open the inspector over the row under the cursor in row mode, or the cell under it in cell mode. Inert in column mode, with nothing loaded, on an empty grid, while a range is held, and on a frame with no room to draw the block. See the inspector's own subsection below. |
-| `e` | `Enter`, then `e` in the inspector, in one press: opens the inspector and an edit field over the value, refused the way the inspector's `e` is. In row mode the field opens on the row's first editable column, not its first. Opens nothing where `Enter` opens nothing. |
+| `e` | In cell mode, `Enter`, then `e` in the inspector, in one press: opens the inspector and an edit field over the value, refused the way the inspector's `e` is. In row mode no field opens: the inspector's cursor rests on the row's first editable column, not its first, and `e` there picks the value. Opens nothing where `Enter` opens nothing. |
 | `m` | Cycle the selection mode: row → column → cell, wrapping. |
 | `p` | Fetch the next page of the result and append it. Inert once the result has ended and while a page is in flight. |
 | `P` | Fetch pages until the result ends or a stop is reached. Inert where `p` is. |
