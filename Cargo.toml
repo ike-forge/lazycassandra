@@ -48,6 +48,9 @@ thiserror = "2.0.19"
 # own column widths, and `chars().count()` is the wrong answer for the text a
 # Cassandra cluster will certainly hold.
 unicode-width = "0.2.2"
+# NFC turns a decomposed accent into the one character a terminal measures the
+# same way everywhere. See `lc_domain::cell::display`.
+unicode-normalization = "0.1.26"
 # `process` and `io-util` are the clipboard helper: a child that owns an X or
 # Wayland selection outlives the yank that spawned it, so it is reaped by the
 # runtime rather than waited for.

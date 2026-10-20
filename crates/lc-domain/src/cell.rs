@@ -2,6 +2,7 @@
 //! agrees and it tests without a cluster.
 
 use crate::model::CqlValue;
+use unicode_normalization::UnicodeNormalization;
 use unicode_width::UnicodeWidthChar;
 
 const HEX: [char; 16] = [
@@ -31,37 +32,18 @@ pub fn text(value: &CqlValue) -> String {
 /// a command or a line break and shifts every cell after it; yank and export
 /// keep [`text`].
 ///
-/// Past one combining mark per base, terminals give each further mark a cell
-/// of its own while ratatui budgets the cluster one, so the row outgrows its
-/// width and the next row shifts.
+/// Nothing zero-width is drawn either. The `ConPTY` that Alacritty ships on
+/// Windows (`OpenConsole` 1.24) repaints a line by writing it whole and letting
+/// the terminal wrap, and it measures any combining mark, ZWSP or ZWJ sequence
+/// differently from the terminal, so the wrap lands off and every line below
+/// shifts. NFC first, so a decomposed accent survives as one character.
 #[must_use]
 pub fn display(value: &CqlValue) -> String {
-    let mut marks = 0;
-
     text(value)
-        .chars()
-        .filter(|character| !joins(*character))
-        .filter(|character| {
-            marks = if character.width() == Some(0) {
-                marks + 1
-            } else {
-                0
-            };
-            marks <= 1
-        })
+        .nfc()
         .map(visible)
+        .filter(|character| character.width() != Some(0))
         .collect()
-}
-
-/// ZWJ and tag characters build one-cell emoji (family, subdivision flags)
-/// that terminals without sequence support draw as every part, so the line
-/// outgrows the width ratatui budgeted and wraps. Dropped, the parts draw
-/// at their own two columns everywhere.
-fn joins(character: char) -> bool {
-    matches!(
-        character,
-        '\u{200d}' | '\u{e0001}' | '\u{e0020}'..='\u{e007f}'
-    )
 }
 
 /// C0 controls take their Unicode control picture, which is one column wide.
@@ -151,15 +133,29 @@ mod tests {
     }
 
     #[test]
-    fn display_keeps_one_combining_mark_per_base() {
-        let stacked = CqlValue::Text("e\u{301} a\u{301}\u{302}\u{303}\u{304}".to_owned());
+    fn display_composes_a_decomposed_accent() {
+        let decomposed = CqlValue::Text("e\u{301}".to_owned());
 
-        assert_eq!(display(&stacked), "e\u{301} a\u{301}");
+        assert_eq!(display(&decomposed), "\u{e9}");
+    }
+
+    #[test]
+    fn display_drops_marks_with_no_composed_form() {
+        let stacked = CqlValue::Text("x\u{301}\u{302} \u{e01}\u{e31}".to_owned());
+
+        assert_eq!(display(&stacked), "x \u{e01}");
+    }
+
+    #[test]
+    fn display_drops_zero_width_spaces() {
+        let spaced = CqlValue::Text("a\u{200b}b\u{feff}c".to_owned());
+
+        assert_eq!(display(&spaced), "abc");
     }
 
     #[test]
     fn display_leaves_ordinary_text_alone() {
-        let text_value = CqlValue::Text("全角 é 👩 e\u{301}".to_owned());
+        let text_value = CqlValue::Text("全角 \u{e9} 👩 \u{5d1}".to_owned());
 
         assert_eq!(display(&text_value), text(&text_value));
     }
