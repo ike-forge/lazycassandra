@@ -16,7 +16,7 @@ use crate::theme::BuiltIn;
 use super::commit::{commit_extent, commit_inspected_row, commit_key, discard_key, open_commit};
 use super::connections::{connections_key, offer_connections, open_connections};
 use super::drop::{drop_key, open_drop};
-use super::export::{cancel_pending_export, export_key, open_export};
+use super::export::{cancel_pending_export, export_chord, export_key, open_export};
 use super::health::{health_key, open_health};
 use super::history::{history_key, open_history};
 use super::insert::open_insert;
@@ -456,6 +456,9 @@ pub(super) fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
 
     if key == Key::Char('s') && matches!(state.overlay, Some(Overlay::Inspect(_))) {
         return commit_inspected_row(state);
+    }
+    if let Some(effects) = export_chord(state, key) {
+        return effects;
     }
 
     if matches!(

@@ -419,21 +419,25 @@ does nothing here.
 | `Tab` / `Shift-Tab` | Move to the next / previous of the form's stops — path, format, scope, the first-N count, Export to file, Copy to clipboard — wrapping; the count is reachable only under the first-N scope. The form opens on the path, and the scope stop is skipped where both scopes would write the same file (the form says so in a sentence instead of offering a radio). |
 | `Space` | Activates the focused stop: on a radio group, advances to the next option, wrapping (scope: visible rows, whole table, first N rows); on a button, runs it. |
 | `Enter` | Runs the focused button, and only from a button. On the Scope or Format radio it does nothing — a radio group is not a button, and a keystroke landing there must not write a file. |
+| `ctrl-s` / `ctrl-y` | Export to file / copy to clipboard, from any stop — the path's included, which takes every printable key as text, so the buttons' keys sit behind ctrl. |
 | `j` / `k`, `Down` / `Up` | Move within a radio group — the second way to reach what `Space` also reaches there. |
 | any printable key (digits only on the count), `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Text, and only on the path stop — the panel-that-takes-text rule, applied inside an overlay (§2). `Space` types a space there rather than activating anything, and `Enter` does nothing there either. |
 | `Esc` | Closes the form and writes nothing. |
 
 The bar names what the stop under `tab` answers to: `tab next option` always,
 `space toggle` on a radio group, nothing more on the path stop, where `space` is text, and
-`space/⏎ export` and `space/⏎ copy` on the two buttons, which sit side by side
-on the form's last row, each a quiet band filled solid while `tab` is on it. `esc close` follows. The overwrite
-confirmation's bar is `space/⏎ overwrite` and `esc back`.
+`space/⏎ export` and `space/⏎ copy` on the two buttons. `esc close` follows.
+The buttons are drawn as every confirmation's are, right-aligned on the last
+row with their key highlighted — `ctrl-s Export to file`, `ctrl-y Copy to
+clipboard` — and the one under `tab` is filled solid. The overwrite
+confirmation's are `⏎ Yes, overwrite` and `esc Back`, and its bar is
+`space/⏎ overwrite` and `esc back`.
 
-`ctrl-d`/`ctrl-u` are the only ctrl chords answered while the form is up —
-dispatched above the overlay guard the way they are everywhere (§1's motion
-table) — and they page nothing here: the form has no list long enough to
-page. Every other ctrl chord is refused while the form is up, the same
-refusal the palette and the picker already get.
+`ctrl-s` and `ctrl-y` are answered while the form is up and its overwrite
+question is not; `ctrl-d`/`ctrl-u` are too, dispatched above the overlay guard
+the way they are everywhere (§1's motion table), and they page nothing here:
+the form has no list long enough to page. Every other ctrl chord is refused
+while the form is up, the same refusal the palette and the picker already get.
 
 Copy to clipboard takes the format and scope and ignores the path. It holds the
 whole result in memory, so it is capped at `export.clipboard_mb` (10 MB by
@@ -1095,7 +1099,7 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has ten members now. `ctrl-r` runs the Queries
+for whatever is focused. The layer has eleven members now. `ctrl-r` runs the Queries
 panel's banded statement, `ctrl-e` opens the buffer in an external editor, `ctrl-f` lays it
 out, and `ctrl-n`/`ctrl-p` walk the completion popup: the panel takes
 text, so every printable key there is a character and none of those actions has
@@ -1103,7 +1107,10 @@ an unmodified key available.
 `ctrl-e` carries a second meaning too, over Table contents: it opens the
 export form, gated on focus exactly as `ctrl-r`'s one meaning already is —
 a chord is never a synonym for the plain key, and nothing in the rule says
-it may carry only one meaning of its own. `ctrl-t` opens
+it may carry only one meaning of its own. `ctrl-s` carries one more, inside
+the export form, and `ctrl-y` means something only there: the form's path
+takes text, so its two buttons have no plain key available (§1's export-form
+subsection). `ctrl-t` opens
 the theme picker, for the reason §1's picker subsection gives. `ctrl-g` opens
 the query history, for the reason §1's history subsection gives. `ctrl-f`,
 `ctrl-n` and `ctrl-p` are Queries members exactly as `ctrl-r` is, gated on that
@@ -1383,7 +1390,8 @@ or reads, the grid inspects, and the editor splits a line (§1).
 
 Ctrl taken: `ctrl-r`, `ctrl-g`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
-`ctrl-s` in Table contents and its inspector, `ctrl-t` and `ctrl-o` everywhere, and
+`ctrl-s` in Table contents, its inspector and the export form, `ctrl-y` in the
+export form alone, `ctrl-t` and `ctrl-o` everywhere, and
 `ctrl-d`/`ctrl-u` everywhere
 `PageDown`/`PageUp` do anything. The rest of the layer is free — including
 `r`, `t`, `o` and `u` as plain keys, which nothing binds. `s` is bound plain,
@@ -1420,7 +1428,7 @@ which changes the rules documented here.
 | `A` `B` `C` `D` `U` | Reserved. A shifted letter is a binding of its own, not a synonym. `T` opened the theme picker until the picker moved to `ctrl-t`, and is free again. |
 | `t` focus | Was Tables before either scheme (§1). Free for the same reason the letters above are. |
 | `Space` on a tree row | Was `Enter`'s synonym there. One key, one action (§2) — true still, even though `Space` is no longer unbound everywhere: it activates a stop inside the export form (§1), and a tree row is not one. |
-| `ctrl-e` / `ctrl-y` | Moved the DDL viewport a line without its cursor. Reading a panel from its heading down needs a design, not two chords. The clipboard binding did not claim `ctrl-y`: `y` was free as a plain key, and a yank in Queries needs a selection first. |
+| `ctrl-e` / `ctrl-y` over DDL | Moved the DDL viewport a line without its cursor. Reading a panel from its heading down needs a design, not two chords. The clipboard binding did not claim `ctrl-y`: `y` was free as a plain key, and a yank in Queries needs a selection first. `ctrl-y` has since been claimed inside the export form alone, where the path field leaves `y` no plain meaning. |
 | `r` refresh | The reload path exists now — a successful drop re-issues `Effect::LoadSchema` (§1's drop subsection) — but it has exactly that one caller. A refresh key needs a rule for what a racing DDL change costs a panel mid-read; that remains open in TODO.md. |
 | `Home`/`End` over columns | Both reach the ends of the document, which in a grid is the row list. A second axis for one panel would be a third exception to a two-exception rule. |
 | Horizontal wheel | Dropped at the edge, and this slice did not pick it up. A notch moves the row viewport; columns are reached with the keys §1 names. |

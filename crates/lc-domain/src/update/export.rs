@@ -265,6 +265,21 @@ pub(super) fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
     }
 }
 
+/// `None` leaves the chord to the ctrl layer, which refuses it under the form:
+/// another chord, or the overwrite question is up.
+pub(super) fn export_chord(state: &mut State, key: Key) -> Option<Vec<Effect>> {
+    let Some(Overlay::Export(form)) = &state.overlay else {
+        return None;
+    };
+    if form.confirm().is_some() {
+        return None;
+    }
+    let button = Button::of_chord(key)?;
+    state.dirty = true;
+
+    Some(start_export(state, button))
+}
+
 /// Dropped for a job no longer tracked.
 pub(super) fn export_progress(state: &mut State, job: JobId, rows: usize) -> Vec<Effect> {
     if let Some(running) = &mut state.export {

@@ -12,7 +12,8 @@ use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 use unicode_width::UnicodeWidthChar as _;
 
-use crate::hit::{ButtonAt, FieldAt, Modal, Target, TextAt};
+use crate::drop::{self, keys};
+use crate::hit::{FieldAt, Modal, Target, TextAt};
 use crate::theme::Theme;
 
 const WIDTH: u16 = 84;
@@ -80,7 +81,7 @@ pub(crate) fn render(
     theme: Theme,
 ) -> Option<Modal> {
     if view.confirm == Some(Confirm::Overwrite) {
-        return confirmation(frame, view, theme);
+        return confirmation(frame, view, pressed, theme);
     }
 
     let area = form_area(frame.area())?;
@@ -155,8 +156,14 @@ pub(crate) fn render(
         ),
     );
     let row = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
-    let (line, at, buttons) = button_row(view.stop, pressed, row, theme);
-    frame.render_widget(Paragraph::new(line), at);
+    let buttons = keys(
+        &[Button::File, Button::Clipboard]
+            .map(|which| drop::Button::export(which, view.stop == Stop::Button(which))),
+        pressed,
+        theme,
+    );
+    frame.render_widget(Paragraph::new(buttons.line()), row);
+    let buttons = buttons.at(row);
 
     if view.stop == Stop::Path {
         set_caret(frame, inner, PATH_ROW, label_width, &visible, caret);
@@ -324,61 +331,6 @@ fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
     (visible, cursor - first)
 }
 
-const BUTTON_GAP: &str = "  ";
-
-/// Centred as one group, measured from the spans it draws. Placed here rather
-/// than by `Paragraph::centered`, which rounds an odd width the other way.
-fn button_row(
-    stop: Stop,
-    pressed: Option<Press>,
-    row: Rect,
-    theme: Theme,
-) -> (TextLine<'static>, Rect, Vec<ButtonAt>) {
-    let drawn: Vec<(Button, TextLine<'static>)> = [Button::File, Button::Clipboard]
-        .into_iter()
-        .map(|which| {
-            let lit = stop == Stop::Button(which) || pressed == Some(Press::Export(which));
-            (which, button(which.label(), lit, theme))
-        })
-        .collect();
-    let gap = u16::try_from(BUTTON_GAP.len()).unwrap_or(0);
-    let width = |line: &TextLine| u16::try_from(line.width()).unwrap_or(0);
-    let total = drawn.iter().map(|(_, line)| width(line)).sum::<u16>() + gap;
-
-    let at =
-        Rect::new(row.x + row.width.saturating_sub(total) / 2, row.y, total, 1).intersection(row);
-    let mut x = at.x;
-    let mut spans = Vec::new();
-    let mut buttons = Vec::new();
-    for (index, (which, line)) in drawn.into_iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw(BUTTON_GAP));
-            x += gap;
-        }
-        buttons.push(ButtonAt {
-            area: Rect::new(x, row.y, width(&line), 1).intersection(row),
-            press: Press::Export(which),
-        });
-        x += width(&line);
-        spans.extend(line.spans);
-    }
-
-    (TextLine::from(spans), at, buttons)
-}
-
-/// Focus fills it solid.
-fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
-    let style = if focused {
-        theme
-            .style(Token::HintAction)
-            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
-    } else {
-        theme.style(Token::Ranged)
-    };
-
-    TextLine::from(Span::styled(format!("  {label}  "), style))
-}
-
 /// Converted through `Line::width()`, so wide characters count right. Clamped
 /// to the inner rect.
 fn set_caret(frame: &mut Frame, inner: Rect, row: u16, offset: u16, visible: &str, caret: usize) {
@@ -395,7 +347,12 @@ fn confirm_width(path: &str, frame_width: u16) -> u16 {
     needed.max(CONFIRM_WIDTH).min(frame_width)
 }
 
-fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) -> Option<Modal> {
+fn confirmation(
+    frame: &mut Frame,
+    view: &ExportView,
+    pressed: Option<Press>,
+    theme: Theme,
+) -> Option<Modal> {
     let width = confirm_width(&view.path, frame.area().width);
     let area = centred(frame.area(), width, CONFIRM_HEIGHT)?;
 
@@ -408,29 +365,26 @@ fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) -> Option<Mo
     frame.render_widget(Clear, area);
     frame.buffer_mut().set_style(area, theme.ground());
     frame.render_widget(block, area);
-    let overwrite = button("Yes, overwrite", true, theme);
-    let buttons = vec![ButtonAt {
-        area: Rect::new(
-            inner.x,
-            inner.y + 3,
-            u16::try_from(overwrite.width())
-                .unwrap_or(0)
-                .min(inner.width),
-            1,
-        ),
-        press: Press::Key(Key::Enter),
-    }];
+    let buttons = keys(
+        &[
+            drop::Button::new(Key::Enter, "Yes, overwrite", true),
+            drop::Button::new(Key::Escape, "Back", true),
+        ],
+        pressed,
+        theme,
+    );
     frame.render_widget(
         Paragraph::new(vec![
             TextLine::from(view.path.as_str()),
             TextLine::from("already exists."),
             TextLine::default(),
-            overwrite,
+            buttons.line(),
         ]),
         inner,
     );
+    let row = Rect::new(inner.x, inner.y + 3, inner.width, 1);
 
-    Some(Modal::new(area, buttons))
+    Some(Modal::new(area, buttons.at(row)))
 }
 
 #[cfg(test)]
@@ -575,60 +529,62 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_export_button_is_a_filled_block_and_names_no_key() {
-        let line = super::button("Export", true, Theme::default());
-
-        assert_eq!(line.spans.len(), 1);
-        assert_eq!(line.spans[0].content.as_ref(), "  Export  ");
-    }
+    const BUTTONS: &str = " ctrl-s Export to file    ctrl-y Copy to clipboard  │";
 
     #[test]
-    fn the_export_button_fills_solid_only_under_tab() {
-        use ratatui::style::Modifier;
-
-        let theme = Theme::default();
-
-        assert_eq!(
-            super::button("Export", true, theme).spans[0].style,
-            theme
-                .style(lc_domain::style::Token::HintAction)
-                .add_modifier(Modifier::REVERSED | Modifier::BOLD)
-        );
-        assert_eq!(
-            super::button("Export", false, theme).spans[0].style,
-            theme.style(lc_domain::style::Token::Ranged)
-        );
-    }
-
-    #[test]
-    fn both_buttons_sit_side_by_side_on_the_form_s_last_row() {
+    fn the_buttons_name_their_chords_right_aligned_on_the_form_s_last_row() {
         let buffer = drawn(80, 24, form(Fetched::Some(200)));
         let area = super::form_area(ratatui::layout::Rect::new(0, 0, 80, 24))
             .expect("the form fits an 80x24 frame");
-        let last_inner_row = area.y + super::HEIGHT - 2;
 
-        assert!(row(&buffer, last_inner_row).contains("  Export to file      Copy to clipboard  "));
+        assert!(row(&buffer, area.y + super::HEIGHT - 2).ends_with(BUTTONS));
     }
 
     #[test]
     fn both_buttons_fit_the_narrowest_form() {
-        let drawn = text(&drawn(super::MIN_WIDTH, 24, form(Fetched::Some(200))));
+        let buffer = drawn(super::MIN_WIDTH, 24, form(Fetched::Some(200)));
+        let area =
+            super::form_area(ratatui::layout::Rect::new(0, 0, super::MIN_WIDTH, 24)).expect("fits");
 
-        assert!(drawn.contains("  Export to file      Copy to clipboard  "));
+        assert!(row(&buffer, area.y + super::HEIGHT - 2).ends_with(BUTTONS));
     }
 
     #[test]
-    fn the_buttons_are_centred_in_the_form_as_a_pair() {
-        let buffer = drawn(100, 24, form(Fetched::Some(200)));
-        let area = super::form_area(ratatui::layout::Rect::new(0, 0, 100, 24)).expect("fits");
-        let line = row(&buffer, area.y + super::HEIGHT - 2);
-        let inner = &line
-            [line.find('│').expect("border") + '│'.len_utf8()..line.rfind('│').expect("border")];
-        let left = inner.len() - inner.trim_start().len();
-        let right = inner.len() - inner.trim_end().len();
+    fn the_button_under_tab_fills_solid_and_the_other_does_not() {
+        use ratatui::style::Modifier;
 
-        assert!(left.abs_diff(right) <= 1, "{left} left, {right} right");
+        let mut on_copy = form(Fetched::Some(200));
+        on_copy.back_tab();
+        let buffer = drawn(80, 24, on_copy);
+        let solid = |needle| {
+            let (x, y) = find(&buffer, needle);
+            buffer[(x, y)].modifier.contains(Modifier::REVERSED)
+        };
+
+        assert!(solid("ctrl-y"));
+        assert!(!solid("ctrl-s"));
+    }
+
+    #[test]
+    fn the_confirmation_names_its_keys_as_the_other_questions_do() {
+        let mut form = form(Fetched::Some(200));
+        form.ask(lc_domain::export::Pending::Overwrite(
+            Box::new(lc_domain::Source::Fetched {
+                columns: Vec::new(),
+                rows: Vec::new(),
+            }),
+            lc_domain::model::JobId::next(),
+        ));
+        let (buffer, map) = mapped(form);
+        let (x, y) = find(&buffer, "esc Back");
+
+        assert!(text(&buffer).contains("⏎ Yes, overwrite"));
+        assert_eq!(
+            map.press(x, y),
+            Some(lc_domain::pointer::Pointer::Hold(
+                lc_domain::pointer::Press::Key(lc_domain::model::Key::Escape)
+            ))
+        );
     }
 
     #[test]
@@ -828,20 +784,20 @@ mod tests {
             map.press(x, y),
             Some(Pointer::Field(Field::Scope(Scope::First)))
         );
-        let (x, y) = find(&buffer, "  Export to file  ");
+        let (x, y) = find(&buffer, "ctrl-s Export to file");
         assert_eq!(
             map.press(x + 3, y),
             Some(Pointer::Hold(Press::Export(Button::File)))
         );
-        let (x, y) = find(&buffer, "  Copy to clipboard  ");
+        let (x, y) = find(&buffer, "ctrl-y Copy to clipboard");
         assert_eq!(
             map.press(x + 3, y),
             Some(Pointer::Hold(Press::Export(Button::Clipboard)))
         );
         assert_eq!(
-            map.press(x - 1, y),
+            map.press(x - 2, y),
             Some(Pointer::Modal),
-            "the gap between the buttons is neither"
+            "the gap between the buttons, past the pad, is neither"
         );
         let (x, y) = find(&buffer, "Path ");
         assert!(

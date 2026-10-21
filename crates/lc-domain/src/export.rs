@@ -8,7 +8,7 @@ use crate::cell;
 use crate::config::ClipboardMb;
 use crate::contents::Paging;
 use crate::contents::Subject;
-use crate::model::{CqlValue, JobId, Row};
+use crate::model::{CqlValue, JobId, Key, Row};
 use crate::style::Segment;
 use crate::update::Source;
 use crate::yank;
@@ -273,6 +273,22 @@ impl Button {
             Self::File => "Export to file",
             Self::Clipboard => "Copy to clipboard",
         }
+    }
+
+    /// Behind ctrl: the path stop takes every printable key as text.
+    #[must_use]
+    pub const fn chord(self) -> char {
+        match self {
+            Self::File => 's',
+            Self::Clipboard => 'y',
+        }
+    }
+
+    #[must_use]
+    pub fn of_chord(key: Key) -> Option<Self> {
+        [Self::File, Self::Clipboard]
+            .into_iter()
+            .find(|button| key == Key::Char(button.chord()))
     }
 }
 

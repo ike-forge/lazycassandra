@@ -1219,3 +1219,49 @@ fn a_press_on_the_form_that_hits_no_field_leaves_it_open() {
     assert!(effects.is_empty());
     assert!(matches!(state.overlay, Some(Overlay::Export(_))));
 }
+
+#[test]
+fn ctrl_s_and_ctrl_y_run_their_buttons_from_the_path_stop() {
+    use crate::export::{Destination, Stop};
+
+    for (chord, file) in [('s', true), ('y', false)] {
+        let mut state = contents_showing_more(PAGE);
+        open_form(&mut state);
+        assert_eq!(form_of(&state).stop(), Stop::Path);
+
+        let effects = handle_key(&mut state, KeyPress::ctrl(Key::Char(chord)));
+
+        let [Effect::Export { destination, .. }] = effects.as_slice() else {
+            panic!("ctrl-{chord} runs an export");
+        };
+        assert_eq!(
+            matches!(destination, Destination::File { .. }),
+            file,
+            "ctrl-{chord}"
+        );
+    }
+}
+
+#[test]
+fn the_chords_are_inert_under_the_overwrite_question() {
+    let mut state = contents_showing_more(PAGE);
+    let effects = started(&mut state);
+    let [Effect::Export { job, .. }] = effects.as_slice() else {
+        panic!("one export effect");
+    };
+    update(
+        &mut state,
+        Msg::ExportFinished {
+            job: *job,
+            result: Err(ExportError::Exists),
+            took: Duration::ZERO,
+        },
+    );
+
+    for chord in ['s', 'y'] {
+        let effects = handle_key(&mut state, KeyPress::ctrl(Key::Char(chord)));
+
+        assert!(effects.is_empty(), "ctrl-{chord} answers nothing");
+        assert_eq!(form_of(&state).confirm(), Some(Confirm::Overwrite));
+    }
+}

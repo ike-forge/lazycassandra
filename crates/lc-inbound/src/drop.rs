@@ -218,22 +218,39 @@ fn set_caret(frame: &mut Frame, inner: Rect, view: &DropView, typed: &TypedName)
 }
 
 pub(crate) struct Button<'a> {
-    pub(crate) key: Key,
+    pub(crate) press: Press,
+    glyph: String,
     pub(crate) label: &'a str,
     pub(crate) live: bool,
+    /// Under `tab`: drawn as if held.
+    focused: bool,
 }
 
 impl<'a> Button<'a> {
-    pub(crate) const fn new(key: Key, label: &'a str, live: bool) -> Self {
-        Self { key, label, live }
-    }
-
-    fn glyph(&self) -> String {
-        match self.key {
+    pub(crate) fn new(key: Key, label: &'a str, live: bool) -> Self {
+        let glyph = match key {
             Key::Char(character) => character.to_string(),
             Key::Enter => "⏎".to_owned(),
             Key::Escape => "esc".to_owned(),
             other => format!("{other:?}").to_lowercase(),
+        };
+
+        Self {
+            press: Press::Key(key),
+            glyph,
+            label,
+            live,
+            focused: false,
+        }
+    }
+
+    pub(crate) fn export(button: lc_domain::export::Button, focused: bool) -> Self {
+        Self {
+            press: Press::Export(button),
+            glyph: format!("ctrl-{}", button.chord()),
+            label: button.label(),
+            live: true,
+            focused,
         }
     }
 }
@@ -242,7 +259,7 @@ impl<'a> Button<'a> {
 /// painted.
 pub(crate) struct Buttons {
     line: TextLine<'static>,
-    spans: Vec<(Key, u16, u16)>,
+    spans: Vec<(Press, u16, u16)>,
     width: u16,
 }
 
@@ -256,9 +273,9 @@ impl Buttons {
 
         self.spans
             .iter()
-            .map(|&(key, start, end)| ButtonAt {
+            .map(|&(press, start, end)| ButtonAt {
                 area: Rect::new(left + start, row.y, end - start, 1),
-                press: Press::Key(key),
+                press,
             })
             .collect()
     }
@@ -283,7 +300,7 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Press>, theme: Theme) -> 
         } else {
             (Token::Faint, Token::Faint)
         };
-        let lit = button.live && pressed == Some(Press::Key(button.key));
+        let lit = button.live && (button.focused || pressed == Some(button.press));
         let (pad, key_style, label_style) = if lit {
             let solid = theme
                 .style(Token::HintAction)
@@ -296,7 +313,7 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Press>, theme: Theme) -> 
                 band.patch(theme.style(label_token)),
             )
         };
-        let glyph = button.glyph();
+        let glyph = button.glyph.clone();
         let label = format!(" {} ", button.label);
         let width = u16::try_from(
             1 + TextLine::raw(glyph.as_str()).width() + TextLine::raw(label.as_str()).width(),
@@ -308,7 +325,7 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Press>, theme: Theme) -> 
         spans.push(Span::styled(glyph, key_style));
         spans.push(Span::styled(label, label_style));
         if button.live {
-            hits.push((button.key, column, column + width));
+            hits.push((button.press, column, column + width));
         }
         column += width;
     }

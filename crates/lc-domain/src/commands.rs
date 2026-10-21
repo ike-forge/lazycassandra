@@ -343,7 +343,17 @@ const EXPORT: &[Command] = &[
     Command::new(&[Stroke::key(Key::BackTab)], "previous field", Run::Inert),
     Command::new(
         &[Stroke::key(Key::Char(' '))],
-        "select, or export",
+        "select, or press",
+        Run::Inert,
+    ),
+    Command::new(
+        &[Stroke::ctrl(Key::Char('s'))],
+        "export to file",
+        Run::Inert,
+    ),
+    Command::new(
+        &[Stroke::ctrl(Key::Char('y'))],
+        "copy to clipboard",
         Run::Inert,
     ),
     Command::new(&[Stroke::key(Key::Escape)], "close the form", Run::Inert),
