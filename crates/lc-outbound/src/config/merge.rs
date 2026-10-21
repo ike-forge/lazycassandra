@@ -156,6 +156,7 @@ fn merge_export(lower: Option<ExportLayer>, upper: Option<ExportLayer>) -> Optio
         (Some(lower), Some(upper)) => Some(ExportLayer {
             path: upper.path.or(lower.path),
             prefix: upper.prefix.or(lower.prefix),
+            clipboard_mb: upper.clipboard_mb.or(lower.clipboard_mb),
             unknown: lower.unknown,
         }),
     }

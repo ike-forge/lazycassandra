@@ -2,7 +2,9 @@
 
 use crate::connection::ConnectionState;
 use crate::contents::{ContentsState, Subject};
-use crate::export::{Confirm, ExportForm, Fetched, Pending, Scope, Stop};
+use crate::export::{
+    Button, Confirm, Destination, ExportForm, Exported, Fetched, Pending, Scope, Stop,
+};
 use crate::jobs::ExportJob;
 use crate::log::{Outcome, Trace};
 use crate::model::{JobId, Key, Statement};
@@ -14,8 +16,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use super::{
-    Decision, Effect, Source, edit_line, logged, raise, sentence, statement_subject, unwind_overlay,
+    Effect, Source, copied, edit_line, logged, raise, sentence, statement_subject, unwind_overlay,
 };
+
+enum Answer {
+    Nothing,
+    Close,
+    Run(Button),
+}
 
 /// Every path that drops or replaces an export confirmation must call this: an
 /// orphaned pending entry keeps `State::is_working` true and the app never
@@ -74,67 +82,66 @@ pub(super) fn export_key(state: &mut State, key: Key) -> Vec<Effect> {
         return confirm_key(state, key);
     }
 
-    let decision = {
+    let answer = {
         let Some(Overlay::Export(form)) = &mut state.overlay else {
             return Vec::new();
         };
 
         match key {
-            Key::Escape => Decision::Close,
+            Key::Escape => Answer::Close,
             Key::Tab => {
                 form.tab();
-                Decision::Nothing
+                Answer::Nothing
             }
             Key::BackTab => {
                 form.back_tab();
-                Decision::Nothing
+                Answer::Nothing
             }
             Key::Char(' ') if !form.stop().takes_text() => {
-                if form.activate() {
-                    Decision::Run
-                } else {
-                    Decision::Nothing
-                }
+                form.activate().map_or(Answer::Nothing, Answer::Run)
             }
-            Key::Enter if form.stop() == Stop::Export => Decision::Run,
+            Key::Enter => match form.stop() {
+                Stop::Button(button) => Answer::Run(button),
+                Stop::Path | Stop::Format | Stop::Scope | Stop::Rows => Answer::Nothing,
+            },
             Key::Char('j') | Key::Down if !form.stop().takes_text() => {
                 form.down();
-                Decision::Nothing
+                Answer::Nothing
             }
             Key::Char('k') | Key::Up if !form.stop().takes_text() => {
                 form.up();
-                Decision::Nothing
+                Answer::Nothing
             }
             Key::Char(character) if form.stop() == Stop::Rows && !character.is_ascii_digit() => {
-                Decision::Nothing
+                Answer::Nothing
             }
             _ if form.stop() == Stop::Rows => {
                 edit_line(form.rows_mut(), key);
-                Decision::Nothing
+                Answer::Nothing
             }
             _ if form.stop().takes_text() => {
                 edit_line(form.path_mut(), key);
-                Decision::Nothing
+                Answer::Nothing
             }
-            _ => Decision::Nothing,
+            _ => Answer::Nothing,
         }
     };
 
     state.dirty = true;
 
-    match decision {
-        Decision::Nothing => Vec::new(),
-        Decision::Close => {
+    match answer {
+        Answer::Nothing => Vec::new(),
+        Answer::Close => {
             state.overlay = None;
             Vec::new()
         }
-        Decision::Run => start_export(state),
+        Answer::Run(button) => start_export(state, button),
     }
 }
 
 /// Re-emits the held source rather than re-reading the panel, which may have
 /// moved on by the time `Exists` returns.
-pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
+pub(super) fn start_export(state: &mut State, button: Button) -> Vec<Effect> {
     let Some(Overlay::Export(form)) = state.overlay.take() else {
         return Vec::new();
     };
@@ -155,7 +162,13 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
         state.overlay = Some(Overlay::Export(form));
         return Vec::new();
     };
-    let destination = PathBuf::from(form.path().text());
+    let destination = match button {
+        Button::File => Destination::File {
+            path: PathBuf::from(form.path().text()),
+            overwrite,
+        },
+        Button::Clipboard => Destination::Clipboard(state.config.export.clipboard_mb),
+    };
     let (conn, job, format) = (
         connection.id,
         retry.unwrap_or_else(JobId::next),
@@ -168,7 +181,10 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
         // act.
         let subject = match &source {
             Source::Whole { statement, .. } => statement_subject(statement),
-            Source::Fetched { .. } => sentence("Exporting the fetched rows"),
+            Source::Fetched { .. } => sentence(match destination {
+                Destination::File { .. } => "Exporting the fetched rows",
+                Destination::Clipboard(_) => "Copying the fetched rows",
+            }),
         };
         logged(
             state,
@@ -182,7 +198,10 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
     // Cloned: the job holds it against an `Exists` that has not come back yet.
     state.notify(
         Severity::Info,
-        format!("exporting to {}", destination.display()),
+        match &destination {
+            Destination::File { path, .. } => format!("exporting to {}", path.display()),
+            Destination::Clipboard(_) => "copying to the clipboard".to_owned(),
+        },
     );
     state.export = Some(ExportJob::started(
         job,
@@ -198,7 +217,6 @@ pub(super) fn start_export(state: &mut State) -> Vec<Effect> {
         source,
         destination,
         format,
-        overwrite,
         page_size: state.config.driver.page_size,
     }]
 }
@@ -233,7 +251,7 @@ pub(super) fn source(state: &State, form: &ExportForm) -> Option<Source> {
 
 pub(super) fn confirm_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
-        Key::Char(' ') | Key::Enter => start_export(state),
+        Key::Char(' ') | Key::Enter => start_export(state, Button::File),
         Key::Escape => {
             // Before `dismiss()` drops the source: nothing else would complete
             // this trace.
@@ -261,7 +279,7 @@ pub(super) fn export_progress(state: &mut State, job: JobId, rows: usize) -> Vec
 pub(super) fn finish_export(
     state: &mut State,
     job: JobId,
-    result: Result<usize, ExportError>,
+    result: Result<Exported, ExportError>,
     took: Duration,
 ) -> Vec<Effect> {
     if state.export.as_ref().map(ExportJob::id) != Some(job) {
@@ -274,21 +292,26 @@ pub(super) fn finish_export(
     state.dirty = true;
 
     match result {
-        Ok(rows) => {
+        Ok(exported) => {
+            let (rows, to) = (exported.rows(), finished.destination().describe());
             state.log.complete(
                 Trace::Export(job),
                 Outcome::Succeeded {
-                    detail: format!("{rows} rows to {}", finished.destination().display()),
+                    detail: format!("{rows} rows to {to}"),
                     took,
                 },
             );
-            state.notify(
-                Severity::Info,
-                format!(
-                    "exported {rows} rows to {}",
-                    finished.destination().display()
-                ),
-            );
+
+            return match exported {
+                Exported::Written(_) => {
+                    state.notify(Severity::Info, format!("exported {rows} rows to {to}"));
+                    Vec::new()
+                }
+                Exported::Copied { text, .. } => {
+                    state.notify(Severity::Info, format!("copied {rows} rows to {to}"));
+                    copied(Some(text))
+                }
+            };
         }
         Err(ExportError::Exists) => {
             let (mut form, source) = finished.into_parts();
@@ -306,7 +329,11 @@ pub(super) fn finish_export(
             raise(
                 state,
                 Message {
-                    title: "Export failed".to_owned(),
+                    title: match finished.destination() {
+                        Destination::File { .. } => "Export failed",
+                        Destination::Clipboard(_) => "Copy failed",
+                    }
+                    .to_owned(),
                     message: error.to_string(),
                     severity: Severity::Danger,
                 },

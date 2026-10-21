@@ -58,10 +58,11 @@
 # compression        = "lz4"            # none | lz4 | snappy
 
 # ── export ────────────────────────────────────────────────────
-# Both unset by default; an export then asks for a destination.
+# path and prefix are unset by default; an export then asks for a destination.
 # [export]
-# path   = "~/exports"
-# prefix = "lc-"
+# path         = "~/exports"
+# prefix       = "lc-"
+# clipboard_mb = 10   # 1..=1024; a larger copy fails rather than truncates
 
 # [[connections]]
 # name       = "prod"                        # required; no whitespace

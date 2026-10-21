@@ -1,6 +1,7 @@
 //! The drop confirmation, drawn over the panels.
 
 use lc_domain::model::Key;
+use lc_domain::pointer::Press;
 use lc_domain::style::{Segment, Severity, Token};
 use lc_domain::view::{DropView, TypedName};
 use ratatui::Frame;
@@ -97,7 +98,7 @@ fn prompt_line(typed: &TypedName) -> String {
 pub(crate) fn render(
     frame: &mut Frame,
     view: &DropView,
-    pressed: Option<Key>,
+    pressed: Option<Press>,
     theme: Theme,
 ) -> Option<Modal> {
     // Before sizing: [`width`] clamps to the frame and could draw below the
@@ -257,7 +258,7 @@ impl Buttons {
             .iter()
             .map(|&(key, start, end)| ButtonAt {
                 area: Rect::new(left + start, row.y, end - start, 1),
-                key,
+                press: Press::Key(key),
             })
             .collect()
     }
@@ -265,7 +266,7 @@ impl Buttons {
 
 /// An inert key recedes to `Faint` and is not pressable. The last button stops
 /// one column short of the border.
-pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Buttons {
+pub(crate) fn keys(buttons: &[Button], pressed: Option<Press>, theme: Theme) -> Buttons {
     let band = theme.style(Token::Ranged);
     let mut spans = Vec::new();
     let mut hits = Vec::new();
@@ -282,7 +283,7 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Bu
         } else {
             (Token::Faint, Token::Faint)
         };
-        let lit = button.live && pressed == Some(button.key);
+        let lit = button.live && pressed == Some(Press::Key(button.key));
         let (pad, key_style, label_style) = if lit {
             let solid = theme
                 .style(Token::HintAction)
@@ -560,16 +561,22 @@ mod tests {
 
         assert_eq!(
             map.press(yes, row),
-            Some(Pointer::Hold(Key::Char('y'))),
+            Some(Pointer::Hold(lc_domain::pointer::Press::Key(Key::Char(
+                'y'
+            )))),
             "the label is the button"
         );
         assert_eq!(
             map.press(cancel + 5, row),
-            Some(Pointer::Hold(Key::Char('n')))
+            Some(Pointer::Hold(lc_domain::pointer::Press::Key(Key::Char(
+                'n'
+            ))))
         );
         assert_eq!(
             map.press(cancel - 3, row),
-            Some(Pointer::Hold(Key::Char('n'))),
+            Some(Pointer::Hold(lc_domain::pointer::Press::Key(Key::Char(
+                'n'
+            )))),
             "and so is the pad around it"
         );
         assert_eq!(
@@ -590,7 +597,7 @@ mod tests {
         let mut state = State::default();
         state.overlay = Some(Overlay::Drop(table()));
         state.held = Some(Held {
-            key: Key::Char('y'),
+            press: lc_domain::pointer::Press::Key(Key::Char('y')),
             over: true,
         });
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");

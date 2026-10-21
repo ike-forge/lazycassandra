@@ -252,7 +252,7 @@ async.
 | `ConfigSink` | write the chosen theme back into the user config |
 | `SecretResolver` | resolve a credential (literal / env / file) to a value |
 | `Store` | query history |
-| `Writer` | open a destination as a `Sink` an export streams into |
+| `Writer` | open a destination as a `Sink` an export streams into; a clipboard copy fills a capped in-memory `Sink` instead |
 
 Ports are `dyn`-compatible so a fake can be swapped in wholesale; that means
 `#[async_trait]` on the async ones until native AFIT is `dyn`-safe.

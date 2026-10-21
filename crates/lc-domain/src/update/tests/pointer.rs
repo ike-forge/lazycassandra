@@ -718,7 +718,7 @@ fn asked_to_drop_a_table() -> State {
 fn a_button_answers_as_its_key_does_on_release() {
     let mut pressed = asked_to_drop_a_table();
     let mut typed = asked_to_drop_a_table();
-    let yes = Key::Char('y');
+    let yes = Press::Key(Key::Char('y'));
 
     let down = point(&mut pressed, Pointer::Hold(yes));
     assert!(down.is_empty(), "going down answers nothing");
@@ -726,7 +726,7 @@ fn a_button_answers_as_its_key_does_on_release() {
     assert_eq!(crate::view_model(&pressed).pressed, Some(yes), "it is lit");
 
     let up = point(&mut pressed, Pointer::Release(Some(yes)));
-    let by_key = press(&mut typed, yes);
+    let by_key = press(&mut typed, Key::Char('y'));
 
     let drops = |effects: &[Effect]| {
         effects
@@ -743,7 +743,7 @@ fn a_button_answers_as_its_key_does_on_release() {
 #[test]
 fn dragging_off_a_button_unlights_it_and_releasing_elsewhere_cancels() {
     let mut state = asked_to_drop_a_table();
-    let yes = Key::Char('y');
+    let yes = Press::Key(Key::Char('y'));
 
     point(&mut state, Pointer::Hold(yes));
     point(&mut state, Pointer::Drag(None));
@@ -760,8 +760,11 @@ fn dragging_off_a_button_unlights_it_and_releasing_elsewhere_cancels() {
         "back on, lit again"
     );
 
-    point(&mut state, Pointer::Drag(Some(Key::Char('n'))));
-    let effects = point(&mut state, Pointer::Release(Some(Key::Char('n'))));
+    point(&mut state, Pointer::Drag(Some(Press::Key(Key::Char('n')))));
+    let effects = point(
+        &mut state,
+        Pointer::Release(Some(Press::Key(Key::Char('n')))),
+    );
 
     assert!(effects.is_empty(), "released over another button: nothing");
     assert!(dropping(&state).is_some());
@@ -772,7 +775,10 @@ fn dragging_off_a_button_unlights_it_and_releasing_elsewhere_cancels() {
 fn a_release_without_a_press_on_the_button_answers_nothing() {
     let mut state = asked_to_drop_a_table();
 
-    let effects = point(&mut state, Pointer::Release(Some(Key::Char('y'))));
+    let effects = point(
+        &mut state,
+        Pointer::Release(Some(Press::Key(Key::Char('y')))),
+    );
 
     assert!(effects.is_empty(), "the press began elsewhere");
     assert!(dropping(&state).is_some());

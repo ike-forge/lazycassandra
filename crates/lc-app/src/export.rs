@@ -1,16 +1,16 @@
-//! The one effect that reads the cluster and writes a file, so it lives where
-//! both ports are. `lc-outbound/tests/support/mod.rs` mirrors this sequencing
+//! The one effect that reads the cluster and writes a file or the clipboard's
+//! buffer, so it lives where both ports are. `lc-outbound/tests/support/mod.rs` mirrors this sequencing
 //! by hand; keep them in step.
 
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use lc_domain::config::PageSize;
-use lc_domain::export::{Encoder, Format};
+use lc_domain::export::{Destination, Encoder, Exported, Format};
 use lc_domain::model::{ConnId, JobId, Page, Statement};
 use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
 use lc_domain::{Msg, Source};
+use lc_outbound::buffer::Buffer;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::input::Incoming;
@@ -19,9 +19,8 @@ pub(crate) struct Job {
     pub(crate) conn: ConnId,
     pub(crate) id: JobId,
     pub(crate) source: Source,
-    pub(crate) destination: PathBuf,
+    pub(crate) destination: Destination,
     pub(crate) format: Format,
-    pub(crate) overwrite: bool,
     pub(crate) page_size: PageSize,
 }
 
@@ -54,9 +53,20 @@ async fn run(
     cluster: &dyn Cluster,
     writer: &dyn Writer,
     job: Job,
-) -> Result<usize, ExportError> {
-    let mut sink = writer.open(&job.destination, job.overwrite).await?;
+) -> Result<Exported, ExportError> {
     let mut encoder = Encoder::new(job.format);
+
+    let (path, overwrite) = match &job.destination {
+        Destination::File { path, overwrite } => (path, *overwrite),
+        Destination::Clipboard(limit) => {
+            let mut buffer = Buffer::new(*limit);
+            let rows = write(tx, cluster, &mut buffer, &mut encoder, &job).await?;
+            let text = buffer.into_text();
+
+            return Ok(Exported::Copied { rows, text });
+        }
+    };
+    let mut sink = writer.open(path, overwrite).await?;
 
     // A partial file is not a result in any format, and `finish` is the flush
     // most likely to leave one.
@@ -69,7 +79,7 @@ async fn run(
         sink.abort().await;
     }
 
-    result
+    result.map(Exported::Written)
 }
 
 async fn write(

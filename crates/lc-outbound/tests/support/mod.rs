@@ -8,11 +8,10 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use lc_domain::config::{ConnectionConfig, ConnectionName, PageSize};
-use lc_domain::export::{Encoder, Format};
+use lc_domain::export::{Destination, Encoder, Exported, Format};
 use lc_domain::model::{
     Column, ConnId, JobId, Key, KeyPress, Keyspace, Page, PrimaryKey, Replication, Schema,
     Statement, Table, TableOptions,
@@ -20,6 +19,7 @@ use lc_domain::model::{
 use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
 use lc_domain::posture::Posture;
 use lc_domain::{Effect, Msg, Source, State, update};
+use lc_outbound::buffer::Buffer;
 
 pub(crate) fn schema_of(names: &[&str]) -> Schema {
     tabled_schema_of(&names.iter().map(|n| (*n, &[][..])).collect::<Vec<_>>())
@@ -98,15 +98,20 @@ pub(crate) async fn run(cluster: &dyn Cluster, state: &mut State, effects: Vec<E
     run_with_writer(cluster, None, state, effects).await;
 }
 
+/// Returns what reached the clipboard.
 pub(crate) async fn run_with_writer(
     cluster: &dyn Cluster,
     writer: Option<&dyn Writer>,
     state: &mut State,
     effects: Vec<Effect>,
-) {
+) -> Vec<String> {
     let mut pending: VecDeque<Effect> = effects.into();
+    let mut yanked = Vec::new();
 
     while let Some(effect) = pending.pop_front() {
+        if let Effect::Yank(line) = &effect {
+            yanked.push(line.clone());
+        }
         let messages: Vec<Msg> = match effect {
             Effect::Connect {
                 conn,
@@ -177,7 +182,6 @@ pub(crate) async fn run_with_writer(
                 source,
                 destination,
                 format,
-                overwrite,
                 page_size,
             } => {
                 let Some(writer) = writer else {
@@ -189,7 +193,6 @@ pub(crate) async fn run_with_writer(
                     source,
                     destination,
                     format,
-                    overwrite,
                     page_size,
                 };
                 run_export(cluster, writer, &job).await
@@ -201,15 +204,16 @@ pub(crate) async fn run_with_writer(
             pending.extend(update(state, msg));
         }
     }
+
+    yanked
 }
 
 struct Job {
     conn: ConnId,
     id: JobId,
     source: Source,
-    destination: PathBuf,
+    destination: Destination,
     format: Format,
-    overwrite: bool,
     page_size: PageSize,
 }
 
@@ -231,9 +235,20 @@ async fn export(
     writer: &dyn Writer,
     job: &Job,
     messages: &mut Vec<Msg>,
-) -> Result<usize, ExportError> {
-    let mut sink = writer.open(&job.destination, job.overwrite).await?;
+) -> Result<Exported, ExportError> {
     let mut encoder = Encoder::new(job.format);
+
+    let (path, overwrite) = match &job.destination {
+        Destination::File { path, overwrite } => (path, *overwrite),
+        Destination::Clipboard(limit) => {
+            let mut buffer = Buffer::new(*limit);
+            let rows = write(cluster, &mut buffer, &mut encoder, job, messages).await?;
+            let text = buffer.into_text();
+
+            return Ok(Exported::Copied { rows, text });
+        }
+    };
+    let mut sink = writer.open(path, overwrite).await?;
 
     let result = match write(cluster, sink.as_mut(), &mut encoder, job, messages).await {
         Ok(written) => sink.finish().await.map(|()| written),
@@ -244,7 +259,7 @@ async fn export(
         sink.abort().await;
     }
 
-    result
+    result.map(Exported::Written)
 }
 
 async fn write(

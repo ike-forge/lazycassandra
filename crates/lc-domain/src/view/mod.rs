@@ -47,7 +47,7 @@ pub struct ViewModel {
     pub theme: ThemeChoice,
     pub toast: Option<ToastLine>,
     /// The modal button held down with the pointer still over it.
-    pub pressed: Option<crate::model::Key>,
+    pub pressed: Option<crate::pointer::Press>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -589,7 +589,7 @@ pub fn view_model(state: &State) -> ViewModel {
         hints: hints::bar(state),
         overlay: overlay(state),
         theme: state.theme.clone(),
-        pressed: state.held.filter(|held| held.over).map(|held| held.key),
+        pressed: state.held.filter(|held| held.over).map(|held| held.press),
         toast: state.toast.as_ref().map(|toast| ToastLine {
             severity: toast.severity(),
             message: toast.message().to_owned(),
@@ -1138,7 +1138,10 @@ mod tests {
         state.focus_on(Panel::Contents);
         state.export = Some(ExportJob::started(
             JobId::next(),
-            PathBuf::from("/home/ike/shop.orders.csv"),
+            crate::export::Destination::File {
+                path: PathBuf::from("/home/ike/shop.orders.csv"),
+                overwrite: false,
+            },
             ExportForm::opened(
                 Subject::Table(TableRef::new("shop", "orders")),
                 Fetched::Some(200),

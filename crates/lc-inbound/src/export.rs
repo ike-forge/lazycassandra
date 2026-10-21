@@ -1,7 +1,8 @@
 //! The export form, drawn over the panels.
 
-use lc_domain::export::{Confirm, Field, Format, Scope, Stop};
+use lc_domain::export::{Button, Confirm, Field, Format, Scope, Stop};
 use lc_domain::model::Key;
+use lc_domain::pointer::Press;
 use lc_domain::style::{Segment, Token};
 use lc_domain::view::ExportView;
 use ratatui::Frame;
@@ -17,7 +18,7 @@ use crate::theme::Theme;
 const WIDTH: u16 = 84;
 /// The form narrows to here before giving up.
 const MIN_WIDTH: u16 = 56;
-/// Ten content rows, none spare, so `Export` sits on the last.
+/// Ten content rows, none spare, so the buttons sit on the last.
 const HEIGHT: u16 = 12;
 /// A floor: [`confirm_width`] widens to show the whole path, which has no
 /// cursor to scroll.
@@ -75,7 +76,7 @@ fn title(segments: &[Segment], theme: Theme) -> TextLine<'static> {
 pub(crate) fn render(
     frame: &mut Frame,
     view: &ExportView,
-    pressed: Option<Key>,
+    pressed: Option<Press>,
     theme: Theme,
 ) -> Option<Modal> {
     if view.confirm == Some(Confirm::Overwrite) {
@@ -153,23 +154,9 @@ pub(crate) fn render(
             inner.height.saturating_sub(1),
         ),
     );
-    let export = button(
-        "Export",
-        view.stop == Stop::Export || pressed == Some(Key::Enter),
-        theme,
-    );
     let row = Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1);
-    let button_width = u16::try_from(export.width()).unwrap_or(0);
-    let buttons = vec![ButtonAt {
-        area: Rect::new(
-            row.x + row.width.saturating_sub(button_width) / 2,
-            row.y,
-            button_width.min(row.width),
-            1,
-        ),
-        key: Key::Enter,
-    }];
-    frame.render_widget(Paragraph::new(export).centered(), row);
+    let (line, at, buttons) = button_row(view.stop, pressed, row, theme);
+    frame.render_widget(Paragraph::new(line), at);
 
     if view.stop == Stop::Path {
         set_caret(frame, inner, PATH_ROW, label_width, &visible, caret);
@@ -337,6 +324,48 @@ fn window(path: &str, cursor: usize, width: usize) -> (String, usize) {
     (visible, cursor - first)
 }
 
+const BUTTON_GAP: &str = "  ";
+
+/// Centred as one group, measured from the spans it draws. Placed here rather
+/// than by `Paragraph::centered`, which rounds an odd width the other way.
+fn button_row(
+    stop: Stop,
+    pressed: Option<Press>,
+    row: Rect,
+    theme: Theme,
+) -> (TextLine<'static>, Rect, Vec<ButtonAt>) {
+    let drawn: Vec<(Button, TextLine<'static>)> = [Button::File, Button::Clipboard]
+        .into_iter()
+        .map(|which| {
+            let lit = stop == Stop::Button(which) || pressed == Some(Press::Export(which));
+            (which, button(which.label(), lit, theme))
+        })
+        .collect();
+    let gap = u16::try_from(BUTTON_GAP.len()).unwrap_or(0);
+    let width = |line: &TextLine| u16::try_from(line.width()).unwrap_or(0);
+    let total = drawn.iter().map(|(_, line)| width(line)).sum::<u16>() + gap;
+
+    let at =
+        Rect::new(row.x + row.width.saturating_sub(total) / 2, row.y, total, 1).intersection(row);
+    let mut x = at.x;
+    let mut spans = Vec::new();
+    let mut buttons = Vec::new();
+    for (index, (which, line)) in drawn.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(BUTTON_GAP));
+            x += gap;
+        }
+        buttons.push(ButtonAt {
+            area: Rect::new(x, row.y, width(&line), 1).intersection(row),
+            press: Press::Export(which),
+        });
+        x += width(&line);
+        spans.extend(line.spans);
+    }
+
+    (TextLine::from(spans), at, buttons)
+}
+
 /// Focus fills it solid.
 fn button(label: &str, focused: bool, theme: Theme) -> TextLine<'static> {
     let style = if focused {
@@ -389,7 +418,7 @@ fn confirmation(frame: &mut Frame, view: &ExportView, theme: Theme) -> Option<Mo
                 .min(inner.width),
             1,
         ),
-        key: Key::Enter,
+        press: Press::Key(Key::Enter),
     }];
     frame.render_widget(
         Paragraph::new(vec![
@@ -499,7 +528,8 @@ mod tests {
         assert!(drawn.contains("CSV"));
         assert!(drawn.contains("JSON"));
         assert!(drawn.contains("shop.orders.csv"));
-        assert!(drawn.contains("Export"));
+        assert!(drawn.contains("Export to file"));
+        assert!(drawn.contains("Copy to clipboard"));
     }
 
     #[test]
@@ -572,17 +602,24 @@ mod tests {
     }
 
     #[test]
-    fn the_export_button_sits_on_the_form_s_last_row() {
+    fn both_buttons_sit_side_by_side_on_the_form_s_last_row() {
         let buffer = drawn(80, 24, form(Fetched::Some(200)));
         let area = super::form_area(ratatui::layout::Rect::new(0, 0, 80, 24))
             .expect("the form fits an 80x24 frame");
         let last_inner_row = area.y + super::HEIGHT - 2;
 
-        assert!(row(&buffer, last_inner_row).contains("  Export  "));
+        assert!(row(&buffer, last_inner_row).contains("  Export to file      Copy to clipboard  "));
     }
 
     #[test]
-    fn the_export_button_is_centred_in_the_form() {
+    fn both_buttons_fit_the_narrowest_form() {
+        let drawn = text(&drawn(super::MIN_WIDTH, 24, form(Fetched::Some(200))));
+
+        assert!(drawn.contains("  Export to file      Copy to clipboard  "));
+    }
+
+    #[test]
+    fn the_buttons_are_centred_in_the_form_as_a_pair() {
         let buffer = drawn(100, 24, form(Fetched::Some(200)));
         let area = super::form_area(ratatui::layout::Rect::new(0, 0, 100, 24)).expect("fits");
         let line = row(&buffer, area.y + super::HEIGHT - 2);
@@ -771,9 +808,8 @@ mod tests {
 
     #[test]
     fn every_element_of_the_form_resolves_a_press_to_itself() {
-        use lc_domain::export::{Field, Format, Scope};
-        use lc_domain::model::Key;
-        use lc_domain::pointer::Pointer;
+        use lc_domain::export::{Button, Field, Format, Scope};
+        use lc_domain::pointer::{Pointer, Press};
 
         let (buffer, map) = mapped(form(Fetched::Some(200)));
 
@@ -792,8 +828,21 @@ mod tests {
             map.press(x, y),
             Some(Pointer::Field(Field::Scope(Scope::First)))
         );
-        let (x, y) = find(&buffer, "  Export  ");
-        assert_eq!(map.press(x + 3, y), Some(Pointer::Hold(Key::Enter)));
+        let (x, y) = find(&buffer, "  Export to file  ");
+        assert_eq!(
+            map.press(x + 3, y),
+            Some(Pointer::Hold(Press::Export(Button::File)))
+        );
+        let (x, y) = find(&buffer, "  Copy to clipboard  ");
+        assert_eq!(
+            map.press(x + 3, y),
+            Some(Pointer::Hold(Press::Export(Button::Clipboard)))
+        );
+        assert_eq!(
+            map.press(x - 1, y),
+            Some(Pointer::Modal),
+            "the gap between the buttons is neither"
+        );
         let (x, y) = find(&buffer, "Path ");
         assert!(
             matches!(

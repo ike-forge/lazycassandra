@@ -5,10 +5,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use lc_domain::config::{
-    Background, ClientIdentity, Compression, Config, ConnectionConfig, ConnectionName, Consistency,
-    Credential, Credentials, CustomTheme, Diagnostic, Discovery, DriverConfig, ExportConfig,
-    GridConfig, HistoryConfig, HistoryLimit, Icons, MaxColumnWidth, Millis, Mouse, Origin,
-    OutOfRange, PageRows, PageSize, PanelRatios, Rgb, Span, Tls, TlsSettings, Trust, Verification,
+    Background, ClientIdentity, ClipboardMb, Compression, Config, ConnectionConfig, ConnectionName,
+    Consistency, Credential, Credentials, CustomTheme, Diagnostic, Discovery, DriverConfig,
+    ExportConfig, GridConfig, HistoryConfig, HistoryLimit, Icons, MaxColumnWidth, Millis, Mouse,
+    Origin, OutOfRange, PageRows, PageSize, PanelRatios, Rgb, Span, Tls, TlsSettings, Trust,
+    Verification,
 };
 use lc_domain::posture::Posture;
 use lc_domain::style::Severity;
@@ -108,7 +109,7 @@ pub(crate) fn validate(merged: Layer) -> (Config, Vec<Diagnostic>) {
         grid: grid(merged.grid, &mut report),
         history: history(merged.history, &mut report),
         driver: driver(merged.driver, &mut report),
-        export: export(merged.export),
+        export: export(merged.export, &mut report),
         default_connection: default_connection(
             merged.default_connection,
             &connections,
@@ -283,14 +284,22 @@ fn driver(layer: Option<DriverLayer>, report: &mut Report) -> DriverConfig {
     }
 }
 
-fn export(layer: Option<ExportLayer>) -> ExportConfig {
+fn export(layer: Option<ExportLayer>, report: &mut Report) -> ExportConfig {
     let Some(layer) = layer else {
         return ExportConfig::default();
     };
+    let clipboard = layer.clipboard_mb.and_then(|value| {
+        report.keep(
+            ClipboardMb::try_new(value.value),
+            &value,
+            "export.clipboard_mb",
+        )
+    });
 
     ExportConfig {
         path: layer.path.map(PathBuf::from),
         prefix: layer.prefix,
+        clipboard_mb: clipboard.unwrap_or_default(),
     }
 }
 

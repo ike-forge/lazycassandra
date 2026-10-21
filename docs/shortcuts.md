@@ -367,6 +367,7 @@ read.
 |---|---|
 | `connected to <name>` | The connection opens. |
 | `exporting to <path>`, `exported N rows to <path>` | An export starts, and finishes. |
+| `copying to the clipboard`, `copied N rows to the clipboard` | A copy from the export form starts, and finishes. |
 | `dropped …`, `deleted …`, `committed N cells to …` | The cluster accepted the statement. |
 | `edit staged, close the inspector and ctrl-s to commit` | An inspector edit is accepted and leaves a mark. |
 | `stopped fetching pages` | `Esc` ends a running `P`. |
@@ -415,17 +416,17 @@ does nothing here.
 
 | Key | Effect |
 |---|---|
-| `Tab` / `Shift-Tab` | Move to the next / previous of the form's stops — path, format, scope, the first-N count, Export — wrapping; the count is reachable only under the first-N scope. The form opens on the path, and the scope stop is skipped where both scopes would write the same file (the form says so in a sentence instead of offering a radio). |
-| `Space` | Activates the focused stop: on a radio group, advances to the next option, wrapping (scope: visible rows, whole table, first N rows); on the Export stop, runs the export. |
-| `Enter` | Runs the export, and only from the Export stop. On the Scope or Format radio it does nothing — a radio group is not a button, and a keystroke landing there must not write a file. |
+| `Tab` / `Shift-Tab` | Move to the next / previous of the form's stops — path, format, scope, the first-N count, Export to file, Copy to clipboard — wrapping; the count is reachable only under the first-N scope. The form opens on the path, and the scope stop is skipped where both scopes would write the same file (the form says so in a sentence instead of offering a radio). |
+| `Space` | Activates the focused stop: on a radio group, advances to the next option, wrapping (scope: visible rows, whole table, first N rows); on a button, runs it. |
+| `Enter` | Runs the focused button, and only from a button. On the Scope or Format radio it does nothing — a radio group is not a button, and a keystroke landing there must not write a file. |
 | `j` / `k`, `Down` / `Up` | Move within a radio group — the second way to reach what `Space` also reaches there. |
 | any printable key (digits only on the count), `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Text, and only on the path stop — the panel-that-takes-text rule, applied inside an overlay (§2). `Space` types a space there rather than activating anything, and `Enter` does nothing there either. |
 | `Esc` | Closes the form and writes nothing. |
 
 The bar names what the stop under `tab` answers to: `tab next option` always,
 `space toggle` on a radio group, nothing more on the path stop, where `space` is text, and
-`space/⏎ export` on the Export stop, which is drawn as a quiet band, filled solid
-while `tab` is on it. `esc close` follows. The overwrite
+`space/⏎ export` and `space/⏎ copy` on the two buttons, which sit side by side
+on the form's last row, each a quiet band filled solid while `tab` is on it. `esc close` follows. The overwrite
 confirmation's bar is `space/⏎ overwrite` and `esc back`.
 
 `ctrl-d`/`ctrl-u` are the only ctrl chords answered while the form is up —
@@ -433,6 +434,12 @@ dispatched above the overlay guard the way they are everywhere (§1's motion
 table) — and they page nothing here: the form has no list long enough to
 page. Every other ctrl chord is refused while the form is up, the same
 refusal the palette and the picker already get.
+
+Copy to clipboard takes the format and scope and ignores the path. It holds the
+whole result in memory, so it is capped at `export.clipboard_mb` (10 MB by
+default, 1024-based). The first chunk past the cap fails the copy and stops the
+fetch: nothing reaches the clipboard and `Copy failed` names the cap. A partial
+copy is never made, since a truncated CSV pastes as if it were whole.
 
 Failing to open the destination with `ExportError::Exists` raises a
 confirmation over the form rather than a sixth overlay variant:
@@ -1453,12 +1460,12 @@ Bound, and spending nothing from §3's budget.
 | Left click | A tab on a panel's top border | Whatever that tab's key does: focus the panel, and draw the tab |
 | Left click | Chrome | Focus that panel |
 | Left click | Anywhere, overlay up | Dismiss the overlay — except on a confirmation's or the health block's own block |
-| Left press | A confirmation's button (drop, commit, discard, export's Export and Yes, overwrite) | Lights it solid; dragging off unlights it |
+| Left press | A confirmation's button (drop, commit, discard, export's two buttons and Yes, overwrite) | Lights it solid; dragging off unlights it |
 | Left release | The button that was pressed | Its key: `y`, `n`, `⏎` or `esc`, answered as if typed. Released anywhere else: nothing |
 | Left click | A confirmation's block, off its buttons | Nothing |
 | Left press | The export form's path or count field | Focus it and put the caret before the character pressed (at the end, past the text); the count field also chooses the first-N scope |
 | Left press | An export format or scope radio | Focus its group and choose that option, rewriting the path's extension for a format. A scope the form does not offer is inert |
-| Left release | The Export button | Focus it and run the export, from whichever stop the form was on |
+| Left release | An export form button | Focus it and run it, from whichever stop the form was on |
 | Left click | A health block row | Select it and fold/unfold it — `Enter`, reached by pointer |
 | Left click | The health block, off its rows | Nothing |
 | Left click | The hint bar | Nothing |

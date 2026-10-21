@@ -98,7 +98,6 @@ pub(crate) fn run(
             source,
             destination,
             format,
-            overwrite,
             page_size,
         } => crate::export::spawn(
             tx,
@@ -110,7 +109,6 @@ pub(crate) fn run(
                 source: source.clone(),
                 destination: destination.clone(),
                 format: *format,
-                overwrite: *overwrite,
                 page_size: *page_size,
             },
         ),
