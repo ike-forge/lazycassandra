@@ -2,6 +2,7 @@
 //! this scrolls: a summary of a write is not a preview of it.
 
 use lc_domain::model::Key;
+use lc_domain::pointer::Press;
 use lc_domain::style::{Severity, Token};
 use lc_domain::view::CommitView;
 use ratatui::Frame;
@@ -65,7 +66,7 @@ pub(crate) fn visible_rows(area: Rect) -> usize {
 pub(crate) fn render(
     frame: &mut Frame,
     view: &CommitView,
-    pressed: Option<Key>,
+    pressed: Option<Press>,
     theme: Theme,
 ) -> (usize, Option<Modal>) {
     let Some(area) = rect(frame.area()) else {
@@ -144,7 +145,7 @@ fn wrapped(view: &CommitView, width: usize, theme: Theme) -> Vec<Vec<(char, Styl
 pub(crate) fn render_discard(
     frame: &mut Frame,
     message: &str,
-    pressed: Option<Key>,
+    pressed: Option<Press>,
     theme: Theme,
 ) -> Option<Modal> {
     let width = MIN_WIDTH.min(frame.area().width);

@@ -67,6 +67,15 @@ impl HistoryLimit {
     }
 }
 bounded!(Millis, u32, "milliseconds", 1, 600_000, 5_000);
+bounded!(ClipboardMb, u32, "clipboard_mb", 1, 1_024, 10);
+
+impl ClipboardMb {
+    /// 1024-based, as every size the app draws.
+    #[must_use]
+    pub const fn bytes(self) -> usize {
+        self.0 as usize * 1024 * 1024
+    }
+}
 
 /// The two share one range.
 impl From<PageRows> for PageSize {
@@ -369,12 +378,14 @@ pub struct DriverConfig {
     pub compression: Compression,
 }
 
-/// Parsed but not consumed: the export form prefills from the working
-/// directory.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExportConfig {
+    /// Parsed but not consumed: the export form prefills from the working
+    /// directory.
     pub path: Option<PathBuf>,
     pub prefix: Option<String>,
+    /// A copy holds the whole result in memory; a file export streams.
+    pub clipboard_mb: ClipboardMb,
 }
 
 /// `extends` is a [`BuiltIn`], so theme chains and their cycles are
@@ -454,6 +465,13 @@ mod tests {
         assert_eq!(config.background, Background::Theme);
         assert!(config.connections.is_empty());
         assert!(config.default_connection.is_none());
+    }
+
+    #[test]
+    fn the_clipboard_limit_counts_in_mebibytes() {
+        assert_eq!(ClipboardMb::default().bytes(), 10 * 1024 * 1024);
+        assert!(ClipboardMb::try_new(0).is_err());
+        assert!(ClipboardMb::try_new(1_025).is_err());
     }
 
     #[test]

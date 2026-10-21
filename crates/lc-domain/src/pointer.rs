@@ -1,17 +1,26 @@
 //! Pointer input in domain terms: never a coordinate, since the domain owns no
 //! layout. `lc-inbound` resolves the panel and row.
 
+use crate::export::Button;
 use crate::model::Key;
 use crate::panel::Panel;
+
+/// What a button answers as. The export form's two buttons share `Enter`, so
+/// they are named rather than keyed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Press {
+    Key(Key),
+    Export(Button),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pointer {
     Click(Click),
     /// Lights the button; only a release over it answers.
-    Hold(Key),
-    Drag(Option<Key>),
-    /// Over the held button, answered as that button's key.
-    Release(Option<Key>),
+    Hold(Press),
+    Drag(Option<Press>),
+    /// Over the held button, answered as that button's press.
+    Release(Option<Press>),
     /// A slip inside the question does not answer it.
     Modal,
     /// Takes effect on press, as a text field does.
@@ -28,7 +37,7 @@ pub enum Pointer {
 /// Dragging off unlights it and cancels the press, as in a GUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Held {
-    pub key: Key,
+    pub press: Press,
     pub over: bool,
 }
 

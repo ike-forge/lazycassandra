@@ -7,7 +7,7 @@ use crate::config::{Config, ConnectionConfig, ConnectionName, Diagnostic, Driver
 use crate::connection::ConnectionState;
 use crate::contents::TableRef;
 use crate::cql;
-use crate::export::Format;
+use crate::export::{Destination, Exported, Format};
 use crate::feedback::{Flash, Toast};
 use crate::geometry::Geometry;
 use crate::health::Health;
@@ -25,7 +25,6 @@ use crate::style::Severity;
 use crate::theme::ThemeChoice;
 use crate::tree::Node;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
 use std::time::Duration;
 
 mod commit;
@@ -149,7 +148,7 @@ pub enum Msg {
     },
     ExportFinished {
         job: JobId,
-        result: Result<usize, ExportError>,
+        result: Result<Exported, ExportError>,
         took: Duration,
     },
     Quit,
@@ -203,9 +202,8 @@ pub enum Effect {
         conn: ConnId,
         job: JobId,
         source: Source,
-        destination: PathBuf,
+        destination: Destination,
         format: Format,
-        overwrite: bool,
         /// Export pages by the driver's size, not the grid's.
         page_size: PageSize,
     },

@@ -9,7 +9,7 @@ mod tests;
 use bindings::{
     ABORT, CLEAR, CLEAR_FILTER, CLOSE, COMMIT, COMMIT_HINT, COMMIT_ROW, COMPLETE, CONNECTIONS,
     CONNECTIONS_GLOBAL, COPY, COPY_LINE, DELETE, DELETE_TYPED, DELETE_YES_NO, DIAGNOSTICS_GLOBAL,
-    DISCARD, DONE, DROP, DROP_TYPED, DROP_YES_NO, EDIT, ENTER, EVERY_PAGE, EXPORT,
+    DISCARD, DONE, DROP, DROP_TYPED, DROP_YES_NO, EDIT, ENTER, EVERY_PAGE, EXPORT, EXPORT_COPY,
     EXPORT_OVERWRITE, EXPORT_ROWS, FIELD, FILTER, FORMAT, HEALTH, HEALTH_GLOBAL, HEALTH_OF,
     HISTORY, HISTORY_GLOBAL, HISTORY_HINT, INSERT, INSERT_ROW, INSPECT_GLOBAL, INSPECT_ROW, LEAVE,
     MOVE, NEXT_MATCH, NEXT_OPTION, NEXT_PAGE, PALETTE_GLOBAL, RUN, SEARCH, SEARCH_GLOBAL, SELECT,
@@ -18,7 +18,7 @@ use bindings::{
 pub(crate) use bindings::{GLOBAL, THEMES, THEMES_GLOBAL};
 
 use crate::drop::DropPrompt;
-use crate::export::{ExportForm, Stop};
+use crate::export::{Button, ExportForm, Stop};
 use crate::inspect::Inspector;
 use crate::model::{Key, KeyPress, Statement};
 use crate::overlay::Overlay;
@@ -276,7 +276,8 @@ fn export_bar(form: &ExportForm) -> HintBar {
     let stop = match form.stop() {
         Stop::Scope | Stop::Format => Some(rendered(&TOGGLE)),
         Stop::Path | Stop::Rows => None,
-        Stop::Export => Some(rendered(&EXPORT)),
+        Stop::Button(Button::File) => Some(rendered(&EXPORT)),
+        Stop::Button(Button::Clipboard) => Some(rendered(&EXPORT_COPY)),
     };
 
     HintBar {

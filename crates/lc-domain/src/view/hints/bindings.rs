@@ -105,6 +105,7 @@ pub(super) const NEXT_OPTION: Binding = Binding::new(&[TAB], "next option");
 /// Text on the path stop.
 pub(super) const TOGGLE: Binding = Binding::new(&[SPACE], "toggle");
 pub(super) const EXPORT: Binding = Binding::new(&[SPACE, ENTER], "export");
+pub(super) const EXPORT_COPY: Binding = Binding::new(&[SPACE, ENTER], "copy");
 pub(super) const EXPORT_OVERWRITE: &[Binding] = &[
     Binding::new(&[SPACE, ENTER], "overwrite"),
     Binding::new(&[ESC], "back"),

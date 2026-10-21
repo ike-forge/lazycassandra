@@ -2,9 +2,8 @@
 //! from what did the drawing: a second layout description drifts silently.
 
 use lc_domain::export::Field;
-use lc_domain::model::Key;
 use lc_domain::panel::Panel;
-use lc_domain::pointer::{Click, Mark, Pointer};
+use lc_domain::pointer::{Click, Mark, Pointer, Press};
 use ratatui::layout::{Position, Rect};
 use unicode_width::UnicodeWidthChar as _;
 
@@ -149,7 +148,7 @@ impl Listed {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ButtonAt {
     pub(crate) area: Rect,
-    pub(crate) key: Key,
+    pub(crate) press: Press,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -205,7 +204,7 @@ impl FrameMap {
                 .iter()
                 .find(|button| button.area.contains(position))
             {
-                return Some(Pointer::Hold(button.key));
+                return Some(Pointer::Hold(button.press));
             }
             if let Some(field) = modal
                 .fields
@@ -231,7 +230,7 @@ impl FrameMap {
         &self,
         column: u16,
         row: u16,
-        gesture: fn(Option<Key>) -> Pointer,
+        gesture: fn(Option<Press>) -> Pointer,
     ) -> Option<Pointer> {
         let position = Position::new(column, row);
         let modal = self.modal.as_ref()?;
@@ -241,7 +240,7 @@ impl FrameMap {
                 .buttons
                 .iter()
                 .find(|button| button.area.contains(position))
-                .map(|button| button.key),
+                .map(|button| button.press),
         ))
     }
 

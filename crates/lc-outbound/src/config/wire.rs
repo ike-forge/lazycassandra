@@ -90,6 +90,9 @@ impl Layer {
         if let Some(history) = self.history.as_mut() {
             at(history.limit.as_mut(), source, origin);
         }
+        if let Some(export) = self.export.as_mut() {
+            at(export.clipboard_mb.as_mut(), source, origin);
+        }
         if let Some(driver) = self.driver.as_mut() {
             at(driver.page_size.as_mut(), source, origin);
             at(driver.request_timeout_ms.as_mut(), source, origin);
@@ -152,6 +155,7 @@ pub(crate) struct DriverLayer {
 pub(crate) struct ExportLayer {
     pub(crate) path: Option<String>,
     pub(crate) prefix: Option<String>,
+    pub(crate) clipboard_mb: Option<Located<u32>>,
     #[serde(flatten)]
     pub(crate) unknown: Unknown,
 }

@@ -1,8 +1,8 @@
-//! Whole sessions that end in a file.
+//! Whole sessions that end in a file or on the clipboard.
 
 use lc_domain::clock::Stamp;
-use lc_domain::config::PageSize;
-use lc_domain::export::{Confirm, Format, Stop};
+use lc_domain::config::{ClipboardMb, PageSize};
+use lc_domain::export::{Button, Confirm, Destination, Format, Stop};
 use lc_domain::geometry::Geometry;
 use lc_domain::model::{CqlValue, DbError, Key, KeyPress, Page, PagingState, Row};
 use lc_domain::overlay::{Message, Overlay};
@@ -105,10 +105,19 @@ fn run_export_form(state: &mut State, format: Format) -> Vec<Effect> {
     }
 
     // Scope is skipped when it has nothing to choose.
-    while !matches!(form_stop(state), Stop::Export) {
+    while !matches!(form_stop(state), Stop::Button(Button::File)) {
         press(state, Key::Tab);
     }
     press(state, Key::Char(' ')) // run
+}
+
+/// The whole table, the form's default scope.
+fn run_copy(state: &mut State) -> Vec<Effect> {
+    ctrl_e(state);
+    while !matches!(form_stop(state), Stop::Button(Button::Clipboard)) {
+        press(state, Key::Tab);
+    }
+    press(state, Key::Char(' '))
 }
 
 fn expect_export(effects: &[Effect]) -> &Effect {
@@ -144,7 +153,10 @@ async fn a_whole_table_export_writes_a_header_and_every_page() {
         export,
         Effect::Export {
             source: Source::Whole { .. },
-            overwrite: false,
+            destination: Destination::File {
+                overwrite: false,
+                ..
+            },
             ..
         }
     ));
@@ -290,10 +302,16 @@ async fn an_existing_destination_asks_before_it_clobbers() {
         panic!("the form is back up asking to overwrite");
     };
     assert_eq!(form.confirm(), Some(Confirm::Overwrite));
-    assert_eq!(form.stop(), Stop::Export);
+    assert_eq!(form.stop(), Stop::Button(Button::File));
 
     let effects = press(&mut state, Key::Char(' '));
-    let [Effect::Export { overwrite, .. }] = effects.as_slice() else {
+    let [
+        Effect::Export {
+            destination: Destination::File { overwrite, .. },
+            ..
+        },
+    ] = effects.as_slice()
+    else {
         panic!("pressing space re-emits the export");
     };
     assert!(*overwrite);
@@ -353,4 +371,76 @@ async fn a_cluster_that_fails_mid_export_leaves_no_partial_file() {
         finished.message.contains("connection reset"),
         "the cluster's own failure reaches the user: {finished:?}"
     );
+}
+
+#[tokio::test]
+async fn a_whole_table_copy_puts_every_page_on_the_clipboard_and_writes_no_file() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .paging(three_pages());
+    let writer = FakeWriter::default();
+    let mut state = on_a_read_table(&cluster).await;
+
+    let effects = run_copy(&mut state);
+    assert!(matches!(
+        expect_export(&effects),
+        Effect::Export {
+            destination: Destination::Clipboard(_),
+            ..
+        }
+    ));
+    let yanked = run_with_writer(&cluster, Some(&writer), &mut state, effects).await;
+
+    assert_eq!(
+        yanked,
+        ["id,email\na1,ada@example.com\na2,bob@example.com\na3,cleo@example.com\n"]
+    );
+    assert_eq!(writer.written(), "");
+    let toast = state.toast.as_ref().expect("the finish is toasted");
+    assert_eq!(toast.message(), "copied 3 rows to the clipboard");
+}
+
+#[tokio::test]
+async fn a_copy_over_the_limit_fails_whole_and_stops_fetching_there() {
+    let wide = |id: &str, next: Option<PagingState>| Page {
+        next,
+        ..page(&[(id, &"x".repeat(600 * 1024))])
+    };
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .paging(vec![
+        wide("a1", Some(PagingState(vec![1]))),
+        wide("a2", Some(PagingState(vec![2]))),
+        wide("a3", None),
+    ]);
+    let writer = FakeWriter::default();
+    let mut state = on_a_read_table(&cluster).await;
+    state.config.export.clipboard_mb = ClipboardMb::try_new(1).expect("in range");
+    let before = cluster.page_sizes().len();
+
+    let effects = run_copy(&mut state);
+    let yanked = run_with_writer(&cluster, Some(&writer), &mut state, effects).await;
+
+    assert!(
+        yanked.is_empty(),
+        "no partial copy: {} bytes",
+        yanked.concat().len()
+    );
+    assert_eq!(
+        cluster.page_sizes().len() - before,
+        2,
+        "the second page crosses 1 MB; the third is never asked for"
+    );
+    let message = expect_finished(&state);
+    assert_eq!(message.title, "Copy failed");
+    assert!(
+        message.message.contains("1 MB clipboard limit"),
+        "{}",
+        message.message
+    );
+    assert!(message.message.contains("export it to a file"));
 }

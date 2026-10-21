@@ -2,12 +2,13 @@
 
 use std::fmt::Write as _;
 use std::num::NonZeroUsize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::cell;
+use crate::config::ClipboardMb;
 use crate::contents::Paging;
 use crate::contents::Subject;
-use crate::model::{CqlValue, JobId, Row};
+use crate::model::{CqlValue, JobId, Key, Row};
 use crate::style::Segment;
 use crate::update::Source;
 use crate::yank;
@@ -226,6 +227,71 @@ impl Fetched {
     }
 }
 
+/// Where a run sends the encoded result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Destination {
+    File { path: PathBuf, overwrite: bool },
+    Clipboard(ClipboardMb),
+}
+
+impl Destination {
+    #[must_use]
+    pub fn describe(&self) -> String {
+        match self {
+            Self::File { path, .. } => path.display().to_string(),
+            Self::Clipboard(_) => "the clipboard".to_owned(),
+        }
+    }
+}
+
+/// A copy carries its text back: OSC 52 is written from the main loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Exported {
+    Written(usize),
+    Copied { rows: usize, text: String },
+}
+
+impl Exported {
+    #[must_use]
+    pub const fn rows(&self) -> usize {
+        match self {
+            Self::Written(rows) | Self::Copied { rows, .. } => *rows,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Button {
+    File,
+    Clipboard,
+}
+
+impl Button {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::File => "Export to file",
+            Self::Clipboard => "Copy to clipboard",
+        }
+    }
+
+    /// Behind ctrl: the path stop takes every printable key as text.
+    #[must_use]
+    pub const fn chord(self) -> char {
+        match self {
+            Self::File => 's',
+            Self::Clipboard => 'y',
+        }
+    }
+
+    #[must_use]
+    pub fn of_chord(key: Key) -> Option<Self> {
+        [Self::File, Self::Clipboard]
+            .into_iter()
+            .find(|button| key == Key::Char(button.chord()))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Path { cursor: usize },
@@ -244,7 +310,7 @@ pub enum Stop {
     Scope,
     /// Skipped unless that scope is chosen; digits only.
     Rows,
-    Export,
+    Button(Button),
 }
 
 impl Stop {
@@ -254,19 +320,21 @@ impl Stop {
             Self::Path => Self::Format,
             Self::Format => Self::Scope,
             Self::Scope => Self::Rows,
-            Self::Rows => Self::Export,
-            Self::Export => Self::Path,
+            Self::Rows => Self::Button(Button::File),
+            Self::Button(Button::File) => Self::Button(Button::Clipboard),
+            Self::Button(Button::Clipboard) => Self::Path,
         }
     }
 
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
-            Self::Path => Self::Export,
+            Self::Path => Self::Button(Button::Clipboard),
             Self::Format => Self::Path,
             Self::Scope => Self::Format,
             Self::Rows => Self::Scope,
-            Self::Export => Self::Rows,
+            Self::Button(Button::File) => Self::Rows,
+            Self::Button(Button::Clipboard) => Self::Button(Button::File),
         }
     }
 
@@ -439,23 +507,23 @@ impl ExportForm {
         match stop {
             Stop::Scope => self.fetched_enabled(),
             Stop::Rows => self.fetched_enabled() && self.scope == Scope::First,
-            Stop::Path | Stop::Format | Stop::Export => true,
+            Stop::Path | Stop::Format | Stop::Button(_) => true,
         }
     }
 
-    /// True only from [`Stop::Export`].
-    pub fn activate(&mut self) -> bool {
+    /// `Some` only from a [`Stop::Button`].
+    pub fn activate(&mut self) -> Option<Button> {
         match self.stop {
             Stop::Scope => {
                 self.step_scope(true);
-                false
+                None
             }
             Stop::Format => {
                 self.toggle_format();
-                false
+                None
             }
-            Stop::Path | Stop::Rows => false,
-            Stop::Export => true,
+            Stop::Path | Stop::Rows => None,
+            Stop::Button(button) => Some(button),
         }
     }
 
@@ -485,9 +553,8 @@ impl ExportForm {
         }
     }
 
-    /// A press must stand on the button for `Enter` to run it.
-    pub const fn focus_button(&mut self) {
-        self.stop = Stop::Export;
+    pub const fn focus_button(&mut self, button: Button) {
+        self.stop = Stop::Button(button);
     }
 
     /// Two options per group, so a move equals a toggle.
@@ -538,7 +605,7 @@ impl ExportForm {
         match self.stop {
             Stop::Scope => self.step_scope(forwards),
             Stop::Format => self.toggle_format(),
-            Stop::Path | Stop::Rows | Stop::Export => {}
+            Stop::Path | Stop::Rows | Stop::Button(_) => {}
         }
     }
 
@@ -868,10 +935,16 @@ mod tests {
     }
 
     #[test]
-    fn tab_walks_the_four_stops_and_wraps() {
+    fn tab_walks_the_stops_and_both_buttons_and_wraps() {
         let mut form = form(Fetched::Some(200));
 
-        for expected in [Stop::Format, Stop::Scope, Stop::Export, Stop::Path] {
+        for expected in [
+            Stop::Format,
+            Stop::Scope,
+            Stop::Button(Button::File),
+            Stop::Button(Button::Clipboard),
+            Stop::Path,
+        ] {
             form.tab();
             assert_eq!(form.stop(), expected);
         }
@@ -881,19 +954,26 @@ mod tests {
     fn shift_tab_walks_them_backwards() {
         let mut form = form(Fetched::Some(200));
 
-        for expected in [Stop::Export, Stop::Scope, Stop::Format, Stop::Path] {
+        for expected in [
+            Stop::Button(Button::Clipboard),
+            Stop::Button(Button::File),
+            Stop::Scope,
+            Stop::Format,
+            Stop::Path,
+        ] {
             form.back_tab();
             assert_eq!(form.stop(), expected);
         }
     }
 
     #[test]
-    fn space_on_the_export_stop_reports_that_it_ran() {
+    fn space_on_a_button_reports_which_one_ran() {
         let mut form = form(Fetched::Some(200));
         form.back_tab();
 
-        assert_eq!(form.stop(), Stop::Export);
-        assert!(form.activate());
+        assert_eq!(form.activate(), Some(Button::Clipboard));
+        form.back_tab();
+        assert_eq!(form.activate(), Some(Button::File));
     }
 
     #[test]
@@ -921,11 +1001,21 @@ mod tests {
     fn tab_skips_the_scope_when_both_scopes_write_the_same_file() {
         let mut form = form(Fetched::Everything(6));
 
-        for expected in [Stop::Format, Stop::Export, Stop::Path] {
+        for expected in [
+            Stop::Format,
+            Stop::Button(Button::File),
+            Stop::Button(Button::Clipboard),
+            Stop::Path,
+        ] {
             form.tab();
             assert_eq!(form.stop(), expected);
         }
-        for expected in [Stop::Export, Stop::Format, Stop::Path] {
+        for expected in [
+            Stop::Button(Button::Clipboard),
+            Stop::Button(Button::File),
+            Stop::Format,
+            Stop::Path,
+        ] {
             form.back_tab();
             assert_eq!(form.stop(), expected);
         }
@@ -996,7 +1086,11 @@ mod tests {
         form.tab();
         form.tab();
         form.tab();
-        assert_eq!(form.stop(), Stop::Export, "Whole has no count to type");
+        assert_eq!(
+            form.stop(),
+            Stop::Button(Button::File),
+            "Whole has no count to type"
+        );
 
         form.back_tab();
         form.activate();
@@ -1004,7 +1098,7 @@ mod tests {
         form.tab();
         assert_eq!(form.stop(), Stop::Rows);
         form.tab();
-        assert_eq!(form.stop(), Stop::Export);
+        assert_eq!(form.stop(), Stop::Button(Button::File));
     }
 
     #[test]

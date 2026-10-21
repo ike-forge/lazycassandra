@@ -22,7 +22,7 @@ use crate::line::Line;
 use crate::model::{CqlValue, Key, Modifiers, Row, StatementKind};
 use crate::panel::Panel;
 use crate::pointer::Mark;
-use crate::pointer::{Click, Pointer, Wheel};
+use crate::pointer::{Click, Pointer, Press, Wheel};
 use crate::queries::QueriesTab;
 use crate::search::Sift;
 use crate::search::{Prompt, Search, Searched};

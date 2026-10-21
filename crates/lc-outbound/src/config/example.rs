@@ -145,6 +145,7 @@ mod tests {
         "[export]",
         "path",
         "prefix",
+        "clipboard_mb",
         "[[connections]]",
         "name",
         "hosts",

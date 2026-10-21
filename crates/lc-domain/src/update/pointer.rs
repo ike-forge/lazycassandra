@@ -3,7 +3,7 @@
 use crate::model::Key;
 use crate::overlay::Overlay;
 use crate::panel::Panel;
-use crate::pointer::{Click, Held, Mark, Pointer, Wheel};
+use crate::pointer::{Click, Held, Mark, Pointer, Press, Wheel};
 use crate::state::State;
 
 use super::{
@@ -26,22 +26,28 @@ pub(super) fn handle_pointer(state: &mut State, pointer: Pointer) -> Vec<Effect>
                 state.held = None;
                 escape(state);
             }
-            Pointer::Hold(key) => state.held = Some(Held { key, over: true }),
+            Pointer::Hold(press) => state.held = Some(Held { press, over: true }),
             Pointer::Drag(over) => {
                 if let Some(held) = &mut state.held {
-                    held.over = over == Some(held.key);
+                    held.over = over == Some(held.press);
                 }
             }
             Pointer::Release(over) => {
                 if let Some(held) = state.held.take()
-                    && over == Some(held.key)
+                    && over == Some(held.press)
                 {
-                    if let Some(Overlay::Export(form)) = &mut state.overlay
-                        && form.confirm().is_none()
-                    {
-                        form.focus_button();
-                    }
-                    return overlay_key(state, held.key).unwrap_or_default();
+                    let key = match held.press {
+                        Press::Key(key) => key,
+                        Press::Export(button) => {
+                            if let Some(Overlay::Export(form)) = &mut state.overlay
+                                && form.confirm().is_none()
+                            {
+                                form.focus_button(button);
+                            }
+                            Key::Enter
+                        }
+                    };
+                    return overlay_key(state, key).unwrap_or_default();
                 }
             }
             Pointer::Field(field) => {

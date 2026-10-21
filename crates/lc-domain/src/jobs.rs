@@ -1,11 +1,9 @@
 //! Writes in flight: an export, a drop, a commit, one of each at a time.
 
-use std::path::{Path, PathBuf};
-
 use crate::contents::TableRef;
 use crate::drop::Target;
 use crate::edit::CommitScope;
-use crate::export::ExportForm;
+use crate::export::{Destination, ExportForm};
 use crate::inspect::Inspector;
 use crate::model::{JobId, QueryId};
 use crate::update::Source;
@@ -14,7 +12,7 @@ use crate::update::Source;
 pub struct ExportJob {
     id: JobId,
     rows: usize,
-    destination: PathBuf,
+    destination: Destination,
     /// So `ExportError::Exists` can reopen the form as it was.
     form: ExportForm,
     /// The panel stays live during an export, so a retry must re-emit what was
@@ -26,7 +24,7 @@ impl ExportJob {
     #[must_use]
     pub const fn started(
         id: JobId,
-        destination: PathBuf,
+        destination: Destination,
         form: ExportForm,
         source: Source,
     ) -> Self {
@@ -50,7 +48,7 @@ impl ExportJob {
     }
 
     #[must_use]
-    pub fn destination(&self) -> &Path {
+    pub const fn destination(&self) -> &Destination {
         &self.destination
     }
 

@@ -7,8 +7,8 @@ use std::path::Path;
 use async_trait::async_trait;
 
 use crate::config::{
-    Config, ConnectionConfig, ConnectionName, Credential, Diagnostic, DriverConfig, HistoryLimit,
-    PageSize,
+    ClipboardMb, Config, ConnectionConfig, ConnectionName, Credential, Diagnostic, DriverConfig,
+    HistoryLimit, PageSize,
 };
 use crate::contents::TableRef;
 use crate::health::Health;
@@ -123,4 +123,9 @@ pub enum ExportError {
     Io(String),
     #[error("the cluster stopped answering: {0}")]
     Cluster(DbError),
+    #[error(
+        "the result is over the {} MB clipboard limit (export.clipboard_mb); export it to a file instead",
+        .0.get()
+    )]
+    TooLarge(ClipboardMb),
 }

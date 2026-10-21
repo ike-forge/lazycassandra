@@ -9,7 +9,7 @@ fn form_of(state: &State) -> &crate::export::ExportForm {
 
 fn started(state: &mut State) -> Vec<Effect> {
     open_form(state);
-    while form_of(state).stop() != crate::export::Stop::Export {
+    while form_of(state).stop() != crate::export::Stop::Button(crate::export::Button::File) {
         handle_key(state, KeyPress::new(Key::Tab));
     }
     handle_key(state, KeyPress::new(Key::Char(' ')))
@@ -327,7 +327,7 @@ fn export_in_flight(cql: &str, destination: &str) -> State {
     if let Some(Overlay::Export(form)) = &mut state.overlay {
         *form.path_mut() = crate::export::Line::new(destination.to_owned());
     }
-    while form_of(&state).stop() != crate::export::Stop::Export {
+    while form_of(&state).stop() != crate::export::Stop::Button(crate::export::Button::File) {
         handle_key(&mut state, KeyPress::new(Key::Tab));
     }
     handle_key(&mut state, KeyPress::new(Key::Char(' ')));
@@ -363,7 +363,6 @@ fn exporting_the_whole_table_asks_for_it_without_a_limit() {
             source,
             format,
             destination,
-            overwrite,
             ..
         },
     ] = effects.as_slice()
@@ -378,7 +377,10 @@ fn exporting_the_whole_table_asks_for_it_without_a_limit() {
         }
     );
     assert_eq!(*format, crate::export::Format::Csv);
-    assert!(destination.ends_with("shop.orders.csv"));
+    let crate::export::Destination::File { path, overwrite } = destination else {
+        panic!("the default button writes a file");
+    };
+    assert!(path.ends_with("shop.orders.csv"));
     assert!(!overwrite, "the first attempt never clobbers");
 }
 
@@ -540,7 +542,7 @@ fn finishing_clears_the_job_and_says_what_was_written() {
         &mut state,
         Msg::ExportFinished {
             job: *job,
-            result: Ok(41_203),
+            result: Ok(crate::export::Exported::Written(41_203)),
             took: Duration::ZERO,
         },
     );
@@ -563,7 +565,7 @@ fn a_finished_export_records_the_exact_statement_and_where_it_went() {
         &mut state,
         Msg::ExportFinished {
             job,
-            result: Ok(18_420),
+            result: Ok(crate::export::Exported::Written(18_420)),
             took: Duration::from_millis(1_400),
         },
     );
@@ -618,7 +620,7 @@ fn an_export_that_exists_stays_pending_through_the_retry_and_completes_with_it()
         &mut state,
         Msg::ExportFinished {
             job,
-            result: Ok(18_420),
+            result: Ok(crate::export::Exported::Written(18_420)),
             took: Duration::from_millis(1_400),
         },
     );
@@ -745,7 +747,7 @@ fn a_finished_fetched_export_completes_its_entry() {
         &mut state,
         Msg::ExportFinished {
             job,
-            result: Ok(200),
+            result: Ok(crate::export::Exported::Written(200)),
             took: Duration::from_millis(50),
         },
     );
@@ -821,7 +823,7 @@ fn a_fetched_export_that_exists_stays_pending_through_the_retry_and_completes_wi
         &mut state,
         Msg::ExportFinished {
             job,
-            result: Ok(200),
+            result: Ok(crate::export::Exported::Written(200)),
             took: Duration::from_millis(50),
         },
     );
@@ -958,8 +960,14 @@ fn confirming_re_emits_the_export_with_overwrite_set() {
 
     let effects = handle_key(&mut state, KeyPress::new(Key::Char(' ')));
 
-    let [Effect::Export { overwrite, .. }] = effects.as_slice() else {
-        panic!("one export effect");
+    let [
+        Effect::Export {
+            destination: crate::export::Destination::File { overwrite, .. },
+            ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("one file export effect");
     };
     assert!(overwrite);
     assert!(state.overlay.is_none());
@@ -1008,7 +1016,9 @@ fn confirming_re_emits_what_was_attempted_not_what_the_panel_now_holds() {
 
     let [
         Effect::Export {
-            source, overwrite, ..
+            source,
+            destination: crate::export::Destination::File { overwrite, .. },
+            ..
         },
     ] = effects.as_slice()
     else {
@@ -1067,7 +1077,7 @@ fn esc_from_the_confirmation_goes_back_to_the_form_intact() {
     assert_eq!(form_of(&state).confirm(), None, "back to the form");
     assert_eq!(
         form_of(&state).stop(),
-        crate::export::Stop::Export,
+        crate::export::Stop::Button(crate::export::Button::File),
         "with every field as it was"
     );
 }
@@ -1089,30 +1099,35 @@ fn ctrl_e_is_inert_while_an_export_is_already_running() {
 
 #[test]
 fn the_export_button_runs_on_release_from_any_stop() {
-    use crate::export::Stop;
+    use crate::export::{Button, Stop};
     use crate::pointer::Pointer;
 
     let mut state = contents_showing_more(PAGE);
     open_form(&mut state);
     assert_eq!(form_of(&state).stop(), Stop::Path);
 
-    let down = update(&mut state, Msg::Pointer(Pointer::Hold(Key::Enter)));
+    let file = Press::Export(Button::File);
+    let down = update(&mut state, Msg::Pointer(Pointer::Hold(file)));
     assert!(down.is_empty(), "going down runs nothing");
-    assert_eq!(crate::view::view_model(&state).pressed, Some(Key::Enter));
+    assert_eq!(crate::view::view_model(&state).pressed, Some(file));
 
-    let up = update(&mut state, Msg::Pointer(Pointer::Release(Some(Key::Enter))));
+    let up = update(&mut state, Msg::Pointer(Pointer::Release(Some(file))));
 
     assert!(matches!(up.as_slice(), [Effect::Export { .. }]));
 }
 
 #[test]
 fn releasing_off_the_export_button_runs_nothing() {
+    use crate::export::Button;
     use crate::pointer::Pointer;
 
     let mut state = contents_showing_more(PAGE);
     open_form(&mut state);
 
-    update(&mut state, Msg::Pointer(Pointer::Hold(Key::Enter)));
+    update(
+        &mut state,
+        Msg::Pointer(Pointer::Hold(Press::Export(Button::File))),
+    );
     let up = update(&mut state, Msg::Pointer(Pointer::Release(None)));
 
     assert!(up.is_empty());
@@ -1203,4 +1218,50 @@ fn a_press_on_the_form_that_hits_no_field_leaves_it_open() {
 
     assert!(effects.is_empty());
     assert!(matches!(state.overlay, Some(Overlay::Export(_))));
+}
+
+#[test]
+fn ctrl_s_and_ctrl_y_run_their_buttons_from_the_path_stop() {
+    use crate::export::{Destination, Stop};
+
+    for (chord, file) in [('s', true), ('y', false)] {
+        let mut state = contents_showing_more(PAGE);
+        open_form(&mut state);
+        assert_eq!(form_of(&state).stop(), Stop::Path);
+
+        let effects = handle_key(&mut state, KeyPress::ctrl(Key::Char(chord)));
+
+        let [Effect::Export { destination, .. }] = effects.as_slice() else {
+            panic!("ctrl-{chord} runs an export");
+        };
+        assert_eq!(
+            matches!(destination, Destination::File { .. }),
+            file,
+            "ctrl-{chord}"
+        );
+    }
+}
+
+#[test]
+fn the_chords_are_inert_under_the_overwrite_question() {
+    let mut state = contents_showing_more(PAGE);
+    let effects = started(&mut state);
+    let [Effect::Export { job, .. }] = effects.as_slice() else {
+        panic!("one export effect");
+    };
+    update(
+        &mut state,
+        Msg::ExportFinished {
+            job: *job,
+            result: Err(ExportError::Exists),
+            took: Duration::ZERO,
+        },
+    );
+
+    for chord in ['s', 'y'] {
+        let effects = handle_key(&mut state, KeyPress::ctrl(Key::Char(chord)));
+
+        assert!(effects.is_empty(), "ctrl-{chord} answers nothing");
+        assert_eq!(form_of(&state).confirm(), Some(Confirm::Overwrite));
+    }
 }

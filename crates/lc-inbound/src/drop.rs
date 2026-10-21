@@ -1,6 +1,7 @@
 //! The drop confirmation, drawn over the panels.
 
 use lc_domain::model::Key;
+use lc_domain::pointer::Press;
 use lc_domain::style::{Segment, Severity, Token};
 use lc_domain::view::{DropView, TypedName};
 use ratatui::Frame;
@@ -97,7 +98,7 @@ fn prompt_line(typed: &TypedName) -> String {
 pub(crate) fn render(
     frame: &mut Frame,
     view: &DropView,
-    pressed: Option<Key>,
+    pressed: Option<Press>,
     theme: Theme,
 ) -> Option<Modal> {
     // Before sizing: [`width`] clamps to the frame and could draw below the
@@ -217,22 +218,39 @@ fn set_caret(frame: &mut Frame, inner: Rect, view: &DropView, typed: &TypedName)
 }
 
 pub(crate) struct Button<'a> {
-    pub(crate) key: Key,
+    pub(crate) press: Press,
+    glyph: String,
     pub(crate) label: &'a str,
     pub(crate) live: bool,
+    /// Under `tab`: drawn as if held.
+    focused: bool,
 }
 
 impl<'a> Button<'a> {
-    pub(crate) const fn new(key: Key, label: &'a str, live: bool) -> Self {
-        Self { key, label, live }
-    }
-
-    fn glyph(&self) -> String {
-        match self.key {
+    pub(crate) fn new(key: Key, label: &'a str, live: bool) -> Self {
+        let glyph = match key {
             Key::Char(character) => character.to_string(),
             Key::Enter => "⏎".to_owned(),
             Key::Escape => "esc".to_owned(),
             other => format!("{other:?}").to_lowercase(),
+        };
+
+        Self {
+            press: Press::Key(key),
+            glyph,
+            label,
+            live,
+            focused: false,
+        }
+    }
+
+    pub(crate) fn export(button: lc_domain::export::Button, focused: bool) -> Self {
+        Self {
+            press: Press::Export(button),
+            glyph: format!("ctrl-{}", button.chord()),
+            label: button.label(),
+            live: true,
+            focused,
         }
     }
 }
@@ -241,7 +259,7 @@ impl<'a> Button<'a> {
 /// painted.
 pub(crate) struct Buttons {
     line: TextLine<'static>,
-    spans: Vec<(Key, u16, u16)>,
+    spans: Vec<(Press, u16, u16)>,
     width: u16,
 }
 
@@ -255,9 +273,9 @@ impl Buttons {
 
         self.spans
             .iter()
-            .map(|&(key, start, end)| ButtonAt {
+            .map(|&(press, start, end)| ButtonAt {
                 area: Rect::new(left + start, row.y, end - start, 1),
-                key,
+                press,
             })
             .collect()
     }
@@ -265,7 +283,7 @@ impl Buttons {
 
 /// An inert key recedes to `Faint` and is not pressable. The last button stops
 /// one column short of the border.
-pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Buttons {
+pub(crate) fn keys(buttons: &[Button], pressed: Option<Press>, theme: Theme) -> Buttons {
     let band = theme.style(Token::Ranged);
     let mut spans = Vec::new();
     let mut hits = Vec::new();
@@ -282,7 +300,7 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Bu
         } else {
             (Token::Faint, Token::Faint)
         };
-        let lit = button.live && pressed == Some(button.key);
+        let lit = button.live && (button.focused || pressed == Some(button.press));
         let (pad, key_style, label_style) = if lit {
             let solid = theme
                 .style(Token::HintAction)
@@ -295,7 +313,7 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Bu
                 band.patch(theme.style(label_token)),
             )
         };
-        let glyph = button.glyph();
+        let glyph = button.glyph.clone();
         let label = format!(" {} ", button.label);
         let width = u16::try_from(
             1 + TextLine::raw(glyph.as_str()).width() + TextLine::raw(label.as_str()).width(),
@@ -307,7 +325,7 @@ pub(crate) fn keys(buttons: &[Button], pressed: Option<Key>, theme: Theme) -> Bu
         spans.push(Span::styled(glyph, key_style));
         spans.push(Span::styled(label, label_style));
         if button.live {
-            hits.push((button.key, column, column + width));
+            hits.push((button.press, column, column + width));
         }
         column += width;
     }
@@ -560,16 +578,22 @@ mod tests {
 
         assert_eq!(
             map.press(yes, row),
-            Some(Pointer::Hold(Key::Char('y'))),
+            Some(Pointer::Hold(lc_domain::pointer::Press::Key(Key::Char(
+                'y'
+            )))),
             "the label is the button"
         );
         assert_eq!(
             map.press(cancel + 5, row),
-            Some(Pointer::Hold(Key::Char('n')))
+            Some(Pointer::Hold(lc_domain::pointer::Press::Key(Key::Char(
+                'n'
+            ))))
         );
         assert_eq!(
             map.press(cancel - 3, row),
-            Some(Pointer::Hold(Key::Char('n'))),
+            Some(Pointer::Hold(lc_domain::pointer::Press::Key(Key::Char(
+                'n'
+            )))),
             "and so is the pad around it"
         );
         assert_eq!(
@@ -590,7 +614,7 @@ mod tests {
         let mut state = State::default();
         state.overlay = Some(Overlay::Drop(table()));
         state.held = Some(Held {
-            key: Key::Char('y'),
+            press: lc_domain::pointer::Press::Key(Key::Char('y')),
             over: true,
         });
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("a backend");
