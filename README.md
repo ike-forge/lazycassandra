@@ -67,7 +67,7 @@ Building requires Git, a C/C++ compiler, and Rust 1.97.1. Clone the repository
 and install the locked source:
 
 ```sh
-git clone https://github.com/ike-forge/lazycassandra.git
+git clone https://github.com/ike-forge/LazyCassandra.git
 cd LazyCassandra
 rustup toolchain install 1.97.1
 cargo +1.97.1 install --path crates/lc-app --locked
@@ -77,7 +77,7 @@ If you use [mise](https://mise.jdx.dev/), it can install the pinned toolchain
 instead:
 
 ```sh
-git clone https://github.com/ike-forge/lazycassandra.git
+git clone https://github.com/ike-forge/LazyCassandra.git
 cd LazyCassandra
 mise install
 cargo install --path crates/lc-app --locked
@@ -170,7 +170,7 @@ custom themes, backgrounds, mouse input, driver settings, and export defaults.
 
 LazyCassandra is under active development. Cluster operations and query
 analysis are on the [roadmap](docs/vision.md#7-roadmap).
-Found a bug or have an idea? [Open an issue](https://github.com/ike-forge/lazycassandra/issues).
+Found a bug or have an idea? [Open an issue](https://github.com/ike-forge/LazyCassandra/issues).
 
 For local development and the sample Cassandra cluster, see the
 [development guide](docs/development.md) and [architecture](docs/architecture.md).

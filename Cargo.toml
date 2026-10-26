@@ -13,8 +13,8 @@ edition = "2024"
 rust-version = "1.97.1"
 publish = false
 license = "0BSD"
-repository = "https://github.com/ike-forge/lazycassandra"
-homepage = "https://github.com/ike-forge/lazycassandra"
+repository = "https://github.com/ike-forge/LazyCassandra"
+homepage = "https://github.com/ike-forge/LazyCassandra"
 
 [workspace.dependencies]
 lc-domain = { path = "crates/lc-domain" }
