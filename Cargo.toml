@@ -55,7 +55,7 @@ unicode-normalization = "0.1.26"
 # `process` and `io-util` are the clipboard helper: a child that owns an X or
 # Wayland selection outlives the yank that spawned it, so it is reaped by the
 # runtime rather than waited for.
-tokio = { version = "1.53.1", features = [
+tokio = { version = "1.54.1", features = [
     "fs",
     "io-util",
     "macros",
