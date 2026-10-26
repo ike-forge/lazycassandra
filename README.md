@@ -53,10 +53,18 @@ Linux and macOS are supported. Windows users can build and run LazyCassandra
 under WSL. A terminal with true-colour support works best. Icons use a Nerd
 Font; set `icons = false` if you prefer a regular font.
 
+### Install with Homebrew
+
+On macOS or Linux:
+
+```sh
+brew install ike-forge/tap/lazycassandra
+```
+
 ### Install from source
 
-Homebrew packaging is coming soon. For now, building requires Git, a C/C++
-compiler, and Rust 1.97.1. Clone the repository and install the locked source:
+Building requires Git, a C/C++ compiler, and Rust 1.97.1. Clone the repository
+and install the locked source:
 
 ```sh
 git clone https://github.com/ike-forge/lazycassandra.git
