@@ -83,8 +83,9 @@ mise install
 cargo install --path crates/lc-app --locked
 ```
 
-Run `lazycassandra` from your own project directory to create the user config.
-Add a connection to your [config](#configuration), then launch:
+The first launch writes a commented config to
+`~/.config/lazycassandra/config.toml`. Add your cluster under
+[`[[connections]]`](#configuration), then launch:
 
 ```sh
 lazycassandra --connection dev
@@ -120,7 +121,7 @@ The bottom bar shows contextual actions; `?` lists all commands.
 | `Esc` / `q` | Back out or stop fetching / quit |
 
 In the CQL editor, printable keys type text. `Esc` dismisses completion, then
-leaves editing. See the [full shortcut reference](docs/shortcuts.md).
+leaves editing.
 
 ## Configuration
 
