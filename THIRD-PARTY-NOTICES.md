@@ -1,11 +1,15 @@
 # Third-party notices
 
-LazyCassandra includes colours from the
-[Catppuccin palette](https://github.com/catppuccin/palette), used under the
+LazyCassandra includes colours from the following palettes, each used under the
 MIT License:
 
-> Copyright (c) 2021 Catppuccin
->
+- [Catppuccin palette](https://github.com/catppuccin/palette):
+  Copyright (c) 2021 Catppuccin
+- [Solarized](https://github.com/altercation/solarized):
+  Copyright (c) 2011 Ethan Schoonover
+- [Dracula](https://github.com/dracula/dracula-theme):
+  Copyright (c) 2023 Dracula Theme
+
 > Permission is hereby granted, free of charge, to any person obtaining a copy
 > of this software and associated documentation files (the "Software"), to deal
 > in the Software without restriction, including without limitation the rights
@@ -23,10 +27,3 @@ MIT License:
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
-
-It also includes colours from
-[Solarized](https://github.com/altercation/solarized), used under the MIT
-License, copyright (c) 2011 Ethan Schoonover, and from
-[Dracula](https://github.com/dracula/dracula-theme), used under the MIT
-License, copyright (c) 2016 Dracula Theme. The permission notice above applies
-to both.
