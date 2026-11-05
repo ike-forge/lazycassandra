@@ -1,5 +1,6 @@
 //! Two hues, warm amber and cool blue, over a neutral ramp; green and red mean
-//! only success and danger. Hence `clustering` is warm here and cool elsewhere.
+//! only success and danger. Hence `clustering` is warm here and cool elsewhere,
+//! and `shortcut` is the blue, since `focus` is the amber.
 
 use crate::theme::{Palette, rgb};
 
@@ -19,7 +20,7 @@ pub(crate) const DARK: Palette = Palette {
     ranged: rgb(0x27303c),
     selection_fg: rgb(0xe1e7ee),
     selection_bar: rgb(0xfcbf76),
-    shortcut: rgb(0xfcbf76),
+    shortcut: rgb(0x84cfec),
     keyspace: rgb(0xe1e7ee),
     table: rgb(0x84cfec),
     partition: rgb(0xfcbf76),
@@ -55,7 +56,7 @@ pub(crate) const LIGHT: Palette = Palette {
     ranged: rgb(0xe7effa),
     selection_fg: rgb(0x272c31),
     selection_bar: rgb(0x8c5500),
-    shortcut: rgb(0x8c5500),
+    shortcut: rgb(0x006888),
     keyspace: rgb(0x272c31),
     table: rgb(0x006888),
     partition: rgb(0x8c5500),

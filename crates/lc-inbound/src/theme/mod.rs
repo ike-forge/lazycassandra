@@ -46,7 +46,8 @@ pub(crate) struct Palette {
     /// Where a cell spends no colour of its own.
     pub(crate) selection_fg: Color,
     pub(crate) selection_bar: Color,
-    /// Always underlined.
+    /// Told apart by colour alone, so it differs from the colours it sits
+    /// beside; the bar and palette also spell the key out.
     pub(crate) shortcut: Color,
     pub(crate) keyspace: Color,
     pub(crate) table: Color,
@@ -222,11 +223,7 @@ impl Theme {
             Token::Comment => fg(palette.comment),
             // `Style::patch` lets this `fg` overwrite the border's.
             Token::Focused => fg(palette.focus).add_modifier(Modifier::BOLD),
-            // Underlined as well: `focus` and `shortcut` are one hex in Beacon,
-            // and colour may be remapped or unseen.
-            Token::HintKey => fg(palette.shortcut)
-                .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::UNDERLINED),
+            Token::HintKey => fg(palette.shortcut).add_modifier(Modifier::BOLD),
             Token::Selected => selected(&palette),
             Token::Crosshair => crosshair(&palette),
             Token::Ranged => ranged(&palette),
@@ -605,7 +602,6 @@ pub(crate) mod tests {
         );
     }
 
-    /// Underline is what survives `focus` and `shortcut` sharing a colour.
     /// Dimmed keeps content colours.
     #[test]
     fn a_dimmed_theme_draws_no_focus_and_no_cursor() {
@@ -638,25 +634,27 @@ pub(crate) mod tests {
         );
     }
 
+    /// Colour is a hot key's only mark, so it must differ from the label
+    /// beside it on the bar and the border beside it in a title. CIE76 15 is
+    /// under Ash's low-chroma 20.
     #[test]
-    fn a_hot_key_is_underlined_and_nothing_else_is() {
-        for choice in BuiltIn::ALL {
-            let theme = Theme::of(&choice.into());
+    fn the_shortcut_of_ours_stands_apart_from_its_neighbours() {
+        for choice in Ours::ALL {
+            let palette = Theme::of(&ThemeChoice::Ours(choice)).palette();
 
-            for token in EVERY_TOKEN {
-                let underlined = theme
-                    .style(token)
-                    .add_modifier
-                    .contains(Modifier::UNDERLINED);
-
-                if matches!(token, Token::HintKey) {
-                    assert!(underlined, "{choice:?}: {token:?} is not underlined");
-                } else {
-                    assert!(
-                        !underlined || matches!(token, Token::SelectedCell),
-                        "{choice:?}: {token:?} spends the underline a hot key needs"
-                    );
-                }
+            for (role, colour) in [
+                ("text", palette.text),
+                ("dim", palette.dim),
+                ("label", palette.label),
+                ("border", palette.border),
+                ("focus", palette.focus),
+            ] {
+                let distance = super::contrast::delta_e(palette.shortcut, colour);
+                assert!(
+                    distance >= 15.0,
+                    "{}: shortcut is {distance:.1} from {role}",
+                    choice.label()
+                );
             }
         }
     }

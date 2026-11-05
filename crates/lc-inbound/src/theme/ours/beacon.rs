@@ -1,5 +1,5 @@
-//! Vivid, high-contrast and the loudest. `focus` and `shortcut` share an amber,
-//! hence underlined hot keys.
+//! Vivid, high-contrast and the loudest. `focus` is amber, so `shortcut` takes
+//! the cyan `info` uses: a key letter sits beside a focused border.
 
 use crate::theme::{Palette, rgb};
 
@@ -19,7 +19,7 @@ pub(crate) const DARK: Palette = Palette {
     ranged: rgb(0x262d3b),
     selection_fg: rgb(0xebeef5),
     selection_bar: rgb(0xfebb45),
-    shortcut: rgb(0xfebb45),
+    shortcut: rgb(0x57daff),
     keyspace: rgb(0xdab6ff),
     table: rgb(0x9aceff),
     partition: rgb(0xfebb45),
@@ -55,7 +55,7 @@ pub(crate) const LIGHT: Palette = Palette {
     ranged: rgb(0xebf0fa),
     selection_fg: rgb(0x1c1f25),
     selection_bar: rgb(0x734d00),
-    shortcut: rgb(0x734d00),
+    shortcut: rgb(0x005f7c),
     keyspace: rgb(0x6c329f),
     table: rgb(0x0056a4),
     partition: rgb(0x734d00),
