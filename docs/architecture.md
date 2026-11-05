@@ -293,10 +293,11 @@ theme, both in `lc-inbound`. `ThemeChoice` lives in `lc-domain` instead,
 because a theme *name* is not a colour: `State.theme` holds one.
 
 `ThemeChoice` has three variants: `Ours(Ours)` and `Ported(Ported)` for the
-twelve built-ins, and `Custom(ThemeName)` for a palette a config file
+fifteen built-ins, and `Custom(ThemeName)` for a palette a config file
 supplies under `[[themes]]`. `Ours` holds the eight palettes we author —
 Default, Ash, Beacon and Quill, each light and dark — and `Ported` holds the
-four Catppuccin flavours we take as given. The `Ours`/`Ported` split is
+seven we take as given: the four Catppuccin flavours, Solarized dark and
+light, and Dracula. The `Ours`/`Ported` split is
 structural rather than a naming convention because the contrast sweep — in
 `theme::tests`, over the ratios `contrast.rs` computes — is written against
 `Ours::ALL`: it takes an `Ours` and cannot name a `Ported` theme by type, so
@@ -325,7 +326,7 @@ alike.
 
 Practical consequence: nothing in the domain has to change to add a
 built-in theme, and no theme can invent a meaning the domain didn't define.
-The twelve built-in themes are available from the runtime picker (`ctrl-t`).
+The fifteen built-in themes are available from the runtime picker (`ctrl-t`).
 
 ## 7. Configuration
 

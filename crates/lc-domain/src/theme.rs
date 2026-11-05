@@ -21,6 +21,9 @@ pub enum Ported {
     CatppuccinFrappe,
     CatppuccinMacchiato,
     CatppuccinMocha,
+    SolarizedDark,
+    SolarizedLight,
+    Dracula,
 }
 
 /// Separate from [`ThemeChoice`], so custom themes extending custom themes are
@@ -32,7 +35,7 @@ pub enum BuiltIn {
 }
 
 impl BuiltIn {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 15] = [
         Self::Ours(Ours::DefaultDark),
         Self::Ours(Ours::DefaultLight),
         Self::Ours(Ours::AshDark),
@@ -45,6 +48,9 @@ impl BuiltIn {
         Self::Ported(Ported::CatppuccinFrappe),
         Self::Ported(Ported::CatppuccinMacchiato),
         Self::Ported(Ported::CatppuccinMocha),
+        Self::Ported(Ported::SolarizedDark),
+        Self::Ported(Ported::SolarizedLight),
+        Self::Ported(Ported::Dracula),
     ];
 
     #[must_use]
@@ -72,6 +78,9 @@ impl BuiltIn {
             Self::Ported(Ported::CatppuccinFrappe) => "catppuccin-frappe",
             Self::Ported(Ported::CatppuccinMacchiato) => "catppuccin-macchiato",
             Self::Ported(Ported::CatppuccinMocha) => "catppuccin-mocha",
+            Self::Ported(Ported::SolarizedDark) => "solarized-dark",
+            Self::Ported(Ported::SolarizedLight) => "solarized-light",
+            Self::Ported(Ported::Dracula) => "dracula",
         }
     }
 }
@@ -198,11 +207,14 @@ impl Ours {
 }
 
 impl Ported {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 7] = [
         Self::CatppuccinLatte,
         Self::CatppuccinFrappe,
         Self::CatppuccinMacchiato,
         Self::CatppuccinMocha,
+        Self::SolarizedDark,
+        Self::SolarizedLight,
+        Self::Dracula,
     ];
 
     #[must_use]
@@ -212,6 +224,9 @@ impl Ported {
             Self::CatppuccinFrappe => "Catppuccin Frappé",
             Self::CatppuccinMacchiato => "Catppuccin Macchiato",
             Self::CatppuccinMocha => "Catppuccin Mocha",
+            Self::SolarizedDark => "Solarized dark",
+            Self::SolarizedLight => "Solarized light",
+            Self::Dracula => "Dracula",
         }
     }
 }

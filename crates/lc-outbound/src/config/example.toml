@@ -12,7 +12,8 @@
 #                               # ash-light | beacon-dark | beacon-light |
 #                               # quill-dark | quill-light | catppuccin-latte |
 #                               # catppuccin-frappe | catppuccin-macchiato |
-#                               # catppuccin-mocha | a [[themes]] name
+#                               # catppuccin-mocha | solarized-dark |
+#                               # solarized-light | dracula | a [[themes]] name
 # background = "theme"          # "theme" | "terminal" | a hex such as "#0b0d12".
 #                               # "terminal" paints nothing, which is what lets
 #                               # a translucent or blurred terminal show

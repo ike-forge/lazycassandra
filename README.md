@@ -39,7 +39,7 @@ panel layout keep your data and its physical shape side by side.
 
 </details>
 
-Screenshots use sample data rendered by the app. Pick from twelve built-in
+Screenshots use sample data rendered by the app. Pick from fifteen built-in
 themes with `Ctrl-t`, preview them live, or define your own.
 
 ## Get started
@@ -176,5 +176,5 @@ For local development and the sample Cassandra cluster, see the
 [development guide](docs/development.md) and [architecture](docs/architecture.md).
 
 LazyCassandra is released under the [0BSD license](LICENSE). The built-in
-Catppuccin themes use the [Catppuccin palette](https://github.com/catppuccin/palette);
-see the [third-party notices](THIRD-PARTY-NOTICES.md).
+Catppuccin, Solarized and Dracula themes use their authors' palettes; see the
+[third-party notices](THIRD-PARTY-NOTICES.md).

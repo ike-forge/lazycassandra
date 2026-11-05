@@ -215,9 +215,9 @@ config can define enough themes that the picker no longer fits where a
 palette would. It is also refused over a live search prompt (see the
 prompt's subsection above). The palette carries a row for it.
 
-The list is the twelve built-in themes, followed by whatever `[[themes]]`
+The list is the fifteen built-in themes, followed by whatever `[[themes]]`
 the config layers define — a config-defined theme is never listed before a
-built-in, so the picker's first twelve rows are the same across every
+built-in, so the picker's first fifteen rows are the same across every
 project. A config file with no custom themes leaves the list exactly as it
 was before config existed.
 

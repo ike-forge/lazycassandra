@@ -101,7 +101,8 @@ fn a_term_that_matches_nothing_empties_the_picker_and_keeps_the_preview() {
     let previewed = state.theme.clone();
 
     press(&mut state, Key::Char('/'));
-    type_into(&mut state, "zzz");
+    // No label holds an `x`; a `z` would find Solarized.
+    type_into(&mut state, "xxx");
 
     assert!(picker_labels(&state).is_empty());
     assert_eq!(state.theme, previewed);

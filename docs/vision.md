@@ -153,10 +153,11 @@ The tool reserves no meaning for the sixteen ANSI colours. A theme is a
 drawn in whichever colour the active theme gives that role.
 
 Themes come in two kinds. Ours — Default, Ash, Beacon and Quill, each light
-and dark — are held to the contrast rules above. Ported palettes, Catppuccin
-today, are their authors' work: we take them as given and impose nothing on
-them beyond deciding whether to ship them, which is stated in the type system
-rather than in a comment. `ctrl-t` moves between all twelve with a live preview.
+and dark — are held to the contrast rules above. Ported palettes —
+Catppuccin, Solarized and Dracula — are their authors' work: we take them as
+given and impose nothing on them beyond deciding whether to ship them, which
+is stated in the type system rather than in a comment. `ctrl-t` moves between
+all fifteen with a live preview.
 
 Users who run a translucent, blurred or image background can declare it:
 `background = "terminal"` paints no ground at all, and `background =

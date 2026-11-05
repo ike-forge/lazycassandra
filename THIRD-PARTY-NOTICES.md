@@ -23,3 +23,10 @@ MIT License:
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
+
+It also includes colours from
+[Solarized](https://github.com/altercation/solarized), used under the MIT
+License, copyright (c) 2011 Ethan Schoonover, and from
+[Dracula](https://github.com/dracula/dracula-theme), used under the MIT
+License, copyright (c) 2016 Dracula Theme. The permission notice above applies
+to both.

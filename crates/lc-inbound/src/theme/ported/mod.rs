@@ -3,3 +3,5 @@
 //! floor.
 
 pub(super) mod catppuccin;
+pub(super) mod dracula;
+pub(super) mod solarized;
