@@ -192,7 +192,7 @@ fn panel_bar(state: &State) -> HintBar {
     }
 }
 
-/// An empty picker names neither `/` nor `⏎`.
+/// An empty picker names neither `/` nor `↵`.
 fn connections_bar(state: &State) -> HintBar {
     let listed = !state.config.connections.is_empty();
 
@@ -424,7 +424,7 @@ fn key_name(key: Key) -> String {
     match key {
         Key::Char(' ') => "space".to_owned(),
         Key::Char(character) => character.to_string(),
-        Key::Enter => "⏎".to_owned(),
+        Key::Enter => "↵".to_owned(),
         Key::Escape => "esc".to_owned(),
         Key::Backspace => "bksp".to_owned(),
         Key::Tab => "tab".to_owned(),

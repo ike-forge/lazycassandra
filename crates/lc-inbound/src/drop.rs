@@ -230,7 +230,7 @@ impl<'a> Button<'a> {
     pub(crate) fn new(key: Key, label: &'a str, live: bool) -> Self {
         let glyph = match key {
             Key::Char(character) => character.to_string(),
-            Key::Enter => "⏎".to_owned(),
+            Key::Enter => "↵".to_owned(),
             Key::Escape => "esc".to_owned(),
             other => format!("{other:?}").to_lowercase(),
         };

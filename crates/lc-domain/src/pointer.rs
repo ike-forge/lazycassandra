@@ -25,7 +25,7 @@ pub enum Pointer {
     Modal,
     /// Takes effect on press, as a text field does.
     Field(crate::export::Field),
-    /// An index into the previous frame's list; selects and answers `⏎`.
+    /// An index into the previous frame's list; selects and answers `↵`.
     Entry(usize),
     /// Scrolling is a glance, clicking a commitment.
     Wheel {

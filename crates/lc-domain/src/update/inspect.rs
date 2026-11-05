@@ -125,7 +125,7 @@ pub(super) fn inspect_key(state: &mut State, key: Key) -> Vec<Effect> {
         return start_edit(state);
     }
 
-    // Over a row not yet inserted, `⏎` asks to write it.
+    // Over a row not yet inserted, `↵` asks to write it.
     if matches!(key, Key::Enter)
         && matches!(&state.overlay, Some(Overlay::Inspect(inspector)) if inspector.is_inserting())
     {

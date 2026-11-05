@@ -176,7 +176,7 @@ fn space_reads_no_table() {
 
     assert!(
         state.contents.outstanding().is_none(),
-        "space is free, not a second name for ⏎"
+        "space is free, not a second name for ↵"
     );
 }
 

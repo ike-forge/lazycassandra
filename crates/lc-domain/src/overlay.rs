@@ -43,7 +43,7 @@ pub enum Overlay {
         /// A field: a prompt and its picker are up together.
         sift: Option<Sift>,
     },
-    /// Previews nothing; `⏎` copies into the buffer.
+    /// Previews nothing; `↵` copies into the buffer.
     History {
         cursor: Cursor,
         /// A field: a prompt and its picker are up together.

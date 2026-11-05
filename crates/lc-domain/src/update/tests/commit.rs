@@ -215,7 +215,7 @@ fn an_open_field_names_only_the_two_keys_it_answers() {
             .chain(&bar.global)
             .map(|hint| format!("{} {}", hint.keys, hint.action))
             .collect::<Vec<_>>(),
-        ["⏎ save", "esc cancel"]
+        ["↵ save", "esc cancel"]
     );
 }
 

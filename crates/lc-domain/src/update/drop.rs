@@ -103,7 +103,7 @@ pub(super) fn open_drop(state: &mut State) {
     state.dirty = true;
 }
 
-/// `⏎` runs the typed spelling only once the name matches.
+/// `↵` runs the typed spelling only once the name matches.
 pub(super) fn drop_key(state: &mut State, key: Key) -> Vec<Effect> {
     let decision = {
         let Some(Overlay::Drop(prompt)) = &mut state.overlay else {

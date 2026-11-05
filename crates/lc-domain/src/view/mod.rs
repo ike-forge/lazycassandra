@@ -228,7 +228,7 @@ pub struct EditView {
     pub text: String,
     /// A character offset, for the caret.
     pub cursor: usize,
-    /// Why `⏎` is greyed.
+    /// Why `↵` is greyed.
     pub error: Option<String>,
 }
 

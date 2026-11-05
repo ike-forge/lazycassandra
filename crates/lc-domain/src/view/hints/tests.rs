@@ -55,7 +55,7 @@ fn the_bar_carries_the_focused_panels_bindings_and_the_common_ones() {
 
     let bar = bar(&state);
 
-    assert_eq!(bar.panel[0].keys, "⏎");
+    assert_eq!(bar.panel[0].keys, "↵");
     assert_eq!(bar.panel[0].action, "open");
     assert_eq!(bar.global.last().expect("y copy is last").action, "copy");
 }
@@ -80,7 +80,7 @@ fn the_logs_tabs_bar_advertises_a_list_not_an_editor() {
 
     assert!(
         bar.panel.iter().all(|hint| hint.action != "newline"),
-        "⏎ types nothing on the Logs tab: {:?}",
+        "↵ types nothing on the Logs tab: {:?}",
         bar.panel
     );
     assert!(
@@ -152,7 +152,7 @@ fn the_bar_names_what_the_palette_responds_to() {
         "the palette answers to nothing a terminal list does not: {:?}",
         bar.panel
     );
-    assert_eq!(bar.global[0].keys, "⏎");
+    assert_eq!(bar.global[0].keys, "↵");
     assert_eq!(bar.global[0].action, "run");
     assert_eq!(bar.global[1].keys, "?/esc");
     assert_eq!(bar.global[1].action, "close");
@@ -226,7 +226,7 @@ fn the_bar_names_what_the_picker_responds_to() {
             .iter()
             .map(|hint| (hint.keys.as_str(), hint.action))
             .collect::<Vec<_>>(),
-        [("⏎", "keep"), ("esc", "cancel"), ("q", "quit")]
+        [("↵", "keep"), ("esc", "cancel"), ("q", "quit")]
     );
 }
 
@@ -254,7 +254,7 @@ fn the_connection_pickers_bar_names_connect_and_teaches_no_motion() {
             .iter()
             .map(|hint| (hint.keys.as_str(), hint.action))
             .collect::<Vec<_>>(),
-        [("⏎", "connect"), ("esc", "close"), ("q", "quit")]
+        [("↵", "connect"), ("esc", "close"), ("q", "quit")]
     );
 }
 
@@ -308,7 +308,7 @@ fn a_live_sift_in_the_connection_picker_shows_the_prompts_bar() {
             .iter()
             .map(|hint| (hint.keys.as_str(), hint.action))
             .collect::<Vec<_>>(),
-        [("⏎", "apply"), ("esc", "cancel")]
+        [("↵", "apply"), ("esc", "cancel")]
     );
 }
 
@@ -465,7 +465,7 @@ fn the_bar_names_what_the_prompt_responds_to() {
             .iter()
             .map(|hint| (hint.keys.as_str(), hint.action))
             .collect::<Vec<_>>(),
-        [("⏎", "apply"), ("esc", "cancel")]
+        [("↵", "apply"), ("esc", "cancel")]
     );
 }
 
@@ -514,7 +514,7 @@ fn a_closed_buffer_names_the_way_in_first_and_leaves_with_esc() {
         bar.panel
             .first()
             .map(|hint| (hint.keys.as_str(), hint.action)),
-        Some(("⏎", "edit"))
+        Some(("↵", "edit"))
     );
     assert!(bar.global.iter().any(|hint| hint.action == "leave"));
 }

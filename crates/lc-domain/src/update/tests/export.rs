@@ -55,7 +55,7 @@ fn every_live_hint_the_export_forms_bar_shows_does_something() {
                 let key = match key {
                     "tab" => Key::Tab,
                     "space" => Key::Char(' '),
-                    "⏎" => Key::Enter,
+                    "↵" => Key::Enter,
                     "esc" => Key::Escape,
                     other => panic!("{stop:?} names {other}, which this sweep cannot press"),
                 };
@@ -105,7 +105,7 @@ fn the_export_forms_bar_follows_the_stop() {
     press(&mut state, Key::Tab);
     assert_eq!(
         named(&state),
-        ["tab next option", "space/⏎ export", "esc close"]
+        ["tab next option", "space/↵ export", "esc close"]
     );
 }
 

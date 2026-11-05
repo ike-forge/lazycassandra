@@ -387,7 +387,7 @@ pub(super) fn dismiss_overlay(state: &mut State) -> bool {
             state.overlay = Some(Overlay::Commands(panel));
             true
         }
-        // Applies nothing: only `⏎` writes a filter.
+        // Applies nothing: only `↵` writes a filter.
         Some(
             Overlay::Message(_)
             | Overlay::Commands(_)

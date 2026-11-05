@@ -150,7 +150,7 @@ pub(super) fn go_right(state: &mut State) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `⏎` folds an open keyspace; `l` steps into it.
+/// `↵` folds an open keyspace; `l` steps into it.
 pub(super) fn step_in(state: &mut State) -> Vec<Effect> {
     let table = {
         let Some((tables, schema)) = state.tables_and_schema() else {

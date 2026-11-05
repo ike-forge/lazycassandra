@@ -178,7 +178,7 @@ impl Inspector {
             return false;
         };
 
-        // Opening a field and pressing `⏎` leaves the column unset.
+        // Opening a field and pressing `↵` leaves the column unset.
         let blank = field.line().text().is_empty();
         let keeps_blank = blank
             && crate::edit::takes_empty(field.cql_type())

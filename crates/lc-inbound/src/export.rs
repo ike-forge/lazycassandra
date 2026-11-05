@@ -578,7 +578,7 @@ mod tests {
         let (buffer, map) = mapped(form);
         let (x, y) = find(&buffer, "esc Back");
 
-        assert!(text(&buffer).contains("⏎ Yes, overwrite"));
+        assert!(text(&buffer).contains("↵ Yes, overwrite"));
         assert_eq!(
             map.press(x, y),
             Some(lc_domain::pointer::Pointer::Hold(

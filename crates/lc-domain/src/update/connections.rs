@@ -117,11 +117,11 @@ fn connections_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
                 return Vec::new();
             }
         }
-        // `⏎` closes the prompt rather than connecting: the row the cursor
+        // `↵` closes the prompt rather than connecting: the row the cursor
         // holds may not be the one being narrowed to.
         Key::Enter => {
             // A term that matched nothing returns the cursor to its origin, so
-            // the next `⏎` cannot open a hidden entry.
+            // the next `↵` cannot open a hidden entry.
             let at = picker_matches(&names, open.search().as_ref())
                 .get(cursor.index())
                 .copied()

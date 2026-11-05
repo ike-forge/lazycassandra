@@ -6,7 +6,7 @@ fn the_bar_describes_the_open_palette_rather_than_the_panel_under_it() {
 
     assert_eq!(
         row(&buffer, 23).trim_end(),
-        " ⏎ run | ?/esc close | q quit | / search"
+        " ↵ run | ?/esc close | q quit | / search"
     );
 }
 
@@ -17,7 +17,7 @@ fn the_bar_says_what_the_focused_panel_does() {
         .map(|&panel| row(&draw_focused(80, 24, panel), 23).trim_end().to_owned())
         .collect();
 
-    assert!(bars[0].contains("⏎ open"), "Tables opens: {:?}", bars[0]);
+    assert!(bars[0].contains("↵ open"), "Tables opens: {:?}", bars[0]);
     assert!(bars[1].contains("/ search"), "Ddl searches: {:?}", bars[1]);
     assert!(
         bars[2].contains("/ search"),
@@ -25,7 +25,7 @@ fn the_bar_says_what_the_focused_panel_does() {
         bars[2]
     );
     assert!(
-        bars[3].contains("⏎ edit"),
+        bars[3].contains("↵ edit"),
         "Queries opens its buffer: {:?}",
         bars[3]
     );
@@ -64,7 +64,7 @@ fn the_narrowest_frame_still_draws_the_bar() {
 
     assert_eq!(
         row(&buffer, 11).trim_end(),
-        " ⏎ open | / search | v select | y copy",
+        " ↵ open | / search | v select | y copy",
         "the row the loader gave up goes back to the hints"
     );
 }

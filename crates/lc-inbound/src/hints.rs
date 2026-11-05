@@ -36,7 +36,7 @@ impl Segment {
         }
     }
 
-    /// Assumes single-width labels, true of ASCII and of the arrow and `⏎`
+    /// Assumes single-width labels, true of ASCII and of the arrow and `↵`
     /// glyphs.
     fn width(&self) -> usize {
         self.keys.chars().count() + 1 + self.action.chars().count()
@@ -184,15 +184,15 @@ mod tests {
     fn a_wide_frame_shows_every_hint() {
         assert_eq!(
             drawn(Panel::Tables, 90),
-            " ⏎ open | H health | / search | v select | y copy"
+            " ↵ open | H health | / search | v select | y copy"
         );
     }
 
     #[test]
     fn hints_are_dropped_whole_and_lowest_value_first() {
         // No geometry here fits a palette, so `?` never joins the bar.
-        assert_eq!(drawn(Panel::Tables, 36), " ⏎ open | v select | y copy");
-        assert_eq!(drawn(Panel::Tables, 25), " ⏎ open | y copy");
+        assert_eq!(drawn(Panel::Tables, 36), " ↵ open | v select | y copy");
+        assert_eq!(drawn(Panel::Tables, 25), " ↵ open | y copy");
         assert_eq!(drawn(Panel::Tables, 15), " y copy");
         assert_eq!(drawn(Panel::Tables, 6), "");
     }
@@ -229,20 +229,20 @@ mod tests {
 
         assert_eq!(
             drawn(90),
-            " ⏎ open | H health | / search | v select | y copy | ? commands"
+            " ↵ open | H health | / search | v select | y copy | ? commands"
         );
         assert_eq!(
             drawn(51),
-            " ⏎ open | / search | v select | y copy | ? commands",
+            " ↵ open | / search | v select | y copy | ? commands",
             "panel hints go first, down to the first"
         );
         assert_eq!(
             drawn(40),
-            " ⏎ open | v select | y copy | ? commands",
+            " ↵ open | v select | y copy | ? commands",
             "the common tail goes from the left"
         );
-        assert_eq!(drawn(29), " ⏎ open | y copy | ? commands");
-        assert_eq!(drawn(20), " ⏎ open | ? commands");
+        assert_eq!(drawn(29), " ↵ open | y copy | ? commands");
+        assert_eq!(drawn(20), " ↵ open | ? commands");
         assert_eq!(drawn(11), " ? commands");
     }
 
@@ -250,7 +250,7 @@ mod tests {
     fn the_widest_bar_still_fits_the_narrowest_legal_frame() {
         assert_eq!(
             drawn(Panel::Tables, 40),
-            " ⏎ open | / search | v select | y copy"
+            " ↵ open | / search | v select | y copy"
         );
     }
 
@@ -258,7 +258,7 @@ mod tests {
     fn a_closed_buffer_names_the_way_in_and_out() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " ⏎ edit | ctrl-r run | ctrl-e $EDITOR | esc leave"
+            " ↵ edit | ctrl-r run | ctrl-e $EDITOR | esc leave"
         );
     }
 
@@ -274,7 +274,7 @@ mod tests {
                 .iter()
                 .map(|span| span.content.as_ref())
                 .collect::<String>(),
-            " ctrl-r run | ctrl-e $EDITOR | ctrl-f format | ⏎ newline | esc done"
+            " ctrl-r run | ctrl-e $EDITOR | ctrl-f format | ↵ newline | esc done"
         );
     }
 
@@ -376,7 +376,7 @@ mod tests {
         let keys = line
             .spans
             .iter()
-            .find(|span| span.content.as_ref() == "⏎")
+            .find(|span| span.content.as_ref() == "↵")
             .expect("the first hint's key");
 
         assert_eq!(keys.style, Theme::default().style(Token::HintKey));
@@ -386,7 +386,7 @@ mod tests {
     fn export_bar(export: Option<String>) -> HintBar {
         HintBar {
             panel: vec![Hint {
-                keys: "⏎".to_owned(),
+                keys: "↵".to_owned(),
                 action: "open",
                 liveness: Liveness::Live,
             }],
@@ -399,7 +399,7 @@ mod tests {
         }
     }
 
-    /// `INDENT` (1) + `⏎ open` (6) + `SEPARATOR` (3) + `q quit` (6).
+    /// `INDENT` (1) + `↵ open` (6) + `SEPARATOR` (3) + `q quit` (6).
     const HINTS_ONLY: u16 = 16;
     const EXPORT_TEXT: &str = "exporting 41203 rows…";
     /// Plus `SEPARATOR` (3) and the 21-character export text.
@@ -444,7 +444,7 @@ mod tests {
             with_room.contains(EXPORT_TEXT),
             "at its own width the export text fits: {with_room:?}"
         );
-        assert!(with_room.contains("⏎ open") && with_room.contains("q quit"));
+        assert!(with_room.contains("↵ open") && with_room.contains("q quit"));
 
         let one_narrower = text_of(&bar, WITH_EXPORT - 1);
         assert!(
@@ -452,7 +452,7 @@ mod tests {
             "one column short, the export text is what goes: {one_narrower:?}"
         );
         assert_eq!(
-            one_narrower, " ⏎ open | q quit",
+            one_narrower, " ↵ open | q quit",
             "both hints survive untouched — export is dropped before either is"
         );
     }

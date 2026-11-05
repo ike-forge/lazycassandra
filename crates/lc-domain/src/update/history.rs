@@ -85,7 +85,7 @@ pub(super) fn history_key(state: &mut State, key: Key) -> Vec<Effect> {
     Vec::new()
 }
 
-/// `⏎` closes the prompt and does not load: the cursor's row may not be the one
+/// `↵` closes the prompt and does not load: the cursor's row may not be the one
 /// being narrowed to.
 fn history_sift_key(state: &mut State, key: Key) -> Vec<Effect> {
     if matches!(key, Key::Escape) {

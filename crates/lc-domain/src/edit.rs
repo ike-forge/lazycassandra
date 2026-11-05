@@ -243,7 +243,7 @@ pub struct Field {
 }
 
 impl Field {
-    /// Seeded with the cell's text, so an immediate `⏎` is a no-op.
+    /// Seeded with the cell's text, so an immediate `↵` is a no-op.
     #[must_use]
     pub fn opened(column: usize, name: &str, cql_type: &str, text: String) -> Self {
         Self {

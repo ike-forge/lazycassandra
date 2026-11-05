@@ -165,7 +165,7 @@ pub(super) fn click_at(state: &mut State, click: Click) -> Vec<Effect> {
             show_tab(state, panel, tab);
             return Vec::new();
         }
-        // A press on the buffer is `4` then `⏎`.
+        // A press on the buffer is `4` then `↵`.
         Click::Panel(Panel::Queries) => {
             state.queries.start_editing();
             return Vec::new();

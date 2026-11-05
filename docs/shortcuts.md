@@ -17,7 +17,7 @@ key does something, it does it there.
 Reachable from every panel that does not take text, in every connection
 state. `Esc`, `Tab` and `Shift-Tab` are the exceptions that really are
 unconditional; the marked rows are text instead, in the one place that takes
-text — Queries' Cql buffer once `4`, `⏎` or `i` has opened it, argued in that
+text — Queries' Cql buffer once `4`, `↵` or `i` has opened it, argued in that
 subsection below. `ctrl-t` and `ctrl-o` are unmarked because a chord is not
 text anywhere: the ctrl layer is dispatched above the panel that takes text
 (§2).
@@ -67,7 +67,7 @@ on the mode rather than fixed to the panel:
 | Any panel, a selection held | Every selected row, in the order the rows are drawn — every column in column mode, every row of the rectangle in cell mode — one line each, joined with `\n`, no trailing newline and nothing between the groups. A single cell in cell mode still yanks bare. |
 
 ³ Except in Queries with a completion popup up, where it accepts the selected
-candidate — as `⏎` does there too. The Queries subsection below is where that
+candidate — as `↵` does there too. The Queries subsection below is where that
 is argued.
 
 Each panel's title opens with the key that reaches it — `[1]-Tables`,
@@ -99,7 +99,7 @@ with `]` and `[`.
 
 Queries is the exception. `4` arrives with the Cql buffer open, because a
 newcomer pressing the number of the panel that takes queries expects to type
-one; a buffer that needed `⏎` first read as broken. An open buffer takes the
+one; a buffer that needed `↵` first read as broken. An open buffer takes the
 next `4` as text, so it cannot also walk the strip, and Logs has a number of
 its own instead: `5`, drawn in the title as `[5]-Logs`.
 `]` and `[` walk the focused panel's tabs forwards and backwards, as in
@@ -130,16 +130,16 @@ before the panel underneath is consulted (§2).
 | `j` `k` `↑` `↓` | Move the cursor, command to command. Headings and rules are stepped over. |
 | `PageDown` `PageUp` `ctrl-d` `ctrl-u` | Page the list. |
 | `Home` `g`, `End` `G` | The first command, the last command. |
-| `⏎` | Close the palette and perform the selected command. |
+| `↵` | Close the palette and perform the selected command. |
 | `?` `Esc` | Close it. |
 | `q` | Quits, as everywhere else. |
-| `/` | Filter the list: typing keeps the rows that match, marking the hit in each. `⏎` keeps the row and widens the list back out, `Esc` puts both back. |
+| `/` | Filter the list: typing keeps the rows that match, marking the hit in each. `↵` keeps the row and widens the list back out, `Esc` puts both back. |
 | anything else | Inert. Nothing means "close" in one frame and something else in the next. |
 
-`⏎` presses the row's own first key, in the panel the row belongs to — it
+`↵` presses the row's own first key, in the panel the row belongs to — it
 focuses that panel first, whether or not the action that follows has anything
 to do. A row that means something only inside the export form is not pressed
-at all: it is drawn faint, and `⏎` on it closes the palette and stops.
+at all: it is drawn faint, and `↵` on it closes the palette and stops.
 
 `/` searches the action text alone — never the key column, never a group
 heading — and narrows the list to what matches: a group keeps the commands
@@ -147,7 +147,7 @@ that match and is dropped whole, heading and rule with it, when it keeps
 none. The cursor still only ever lands on a command, the same
 skip-the-heading rule `j`/`k` and paging already keep, and it lands on the
 first surviving one at or beyond the row the prompt opened on. A term
-matching nothing draws one faint line saying so, which `⏎` does nothing on.
+matching nothing draws one faint line saying so, which `↵` does nothing on.
 The block itself is sized from the whole catalogue, so no keystroke moves a
 border. The catalogue this table draws gained no row of its own for `/`: a
 row saying `/` searches the palette would be a row about the palette inside
@@ -229,7 +229,7 @@ was before config existed.
 | `Enter` | Closes, keeping whatever theme is set — and writes it to the config file it is read from, so the next launch opens on it. |
 | `Esc` | Sets `State.theme` back to the theme the picker opened on, then closes. |
 | `q` | Quits, as everywhere else. The picker takes motion, not text, so it leaves `q` alone — the palette's rule (§2). |
-| `/` | Filter the list: typing keeps the themes that match, marking the hit and previewing the row it seats on. `⏎` keeps the theme and widens the list back out, `Esc` puts both back. |
+| `/` | Filter the list: typing keeps the themes that match, marking the hit and previewing the row it seats on. `↵` keeps the theme and widens the list back out, `Esc` puts both back. |
 
 Search here previews the same way motion already does: the cursor is what
 sets `State.theme`, so the row a filter seats it on is the theme in force.
@@ -281,15 +281,15 @@ panels and no explanation. A config that names a default skips it and connects.
 | `Enter` | Opens the connection under the cursor, and closes. |
 | `Esc` | Closes, leaving the tool connected to whatever it already was — at startup, nothing. |
 | `q` | Quits, as everywhere else. The picker takes motion, not text (§2). |
-| `/` | Filter the list by name. `⏎` closes the prompt onto its row, `Esc` puts the cursor back. |
+| `/` | Filter the list by name. `↵` closes the prompt onto its row, `Esc` puts the cursor back. |
 
-The two `⏎`s are deliberate. The first closes a filter onto the row the cursor
+The two `↵`s are deliberate. The first closes a filter onto the row the cursor
 holds; the second opens it. A term typed to *find* an entry should not also
 connect to it, because the row the cursor happens to hold may not be the one
 the user was still narrowing towards — and unlike the theme picker, landing on
 the wrong row here costs a connection rather than a repaint. A term matching
 nothing draws one faint line saying so, opens nothing, and puts the cursor back
-where the prompt started, so the next `⏎` cannot open an entry the filter had
+where the prompt started, so the next `↵` cannot open an entry the filter had
 hidden.
 
 `Esc` leaving the picker closed is what `ctrl-o` exists for: dismissing it is a
@@ -320,7 +320,7 @@ so the file is `0600`.
 | `Enter` | Appends the entry under the cursor to the buffer, after a blank line, and closes. An empty buffer takes it alone. Runs nothing: `ctrl-r` is the one key that sends a statement. |
 | `Esc` | Closes, leaving the buffer as it was. |
 | `q` | Quits, as everywhere else. The list takes motion, not text. |
-| `/` | Filter the list. `⏎` closes the prompt onto its row without loading it, `Esc` puts the cursor back — the connection picker's two `⏎`s, for its reason. |
+| `/` | Filter the list. `↵` closes the prompt onto its row without loading it, `Esc` puts the cursor back — the connection picker's two `↵`s, for its reason. |
 
 The block scrolls, where the pickers refuse a list that does not fit: a
 hundred rows is far more than a frame holds.
@@ -420,12 +420,12 @@ does nothing here.
 
 The bar names what the stop under `tab` answers to: `tab next option` always,
 `space toggle` on a radio group, nothing more on the path stop, where `space` is text, and
-`space/⏎ export` and `space/⏎ copy` on the two buttons. `esc close` follows.
+`space/↵ export` and `space/↵ copy` on the two buttons. `esc close` follows.
 The buttons are drawn as every confirmation's are, right-aligned on the last
 row with their key highlighted — `ctrl-s Export to file`, `ctrl-y Copy to
 clipboard` — and the one under `tab` is filled solid. The overwrite
-confirmation's are `⏎ Yes, overwrite` and `esc Back`, and its bar is
-`space/⏎ overwrite` and `esc back`.
+confirmation's are `↵ Yes, overwrite` and `esc Back`, and its bar is
+`space/↵ overwrite` and `esc back`.
 
 `ctrl-s` and `ctrl-y` are answered while the form is up and its overwrite
 question is not; `ctrl-d`/`ctrl-u` are too, dispatched above the overlay guard
@@ -506,7 +506,7 @@ not reach it:
 |---|---|---|
 | `y` | Runs the drop. | Text. |
 | `n` | Closes it, and runs nothing. | Text. |
-| `Enter` | Inert. | Runs the drop, and only once the field equals the name asked for. The bar greys `⏎ drop it` until it does. |
+| `Enter` | Inert. | Runs the drop, and only once the field equals the name asked for. The bar greys `↵ drop it` until it does. |
 | any printable key (digits only on the count), `Backspace` / `Delete`, `←` / `→`, `Home` / `End` | Inert. | Text and editing, the panel-that-takes-text rule applied inside an overlay (§2). |
 | `Esc` | Closes it, and runs nothing. | The same. |
 | anything else | Inert. Nothing means "close" in one frame and something else in the next. |
@@ -672,11 +672,11 @@ action, and a second name for a key everyone already knows buys nothing.
 where they live: unfolding is what *move right* means in a tree, and the same
 key means the next column in a grid — §2.
 
-On a table row `l` is `⏎`: the tree has no level below a table, so *move
+On a table row `l` is `↵`: the tree has no level below a table, so *move
 right* out of one is the panel to its right, and a hand walking `l` `l` `l`
 lands in Contents rather than on a key that does nothing. The two are not
-synonyms above that row — on an open keyspace `⏎` folds where `l` steps in —
-and `l` inherits `⏎`'s two conditions on the read itself: a selection of more
+synonyms above that row — on an open keyspace `↵` folds where `l` steps in —
+and `l` inherits `↵`'s two conditions on the read itself: a selection of more
 than one row makes it inert, and a search swallows only the fold path, never
 the read.
 
@@ -831,7 +831,7 @@ open.
 
 | Key | Effect |
 |---|---|
-| `Enter` | Accept it. Inert — and the `⏎` hint greyed — while the text is not a value of the column's declared type; the field stays open with the reason under it rather than losing what was typed. |
+| `Enter` | Accept it. Inert — and the `↵` hint greyed — while the text is not a value of the column's declared type; the field stays open with the reason under it rather than losing what was typed. |
 | `Esc` | Abandon it, changing nothing. |
 | `Left` / `Right`, `Home` / `End`, `Backspace` / `Delete` | Move and edit within the field. |
 | anything else printable | Types itself. |
@@ -891,7 +891,7 @@ every key.
 | `y` | Run it. The posture is checked here, not only where the block opened. |
 | `n` / `Esc` | Abandon it, leaving the edits standing — or, over an insert, handing the form back with what was typed. |
 | `j` / `k`, `PageDown` / `PageUp`, `ctrl-d` / `ctrl-u`, `Home` / `End`, `g` / `G` | Scroll the statement. Unlike the drop confirmation, which elides a long batch to its head, this block scrolls: every statement a commit would run is readable. |
-| anything else | Inert. `⏎` answers nothing — an `UPDATE` is a write, so there is no typed spelling. |
+| anything else | Inert. `↵` answers nothing — an `UPDATE` is a write, so there is no typed spelling. |
 
 On success the edits are written into the page in place and the marks clear;
 the page is not re-read, so the cursor, the paging and the arrangement are
@@ -921,9 +921,9 @@ tab click arrive with it closed, taking no text: every global key keeps its
 meaning. Closed, its rows are the statements the buffer
 holds: `j`/`k` band one after another and `ctrl-r` runs the banded one.
 The band is drawn in both modes — it says what `ctrl-r` would send, and
-`ctrl-r` answers in both. `⏎` or `i` opens it, and from then on every
+`ctrl-r` answers in both. `↵` or `i` opens it, and from then on every
 printable key is a character; `Esc` closes it again without leaving the
-panel. The caret is drawn only while it is open, and the bar reads `⏎ edit`
+panel. The caret is drawn only while it is open, and the bar reads `↵ edit`
 before and `esc done` after. Leaving the panel or the tab closes it, and
 nothing reopens it on the way back. Vim motions stop at the buffer's edge: it
 is edited with the keys below, and `ctrl-e` is the way to any other editor.
@@ -939,7 +939,7 @@ is edited with the keys below, and `ctrl-e` is the way to any other editor.
 | `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
 | `ctrl-n` / `ctrl-p` | The next / previous completion. With no popup up, raise one against the word under the cursor. |
 | `↓`³ / `↑`³ | The next / previous completion — **only** while a popup is up, and the same step `ctrl-n`/`ctrl-p` take. With none up, they move the cursor, as everywhere else. |
-| `Tab`³ / `Enter`³ | Accept the selected completion — **only** while a popup is up. A keyword lands with the space the word after it needs, unless the cursor is already on one; a name, a type and a statement shape land as they are drawn. With no popup up, `Tab` moves focus and `⏎` splits the line, as everywhere else. |
+| `Tab`³ / `Enter`³ | Accept the selected completion — **only** while a popup is up. A keyword lands with the space the word after it needs, unless the cursor is already on one; a name, a type and a statement shape land as they are drawn. With no popup up, `Tab` moves focus and `↵` splits the line, as everywhere else. |
 | any printable key | Insert it, and offer completions against the word it lands in. `q`, `t`, `j` and the rest are text here. |
 | `Enter` | With the buffer open: split the line at the cursor. |
 | `Backspace` / `Delete` | Delete before / at the cursor; at a line's edge, the line break. |
@@ -952,8 +952,8 @@ is edited with the keys below, and `ctrl-e` is the way to any other editor.
 is drawn. All five are exceptions to §2's *the same key means the same thing
 in every panel*, taken for the reason `Home` and `End` already diverge here: it
 is what the key does in every editor the audience has met. None is invisible —
-the popup is on screen with a row selected, and the bar swaps `⏎ newline` for
-`tab ⏎ complete` in exactly the frames the swap is true.
+the popup is on screen with a row selected, and the bar swaps `↵ newline` for
+`tab ↵ complete` in exactly the frames the swap is true.
 `Esc`'s second press still closes the buffer, so its hint stays true either way.
 The arrows need no swap of their own: a list with a row selected is what a
 reader already presses them in, and *down one row* is what the palette calls
@@ -1166,12 +1166,12 @@ A panel number (`1`–`5`) is a third exception: it moves focus everywhere but
 an open Cql buffer, where it is text. So are `[` and `]`.
 `Tab`, `Enter` and `Esc` under a completion popup are a fourth, and the only
 one conditional on something drawn rather than on which panel is focused: while
-the popup is up `Tab` and `⏎` accept the selected candidate and `Esc` takes the
+the popup is up `Tab` and `↵` accept the selected candidate and `Esc` takes the
 popup down, and in every other frame all three mean what they mean everywhere.
 `↑`/`↓` join them there — they walk the popup while one is up and move the
 cursor otherwise — and are the mildest of the five: what they move is still the
 row list on screen.
-The condition is on screen — the popup itself — and the bar drops `⏎ newline`
+The condition is on screen — the popup itself — and the bar drops `↵ newline`
 for exactly those frames rather than name something the next
 keystroke will not do.
 
@@ -1240,7 +1240,7 @@ that does something. That claim is about keys, not about wordings. The shared mo
 `h`/`l`, the arrows, the paging keys, `Home`/`End` — are listed once, under
 `Navigate`, and worded for the movement rather than for what a panel makes of
 it: `h`/`←` is "left, or fold". A panel's own group then carries only what that
-panel alone answers — `⏎` in the tree, `m` in the grid. Listing the horizontal
+panel alone answers — `↵` in the tree, `m` in the grid. Listing the horizontal
 pair under every heading that resolves it, which the catalogue did until
 2026-08-15, bought a per-panel noun and cost the reader the same two keys three
 times over before anything particular to a panel.
@@ -1250,7 +1250,7 @@ outranks focus.** `State::takes_text` is the one exhaustive answer: true only
 while Queries has focus and its Cql buffer is open. There every printable key
 is a character; everywhere else every printable key is a binding. Opening the
 buffer is the one state within a panel that changes what a key means, and it
-is entered by a press of its own (`⏎`/`i`), shown by the caret and the bar,
+is entered by a press of its own (`↵`/`i`), shown by the caret and the bar,
 and left by `Esc` or by leaving the panel.
 
 The Table contents selection mode does not touch this. `m` changes what the
@@ -1264,7 +1264,7 @@ this rule, and is not what this is.
 
 The command palette sits above that. It is opened deliberately with `?`, closes
 with either `?` or `esc` — both named on its bar — and while it is up it
-takes motion, runs the selected row on `⏎`, leaves `q` quitting, and makes
+takes motion, runs the selected row on `↵`, leaves `q` quitting, and makes
 every other key inert rather than dismissing. A key that means "close" in one
 frame and something else in the next is the ambiguity both halves of this
 rule exist to prevent.
@@ -1310,7 +1310,7 @@ of the palette and the picker's own `q`-quits rule. Both lists narrow to
 the rows the term matched, marking the hit where it sits, in a block the
 unfiltered list still sizes — and in the picker the row the filter seats on
 is the theme previewed, since its cursor is the preview. Nothing of the
-search outlives the prompt: `⏎` keeps only the row the cursor found and
+search outlives the prompt: `↵` keeps only the row the cursor found and
 widens the list back out around it, `Esc` puts the cursor back where the
 prompt opened, and the query itself is gone once the prompt closes, with no
 highlight and no `n`/`N` left to walk.
@@ -1464,7 +1464,7 @@ Bound, and spending nothing from §3's budget.
 | Left click | Chrome | Focus that panel |
 | Left click | Anywhere, overlay up | Dismiss the overlay — except on a confirmation's or the health block's own block |
 | Left press | A confirmation's button (drop, commit, discard, export's two buttons and Yes, overwrite) | Lights it solid; dragging off unlights it |
-| Left release | The button that was pressed | Its key: `y`, `n`, `⏎` or `esc`, answered as if typed. Released anywhere else: nothing |
+| Left release | The button that was pressed | Its key: `y`, `n`, `↵` or `esc`, answered as if typed. Released anywhere else: nothing |
 | Left click | A confirmation's block, off its buttons | Nothing |
 | Left press | The export form's path or count field | Focus it and put the caret before the character pressed (at the end, past the text); the count field also chooses the first-N scope |
 | Left press | An export format or scope radio | Focus its group and choose that option, rewriting the path's extension for a format. A scope the form does not offer is inert |

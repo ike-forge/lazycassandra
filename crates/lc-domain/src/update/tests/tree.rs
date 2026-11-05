@@ -29,14 +29,14 @@ fn enter_toggles_a_keyspace() {
     let mut state = browsing_tables(&[("shop", &["orders", "users"])]);
 
     let effects = press(&mut state, Key::Enter);
-    assert_eq!(row_count(&state), 3, "⏎ did not unfold");
+    assert_eq!(row_count(&state), 3, "↵ did not unfold");
     assert!(
         effects.is_empty(),
         "unfolding is a pure state change and must emit no effect"
     );
 
     let effects = press(&mut state, Key::Enter);
-    assert_eq!(row_count(&state), 1, "⏎ did not fold");
+    assert_eq!(row_count(&state), 1, "↵ did not fold");
     assert!(
         effects.is_empty(),
         "folding is a pure state change and must emit no effect"

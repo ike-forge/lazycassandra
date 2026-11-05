@@ -35,7 +35,7 @@ pub(super) const SEARCH: Binding = Binding::new(&[key('/')], "search");
 pub(super) const SELECT: Binding = Binding::new(&[key('v')], "select");
 
 /// `esc` is named only here among the globals: with the palette open it always
-/// closes it. `⏎ run` first, so it is dropped first.
+/// closes it. `↵ run` first, so it is dropped first.
 pub(super) const PALETTE_GLOBAL: &[Binding] = &[
     Binding::new(&[ENTER], "run"),
     Binding::new(&[PALETTE, ESC], "close"),
@@ -72,7 +72,7 @@ pub(super) const COMMIT_HINT: Binding = Binding::new(&[ctrl('s')], "commit");
 /// `j`/`k` named as "preview": the motion's side effect is what it teaches.
 pub(crate) const THEMES: &[Binding] = &[Binding::new(&[key('j'), key('k')], "preview"), SEARCH];
 
-/// `⏎` keeps the previewed theme; `esc` restores the original.
+/// `↵` keeps the previewed theme; `esc` restores the original.
 pub(crate) const THEMES_GLOBAL: &[Binding] = &[Binding::new(&[ENTER], "keep"), CANCEL, QUIT];
 
 /// No `j`/`k`: moving this cursor previews nothing.
@@ -85,10 +85,10 @@ pub(super) const HISTORY_HINT: Binding = Binding::new(&[ctrl('g')], "history");
 
 pub(super) const HISTORY: &[Binding] = &[SEARCH];
 
-/// `⏎` appends and runs nothing, the difference from `ctrl-r` worth saying.
+/// `↵` appends and runs nothing, the difference from `ctrl-r` worth saying.
 pub(super) const HISTORY_GLOBAL: &[Binding] = &[Binding::new(&[ENTER], "append"), CLOSE, QUIT];
 
-/// `⏎` named: it folds here rather than choosing.
+/// `↵` named: it folds here rather than choosing.
 pub(super) const HEALTH: &[Binding] = &[Binding::new(&[ENTER], "fold/unfold")];
 
 pub(super) const HEALTH_GLOBAL: &[Binding] = &[CLOSE, QUIT];
@@ -97,7 +97,7 @@ pub(super) const HEALTH_GLOBAL: &[Binding] = &[CLOSE, QUIT];
 pub(super) const DROP_YES_NO: &[Binding] = &[Binding::new(&[key('y')], "drop it"), NO];
 pub(super) const DELETE_YES_NO: &[Binding] = &[Binding::new(&[key('y')], "delete them"), NO];
 
-/// `⏎` is greyed until the typed name matches.
+/// `↵` is greyed until the typed name matches.
 pub(super) const DROP_TYPED: &[Binding] = &[Binding::new(&[ENTER], "drop it"), CANCEL];
 pub(super) const DELETE_TYPED: &[Binding] = &[Binding::new(&[ENTER], "delete them"), CANCEL];
 
@@ -114,7 +114,7 @@ pub(super) const EXPORT_OVERWRITE: &[Binding] = &[
 /// Empty panel group: the focused panel responds to nothing under a prompt.
 pub(super) const SEARCH_GLOBAL: &[Binding] = &[Binding::new(&[ENTER], "apply"), CANCEL];
 
-/// Only while a popup is up; the `⏎ newline` hint drops for those frames.
+/// Only while a popup is up; the `↵ newline` hint drops for those frames.
 pub(super) const COMPLETE: Binding = Binding::new(&[TAB, ENTER], "complete");
 
 pub(super) const CLEAR: Binding = Binding::new(&[ESC], "clear");
@@ -191,7 +191,7 @@ const CONTENTS_COLUMN_HINTS: &[Binding] = &[
     SELECT,
 ];
 
-/// `⏎` first: nothing else says how to start typing.
+/// `↵` first: nothing else says how to start typing.
 const CQL_HINTS: &[Binding] = &[Binding::new(&[ENTER], "edit"), RUN, EDITOR];
 
 /// `run` first: it is what the panel is for.

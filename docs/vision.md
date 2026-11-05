@@ -304,7 +304,7 @@ users, not in a document.
   ignored on everything. Severity model, dismissal, and per-project
   configuration need thought.
 - ~~**Where does the CQL editor sit on the modal/non-modal question?**~~
-  Answered: the editor is modeless, entered with `⏎`/`i` and left with `Esc`,
+  Answered: the editor is modeless, entered with `↵`/`i` and left with `Esc`,
   like any other drill-in. Vim keys move around the application, never inside
   the buffer; `ctrl-e` hands the buffer to `$EDITOR` for anyone who wants their
   own editor's keys.

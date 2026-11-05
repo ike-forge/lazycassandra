@@ -270,7 +270,7 @@ fn a_filter_narrows_the_list_and_enter_closes_it_onto_the_row_before_loading() {
 
     assert!(
         matches!(state.overlay, Some(Overlay::History { sift: None, .. })),
-        "the first ⏎ closes the prompt and loads nothing"
+        "the first ↵ closes the prompt and loads nothing"
     );
     assert_eq!(buffer(&state), "");
 

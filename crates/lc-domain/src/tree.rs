@@ -86,7 +86,7 @@ impl TablesPanel {
                 .any(|table| search.matches(&table.name))
     }
 
-    /// A term matching the keyspace keeps every table in it: `l` and `⏎` are
+    /// A term matching the keyspace keeps every table in it: `l` and `↵` are
     /// swallowed under a search, so nothing else could open it.
     fn reaches(&self, keyspace: &Keyspace, table: &Table) -> bool {
         let Some(search) = &self.search else {
