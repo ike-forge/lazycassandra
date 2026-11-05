@@ -334,7 +334,7 @@ fn a_number_focuses_its_panel_from_any_panel_that_does_not_take_text() {
 }
 
 #[test]
-fn a_repeated_number_keeps_focus_and_walks_the_panels_tabs() {
+fn a_repeated_number_changes_neither_focus_nor_tab() {
     // Queries numbers each tab instead.
     for panel in Panel::ALL
         .into_iter()
@@ -348,29 +348,8 @@ fn a_repeated_number_keeps_focus_and_walks_the_panels_tabs() {
         press(&mut state, Key::Char(panel.number()));
 
         assert_eq!(state.focus(), panel, "the second press does not move focus");
-        assert_eq!(
-            state.ddl.tab(),
-            if panel == Panel::Ddl {
-                DdlTab::Columns
-            } else {
-                DdlTab::Ddl
-            },
-            "only the panel that has tabs answers the second press"
-        );
+        assert_eq!(state.ddl.tab(), DdlTab::Ddl, "nor walk a tab");
     }
-}
-
-#[test]
-fn pressing_two_once_per_tab_returns_to_the_first_one() {
-    let mut state = browsing_a_table();
-
-    // Counted from `DdlTab::ALL` so a third tab cannot make it wrong.
-    for _ in 0..=DdlTab::ALL.len() {
-        press(&mut state, Key::Char('2'));
-    }
-
-    assert_eq!(state.focus(), Panel::Ddl);
-    assert_eq!(state.ddl.tab(), DdlTab::Ddl);
 }
 
 #[test]
@@ -408,7 +387,7 @@ fn walking_on_a_keyspace_stays_on_the_only_tab_there_is() {
     press(&mut state, Key::Char('l'));
 
     press(&mut state, Key::Char('2'));
-    press(&mut state, Key::Char('2'));
+    press(&mut state, Key::Char(']'));
 
     assert_eq!(state.focus(), Panel::Ddl);
     assert_eq!(

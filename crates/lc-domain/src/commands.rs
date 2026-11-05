@@ -126,17 +126,6 @@ const GLOBAL: &[Command] = &[
     Command::new(&[Stroke::key(Key::BackTab)], "previous panel", Run::Here),
     Command::new(&[Stroke::key(Key::Char('1'))], "focus Tables", Run::Here),
     Command::new(&[Stroke::key(Key::Char('2'))], "focus Table DDL", Run::Here),
-    // A row per tab teaches that `2` again goes one tab further.
-    Command::new(
-        &[Stroke::key(Key::Char('2'))],
-        "focus Table columns",
-        Run::Here,
-    ),
-    Command::new(
-        &[Stroke::key(Key::Char('2'))],
-        "focus Table indexes",
-        Run::Here,
-    ),
     Command::new(
         &[Stroke::key(Key::Char('3'))],
         "focus Table contents",
@@ -937,36 +926,20 @@ mod tests {
     }
 
     #[test]
-    fn the_panel_number_names_every_tab_its_further_presses_reach() {
-        let rows = rows(None);
-        let ddl = rows
-            .iter()
-            .position(|row| {
-                *row == CommandRow::Command {
-                    keys: "2".to_owned(),
-                    action: "focus Table DDL",
-                    liveness: Liveness::Live,
-                    refused: None,
-                }
-            })
-            .expect("no row focuses the DDL panel");
+    fn the_panel_number_has_one_row_since_pressing_it_again_does_nothing() {
+        let twos: Vec<_> = rows(None)
+            .into_iter()
+            .filter(|row| matches!(row, CommandRow::Command { keys, .. } if keys == "2"))
+            .collect();
 
         assert_eq!(
-            rows[ddl + 1..=ddl + 2],
-            [
-                CommandRow::Command {
-                    keys: "2".to_owned(),
-                    action: "focus Table columns",
-                    liveness: Liveness::Live,
-                    refused: None,
-                },
-                CommandRow::Command {
-                    keys: "2".to_owned(),
-                    action: "focus Table indexes",
-                    liveness: Liveness::Live,
-                    refused: None,
-                },
-            ]
+            twos,
+            [CommandRow::Command {
+                keys: "2".to_owned(),
+                action: "focus Table DDL",
+                liveness: Liveness::Live,
+                refused: None,
+            }]
         );
     }
 

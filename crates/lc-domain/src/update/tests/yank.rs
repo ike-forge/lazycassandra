@@ -536,7 +536,7 @@ fn y_yanks_a_ddl_row() {
 fn y_yanks_a_column_row() {
     let mut state = browsing_a_table();
     press(&mut state, Key::Char('2'));
-    press(&mut state, Key::Char('2'));
+    press(&mut state, Key::Char(']'));
     press(&mut state, Key::Char('j'));
     press(&mut state, Key::Char('j'));
 

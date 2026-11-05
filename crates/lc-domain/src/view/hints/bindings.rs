@@ -157,7 +157,13 @@ pub(super) const FORMAT: Binding = Binding::new(&[ctrl('f')], "format");
 // lists it.
 const TABLES_HINTS: &[Binding] = &[OPEN, SEARCH, DROP, HEALTH_OF, SELECT];
 
-const DDL_HINTS: &[Binding] = &[SEARCH, SELECT];
+/// The tabs are taught here: a panel's number focuses it, never a tab.
+const TABS: Binding = Binding::new(&[key('['), key(']')], "tab");
+
+const DDL_HINTS: &[Binding] = &[TABS, SEARCH, SELECT];
+
+/// A keyspace's DDL draws one tab, so `[`/`]` would be inert.
+const DDL_ONE_TAB_HINTS: &[Binding] = &[SEARCH, SELECT];
 
 const CONTENTS_HINTS: &[Binding] = &[
     INSPECT_ROW,
@@ -218,6 +224,7 @@ impl State {
                 Some(CqlMode::Editing) => QUERIES_HINTS,
             },
             Panel::Contents if self.contents.mode == SelectionMode::Column => CONTENTS_COLUMN_HINTS,
+            Panel::Ddl if crate::view::ddl_tabs(self).len() < 2 => DDL_ONE_TAB_HINTS,
             panel => panel.hints(),
         }
     }

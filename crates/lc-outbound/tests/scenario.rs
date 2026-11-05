@@ -390,10 +390,9 @@ async fn walking_the_ddl_strip_reaches_the_indexes_of_the_selected_table() {
 
     press(&mut state, Key::Char('l'));
     press(&mut state, Key::Char('l'));
-    // Once to reach the panel, then once per tab.
-    for _ in 0..3 {
-        press(&mut state, Key::Char('2'));
-    }
+    press(&mut state, Key::Char('2'));
+    press(&mut state, Key::Char(']'));
+    press(&mut state, Key::Char(']'));
 
     let indexes = ddl_details(&state);
     assert_eq!(

@@ -22,13 +22,8 @@ pub(super) fn focus_by_number(state: &mut State, key: char) {
         return;
     }
 
-    let Some(panel) = Panel::from_number(key) else {
-        return;
-    };
-
-    if state.focus() == panel {
-        walk_tab(state, Step::Forward);
-    } else {
+    // Pressed again it does nothing: one key, one action. `[` / `]` walk tabs.
+    if let Some(panel) = Panel::from_number(key) {
         state.focus_on(panel);
     }
 }

@@ -349,3 +349,21 @@ fn every_key_the_palette_lists_does_something() {
         }
     }
 }
+
+#[test]
+fn the_ddl_bar_offers_its_tabs_only_where_it_draws_more_than_one() {
+    let shows_tabs = |state: &State| {
+        crate::view::hints::bar(state)
+            .panel
+            .iter()
+            .any(|hint| hint.action == "tab")
+    };
+
+    let mut table = browsing_a_table();
+    table.focus_on(Panel::Ddl);
+    assert!(shows_tabs(&table), "a table draws DDL, Columns and Indexes");
+
+    let mut keyspace = browsing_tables(&[("shop", &["orders"])]);
+    press(&mut keyspace, Key::Char('2'));
+    assert!(!shows_tabs(&keyspace), "a keyspace draws one tab");
+}

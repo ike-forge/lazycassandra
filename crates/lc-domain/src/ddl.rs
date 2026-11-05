@@ -16,7 +16,7 @@ pub enum DdlTab {
 impl DdlTab {
     pub const ALL: [Self; 3] = [Self::Ddl, Self::Columns, Self::Indexes];
 
-    /// No key per tab: the panel's number, pressed again, walks them.
+    /// No key per tab: `]` and `[` walk them.
     #[must_use]
     pub const fn next(self) -> Self {
         match self {

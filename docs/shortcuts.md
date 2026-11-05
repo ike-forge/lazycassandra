@@ -38,9 +38,7 @@ text anywhere: the ctrl layer is dispatched above the panel that takes text
 | `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns and Indexes tabs where a table is selected; Table contents; Queries' Cql tab; Queries' Logs tab. |
 | `Shift-Tab` | The same stops, walked backwards. |
 | `1`¹ | Focus Tables. |
-| `2`¹ | Focus DDL. Pressed again, its next tab. |
-| `2`¹ | Focus Table columns — the same key, one tab further in. |
-| `2`¹ | Focus Table indexes — the same key, one tab further still. |
+| `2`¹ | Focus DDL. |
 | `3`¹ | Focus Table contents. |
 | `4`¹ | Focus Queries with the Cql buffer open, ready to type. |
 | `5`¹ | Focus Queries' Logs tab. |
@@ -95,23 +93,19 @@ job; a letter has to be learned per panel, while four digits in frame order
 are one rule, and a novice reading `[2]-` has been told the whole binding.
 
 A number focuses its panel. Pressed again — that is, pressed while its panel
-already has focus — it steps to the panel's next tab, wrapping: `2` `2`
-reaches the Columns tab, a third `2` the Indexes tab and a fourth comes back;
-`1` `1` stays on Tables. The palette says so directly for DDL: `2` takes a
-row per tab, one under the other.
+already has focus — it does nothing: a key that means one thing pressed once
+and another pressed twice breaks one key, one action (§2). Tabs are walked
+with `]` and `[`.
 
 Queries is the exception. `4` arrives with the Cql buffer open, because a
 newcomer pressing the number of the panel that takes queries expects to type
 one; a buffer that needed `⏎` first read as broken. An open buffer takes the
 next `4` as text, so it cannot also walk the strip, and Logs has a number of
 its own instead: `5`, drawn in the title as `[5]-Logs`.
-The general rule stays with `]`/`[`, but a reader who has not met
-those keys yet learns from the repetition that the number pressed again goes
-somewhere — which is how the tabs are found without reading this file
-(vision.md §4, principle 1). `]` and `[` do the same walk forwards and
-backwards from the focused panel, for a hand that learnt them in lazygit; on
-a panel with one tab they do nothing, and in an open Cql buffer they are
-text.
+`]` and `[` walk the focused panel's tabs forwards and backwards, as in
+lazygit; on a panel with one tab they do nothing, and in an open Cql buffer
+they are text. The bar of a panel with tabs offers them, so the tabs are
+found without reading this file (vision.md §4, principle 1).
 
 Arriving at the tab already drawn costs nothing: `2` from another panel is how
 focus comes back to whichever DDL tab was up, and it leaves the cursor on the
@@ -706,7 +700,8 @@ Its tabs, and nothing else. `2` is a global key (§1) rather than a binding of
 this panel — it is how you reach it from anywhere, so a panel that does not yet
 have focus has to answer it. `[` and `]` are the exception that proves it: they
 walk the *focused* panel's strip, so they mean nothing here until `2` has been
-pressed. `Tab`/`Shift-Tab` reach it too, now stopping on both of its tabs on
+pressed. Its bar offers them as `[/] tab` wherever the strip draws more than
+one tab, and drops them over a keyspace, whose strip draws one. `Tab`/`Shift-Tab` reach it too, now stopping on both of its tabs on
 the way through the cycle (§1) — the same two-stop treatment Queries' strip
 gets, though Queries reaches its second stop by a different route (see the
 Logs tab subsection below). Motion, search and `Esc` reach

@@ -28,7 +28,7 @@ pub(crate) struct TabSpec {
     pub(crate) label: &'static str,
     pub(crate) short: &'static str,
     pub(crate) active: bool,
-    /// `None` for a tab reached by pressing the panel's number again.
+    /// `None` for a tab reached only by `]` / `[`.
     pub(crate) number: Option<char>,
 }
 

@@ -102,7 +102,7 @@ The bottom bar shows contextual actions; `?` lists all commands.
 | --- | --- |
 | `1` / `2` / `3` / `4` / `5` | Tables / DDL / contents / CQL editor / session log |
 | `Tab` / `Shift-Tab` | Next / previous panel or tab |
-| `[` / `]` | Previous / next tab; repeat `2` to cycle DDL, Columns, Indexes |
+| `[` / `]` | Previous / next tab: DDL, Columns, Indexes |
 | `h` `j` `k` `l` / arrows | Navigate the tree or grid |
 | `g` / `G` · `Ctrl-u` / `Ctrl-d` | First / last row · page up / down |
 | `/` · `n` / `N` | Search · next / previous match |
