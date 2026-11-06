@@ -145,7 +145,8 @@ pub fn suggest(
     let word = word_before(editor);
     let (qualifier, prefix) = split(&word);
 
-    if prefix.is_empty() {
+    // A dot alone is enough: `shop.` asks what is inside `shop`.
+    if prefix.is_empty() && qualifier.is_none() {
         return None;
     }
 
@@ -665,6 +666,35 @@ mod tests {
             offers("SELECT * FROM shop.order", None),
             vec!["order_items".to_owned(), "orders".to_owned()],
             "the tables of shop, and no keyword or keyspace"
+        );
+    }
+
+    #[test]
+    fn a_bare_qualifier_offers_every_table_of_its_keyspace() {
+        assert_eq!(
+            offers("SELECT * FROM shop.", None),
+            offers("SELECT * FROM shop.", Some("shop")),
+            "the qualifier, not the panel, picks the keyspace"
+        );
+        assert!(
+            offers("SELECT * FROM shop.", None).contains(&"orders".to_owned()),
+            "the dot alone is enough to list them"
+        );
+    }
+
+    #[test]
+    fn a_bare_qualifier_in_column_position_offers_that_tables_columns() {
+        let schema = schema();
+        let suffix = " FROM shop.orders";
+        let mut editor = typed("SELECT orders. FROM shop.orders");
+        for _ in 0..suffix.len() {
+            editor.left();
+        }
+        let completion = suggest(&editor, Some(&schema), None).expect("offers");
+
+        assert_eq!(
+            completion.candidates().first().map(|c| c.text.as_str()),
+            Some("id")
         );
     }
 
