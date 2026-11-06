@@ -18,7 +18,7 @@ Reachable from every panel that does not take text, in every connection
 state. `Esc`, `Tab` and `Shift-Tab` are the exceptions that really are
 unconditional; the marked rows are text instead, in the one place that takes
 text — Queries' Cql buffer once `4`, `↵` or `i` has opened it, argued in that
-subsection below. `ctrl-t`, `ctrl-o` and `ctrl-l` are unmarked because a chord is not
+subsection below. `ctrl-t`, `ctrl-o` and `ctrl-x` are unmarked because a chord is not
 text anywhere: the ctrl layer is dispatched above the panel that takes text
 (§2).
 
@@ -28,7 +28,7 @@ text anywhere: the ctrl layer is dispatched above the panel that takes text
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
 | `ctrl-t` | Open the theme picker: every theme, previewed as you move. From Queries it traces the banded statement instead (§1's Queries panel subsection); the palette's row still opens the picker there. |
 | `ctrl-o` | Open the connection picker: every `[[connections]]` a config defines. |
-| `ctrl-l` | Open the consistency picker: the level this connection's next statements run at. |
+| `ctrl-x` | Open the consistency picker: the level this connection's next statements run at. |
 | `ctrl-c` | Cancel every query in flight: the read, a page, a drop or a commit. The task is aborted and the panel says `cancelled`; a late answer is dropped. The cluster is not told, so a write may still land, and the drop or commit says so. |
 | `/`¹ | Search the focused panel. |
 | `n`¹ | Move to the next match of the focused panel's search, wrapping. |
@@ -303,14 +303,14 @@ would be final and a connection opened by mistake would cost a restart.
 
 ### The consistency picker
 
-`ctrl-l` opens `Overlay::Consistency`, an `Overlay` of the same rank as the
+`ctrl-x` opens `Overlay::Consistency`, an `Overlay` of the same rank as the
 other two pickers, refused over a live search prompt for the same reason. It
 lists the eleven levels weakest first, each beside who has to answer for it,
 with `●` on the level in force. The palette carries a row for it.
 
 The level belongs to the connection, not the tool: every connection starts
 at `driver.consistency`, and a level chosen here lasts until the next
-connect. Without a connection there is nothing to set, and `ctrl-l` says so
+connect. Without a connection there is nothing to set, and `ctrl-x` says so
 in a toast. The block does not scroll — eleven rows is the whole of it — so
 a frame too short for every level refuses it rather than hide one.
 
@@ -1163,7 +1163,7 @@ it may carry only one meaning of its own. `ctrl-s` carries one more, inside
 the export form, and `ctrl-y` means something only there: the form's path
 takes text, so its two buttons have no plain key available (§1's export-form
 subsection). `ctrl-t` opens
-the theme picker, for the reason §1's picker subsection gives, and `ctrl-l`
+the theme picker, for the reason §1's picker subsection gives, and `ctrl-x`
 the consistency picker: a level is changed mid-query, from the panel that
 takes text, where no plain key is free. `ctrl-g` opens
 the query history, for the reason §1's history subsection gives. `ctrl-f`,
@@ -1445,7 +1445,7 @@ or reads, the grid inspects, and the editor splits a line (§1).
 Ctrl taken: `ctrl-r`, `ctrl-g`, `ctrl-f`, `ctrl-n` and `ctrl-p` in Queries, `ctrl-e` in
 two panels — Queries and Table contents (§1's export-form subsection) —
 `ctrl-s` in Table contents, its inspector and the export form, `ctrl-y` in the
-export form alone, `ctrl-t`, `ctrl-o` and `ctrl-l` everywhere, and
+export form alone, `ctrl-t`, `ctrl-o` and `ctrl-x` everywhere, and
 `ctrl-d`/`ctrl-u` everywhere
 `PageDown`/`PageUp` do anything. The rest of the layer is free — including
 `r`, `t`, `o` and `u` as plain keys, which nothing binds. `s` is bound plain,
@@ -1488,6 +1488,7 @@ which changes the rules documented here.
 | Horizontal wheel | Dropped at the edge, and this slice did not pick it up. A notch moves the row viewport; columns are reached with the keys §1 names. |
 | Drag-to-select | Weighed and refused: `lc-inbound` drops drag and move events at the edge today (§6), so honouring one would need a new gesture, press-origin state, and an autoscroll rule at the panel edges — for a selection two keystrokes already make. |
 | `Shift-↓` extend selection | `v` is the way to extend a selection; a shifted arrow would be a second name for a key that already does it, the fourth kind of duplicate §2's "one key, one action" refuses. |
+| `ctrl-h` `ctrl-j` `ctrl-k` `ctrl-l` | Pane navigation in tmux and vim splits: a binding there is never delivered to a user who has it. The consistency picker took `ctrl-l` until that cost it; it is `ctrl-x`. |
 | User-defined bindings | vision.md §7 Phase 5. |
 
 ---

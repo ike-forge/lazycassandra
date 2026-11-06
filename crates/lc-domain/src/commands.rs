@@ -117,7 +117,7 @@ const GLOBAL: &[Command] = &[
         Run::Here,
     ),
     Command::new(
-        &[Stroke::ctrl(Key::Char('l'))],
+        &[Stroke::ctrl(Key::Char('x'))],
         "choose consistency",
         Run::Here,
     ),

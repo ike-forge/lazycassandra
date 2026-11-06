@@ -502,7 +502,7 @@ pub(super) fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
             open_connections(state);
             Vec::new()
         }
-        Key::Char('l') => {
+        Key::Char('x') => {
             open_consistency(state);
             Vec::new()
         }

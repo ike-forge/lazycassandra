@@ -203,7 +203,7 @@ impl Geometry {
         }
     }
 
-    /// Below `Consistency::ALL.len()`, `ctrl-l` is inert: the block does not
+    /// Below `Consistency::ALL.len()`, `ctrl-x` is inert: the block does not
     /// scroll.
     #[must_use]
     pub const fn consistency_rows(self) -> usize {

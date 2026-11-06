@@ -19,7 +19,7 @@ const LABEL: u16 = 12;
 const PAD: u16 = 1;
 const CURRENT: &str = "● ";
 
-/// Below `Consistency::ALL.len()` gates `ctrl-l`.
+/// Below `Consistency::ALL.len()` gates `ctrl-x`.
 pub(crate) fn visible_rows(area: Rect) -> usize {
     if area.width < MIN_WIDTH || area.height < 2 {
         return 0;

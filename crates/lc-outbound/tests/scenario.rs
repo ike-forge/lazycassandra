@@ -834,7 +834,7 @@ async fn a_trace_the_cluster_never_finished_says_why_and_keeps_the_page() {
 }
 
 #[tokio::test]
-async fn a_level_chosen_with_ctrl_l_reaches_the_cluster_and_the_titles() {
+async fn a_level_chosen_with_ctrl_x_reaches_the_cluster_and_the_titles() {
     let cluster = FakeCluster::new(
         tabled_schema_of(&[("shop", &["orders"])]),
         Posture::ReadOnly,
@@ -843,7 +843,7 @@ async fn a_level_chosen_with_ctrl_l_reaches_the_cluster_and_the_titles() {
     let mut state = on_a_table(&cluster).await;
     state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_consistency_rows(20);
 
-    update(&mut state, Msg::Input(KeyPress::ctrl(Key::Char('l'))));
+    update(&mut state, Msg::Input(KeyPress::ctrl(Key::Char('x'))));
     press(&mut state, Key::Home);
     press(&mut state, Key::Char('j'));
     press(&mut state, Key::Enter);

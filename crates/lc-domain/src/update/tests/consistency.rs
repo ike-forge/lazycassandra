@@ -16,7 +16,7 @@ fn picker_cursor(state: &State) -> Option<Consistency> {
 /// From the picker's top, so the test names the level rather than a count of
 /// presses from wherever the cursor started.
 fn choose(state: &mut State, level: Consistency) {
-    ctrl(state, Key::Char('l'));
+    ctrl(state, Key::Char('x'));
     press(state, Key::Home);
     while picker_cursor(state) != Some(level) {
         press(state, Key::Char('j'));
@@ -63,10 +63,10 @@ fn a_connection_starts_at_the_configured_level() {
 }
 
 #[test]
-fn ctrl_l_opens_the_picker_on_the_level_in_force() {
+fn ctrl_x_opens_the_picker_on_the_level_in_force() {
     let mut state = roomy(connected(Posture::ReadOnly));
 
-    ctrl(&mut state, Key::Char('l'));
+    ctrl(&mut state, Key::Char('x'));
 
     assert_eq!(picker_cursor(&state), Some(Consistency::LocalQuorum));
 }
@@ -79,7 +79,7 @@ fn enter_sets_the_level_and_esc_leaves_it() {
     assert_eq!(state.consistency(), Consistency::One);
     assert!(state.overlay.is_none());
 
-    ctrl(&mut state, Key::Char('l'));
+    ctrl(&mut state, Key::Char('x'));
     press(&mut state, Key::Char('j'));
     press(&mut state, Key::Escape);
 
@@ -104,7 +104,7 @@ fn without_a_connection_there_is_no_level_to_set() {
     let mut state = State::default();
     state.geometry = state.geometry.with_consistency_rows(20);
 
-    ctrl(&mut state, Key::Char('l'));
+    ctrl(&mut state, Key::Char('x'));
 
     assert!(state.overlay.is_none());
     assert!(toasted(&state).is_some(), "the press is answered");
@@ -117,7 +117,7 @@ fn a_frame_too_short_for_every_level_opens_no_picker() {
         .geometry
         .with_consistency_rows(Consistency::ALL.len() - 1);
 
-    ctrl(&mut state, Key::Char('l'));
+    ctrl(&mut state, Key::Char('x'));
 
     assert!(state.overlay.is_none());
 }
