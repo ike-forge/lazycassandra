@@ -38,6 +38,7 @@ pub mod selection;
 pub mod state;
 pub mod style;
 pub mod theme;
+pub mod trace;
 pub mod tree;
 pub mod update;
 pub mod view;

@@ -60,6 +60,7 @@ mod run;
 mod search;
 mod selection;
 mod themes;
+mod trace;
 mod tree;
 mod yank;
 

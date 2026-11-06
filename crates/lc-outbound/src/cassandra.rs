@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,6 +20,7 @@ use lc_domain::model::{
 };
 use lc_domain::ports::Cluster;
 use lc_domain::posture::Posture;
+use lc_domain::trace::{QueryTrace, TraceEvent, TraceId, Traced};
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -169,6 +171,15 @@ impl CassandraCluster {
     }
 }
 
+/// Cassandra writes a trace's `system_traces.sessions` row after it answers
+/// the traced request, and scylla's default of 10 tries 3 ms apart gives up
+/// long before a loaded node has. cqlsh waits up to 10 s; 2 s is our bound.
+const TRACE_FETCH_ATTEMPTS: NonZeroU32 = match NonZeroU32::new(40) {
+    Some(attempts) => attempts,
+    None => panic!("a zero attempt count"),
+};
+const TRACE_FETCH_INTERVAL: Duration = Duration::from_millis(50);
+
 #[async_trait]
 impl Cluster for CassandraCluster {
     async fn connect(
@@ -179,6 +190,8 @@ impl Cluster for CassandraCluster {
     ) -> Result<Posture, DbError> {
         let mut builder = SessionBuilder::new()
             .known_nodes(&target.hosts)
+            .tracing_info_fetch_attempts(TRACE_FETCH_ATTEMPTS)
+            .tracing_info_fetch_interval(TRACE_FETCH_INTERVAL)
             .connection_timeout(Duration::from_millis(driver.connect_timeout.get().into()))
             .compression(compression(driver.compression))
             .default_execution_profile_handle(execution_profile(target, driver).into_handle());
@@ -256,9 +269,7 @@ impl Cluster for CassandraCluster {
         cursor: Option<&PagingState>,
     ) -> Result<Page, DbError> {
         let session = self.session(conn).await?;
-        // scylla panics on a non-positive page size.
-        let statement = scylla::statement::unprepared::Statement::new(stmt.cql.as_str())
-            .with_page_size(i32::try_from(page_size.get()).unwrap_or(i32::MAX));
+        let statement = paged(stmt, page_size);
         let paging = cursor.map_or(
             scylla::response::PagingState::start(),
             |PagingState(bytes)| scylla::response::PagingState::new_from_raw_bytes(bytes.clone()),
@@ -269,22 +280,93 @@ impl Cluster for CassandraCluster {
             .await
             .map_err(|error| DbError::Invalid(error.to_string()))?;
 
-        let next = match response.into_paging_control_flow() {
-            std::ops::ControlFlow::Continue(state) => state
-                .as_bytes_slice()
-                .map(|bytes| PagingState(bytes.to_vec())),
-            std::ops::ControlFlow::Break(()) => None,
+        let mut page = to_page(result)?;
+        page.next = next_page(response);
+
+        Ok(page)
+    }
+
+    async fn execute_traced(
+        &self,
+        conn: ConnId,
+        stmt: &Statement,
+        page_size: PageSize,
+    ) -> Result<Traced, DbError> {
+        let session = self.session(conn).await?;
+
+        let (result, next) = if stmt.mutates() {
+            let mut statement = scylla::statement::unprepared::Statement::new(stmt.cql.as_str());
+            statement.set_tracing(true);
+            let result = session
+                .query_unpaged(statement, &[])
+                .await
+                .map_err(|error| DbError::Invalid(error.to_string()))?;
+            (result, None)
+        } else {
+            let mut statement = paged(stmt, page_size);
+            statement.set_tracing(true);
+            let (result, response) = session
+                .query_single_page(statement, &[], scylla::response::PagingState::start())
+                .await
+                .map_err(|error| DbError::Invalid(error.to_string()))?;
+            (result, next_page(response))
         };
 
+        let trace = result.tracing_id().map(|id| TraceId(id.into_bytes()));
         let mut page = to_page(result)?;
         page.next = next;
 
-        Ok(page)
+        Ok(Traced { page, trace })
+    }
+
+    async fn trace(&self, conn: ConnId, trace: TraceId) -> Result<QueryTrace, DbError> {
+        let TraceId(bytes) = trace;
+        let info = self
+            .session(conn)
+            .await?
+            .get_tracing_info(&uuid::Uuid::from_bytes(bytes))
+            .await
+            .map_err(|error| DbError::Other(error.to_string()))?;
+
+        Ok(QueryTrace {
+            coordinator: info.coordinator,
+            duration: info.duration.and_then(micros),
+            events: info
+                .events
+                .into_iter()
+                .map(|event| TraceEvent {
+                    activity: event.activity.unwrap_or_default(),
+                    source: event.source,
+                    elapsed: event.source_elapsed.and_then(micros),
+                    thread: event.thread,
+                })
+                .collect(),
+        })
     }
 
     async fn table_health(&self, conn: ConnId, table: &TableRef) -> Result<Health, DbError> {
         crate::health::read(&self.session(conn).await?, table).await
     }
+}
+
+fn paged(stmt: &Statement, page_size: PageSize) -> scylla::statement::unprepared::Statement {
+    // scylla panics on a non-positive page size.
+    scylla::statement::unprepared::Statement::new(stmt.cql.as_str())
+        .with_page_size(i32::try_from(page_size.get()).unwrap_or(i32::MAX))
+}
+
+fn next_page(response: scylla::response::PagingStateResponse) -> Option<PagingState> {
+    match response.into_paging_control_flow() {
+        std::ops::ControlFlow::Continue(state) => state
+            .as_bytes_slice()
+            .map(|bytes| PagingState(bytes.to_vec())),
+        std::ops::ControlFlow::Break(()) => None,
+    }
+}
+
+/// `system_traces` stores microseconds as a signed `int`.
+fn micros(value: i32) -> Option<Duration> {
+    u64::try_from(value).ok().map(Duration::from_micros)
 }
 
 fn to_page(result: scylla::response::query_result::QueryResult) -> Result<Page, DbError> {

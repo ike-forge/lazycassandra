@@ -7,6 +7,7 @@ pub(crate) mod hints;
 pub(crate) mod logs;
 mod tables;
 mod title;
+mod trace;
 
 pub use crate::style::Segment;
 pub use contents::{Footer, GridCell, GridColumn, SIZE_SHOWN_FROM};
@@ -675,6 +676,7 @@ fn body(state: &State, panel: Panel) -> PanelBody {
                 completion: state.queries.completion().map(completion),
             },
             QueriesTab::Logs => logs::log_body(state),
+            QueriesTab::Trace => trace::trace_body(&state.trace),
         },
     }
 }
@@ -763,7 +765,7 @@ mod tests {
                 "[1]-Tables",
                 "[2]-DDL",
                 "[3]-Table contents",
-                "[4]-Queries - [5]-Logs"
+                "[4]-Queries - [5]-Logs - [6]-Trace"
             ]
             .map(str::to_owned)
         );

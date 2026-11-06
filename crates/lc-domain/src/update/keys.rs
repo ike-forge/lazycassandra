@@ -27,7 +27,8 @@ use super::themes::{open_themes, preview_theme, themes_key};
 use super::yank::yank;
 use super::{
     Effect, Motion, Step, activate, cancel, clear_selection, every_page, focus_by_number, go_left,
-    go_right, next_page, quit, run, scroll, stop_extending, toggle_visual, walk_landing, walk_tab,
+    go_right, next_page, quit, run, run_traced, scroll, stop_extending, toggle_visual,
+    walk_landing, walk_tab,
 };
 
 /// Only two of [`Motion`]'s landings: an overlay has no paging arm to fall
@@ -483,6 +484,7 @@ pub(super) fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
     match key {
         Key::Char('r') => run(state),
         Key::Char('c') => cancel(state),
+        Key::Char('t') if state.focus() == Panel::Queries => run_traced(state),
         Key::Char('t') => {
             open_themes(state);
             Vec::new()

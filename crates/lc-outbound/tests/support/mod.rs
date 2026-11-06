@@ -13,8 +13,8 @@ use std::time::Duration;
 use lc_domain::config::{ConnectionConfig, ConnectionName, PageSize};
 use lc_domain::export::{Destination, Encoder, Exported, Format};
 use lc_domain::model::{
-    Column, ConnId, JobId, Key, KeyPress, Keyspace, Page, PrimaryKey, Replication, Schema,
-    Statement, Table, TableOptions,
+    Column, ConnId, DbError, JobId, Key, KeyPress, Keyspace, Page, PrimaryKey, QueryId,
+    Replication, Schema, Statement, Table, TableOptions,
 };
 use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
 use lc_domain::posture::Posture;
@@ -142,18 +142,7 @@ pub(crate) async fn run_with_writer(
                 },
             }],
             Effect::Execute { conn, query, stmt } => {
-                vec![match cluster.execute(conn, &stmt).await {
-                    Ok(page) => Msg::PageReady {
-                        query,
-                        page: Box::new(page),
-                        took: Duration::ZERO,
-                    },
-                    Err(error) => Msg::Failed {
-                        query,
-                        error,
-                        took: Duration::ZERO,
-                    },
-                }]
+                vec![answered(query, cluster.execute(conn, &stmt).await)]
             }
             Effect::ExecutePaged {
                 conn,
@@ -161,21 +150,18 @@ pub(crate) async fn run_with_writer(
                 stmt,
                 page_size,
                 cursor,
-            } => vec![match cluster
-                .execute_paged(conn, &stmt, page_size, cursor.as_ref())
-                .await
-            {
-                Ok(page) => Msg::PageReady {
-                    query,
-                    page: Box::new(page),
-                    took: Duration::ZERO,
-                },
-                Err(error) => Msg::Failed {
-                    query,
-                    error,
-                    took: Duration::ZERO,
-                },
-            }],
+            } => vec![answered(
+                query,
+                cluster
+                    .execute_paged(conn, &stmt, page_size, cursor.as_ref())
+                    .await,
+            )],
+            Effect::ExecuteTraced {
+                conn,
+                query,
+                stmt,
+                page_size,
+            } => traced(cluster, conn, query, &stmt, page_size).await,
             Effect::Export {
                 conn,
                 job,
@@ -206,6 +192,44 @@ pub(crate) async fn run_with_writer(
     }
 
     yanked
+}
+
+fn answered(query: QueryId, result: Result<Page, DbError>) -> Msg {
+    match result {
+        Ok(page) => Msg::PageReady {
+            query,
+            page: Box::new(page),
+            took: Duration::ZERO,
+        },
+        Err(error) => Msg::Failed {
+            query,
+            error,
+            took: Duration::ZERO,
+        },
+    }
+}
+
+/// Mirrors `lc-app`'s `effects::traced`: the page, then its trace.
+async fn traced(
+    cluster: &dyn Cluster,
+    conn: ConnId,
+    query: QueryId,
+    stmt: &Statement,
+    page_size: PageSize,
+) -> Vec<Msg> {
+    match cluster.execute_traced(conn, stmt, page_size).await {
+        Ok(traced) => vec![
+            answered(query, Ok(traced.page)),
+            Msg::TraceReady {
+                query,
+                trace: match traced.trace {
+                    Some(id) => cluster.trace(conn, id).await,
+                    None => Err(DbError::Other("no trace id".to_owned())),
+                },
+            },
+        ],
+        Err(error) => vec![answered(query, Err(error))],
+    }
 }
 
 struct Job {

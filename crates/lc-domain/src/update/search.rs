@@ -2,6 +2,8 @@
 
 use crate::model::Key;
 use crate::overlay::Overlay;
+use crate::panel::Panel;
+use crate::queries::QueriesTab;
 use crate::search::{Direction, Origin, Prompt, Searched};
 use crate::state::State;
 
@@ -107,8 +109,11 @@ pub(super) fn next_match_key(state: &mut State, direction: Direction) {
 }
 
 /// Clears the target's search at once: the panel previews the empty buffer from
-/// the first frame.
+/// the first frame. Inert over Trace: Queries' search is the trail's.
 pub(super) fn open_prompt(state: &mut State) {
+    if state.focus() == Panel::Queries && state.queries.tab() == QueriesTab::Trace {
+        return;
+    }
     let Some(target) = Searched::of(state.focus()) else {
         return;
     };

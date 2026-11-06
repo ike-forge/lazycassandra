@@ -112,9 +112,11 @@ fn tab_from_queries_cql_lands_on_queries_logs() {
 }
 
 #[test]
-fn tab_from_queries_logs_lands_on_tables_and_reverts_to_cql() {
+fn tab_from_queries_trace_lands_on_tables_and_reverts_to_cql() {
     let mut state = on_the_trail();
 
+    press(&mut state, Key::Tab);
+    assert_eq!(state.queries.tab(), QueriesTab::Trace, "Queries' last stop");
     press(&mut state, Key::Tab);
 
     assert_eq!(state.focus(), Panel::Tables);
@@ -126,7 +128,7 @@ fn tab_from_queries_logs_lands_on_tables_and_reverts_to_cql() {
 }
 
 #[test]
-fn shift_tab_from_tables_lands_on_queries_logs() {
+fn shift_tab_from_tables_lands_on_queries_trace() {
     let mut state = State::default();
 
     press(&mut state, Key::BackTab);
@@ -138,7 +140,7 @@ fn shift_tab_from_tables_lands_on_queries_logs() {
     );
     assert_eq!(
         state.queries.tab(),
-        QueriesTab::Logs,
+        QueriesTab::Trace,
         "arrival sets the tab explicitly, or focus_on's revert of the \
          panel it just left would undo it"
     );
@@ -282,6 +284,10 @@ fn tab_walks_every_stop_in_order_and_wraps() {
     assert_eq!(state.queries.tab(), QueriesTab::Logs);
 
     press(&mut state, Key::Tab);
+    assert_eq!(state.focus(), Panel::Queries, "and its third");
+    assert_eq!(state.queries.tab(), QueriesTab::Trace);
+
+    press(&mut state, Key::Tab);
     assert_eq!(state.focus(), Panel::Tables, "the cycle wraps");
 }
 
@@ -295,6 +301,9 @@ fn shift_tab_walks_the_same_stops_the_other_way() {
         Panel::Queries,
         "stepping back from the first stop wraps to the last"
     );
+    assert_eq!(state.queries.tab(), QueriesTab::Trace);
+
+    press(&mut state, Key::BackTab);
     assert_eq!(state.queries.tab(), QueriesTab::Logs);
 
     press(&mut state, Key::BackTab);

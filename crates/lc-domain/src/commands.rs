@@ -77,13 +77,15 @@ pub enum Run {
     /// The row means something only inside a mode that is not up, and its key
     /// means something else outside it.
     Inert,
+    /// Dispatched by name: replayed over Queries, `ctrl-t` would trace.
+    Themes,
 }
 
 impl Run {
     const fn liveness(self) -> Liveness {
         match self {
             Self::Inert => Liveness::Inert,
-            Self::Here | Self::In(_) | Self::Editing => Liveness::Live,
+            Self::Here | Self::In(_) | Self::Editing | Self::Themes => Liveness::Live,
         }
     }
 }
@@ -104,7 +106,11 @@ impl Command {
 const GLOBAL: &[Command] = &[
     Command::new(&[Stroke::key(Key::Char('q'))], "quit", Run::Here),
     Command::new(&[Stroke::key(Key::Char('?'))], "commands", Run::Here),
-    Command::new(&[Stroke::ctrl(Key::Char('t'))], "choose a theme", Run::Here),
+    Command::new(
+        &[Stroke::ctrl(Key::Char('t'))],
+        "choose a theme",
+        Run::Themes,
+    ),
     Command::new(
         &[Stroke::ctrl(Key::Char('o'))],
         "choose a connection",
@@ -133,6 +139,7 @@ const GLOBAL: &[Command] = &[
     ),
     Command::new(&[Stroke::key(Key::Char('4'))], "write a query", Run::Here),
     Command::new(&[Stroke::key(Key::Char('5'))], "focus Logs", Run::Here),
+    Command::new(&[Stroke::key(Key::Char('6'))], "focus Trace", Run::Here),
     Command::new(&[Stroke::key(Key::Char(']'))], "next tab", Run::Here),
     Command::new(&[Stroke::key(Key::Char('['))], "prev tab", Run::Here),
     Command::new(&[Stroke::key(Key::Char('y'))], "yank", Run::Here),
@@ -370,6 +377,11 @@ const QUERIES: &[Command] = &[
     Command::new(
         &[Stroke::ctrl(Key::Char('r'))],
         "run the statement",
+        Run::In(Panel::Queries),
+    ),
+    Command::new(
+        &[Stroke::ctrl(Key::Char('t'))],
+        "trace the statement",
         Run::In(Panel::Queries),
     ),
     Command::new(
@@ -1228,7 +1240,7 @@ mod tests {
             group("Global")
                 .commands
                 .iter()
-                .all(|command| command.run == Run::Here),
+                .all(|command| matches!(command.run, Run::Here | Run::Themes)),
             "a global binding acts wherever focus is"
         );
         assert!(

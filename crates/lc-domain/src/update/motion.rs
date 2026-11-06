@@ -78,6 +78,7 @@ pub(super) fn row_count(state: &State, panel: Panel) -> usize {
         Panel::Queries => match state.queries.tab() {
             QueriesTab::Cql => 0,
             QueriesTab::Logs => state.log.len(),
+            QueriesTab::Trace => state.trace.rows(),
         },
     }
 }
@@ -91,6 +92,7 @@ pub(super) fn panel_cursor(state: &mut State, panel: Panel) -> Option<&mut Curso
         Panel::Queries => match state.queries.tab() {
             QueriesTab::Cql => None,
             QueriesTab::Logs => Some(&mut state.log.cursor),
+            QueriesTab::Trace => Some(&mut state.trace.cursor),
         },
     }
 }
@@ -151,16 +153,18 @@ pub(super) fn follow_viewports(state: &mut State, previous: Geometry, geometry: 
         state.mark_dirty();
     }
 
-    // Followed by span, like Ddl: the offset counts wrapped lines.
-    let log_before = state.log.scroll;
+    // Followed by span, like Ddl: the offset counts wrapped lines. Logs and
+    // Trace draw the same body, so the measurement is whichever is shown.
     let log_height = geometry.height(Panel::Queries);
-    state
-        .log
-        .scroll
-        .follow_span(geometry.log_selection(), log_height);
-    state.log.scroll.clamp_to(geometry.log_lines(), log_height);
+    let log_scroll = match state.queries.tab() {
+        QueriesTab::Cql | QueriesTab::Logs => &mut state.log.scroll,
+        QueriesTab::Trace => &mut state.trace.scroll,
+    };
+    let log_before = *log_scroll;
+    log_scroll.follow_span(geometry.log_selection(), log_height);
+    log_scroll.clamp_to(geometry.log_lines(), log_height);
 
-    if state.log.scroll != log_before {
+    if *log_scroll != log_before {
         state.mark_dirty();
     }
 }
@@ -240,6 +244,7 @@ pub(super) fn panel_scroll(state: &mut State, panel: Panel) -> Option<&mut Scrol
         Panel::Queries => match state.queries.tab() {
             QueriesTab::Cql => None,
             QueriesTab::Logs => Some(&mut state.log.scroll),
+            QueriesTab::Trace => Some(&mut state.trace.scroll),
         },
     }
 }
@@ -250,7 +255,7 @@ pub(super) fn scroll_len(state: &State, panel: Panel) -> usize {
         Panel::Tables | Panel::Contents => row_count(state, panel),
         Panel::Queries => match state.queries.tab() {
             QueriesTab::Cql => 0,
-            QueriesTab::Logs => state.geometry.log_lines(),
+            QueriesTab::Logs | QueriesTab::Trace => state.geometry.log_lines(),
         },
     }
 }
@@ -263,6 +268,7 @@ pub(super) fn cursor_index(state: &State, panel: Panel) -> usize {
         Panel::Queries => match state.queries.tab() {
             QueriesTab::Cql => 0,
             QueriesTab::Logs => state.log.cursor.index(),
+            QueriesTab::Trace => state.trace.cursor.index(),
         },
     }
 }

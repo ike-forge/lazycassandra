@@ -6,6 +6,7 @@ use crate::overlay::Overlay;
 use crate::panel::Panel;
 use crate::state::State;
 
+use super::themes::open_themes;
 use super::{Effect, escape, handle_key, quit};
 
 /// Refused where the frame cannot draw one: an undrawn palette would still
@@ -97,6 +98,10 @@ fn run_selected(state: &mut State) -> Vec<Effect> {
             state.queries.start_editing();
         }
         Run::Here => {}
+        Run::Themes => {
+            open_themes(state);
+            return Vec::new();
+        }
     }
 
     let Some(stroke) = command.binding.keys.first().copied() else {

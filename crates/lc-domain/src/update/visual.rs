@@ -85,7 +85,7 @@ pub(super) fn axes(state: &mut State, panel: Panel) -> [Option<Axis<'_>>; 2] {
             ],
         },
         Panel::Queries => match state.queries.tab() {
-            QueriesTab::Cql => [None, None],
+            QueriesTab::Cql | QueriesTab::Trace => [None, None],
             QueriesTab::Logs => [
                 Some(Axis {
                     selection: &mut state.log.selection,

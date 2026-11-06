@@ -22,6 +22,7 @@ use crate::queries::{QueriesPanel, QueriesTab};
 use crate::search::{Search, Searched};
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
+use crate::trace::TracePanel;
 use crate::tree::{Node, TablesPanel};
 
 #[derive(Debug, Clone, Default)]
@@ -33,6 +34,7 @@ pub struct State {
     pub ddl: DdlPanel,
     pub queries: QueriesPanel,
     pub log: Log,
+    pub trace: TracePanel,
     pub histories: Histories,
     /// So a motion knows how far a page is.
     pub geometry: Geometry,
@@ -97,9 +99,11 @@ impl State {
 
     /// The one chokepoint for leaving Logs: a search left applied would keep
     /// `n`/`esc clear` on the bar over a buffer that takes text, and a
-    /// selection would name a trail that has moved on.
+    /// selection would name a trail that has moved on. Trace is cleared on
+    /// arrival too: it draws the trail's body, which would paint the search.
     pub(crate) fn show_queries_tab(&mut self, tab: QueriesTab) {
-        if self.queries.tab() == QueriesTab::Logs && tab != QueriesTab::Logs {
+        let leaves_logs = self.queries.tab() == QueriesTab::Logs && tab != QueriesTab::Logs;
+        if leaves_logs || tab == QueriesTab::Trace {
             self.log.set_search(None);
             self.log.selection.clear();
         }
@@ -220,10 +224,13 @@ impl State {
                 | ConnectionState::Failed(_) => false,
             },
             Panel::Contents => !self.in_flight.is_empty(),
-            Panel::Queries => self
-                .log
-                .entries()
-                .any(|entry| matches!(entry.outcome(), Outcome::Pending { .. })),
+            Panel::Queries => {
+                self.trace.waiting().is_some()
+                    || self
+                        .log
+                        .entries()
+                        .any(|entry| matches!(entry.outcome(), Outcome::Pending { .. }))
+            }
             Panel::Ddl => false,
         }
     }

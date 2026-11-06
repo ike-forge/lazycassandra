@@ -43,6 +43,9 @@ num-bigint = "0.4.6"
 # Already in the tree as a non-optional dependency of scylla; direct here
 # because the adapter formats timestamps and dates.
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+# Already in the tree as a non-optional dependency of scylla; direct here
+# because a trace is read back by the id the domain hands over as bytes.
+uuid = { version = "1.24.0", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.19"
 # Already in the tree via ratatui. Direct here because the grid measures its

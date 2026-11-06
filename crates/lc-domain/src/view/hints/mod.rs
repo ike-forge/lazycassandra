@@ -13,7 +13,7 @@ use bindings::{
     EXPORT_OVERWRITE, EXPORT_ROWS, FIELD, FILTER, FORMAT, HEALTH, HEALTH_GLOBAL, HEALTH_OF,
     HISTORY, HISTORY_GLOBAL, HISTORY_HINT, INSERT, INSERT_ROW, INSPECT_GLOBAL, INSPECT_ROW, LEAVE,
     MOVE, NEXT_MATCH, NEXT_OPTION, NEXT_PAGE, PALETTE_GLOBAL, RUN, SEARCH, SEARCH_GLOBAL, SELECT,
-    SORT, STOP, TOGGLE, UNSET,
+    SORT, STOP, TOGGLE, TRACE, UNSET,
 };
 pub(crate) use bindings::{GLOBAL, THEMES, THEMES_GLOBAL};
 
@@ -318,7 +318,7 @@ fn live(state: &State, binding: &Binding) -> bool {
     match *binding {
         // Follows the statement as typed: the same key runs a `SELECT` and is
         // refused a `DELETE`.
-        RUN => state.queries.statement().is_some_and(|cql| {
+        RUN | TRACE => state.queries.statement().is_some_and(|cql| {
             state.posture().permits_mutation() || !Statement::typed(&cql).mutates()
         }),
         FORMAT => {

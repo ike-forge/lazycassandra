@@ -763,6 +763,7 @@ fn nothing_but_a_hint_that_would_do_nothing_is_ever_inert() {
             assert!(
                 hint.liveness == Liveness::Live
                     || hint.action == "run"
+                    || hint.action == "trace"
                     || hint.action == "format"
                     || hint.action == "export"
                     || hint.action == "drop"
