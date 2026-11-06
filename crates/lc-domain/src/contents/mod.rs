@@ -11,6 +11,7 @@ pub use grid_page::{GridPage, Order, Sort};
 pub use paging::{Continue, Failure, Fetch, Landed, MEMORY_STEP, Paging, ROW_STEP, Stopped, Stops};
 pub use subject::{Subject, TableRef};
 
+use crate::config::Consistency;
 use crate::grid::ColumnScroll;
 use crate::inspect::Inspector;
 use crate::model::{DbError, QueryId, Statement};
@@ -72,6 +73,9 @@ pub enum ContentsState {
         subject: Subject,
         page: Box<GridPage>,
         paging: Paging,
+        /// What the rows were read at, whatever the session has moved to
+        /// since.
+        consistency: Consistency,
     },
     Failed {
         subject: Subject,

@@ -133,6 +133,7 @@ fn browsing(names: &[&str], selected: usize) -> State {
         id: ConnId::next(),
         name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
         posture: Posture::ReadOnly,
+        consistency: lc_domain::config::Consistency::default(),
         schema: SchemaState::Loaded(schema_of(names)),
     });
     state.move_tree_cursor(selected);
@@ -187,6 +188,7 @@ fn showing(page: Page) -> State {
         id: ConnId::next(),
         name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
         posture: Posture::ReadOnly,
+        consistency: lc_domain::config::Consistency::default(),
         schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
     });
     state.focus_on(Panel::Contents);
@@ -333,6 +335,7 @@ fn describing(table: Table) -> State {
         id: ConnId::next(),
         name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
         posture: Posture::ReadOnly,
+        consistency: lc_domain::config::Consistency::default(),
         schema: SchemaState::Loaded(schema.clone()),
     });
     state.tables.open(&schema);

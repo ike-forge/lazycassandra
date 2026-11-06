@@ -3,10 +3,16 @@
 
 use std::fmt::Write as _;
 
+use crate::config::Consistency;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Statement {
     pub cql: String,
     pub kind: StatementKind,
+    /// On the statement, as on a driver's: a page that follows, a trace and
+    /// an export run at the level the read began at. The constructors leave
+    /// the default; `submit` stamps the connection's.
+    pub consistency: Consistency,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +50,7 @@ impl Statement {
         Self {
             cql: format!("SELECT * FROM {}.{}", quoted(keyspace), quoted(table)),
             kind: StatementKind::Read,
+            consistency: Consistency::default(),
         }
     }
 
@@ -54,6 +61,7 @@ impl Statement {
         Self {
             cql: format!("DROP TABLE {}.{}", quoted(keyspace), quoted(table)),
             kind: StatementKind::Destructive,
+            consistency: Consistency::default(),
         }
     }
 
@@ -62,6 +70,7 @@ impl Statement {
         Self {
             cql: format!("DROP KEYSPACE {}", quoted(keyspace)),
             kind: StatementKind::Destructive,
+            consistency: Consistency::default(),
         }
     }
 
@@ -78,6 +87,7 @@ impl Statement {
                 restriction(key)
             ),
             kind: StatementKind::Write,
+            consistency: Consistency::default(),
         }
     }
 
@@ -104,6 +114,7 @@ impl Statement {
         Self {
             cql,
             kind: StatementKind::Write,
+            consistency: Consistency::default(),
         }
     }
 
@@ -124,6 +135,7 @@ impl Statement {
                 restriction(key)
             ),
             kind: StatementKind::Write,
+            consistency: Consistency::default(),
         }
     }
 
@@ -142,6 +154,7 @@ impl Statement {
                 literals.join(", ")
             ),
             kind: StatementKind::Write,
+            consistency: Consistency::default(),
         }
     }
 
@@ -169,7 +182,14 @@ impl Statement {
         Self {
             cql,
             kind: StatementKind::Write,
+            consistency: Consistency::default(),
         }
+    }
+
+    #[must_use]
+    pub fn at(mut self, consistency: Consistency) -> Self {
+        self.consistency = consistency;
+        self
     }
 
     /// Every statement in the buffer is classified and the most restricted
@@ -179,6 +199,7 @@ impl Statement {
         Self {
             cql: cql.to_owned(),
             kind: kind_of(cql),
+            consistency: Consistency::default(),
         }
     }
 }

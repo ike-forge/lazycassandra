@@ -80,6 +80,9 @@ pub(super) const CONNECTIONS: &[Binding] = &[SEARCH];
 
 pub(super) const CONNECTIONS_GLOBAL: &[Binding] = &[Binding::new(&[ENTER], "connect"), CLOSE, QUIT];
 
+/// No panel group: no `/`, and moving previews nothing.
+pub(super) const CONSISTENCY_GLOBAL: &[Binding] = &[Binding::new(&[ENTER], "set"), CLOSE, QUIT];
+
 /// Last of the panel's hints, so a narrow bar drops it before `run`.
 pub(super) const HISTORY_HINT: Binding = Binding::new(&[ctrl('g')], "history");
 

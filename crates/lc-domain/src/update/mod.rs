@@ -30,6 +30,7 @@ use std::time::Duration;
 
 mod commit;
 mod connections;
+mod consistency;
 mod drop;
 mod edit;
 mod export;

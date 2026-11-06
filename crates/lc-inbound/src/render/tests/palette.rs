@@ -100,7 +100,7 @@ fn a_rule_meets_the_block_it_divides() {
 #[test]
 fn a_command_row_names_what_it_does_before_the_key_it_costs() {
     let buffer = with_palette(100, 40);
-    let row = block_row(&buffer, "Commands", 20);
+    let row = block_row(&buffer, "Commands", 21);
 
     assert_eq!(row.trim(), "yank                  y");
 }

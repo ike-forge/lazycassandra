@@ -272,6 +272,16 @@ Contents panel pages at `grid.page_rows`, one page per `p` and until a stop
 for `P`; export pages at `driver.page_size` to the end. `execute` stays
 `query_unpaged` for mutations and DDL, which return no rows to page.
 
+**The consistency level travels on the `Statement`, not the port.** A
+connection starts at `driver.consistency` and `ctrl-l` moves it;
+`submit` stamps the connection's level on each statement, and the adapter
+sets it per request over the execution profile's. On the statement, a
+page that follows, a trace and a whole-table export run at the level the
+read began at without a second argument threaded beside every `stmt`, and
+`update`'s effects say which level they ask for. Schema and health reads
+keep the profile's level: they read `system_*` tables, not the user's
+data.
+
 ## 6. Theme plumbing
 
 VISION principle 5 says colour is a relationship, not a property: a theme

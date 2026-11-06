@@ -116,6 +116,11 @@ const GLOBAL: &[Command] = &[
         "choose a connection",
         Run::Here,
     ),
+    Command::new(
+        &[Stroke::ctrl(Key::Char('l'))],
+        "choose consistency",
+        Run::Here,
+    ),
     Command::new(&[Stroke::ctrl(Key::Char('c'))], "cancel queries", Run::Here),
     // Queries is the one panel this does nothing in: the editor takes `/` as
     // text.

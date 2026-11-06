@@ -107,6 +107,7 @@ fn scrolls(overlay: Option<&Overlay>) -> bool {
                 | Overlay::Inspect(_)
                 | Overlay::Themes { .. }
                 | Overlay::Connections { .. }
+                | Overlay::Consistency { .. }
                 | Overlay::History { .. }
                 | Overlay::Health(_)
                 | Overlay::Commit(_)

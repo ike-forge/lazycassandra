@@ -21,9 +21,9 @@ pub(super) fn page_ready(
     page: Page,
     took: Duration,
 ) -> Vec<Effect> {
-    if state.in_flight.remove(&query).is_none() {
+    let Some(stmt) = state.in_flight.remove(&query) else {
         return Vec::new();
-    }
+    };
     let rows = page.rows.len();
     // A drop's result reaches the panel too and is dropped there: the panel is
     // not waiting on that id.
@@ -40,7 +40,7 @@ pub(super) fn page_ready(
             state.log.complete(
                 Trace::Query(query),
                 Outcome::Succeeded {
-                    detail: format!("{rows} rows"),
+                    detail: format!("{rows} rows at {}", stmt.consistency.label()),
                     took,
                 },
             );
@@ -309,6 +309,9 @@ fn submit_as(
         effects.push(Effect::Cancel(superseded));
     }
 
+    // Stamped before the grid keeps it, so a page that follows runs at the
+    // level the read began at.
+    let stmt = stmt.at(state.consistency());
     // Logged here so every refusal `submit` returns gets an entry.
     let log_subject = statement_subject(&stmt);
     match submit_request(state, stmt.clone(), request) {
@@ -363,6 +366,7 @@ fn submit_request(
         return Err(DbError::Unreachable("not connected".to_owned()));
     };
 
+    let stmt = stmt.at(state.consistency());
     let query = QueryId::next();
     state.in_flight.insert(query, stmt.clone());
     state.mark_dirty();

@@ -25,6 +25,7 @@ fn a_tree_row_wears_the_icon_of_what_it_names() {
         id: ConnId::next(),
         name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
         posture: Posture::ReadOnly,
+        consistency: lc_domain::config::Consistency::default(),
         schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders"])])),
     });
     let schema = state.schema().cloned().expect("loaded");
@@ -93,6 +94,7 @@ fn an_unfolded_keyspaces_tables_are_indented_beneath_it() {
         id: ConnId::next(),
         name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
         posture: Posture::ReadOnly,
+        consistency: lc_domain::config::Consistency::default(),
         schema: SchemaState::Loaded(tabled_schema(&[
             ("shop", &["orders", "users"]),
             ("typezoo", &[]),
@@ -126,6 +128,7 @@ fn a_match_is_painted_where_it_sits() {
         id: ConnId::next(),
         name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
         posture: Posture::ReadOnly,
+        consistency: lc_domain::config::Consistency::default(),
         schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders", "users"])])),
     });
     state.apply_search(Searched::Tables, Search::new("der"));
@@ -162,6 +165,7 @@ fn a_search_drops_the_tables_it_does_not_reach() {
         id: ConnId::next(),
         name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
         posture: Posture::ReadOnly,
+        consistency: lc_domain::config::Consistency::default(),
         schema: SchemaState::Loaded(tabled_schema(&[("shop", &["orders", "users"])])),
     });
     state.apply_search(Searched::Tables, Search::new("orders"));

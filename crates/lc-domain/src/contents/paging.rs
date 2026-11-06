@@ -314,6 +314,7 @@ impl ContentsPanel {
                         cap,
                     )),
                     paging,
+                    consistency: stmt.consistency,
                 };
                 Landed::Read
             }

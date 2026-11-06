@@ -149,7 +149,7 @@ fn catalogued() -> Vec<KeyPress> {
 /// Between them every binding has somewhere to act: an overlay open, a keyspace
 /// unfolded, cursors and offsets off their ends, a loaded grid.
 fn sweep_fixtures() -> Vec<State> {
-    let geometry = Geometry::new([8, 14, 20, 1], 37, 14);
+    let geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_consistency_rows(20);
 
     let mut covered = browsing_tables(&[("shop", &["orders"])]);
     covered.geometry = geometry;

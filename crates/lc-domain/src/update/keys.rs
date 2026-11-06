@@ -15,6 +15,7 @@ use crate::theme::BuiltIn;
 
 use super::commit::{commit_extent, commit_inspected_row, commit_key, discard_key, open_commit};
 use super::connections::{connections_key, offer_connections, open_connections};
+use super::consistency::{consistency_key, open_consistency};
 use super::drop::{drop_key, open_drop};
 use super::export::{cancel_pending_export, export_chord, export_key, open_export};
 use super::health::{health_key, open_health};
@@ -105,6 +106,7 @@ pub(super) fn overlay_key(state: &mut State, key: Key) -> Option<Vec<Effect>> {
         Some(Overlay::Inspect(_)) => inspect_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Connections { .. }) => connections_key(state, key),
+        Some(Overlay::Consistency { .. }) => consistency_key(state, key),
         Some(Overlay::History { .. }) => history_key(state, key),
         Some(Overlay::Health(_)) => health_key(state, key),
         Some(Overlay::Search(_)) => search_key(state, key),
@@ -192,6 +194,7 @@ pub(super) fn takes_text(state: &State) -> bool {
         Some(Overlay::Inspect(inspector)) => inspector.field().is_some(),
         Some(
             Overlay::Diagnostics(_)
+            | Overlay::Consistency { .. }
             | Overlay::Health(_)
             | Overlay::Fatal(_)
             | Overlay::Commit(_)
@@ -238,6 +241,10 @@ pub(super) fn goto(state: &mut State, edge: Edge) {
         Some(Overlay::History { cursor, .. }) => match edge {
             Edge::Start => cursor.to_start(),
             Edge::End => cursor.to_end(history),
+        },
+        Some(Overlay::Consistency { cursor }) => match edge {
+            Edge::Start => cursor.to_start(),
+            Edge::End => cursor.to_end(crate::config::Consistency::ALL.len()),
         },
         Some(Overlay::Health(panel)) => match edge {
             Edge::Start => panel.to_start(),
@@ -393,6 +400,7 @@ pub(super) fn dismiss_overlay(state: &mut State) -> bool {
             Overlay::Message(_)
             | Overlay::Commands(_)
             | Overlay::History { .. }
+            | Overlay::Consistency { .. }
             | Overlay::Health(_)
             | Overlay::Diagnostics(_)
             | Overlay::Inspect(_)
@@ -468,6 +476,7 @@ pub(super) fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
             Overlay::Commands(_)
                 | Overlay::Themes { .. }
                 | Overlay::Connections { .. }
+                | Overlay::Consistency { .. }
                 | Overlay::History { .. }
                 | Overlay::Diagnostics(_)
                 | Overlay::Inspect(_)
@@ -491,6 +500,10 @@ pub(super) fn ctrl_key(state: &mut State, key: Key) -> Vec<Effect> {
         }
         Key::Char('o') => {
             open_connections(state);
+            Vec::new()
+        }
+        Key::Char('l') => {
+            open_consistency(state);
             Vec::new()
         }
         Key::Char('e') => ctrl_e(state),
@@ -602,6 +615,7 @@ pub(super) fn page(state: &mut State, key: Key) -> Vec<Effect> {
         Some(Overlay::Commands(_)) => palette_key(state, key),
         Some(Overlay::Themes { .. }) => themes_key(state, key),
         Some(Overlay::Connections { .. }) => connections_key(state, key),
+        Some(Overlay::Consistency { .. }) => consistency_key(state, key),
         Some(Overlay::History { .. }) => history_key(state, key),
         Some(Overlay::Health(_)) => health_key(state, key),
         Some(Overlay::Diagnostics(_)) => diagnostics_key(state, key),

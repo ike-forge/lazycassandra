@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use lc_domain::config::{ConnectionConfig, ConnectionName, DriverConfig, PageSize};
+use lc_domain::config::{ConnectionConfig, ConnectionName, Consistency, DriverConfig, PageSize};
 use lc_domain::model::{
     ClusteringOrder, ConnId, CqlValue, DbError, IndexKind, Keyspace, KeyspaceKind, Replication,
     Statement,
@@ -757,4 +757,40 @@ async fn the_fixture_reports_a_tables_health_from_its_one_node() {
     }
     assert_eq!(thresholds.tombstone_warn, Some(1000.0));
     assert_eq!(thresholds.tombstone_failure, Some(100_000.0));
+}
+
+/// ANY is write-only, so a coordinator refusing a read at it is the level
+/// arriving rather than the profile's.
+#[tokio::test]
+async fn a_statements_level_reaches_the_coordinator() {
+    let conn = ConnId::next();
+    let cluster = CassandraCluster::new();
+    cluster
+        .connect(conn, &fixture(), &DriverConfig::default())
+        .await
+        .expect("the fixture is up");
+    let read = Statement::typed("SELECT * FROM typezoo.all_scalar_types LIMIT 1");
+
+    let refused = cluster
+        .execute_paged(
+            conn,
+            &read.clone().at(Consistency::Any),
+            PageSize::default(),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(DbError::Invalid(message)) if message.contains("ANY")),
+        "{refused:?}"
+    );
+
+    cluster
+        .execute_paged(
+            conn,
+            &read.at(Consistency::Serial),
+            PageSize::default(),
+            None,
+        )
+        .await
+        .expect("a Paxos read answers on a single node");
 }

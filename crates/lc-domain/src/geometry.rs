@@ -25,6 +25,7 @@ pub struct Geometry {
     connection_rows: usize,
     /// A ceiling, not a refusal threshold: the block scrolls.
     history_rows: usize,
+    consistency_rows: usize,
     health_rows: usize,
     /// Sized from the terminal alone, so neither depends on the offset they
     /// bound.
@@ -55,6 +56,7 @@ impl Geometry {
             theme_rows: 0,
             connection_rows: 0,
             history_rows: 0,
+            consistency_rows: 0,
             health_rows: 0,
             inspector_rows: 0,
             inspector_lines: 0,
@@ -197,6 +199,21 @@ impl Geometry {
     pub const fn with_history_rows(self, history_rows: usize) -> Self {
         Self {
             history_rows,
+            ..self
+        }
+    }
+
+    /// Below `Consistency::ALL.len()`, `ctrl-l` is inert: the block does not
+    /// scroll.
+    #[must_use]
+    pub const fn consistency_rows(self) -> usize {
+        self.consistency_rows
+    }
+
+    #[must_use]
+    pub const fn with_consistency_rows(self, consistency_rows: usize) -> Self {
+        Self {
+            consistency_rows,
             ..self
         }
     }

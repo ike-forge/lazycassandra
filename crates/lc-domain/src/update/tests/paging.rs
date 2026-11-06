@@ -131,7 +131,7 @@ fn an_empty_first_page_is_followed_under_the_reads_one_entry() {
     assert_eq!(state.log.len(), entries);
     assert!(matches!(
         state.log.entries().last().map(Entry::outcome),
-        Some(Outcome::Succeeded { detail, .. }) if detail == "2 rows"
+        Some(Outcome::Succeeded { detail, .. }) if detail == "2 rows at LOCAL_QUORUM"
     ));
     assert_eq!(state.contents.row_count(), 2);
 }

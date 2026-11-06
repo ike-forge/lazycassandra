@@ -4,6 +4,7 @@
 mod body;
 mod commit;
 mod connections;
+mod consistency;
 mod details;
 mod diagnostics;
 mod drop;

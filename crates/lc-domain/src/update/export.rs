@@ -54,6 +54,7 @@ pub(super) fn open_export(state: &mut State) {
         subject,
         page,
         paging,
+        ..
     } = state.contents.state()
     else {
         state.notify(Severity::Info, "nothing to export");
@@ -223,17 +224,28 @@ pub(super) fn start_export(state: &mut State, button: Button) -> Vec<Effect> {
 
 /// `None` is unreachable today but must not panic if that changes.
 pub(super) fn source(state: &State, form: &ExportForm) -> Option<Source> {
-    let ContentsState::Loaded { subject, page, .. } = state.contents.state() else {
+    let ContentsState::Loaded {
+        subject,
+        page,
+        consistency,
+        ..
+    } = state.contents.state()
+    else {
         return None;
     };
 
     match form.scope() {
         // Only our limit is dropped; a typed statement's own is the user's.
         Scope::Whole | Scope::First => {
-            let statement = Box::new(match subject {
-                Subject::Table(table) => Statement::select_all(&table.keyspace, &table.table),
-                Subject::Typed(cql) => Statement::typed(cql),
-            });
+            let statement = Box::new(
+                match subject {
+                    Subject::Table(table) => Statement::select_all(&table.keyspace, &table.table),
+                    Subject::Typed(cql) => Statement::typed(cql),
+                }
+                // The grid's level, not the session's: the export is of what is
+                // on screen.
+                .at(*consistency),
+            );
             let limit = match form.scope() {
                 Scope::First => Some(form.row_limit()?),
                 _ => None,

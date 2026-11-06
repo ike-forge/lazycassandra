@@ -55,7 +55,8 @@
 # connect_timeout_ms = 5000    # 1..=600000
 # consistency        = "local-quorum"   # any | one | two | three | quorum |
 #                                       # all | local-quorum | each-quorum |
-#                                       # local-one
+#                                       # local-one | serial | local-serial;
+#                                       # ctrl-l changes it for the session
 # compression        = "lz4"            # none | lz4 | snappy
 
 # ── export ────────────────────────────────────────────────────
