@@ -258,7 +258,7 @@ mod tests {
     fn a_closed_buffer_names_the_way_in_and_out() {
         assert_eq!(
             drawn(Panel::Queries, 80),
-            " ↵ edit | ctrl-r run | ctrl-e $EDITOR | esc leave"
+            " ↵ edit | ctrl-r run | ctrl-t trace | ctrl-e $EDITOR | esc leave"
         );
     }
 

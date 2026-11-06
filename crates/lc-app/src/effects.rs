@@ -4,10 +4,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use lc_domain::config::PageSize;
 use lc_domain::config::{ConnectionConfig, ConnectionName, DriverConfig};
 use lc_domain::contents::TableRef;
-use lc_domain::model::{ConnId, DbError, Page, QueryId};
+use lc_domain::model::{ConnId, DbError, Page, QueryId, Statement};
 use lc_domain::ports::{Cluster, ConfigSink, Store, Writer};
+use lc_domain::trace::Traced;
 use lc_domain::{Effect, Msg};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::AbortHandle;
@@ -79,6 +81,21 @@ pub(crate) fn run(
                     .await
             });
         }
+
+        Effect::ExecuteTraced {
+            conn,
+            query,
+            stmt,
+            page_size,
+        } => traced(
+            tx,
+            running,
+            *query,
+            Arc::clone(cluster),
+            *conn,
+            stmt.as_ref().clone(),
+            *page_size,
+        ),
 
         // Both routes every time: OSC 52 gets no answer, so failure is
         // undetectable, and a multiplexer may drop it. The OSC write stays on
@@ -275,6 +292,53 @@ async fn save_history(
     }
 }
 
+/// Registered until the trace is read, so `Cancel` reaches either half.
+fn traced(
+    tx: &UnboundedSender<Incoming>,
+    running: &Running,
+    query: QueryId,
+    cluster: Arc<dyn Cluster>,
+    conn: ConnId,
+    stmt: Statement,
+    page_size: PageSize,
+) {
+    let (tx, registry) = (tx.clone(), running.clone());
+    let mut handles = running.lock();
+    let task = tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let result = cluster.execute_traced(conn, &stmt, page_size).await;
+        let took = started.elapsed();
+
+        let id = match result {
+            Ok(Traced { page, trace }) => {
+                let _sent = tx.send(
+                    Msg::PageReady {
+                        query,
+                        page: Box::new(page),
+                        took,
+                    }
+                    .into(),
+                );
+                trace
+            }
+            Err(error) => {
+                registry.lock().remove(&query);
+                let _sent = tx.send(Msg::Failed { query, error, took }.into());
+                return;
+            }
+        };
+
+        let trace = match id {
+            Some(id) => cluster.trace(conn, id).await,
+            None => Err(DbError::Other(
+                "the coordinator returned no trace id".to_owned(),
+            )),
+        };
+        registry.lock().remove(&query);
+        let _sent = tx.send(Msg::TraceReady { query, trace }.into());
+    });
+    handles.insert(query, task.abort_handle());
+}
 #[cfg(test)]
 mod tests {
     use lc_domain::config::{Diagnostic, HistoryLimit};

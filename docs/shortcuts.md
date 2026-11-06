@@ -26,7 +26,7 @@ text anywhere: the ctrl layer is dispatched above the panel that takes text
 |---|---|
 | `q`¹ | Quit. Cancels every in-flight query. |
 | `?`¹ | Open the command palette: every binding, in one scrollable block. |
-| `ctrl-t` | Open the theme picker: every theme, previewed as you move. |
+| `ctrl-t` | Open the theme picker: every theme, previewed as you move. From Queries it traces the banded statement instead (§1's Queries panel subsection); the palette's row still opens the picker there. |
 | `ctrl-o` | Open the connection picker: every `[[connections]]` a config defines. |
 | `ctrl-c` | Cancel every query in flight: the read, a page, a drop or a commit. The task is aborted and the panel says `cancelled`; a late answer is dropped. The cluster is not told, so a write may still land, and the drop or commit says so. |
 | `/`¹ | Search the focused panel. |
@@ -35,20 +35,21 @@ text anywhere: the ctrl layer is dispatched above the panel that takes text
 | `y`¹ ² | Yank the selection to the clipboard, as one line — in Table contents, the cell, the row or the column, per the mode. Flashes what it copied, then drops the selection and returns the cursor to where `v` was pressed. |
 | `v`¹ | Start or freeze a selection of whole rows in the focused list panel. On a row already selected, drops the group holding it; on any other row, adds a group beside what is held. |
 | `Esc` | Dismiss the overlay, stop a running `P`, close the open Cql buffer, leave visual mode, clear a range, clear the focused panel's search, or leave the panel for Tables — first hit wins (§2). |
-| `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns and Indexes tabs where a table is selected; Table contents; Queries' Cql tab; Queries' Logs tab. |
+| `Tab`³ | Focus the next `(panel, tab)` stop, wrapping: Tables; DDL, and its Columns and Indexes tabs where a table is selected; Table contents; Queries' Cql, Logs and Trace tabs. |
 | `Shift-Tab` | The same stops, walked backwards. |
 | `1`¹ | Focus Tables. |
 | `2`¹ | Focus DDL. |
 | `3`¹ | Focus Table contents. |
 | `4`¹ | Focus Queries with the Cql buffer open, ready to type. |
 | `5`¹ | Focus Queries' Logs tab. |
+| `6`¹ | Focus Queries' Trace tab. |
 | `]`¹ | The focused panel's next tab. |
 | `[`¹ | Its previous tab. |
 
 ¹ Not reachable while the Cql buffer is open: it claims every printable key
 before this table is consulted, so these type themselves there instead.
 `Esc` closes the buffer and every one of them answers again. A Cql tab that
-has not been opened, and the Logs tab, take no text at all.
+has not been opened, and the Logs and Trace tabs, take no text at all.
 
 ² "One CSV line" holds for DDL's three tabs, and for two of Table contents'
 three selection modes. Tables is the exception it always was, with a bare
@@ -87,7 +88,7 @@ command acts on what has focus.
 top-left, bottom-left, top-right, bottom-right — and `Tab` walks the same
 order, now stopping at every tab a panel draws along the way: DDL's own tab
 and, where a table is selected, its Columns and Indexes tabs beside it; then
-Queries' Cql tab and its Logs tab. One order on screen, in the titles and under the
+Queries' Cql tab, its Logs tab and its Trace tab. One order on screen, in the titles and under the
 fingers. Four letters chosen for the words they sit inside used to do this
 job; a letter has to be learned per panel, while four digits in frame order
 are one rule, and a novice reading `[2]-` has been told the whole binding.
@@ -100,8 +101,9 @@ with `]` and `[`.
 Queries is the exception. `4` arrives with the Cql buffer open, because a
 newcomer pressing the number of the panel that takes queries expects to type
 one; a buffer that needed `↵` first read as broken. An open buffer takes the
-next `4` as text, so it cannot also walk the strip, and Logs has a number of
-its own instead: `5`, drawn in the title as `[5]-Logs`.
+next `4` as text, so it cannot also walk the strip, and Logs and Trace have a
+number of their own instead: `5` and `6`, drawn in the title as `[5]-Logs`
+and `[6]-Trace`.
 `]` and `[` walk the focused panel's tabs forwards and backwards, as in
 lazygit; on a panel with one tab they do nothing, and in an open Cql buffer
 they are text. The bar of a panel with tabs offers them, so the tabs are
@@ -176,12 +178,12 @@ for its own reason. `ctrl-d`/`ctrl-u` page nothing because `PageDown`/`PageUp`
 page nothing here, and the two spellings reach one implementation. `ctrl-t` is
 refused outright: it is the one opener a prompt cannot swallow, and a picker
 opened over a live query would strand the panel searched with nothing left
-holding what it was searched from. `ctrl-r` and `ctrl-g` act only from Queries,
-and no prompt can be open while Queries has focus. That takes two halves:
-Queries holds no search, so no prompt can be opened *over* it; and focus cannot
-move *to* it under a live prompt, since the prompt swallows `Tab`/`Shift-Tab`,
-types the panel numbers as text rather than acting on them, and a click is
-spent dismissing the prompt (§6).
+holding what it was searched from. `ctrl-r`, `ctrl-t` and `ctrl-g` act only
+from Queries, where the one prompt that can be open is the Logs tab's: focus
+cannot move *to* Queries under a live prompt, since the prompt swallows
+`Tab`/`Shift-Tab`, types the panel numbers as text rather than acting on them,
+and a click is spent dismissing the prompt (§6). `ctrl-r` and `ctrl-t` refuse
+that prompt themselves, since running moves focus or the tab out from under it.
 
 A chord the layer has no member for is still refused rather than typed: ctrl
 is a layer of its own, and `ctrl-n` is not an `n`.
@@ -213,7 +215,9 @@ underneath ever sees one. It is refused on the picker's own gate — a frame too
 small to draw its list gets no picker — which is not the palette's gate: a
 config can define enough themes that the picker no longer fits where a
 palette would. It is also refused over a live search prompt (see the
-prompt's subsection above). The palette carries a row for it.
+prompt's subsection above). The palette carries a row for it. With Queries
+focused `ctrl-t` traces instead, so there the palette row is the way to the
+picker: it opens it by name rather than replaying the chord.
 
 The list is the fifteen built-in themes, followed by whatever `[[themes]]`
 the config layers define — a config-defined theme is never listed before a
@@ -912,9 +916,9 @@ The guard lives in `quit` itself, so the palette's quit row, the inspector's
 
 ### Queries panel
 
-Two tabs, Cql and Logs. This subsection is the Cql tab, the buffer the panel
-opens on; the Logs tab is read-only and has a subsection of its own,
-directly below.
+Three tabs, Cql, Logs and Trace. This subsection is the Cql tab, the buffer
+the panel opens on; the Logs and Trace tabs are read-only and have
+subsections of their own, directly below.
 
 `4` and a press on the buffer arrive with it open. `Tab`, `Shift-Tab` and a
 tab click arrive with it closed, taking no text: every global key keeps its
@@ -934,6 +938,7 @@ is edited with the keys below, and `ctrl-e` is the way to any other editor.
 | `j` / `k` / `↓` / `↑` | With the buffer closed: band the next / previous statement. A step off either end stays where it is. |
 | `g` / `G` / `Home` / `End` | With the buffer closed: band the first / last statement. |
 | `ctrl-r` | Run the banded statement — the one the cursor is in, in either mode. Its page replaces whatever Contents was showing. A buffer holding no statement runs nothing, and the bar greys the hint out while that is so — §2. |
+| `ctrl-t` | Run the banded statement traced: the coordinator records it in `system_traces`. The page lands in Contents as `ctrl-r`'s does, but focus stays here and the Trace tab is shown, waiting on the trace. Inert, refused and greyed exactly where `ctrl-r` is. |
 | `ctrl-g` | Open the query history: what this connection has been asked from the buffer, newest first. Inert with nothing remembered, and the bar names it only once there is something to open. See the query history's own subsection in §1. |
 | `ctrl-e` | Open the buffer in `$VISUAL`, `$EDITOR` or `vi`, and replace it with whatever the editor saved. The program is suspended while the editor holds the terminal. |
 | `ctrl-f` | Lay the buffer out: one clause to a line, keywords upper case, `AND` indented under the clause it continues. Nothing is reordered and no name, string or comment is retyped. The bar greys the hint out on a buffer already laid out, which an empty one is. |
@@ -990,7 +995,7 @@ end of that statement, leaving the cursor on the select list.
 
 `Tab` and `Shift-Tab` still reach here, except as ³ says, but from the Cql tab
 neither leaves the panel outright: `Tab` lands on the Logs tab first, the
-panel's own second stop in the cycle (§1), and only a second `Tab` from there
+panel's own second stop in the cycle (§1), then Trace, and only a `Tab` from there
 wraps on to Tables; `Shift-Tab` from Cql steps back to Table contents
 instead, since Logs sits after Cql in the cycle, not before it. Nothing else
 global survives inside an open buffer — including `q`, which types a `q`. `ctrl-r` is not global either:
@@ -1021,6 +1026,27 @@ leaves it for Tables the way it leaves any other panel (§2), reverting the
 tab on the way out like every other route off it. The trail's own search does
 not outlive the tab being drawn either — switching to Cql clears it, since the
 hint bar cannot advertise `n` while `n` is literal text there.
+
+### Trace tab
+
+Queries' third tab: the trace of the last statement `ctrl-t` ran, drawn the
+way the trail is. A summary row names the statement, the coordinator, the
+duration the coordinator recorded and how many nodes and events took part;
+one row per `system_traces.events` row follows, its elapsed time — since the
+request reached *that* node, so rows from different nodes do not share a
+clock — beside the activity, the node and thread under it. Reached by `6`,
+`ctrl-t`, `]`/`[`, `Tab`/`Shift-Tab` or a click.
+
+It takes no text: `j`/`k`, the arrows, the paging keys and `g`/`G` move a
+cursor over the rows. `/`, `v` and `y` are inert: the tab draws the trail's
+body without being the trail, and the panel's search is the trail's. Leaving
+the panel reverts it to Cql, for the reason Logs does.
+
+The trace arrives after its page: Cassandra writes `system_traces` once it
+has answered, and the adapter polls for up to two seconds. `ctrl-c` cancels a
+trace still being read even after its page landed. A trace that lands while
+the tab is not drawn says so in a toast. A new `ctrl-t` replaces what the tab
+showed; `ctrl-r` leaves it alone.
 
 ---
 
@@ -1094,7 +1120,8 @@ returns early on alt and on ctrl+alt together — a two-modifier chord is a thir
 layer, undesigned. What the rule protects is unchanged: a ctrl key is a binding
 of its own and never a synonym for the plain one, so `ctrl-j` still does
 nothing, and a member pressed outside its panel is inert rather than a binding
-for whatever is focused. The layer has eleven members now. `ctrl-r` runs the Queries
+for whatever is focused. The layer has eleven members now; `ctrl-t` carries a
+Queries meaning beside its global one, as `ctrl-e` carries a Contents one. `ctrl-r` runs the Queries
 panel's banded statement, `ctrl-e` opens the buffer in an external editor, `ctrl-f` lays it
 out, and `ctrl-n`/`ctrl-p` walk the completion popup: the panel takes
 text, so every printable key there is a character and none of those actions has
@@ -1162,7 +1189,7 @@ of the document; in the editor they reach the ends of the line, because that
 is what they do in every text editor a user has met. The document's ends
 stay reachable with `PageUp` and `PageDown`.
 
-A panel number (`1`–`5`) is a third exception: it moves focus everywhere but
+A panel number (`1`–`6`) is a third exception: it moves focus everywhere but
 an open Cql buffer, where it is text. So are `[` and `]`.
 `Tab`, `Enter` and `Esc` under a completion popup are a fourth, and the only
 one conditional on something drawn rather than on which panel is focused: while
@@ -1350,7 +1377,7 @@ mode alone — a panel's claim on a letter stops at that panel's border, and
 this one stops at a mode's (§1's Table contents subsection). `e` opens an
 edit field, from the inspector and from the grid, and is free everywhere
 else.
-Taken, digits: `1` `2` `3` `4` `5`.
+Taken, digits: `1` `2` `3` `4` `5` `6`.
 Taken, punctuation: `[` and `]`.
 Taken, uppercase: `G`, `H`, `N`, `P` and `Y` — the only shifted letters bound (§2).
 `H` answers in Tables alone.
@@ -1507,7 +1534,7 @@ moves the column cursor under the highlight, and the next `m` finds it where the
 pointer left it.
 
 A press on the Queries panel opens its Cql buffer, as `4` does; on
-the Logs tab it only focuses.
+the Logs and Trace tabs it only focuses.
 
 Chrome is a border, a notice, a title away from any tab, the
 blank over a grid's gutter, and the blank space past the last row or column. In

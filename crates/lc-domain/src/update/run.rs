@@ -2,10 +2,12 @@ use crate::connection::ConnectionState;
 use crate::contents::{ContentsState, Continue, Failure, Landed, Subject, TableRef};
 use crate::log::{Outcome, Trace};
 use crate::model::{DbError, Page, QueryId, Statement};
-use crate::overlay::Message;
+use crate::overlay::{Message, Overlay};
 use crate::panel::Panel;
+use crate::queries::QueriesTab;
 use crate::state::State;
 use crate::style::Severity;
+use crate::trace::QueryTrace;
 use crate::tree::Node;
 use std::time::Duration;
 
@@ -60,6 +62,7 @@ pub(super) fn query_failed(state: &mut State, query: QueryId, error: &DbError) -
     if state.in_flight.remove(&query).is_none() {
         return Vec::new();
     }
+    state.trace.answer(query, Err(error.to_string()));
     let outcome = Outcome::Failed {
         detail: error.to_string(),
     };
@@ -84,9 +87,15 @@ pub(super) fn query_failed(state: &mut State, query: QueryId, error: &DbError) -
     effects
 }
 
-/// A cancelled page keeps the rows already loaded.
+/// A cancelled page keeps the rows already loaded. A trace still being read
+/// counts as running: its request is no longer in flight once the page lands.
 pub(super) fn cancel(state: &mut State) -> Vec<Effect> {
-    let running: Vec<QueryId> = state.in_flight.keys().copied().collect();
+    let mut running: Vec<QueryId> = state.in_flight.keys().copied().collect();
+    if let Some(tracing) = state.trace.waiting()
+        && !running.contains(&tracing)
+    {
+        running.push(tracing);
+    }
     if running.is_empty() {
         state.notify(Severity::Info, "nothing is running");
         return Vec::new();
@@ -97,6 +106,9 @@ pub(super) fn cancel(state: &mut State) -> Vec<Effect> {
         state.in_flight.remove(&query);
         state.log.complete(Trace::Query(query), Outcome::Cancelled);
         state.contents.failed(query, &DbError::Cancelled);
+        state
+            .trace
+            .answer(query, Err(DbError::Cancelled.to_string()));
         effects.extend(finish_drop(state, query, Some(&DbError::CancelledWrite)));
         effects.extend(finish_commit(state, query, Some(&DbError::CancelledWrite)));
         effects.push(Effect::Cancel(query));
@@ -143,8 +155,27 @@ pub(super) fn read(state: &mut State, table: TableRef) -> Vec<Effect> {
     submit_into_contents(state, Subject::Table(table), stmt)
 }
 
+/// Whether the coordinator records the request in `system_traces`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Request {
+    Untraced,
+    Traced,
+}
+
 pub(super) fn run(state: &mut State) -> Vec<Effect> {
-    if state.focus() != Panel::Queries {
+    run_buffer(state, Request::Untraced)
+}
+
+/// Unlike [`run`], focus stays on Queries and moves to its Trace tab: the trace
+/// is what was asked for. The page still lands in Contents.
+pub(super) fn run_traced(state: &mut State) -> Vec<Effect> {
+    run_buffer(state, Request::Traced)
+}
+
+fn run_buffer(state: &mut State, request: Request) -> Vec<Effect> {
+    // A Logs search prompt is the one overlay `ctrl_key` lets through here;
+    // running would move focus or the tab out from under it.
+    if state.focus() != Panel::Queries || matches!(state.overlay, Some(Overlay::Search(_))) {
         return Vec::new();
     }
 
@@ -185,16 +216,51 @@ pub(super) fn run(state: &mut State) -> Vec<Effect> {
         return Vec::new();
     }
 
-    state.focus_on(Panel::Contents);
+    if request == Request::Untraced {
+        state.focus_on(Panel::Contents);
+    }
 
-    let mut effects = submit_into_contents(state, Subject::Typed(cql.to_owned()), stmt);
+    let mut effects = submit_as(state, Subject::Typed(cql.to_owned()), stmt, request);
 
     // A refused statement sent nothing and is not worth recalling.
     if !effects.is_empty() {
+        if request == Request::Traced {
+            state.show_queries_tab(QueriesTab::Trace);
+        }
         effects.extend(record_history(state, cql));
     }
 
     effects
+}
+
+/// An answer for a trace the panel stopped waiting on is dropped.
+pub(super) fn trace_ready(
+    state: &mut State,
+    query: QueryId,
+    trace: Result<QueryTrace, DbError>,
+) -> Vec<Effect> {
+    let failed = trace.is_err();
+    if !state
+        .trace
+        .answer(query, trace.map_err(|error| error.to_string()))
+    {
+        return Vec::new();
+    }
+    state.mark_dirty();
+
+    let shown = state.focus() == Panel::Queries && state.queries.tab() == QueriesTab::Trace;
+    if !shown {
+        if failed {
+            state.notify(
+                Severity::Warning,
+                "the trace could not be read, 6 shows why",
+            );
+        } else {
+            state.notify(Severity::Info, "trace ready, 6 shows it");
+        }
+    }
+
+    Vec::new()
 }
 
 /// Only the buffer: reading a table from the tree is not something the user
@@ -220,6 +286,15 @@ pub(super) fn submit_into_contents(
     subject: Subject,
     stmt: Statement,
 ) -> Vec<Effect> {
+    submit_as(state, subject, stmt, Request::Untraced)
+}
+
+fn submit_as(
+    state: &mut State,
+    subject: Subject,
+    stmt: Statement,
+    request: Request,
+) -> Vec<Effect> {
     let mut effects = Vec::new();
 
     // Dropping the id is what stops a late page; the effect is inert.
@@ -228,13 +303,19 @@ pub(super) fn submit_into_contents(
         state
             .log
             .complete(Trace::Query(superseded), Outcome::Cancelled);
+        state
+            .trace
+            .answer(superseded, Err(DbError::Cancelled.to_string()));
         effects.push(Effect::Cancel(superseded));
     }
 
     // Logged here so every refusal `submit` returns gets an entry.
     let log_subject = statement_subject(&stmt);
-    match submit(state, stmt.clone()) {
+    match submit_request(state, stmt.clone(), request) {
         Ok((query, submitted)) => {
+            if request == Request::Traced {
+                state.trace.wait(query, stmt.cql.clone());
+            }
             state.contents.requested(query, subject, stmt);
             effects.extend(submitted);
         }
@@ -266,6 +347,14 @@ pub(super) fn submit_into_contents(
 /// [`DbError::ReadOnly`] if the statement mutates and the posture forbids it;
 /// [`DbError::Unreachable`] with no connection.
 pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect>), DbError> {
+    submit_request(state, stmt, Request::Untraced)
+}
+
+fn submit_request(
+    state: &mut State,
+    stmt: Statement,
+    request: Request,
+) -> Result<(QueryId, Vec<Effect>), DbError> {
     if stmt.mutates() && !state.posture().permits_mutation() {
         return Err(DbError::ReadOnly);
     }
@@ -286,7 +375,14 @@ pub fn submit(state: &mut State, stmt: Statement) -> Result<(QueryId, Vec<Effect
         },
     );
 
-    let execute = if stmt.mutates() {
+    let execute = if request == Request::Traced {
+        Effect::ExecuteTraced {
+            conn,
+            query,
+            stmt: Box::new(stmt.clone()),
+            page_size: state.config.grid.page_rows.into(),
+        }
+    } else if stmt.mutates() {
         Effect::Execute {
             conn,
             query,

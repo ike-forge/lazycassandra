@@ -16,6 +16,7 @@ use crate::history::Histories;
 use crate::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use crate::posture::Posture;
 use crate::theme::ThemeChoice;
+use crate::trace::{QueryTrace, TraceId, Traced};
 
 /// Driver types stop at the adapter.
 #[async_trait]
@@ -40,6 +41,19 @@ pub trait Cluster: Send + Sync {
         page_size: PageSize,
         cursor: Option<&PagingState>,
     ) -> Result<Page, DbError>;
+
+    /// The first page of a read, or the whole answer of a mutation, with the
+    /// coordinator asked to trace it.
+    async fn execute_traced(
+        &self,
+        conn: ConnId,
+        stmt: &Statement,
+        page_size: PageSize,
+    ) -> Result<Traced, DbError>;
+
+    /// The coordinator writes `system_traces` after it answers, so the adapter
+    /// waits for the record to be complete.
+    async fn trace(&self, conn: ConnId, trace: TraceId) -> Result<QueryTrace, DbError>;
 
     /// A failing node is a [`crate::health::NodeOutcome`]; `Err` means no node
     /// was reached.

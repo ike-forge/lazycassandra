@@ -12,6 +12,7 @@ use lc_domain::health::Health;
 use lc_domain::model::{ConnId, DbError, Page, PagingState, Schema, Statement};
 use lc_domain::ports::{Cluster, ExportError, Sink, Writer};
 use lc_domain::posture::Posture;
+use lc_domain::trace::{QueryTrace, TraceId, Traced};
 
 #[derive(Debug, Default)]
 pub struct FakeCluster {
@@ -34,6 +35,8 @@ pub struct FakeCluster {
     /// Earlier pages are still delivered, so a mid-export abort is testable.
     failing_page: Option<(usize, DbError)>,
     health: Health,
+    /// `Err` is a trace the cluster never finished writing.
+    trace: Option<Result<QueryTrace, DbError>>,
 }
 
 impl FakeCluster {
@@ -86,6 +89,16 @@ impl FakeCluster {
     #[must_use]
     pub fn reporting(self, health: Health) -> Self {
         Self { health, ..self }
+    }
+
+    /// Without it a traced request answers with no trace id, as a coordinator
+    /// that ignored the flag would.
+    #[must_use]
+    pub fn tracing(self, trace: Result<QueryTrace, DbError>) -> Self {
+        Self {
+            trace: Some(trace),
+            ..self
+        }
     }
 
     /// A poisoned lock is recovered: the panic that poisoned it is the real
@@ -197,6 +210,30 @@ impl Cluster for FakeCluster {
         }
 
         Ok(self.pages.get(index).cloned().unwrap_or_default())
+    }
+
+    async fn execute_traced(
+        &self,
+        conn: ConnId,
+        stmt: &Statement,
+        page_size: PageSize,
+    ) -> Result<Traced, DbError> {
+        let page = if stmt.mutates() {
+            self.execute(conn, stmt).await?
+        } else {
+            self.execute_paged(conn, stmt, page_size, None).await?
+        };
+
+        Ok(Traced {
+            page,
+            trace: self.trace.as_ref().map(|_| TraceId([0; 16])),
+        })
+    }
+
+    async fn trace(&self, _conn: ConnId, _trace: TraceId) -> Result<QueryTrace, DbError> {
+        self.trace
+            .clone()
+            .unwrap_or_else(|| Err(DbError::Other("no trace was recorded".to_owned())))
     }
 
     async fn table_health(&self, _conn: ConnId, _table: &TableRef) -> Result<Health, DbError> {

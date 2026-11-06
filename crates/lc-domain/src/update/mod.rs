@@ -23,6 +23,7 @@ use crate::search::Search;
 use crate::state::State;
 use crate::style::Severity;
 use crate::theme::ThemeChoice;
+use crate::trace::QueryTrace;
 use crate::tree::Node;
 use std::num::NonZeroUsize;
 use std::time::Duration;
@@ -64,8 +65,8 @@ use navigation::{Step, focus_by_number, go_left, go_right, show_tab, walk_landin
 use pointer::handle_pointer;
 pub use run::submit;
 use run::{
-    activate, cancel, every_page, next_page, page_ready, query_failed, read, run,
-    submit_into_contents,
+    activate, cancel, every_page, next_page, page_ready, query_failed, read, run, run_traced,
+    submit_into_contents, trace_ready,
 };
 use search::restore_origin;
 use themes::{restore_theme, theme_save_failed};
@@ -123,6 +124,11 @@ pub enum Msg {
         error: DbError,
         took: Duration,
     },
+    /// After the traced request's own `PageReady` or `Failed`.
+    TraceReady {
+        query: QueryId,
+        trace: Result<QueryTrace, DbError>,
+    },
     EditorClosed {
         buffer: String,
     },
@@ -175,6 +181,15 @@ pub enum Effect {
         stmt: Box<Statement>,
         page_size: PageSize,
         cursor: Option<PagingState>,
+    },
+    /// Paged for a read and unpaged for a mutation, as [`Self::ExecutePaged`]
+    /// and [`Self::Execute`]; answered by `PageReady` or `Failed`, then
+    /// `TraceReady`.
+    ExecuteTraced {
+        conn: ConnId,
+        query: QueryId,
+        stmt: Box<Statement>,
+        page_size: PageSize,
     },
     Cancel(QueryId),
     LoadHealth {
@@ -360,6 +375,8 @@ fn apply(state: &mut State, msg: Msg) -> Vec<Effect> {
 
         // No overlay: a failed browse disables one panel, not the application.
         Msg::Failed { query, error, .. } => query_failed(state, query, &error),
+
+        Msg::TraceReady { query, trace } => trace_ready(state, query, trace),
 
         Msg::EditorClosed { buffer } => editor_closed(state, &buffer),
 

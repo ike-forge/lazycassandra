@@ -341,6 +341,11 @@ fn every_row_can_be_run() {
                     "{:?} is filed under {panel:?}",
                     command.binding.action
                 ),
+                Run::Themes => assert!(
+                    matches!(state.overlay, Some(Overlay::Themes { .. })),
+                    "{:?} opens the picker",
+                    command.binding.action
+                ),
                 Run::Here | Run::Inert => {}
             }
         }
@@ -354,7 +359,7 @@ fn a_row_filed_under_a_panel_stays_in_that_panel() {
             let panel = match command.run {
                 Run::In(panel) => panel,
                 Run::Editing => Panel::Queries,
-                Run::Here | Run::Inert => continue,
+                Run::Here | Run::Inert | Run::Themes => continue,
             };
             let key = *command
                 .binding

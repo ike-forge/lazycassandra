@@ -207,10 +207,11 @@ lc-domain/src/
   ddl.rs        # DDL panel and its tabs
   contents.rs   # Contents panel: the outstanding read and its result
   grid.rs       # column widths and horizontal fitting
-  queries.rs    # Queries panel: Cql/Logs tabs over the editor
+  queries.rs    # Queries panel: Cql/Logs/Trace tabs over the editor
   editor.rs     # the CQL text buffer
   cql/          # lexer, resolver, statements, completion, formatter
   log.rs        # Logs tab: a bounded trail of what ran
+  trace.rs      # Trace tab: the last traced statement's system_traces record
   history.rs    # per-connection query history
   commands.rs   # the command palette: every binding
   search.rs     # panel and overlay search
@@ -247,7 +248,7 @@ async.
 
 | Port | Responsibility |
 |---|---|
-| `Cluster` | connect, describe schema, execute, execute paged, node/table state |
+| `Cluster` | connect, describe schema, execute, execute paged, execute traced and read the trace, node/table state |
 | `ConfigSource` | locate, layer and validate config files; never fails |
 | `ConfigSink` | write the chosen theme back into the user config |
 | `SecretResolver` | resolve a credential (literal / env / file) to a value |

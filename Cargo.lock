@@ -936,6 +936,7 @@ dependencies = [
  "serde",
  "tokio",
  "toml",
+ "uuid",
 ]
 
 [[package]]

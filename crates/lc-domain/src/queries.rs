@@ -26,24 +26,27 @@ pub enum QueriesTab {
     #[default]
     Cql,
     Logs,
+    Trace,
 }
 
 impl QueriesTab {
-    pub const ALL: [Self; 2] = [Self::Cql, Self::Logs];
+    pub const ALL: [Self; 3] = [Self::Cql, Self::Logs, Self::Trace];
 
     #[must_use]
     pub const fn next(self) -> Self {
         match self {
             Self::Cql => Self::Logs,
-            Self::Logs => Self::Cql,
+            Self::Logs => Self::Trace,
+            Self::Trace => Self::Cql,
         }
     }
 
     #[must_use]
     pub const fn previous(self) -> Self {
         match self {
-            Self::Cql => Self::Logs,
+            Self::Cql => Self::Trace,
             Self::Logs => Self::Cql,
+            Self::Trace => Self::Logs,
         }
     }
 
@@ -52,6 +55,7 @@ impl QueriesTab {
         match self {
             Self::Cql => "Queries",
             Self::Logs => "Logs",
+            Self::Trace => "Trace",
         }
     }
 
@@ -60,13 +64,14 @@ impl QueriesTab {
         self.label()
     }
 
-    /// Logs needs its own: `4` opens the buffer, which then takes a second `4`
-    /// as text.
+    /// Logs and Trace need their own: `4` opens the buffer, which then takes a
+    /// second `4` as text.
     #[must_use]
     pub const fn number(self) -> char {
         match self {
             Self::Cql => '4',
             Self::Logs => '5',
+            Self::Trace => '6',
         }
     }
 
@@ -85,11 +90,12 @@ pub enum CqlMode {
     Editing,
 }
 
-/// An editing Logs tab is unrepresentable.
+/// An editing Logs or Trace tab is unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Shown {
     Cql(CqlMode),
     Logs,
+    Trace,
 }
 
 impl Default for Shown {
@@ -116,6 +122,7 @@ impl QueriesPanel {
         match self.shown {
             Shown::Cql(_) => QueriesTab::Cql,
             Shown::Logs => QueriesTab::Logs,
+            Shown::Trace => QueriesTab::Trace,
         }
     }
 
@@ -123,7 +130,7 @@ impl QueriesPanel {
     pub const fn mode(&self) -> Option<CqlMode> {
         match self.shown {
             Shown::Cql(mode) => Some(mode),
-            Shown::Logs => None,
+            Shown::Logs | Shown::Trace => None,
         }
     }
 
@@ -142,6 +149,7 @@ impl QueriesPanel {
         self.shown = match tab {
             QueriesTab::Cql => Shown::Cql(CqlMode::Browsing),
             QueriesTab::Logs => Shown::Logs,
+            QueriesTab::Trace => Shown::Trace,
         };
     }
 

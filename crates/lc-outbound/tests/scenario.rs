@@ -1,5 +1,7 @@
 //! Whole sessions driven through the in-memory cluster: no clock, no socket.
 
+use std::net::{IpAddr, Ipv4Addr};
+
 use lc_domain::clock::Stamp;
 use lc_domain::config::{PageRows, PageSize};
 use lc_domain::log::Outcome;
@@ -9,7 +11,9 @@ use lc_domain::model::{
 };
 use lc_domain::panel::Panel;
 use lc_domain::posture::Posture;
+use lc_domain::queries::QueriesTab;
 use lc_domain::style::Token;
+use lc_domain::trace::{QueryTrace, TraceEvent, Tracing};
 use lc_domain::view::{DetailRow, Details, OverlayView, PanelBody, RowKind, Section};
 use lc_domain::{Effect, Msg, State, init, update, view_model};
 use lc_outbound::fake::FakeCluster;
@@ -757,5 +761,73 @@ async fn a_read_pages_through_p_and_then_shift_p_to_the_end() {
             .count(),
         1,
         "the trail keeps the one entry the read made"
+    );
+}
+
+#[tokio::test]
+async fn ctrl_t_lands_the_page_in_contents_and_its_trace_in_queries() {
+    let trace = QueryTrace {
+        coordinator: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        duration: Some(std::time::Duration::from_micros(1_500)),
+        events: vec![TraceEvent {
+            activity: "Parsing a statement".to_owned(),
+            source: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            elapsed: Some(std::time::Duration::from_micros(40)),
+            thread: None,
+        }],
+    };
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .returning(customers())
+    .tracing(Ok(trace.clone()));
+    let mut state = on_a_table(&cluster).await;
+
+    press(&mut state, Key::Char('4'));
+    for character in "SELECT * FROM shop.orders".chars() {
+        press(&mut state, Key::Char(character));
+    }
+    let effects = update(&mut state, Msg::Input(KeyPress::ctrl(Key::Char('t'))));
+    run(&cluster, &mut state, effects).await;
+
+    assert_eq!(state.contents.row_count(), 2);
+    assert_eq!(state.focus(), Panel::Queries);
+    assert_eq!(state.queries.tab(), QueriesTab::Trace);
+    assert_eq!(
+        state.trace.tracing(),
+        &Tracing::Traced {
+            cql: "SELECT * FROM shop.orders".to_owned(),
+            trace,
+        }
+    );
+    let PanelBody::Log { rows, .. } = &view_model(&state).panels[3].body else {
+        panic!("a trace draws as the trail does");
+    };
+    assert_eq!(rows.len(), 2, "a summary over the one event");
+}
+
+#[tokio::test]
+async fn a_trace_the_cluster_never_finished_says_why_and_keeps_the_page() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .returning(customers())
+    .tracing(Err(DbError::Other("system_traces is empty".to_owned())));
+    let mut state = on_a_table(&cluster).await;
+
+    press(&mut state, Key::Char('4'));
+    for character in "SELECT * FROM shop.orders".chars() {
+        press(&mut state, Key::Char(character));
+    }
+    let effects = update(&mut state, Msg::Input(KeyPress::ctrl(Key::Char('t'))));
+    run(&cluster, &mut state, effects).await;
+
+    assert_eq!(state.contents.row_count(), 2);
+    assert!(
+        matches!(state.trace.tracing(), Tracing::Failed { reason, .. } if reason.contains("system_traces is empty")),
+        "{:?}",
+        state.trace.tracing()
     );
 }

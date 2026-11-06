@@ -2,7 +2,7 @@ use super::{Binding, Stroke};
 use crate::contents::SelectionMode;
 use crate::model::Key;
 use crate::panel::Panel;
-use crate::queries::CqlMode;
+use crate::queries::{CqlMode, QueriesTab};
 use crate::state::State;
 
 pub(super) const ENTER: Stroke = Stroke::key(Key::Enter);
@@ -149,6 +149,7 @@ pub(super) const FILTER: Binding = Binding::new(&[key('f')], "filter");
 pub(super) const CLEAR_FILTER: Binding = Binding::new(&[key('c')], "clear filter");
 
 pub(super) const RUN: Binding = Binding::new(&[ctrl('r')], "run");
+pub(super) const TRACE: Binding = Binding::new(&[ctrl('t')], "trace");
 /// Never greyed: always true while Queries is focused.
 const EDITOR: Binding = Binding::new(&[ctrl('e')], "$EDITOR");
 pub(super) const FORMAT: Binding = Binding::new(&[ctrl('f')], "format");
@@ -192,12 +193,16 @@ const CONTENTS_COLUMN_HINTS: &[Binding] = &[
 ];
 
 /// `↵` first: nothing else says how to start typing.
-const CQL_HINTS: &[Binding] = &[Binding::new(&[ENTER], "edit"), RUN, EDITOR];
+const CQL_HINTS: &[Binding] = &[Binding::new(&[ENTER], "edit"), RUN, TRACE, EDITOR];
 
-/// `run` first: it is what the panel is for.
+/// `run` first: it is what the panel is for. No `trace`: the closed buffer's bar
+/// teaches it, and here it would push `newline` off a narrow bar.
 const QUERIES_HINTS: &[Binding] = &[RUN, EDITOR, FORMAT, Binding::new(&[ENTER], "newline")];
 
 const LOGS_HINTS: &[Binding] = &[SEARCH, SELECT];
+
+/// Neither search nor select: the tab draws the trail's body, not the trail.
+const TRACE_HINTS: &[Binding] = &[TABS];
 
 impl Panel {
     /// Exhaustive, so a new panel cannot compile without its bindings.
@@ -218,10 +223,11 @@ impl State {
     #[must_use]
     pub fn hints(&self) -> &'static [Binding] {
         match self.focus() {
-            Panel::Queries => match self.queries.mode() {
-                None => LOGS_HINTS,
-                Some(CqlMode::Browsing) => CQL_HINTS,
-                Some(CqlMode::Editing) => QUERIES_HINTS,
+            Panel::Queries => match (self.queries.tab(), self.queries.mode()) {
+                (QueriesTab::Trace, _) => TRACE_HINTS,
+                (_, None) => LOGS_HINTS,
+                (_, Some(CqlMode::Browsing)) => CQL_HINTS,
+                (_, Some(CqlMode::Editing)) => QUERIES_HINTS,
             },
             Panel::Contents if self.contents.mode == SelectionMode::Column => CONTENTS_COLUMN_HINTS,
             Panel::Ddl if crate::view::ddl_tabs(self).len() < 2 => DDL_ONE_TAB_HINTS,
