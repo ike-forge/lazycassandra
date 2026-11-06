@@ -49,6 +49,10 @@ pub enum Overlay {
         /// A field: a prompt and its picker are up together.
         sift: Option<Sift>,
     },
+    /// No sift: the list is eleven fixed rows. Previews nothing.
+    Consistency {
+        cursor: Cursor,
+    },
     Diagnostics(DiagnosticsPanel),
     /// A modal, not a bar prompt like [`Overlay::Search`]: a filter drops rows
     /// and must not read like a search.

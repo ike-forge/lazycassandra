@@ -98,6 +98,10 @@ pub enum OverlayView {
         /// `None` without `$XDG_CONFIG_HOME` or `$HOME`.
         config_home: Option<String>,
     },
+    Consistency {
+        rows: Vec<ConsistencyRow>,
+        selected: usize,
+    },
     /// Only the rows a sift left: the block is sized from the frame, not its
     /// rows.
     History {
@@ -123,6 +127,14 @@ pub enum OverlayView {
         message: String,
     },
     Fatal(Message),
+}
+
+/// `current` marks the level in force, which the cursor leaves as it moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConsistencyRow {
+    pub label: &'static str,
+    pub meaning: &'static str,
+    pub current: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,6 +358,20 @@ fn health_view(state: &State, panel: &crate::health::HealthPanel) -> HealthView 
     }
 }
 
+fn consistency_view(state: &State, cursor: crate::viewport::Cursor) -> OverlayView {
+    OverlayView::Consistency {
+        rows: crate::config::Consistency::ALL
+            .iter()
+            .map(|level| ConsistencyRow {
+                label: level.label(),
+                meaning: level.meaning(),
+                current: *level == state.consistency(),
+            })
+            .collect(),
+        selected: cursor.index(),
+    }
+}
+
 fn overlay(state: &State) -> Option<OverlayView> {
     match state.overlay.as_ref()? {
         Overlay::Message(message) => Some(OverlayView::Message(message.clone())),
@@ -378,6 +404,7 @@ fn overlay(state: &State) -> Option<OverlayView> {
             })
         }
         Overlay::History { cursor, sift } => Some(history_view(state, *cursor, sift.as_ref())),
+        Overlay::Consistency { cursor } => Some(consistency_view(state, *cursor)),
         Overlay::Health(panel) => Some(OverlayView::Health(Box::new(health_view(state, panel)))),
         Overlay::Connections { cursor, sift } => {
             let names = crate::update::connection_names(&state.config);
@@ -643,7 +670,10 @@ fn title(state: &State, panel: Panel) -> PanelTitle {
 
             PanelTitle::tabbed(number, &specs)
         }
-        Panel::Contents => PanelTitle::styled(number, contents::title(state)),
+        Panel::Contents => {
+            let (text, compact) = contents::title(state);
+            PanelTitle::laddered(number, text, compact.clone(), compact)
+        }
         Panel::Queries => {
             let tab = state.queries.tab();
             let specs: Vec<TabSpec> = QueriesTab::ALL
@@ -709,6 +739,7 @@ pub(crate) mod tests_support {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Loaded(schema),
         }))
     }

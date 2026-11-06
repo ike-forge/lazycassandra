@@ -1,6 +1,6 @@
 //! The one connection and how far along it is.
 
-use crate::config::ConnectionName;
+use crate::config::{ConnectionName, Consistency};
 use crate::model::{ConnId, DbError, Schema};
 use crate::posture::Posture;
 
@@ -28,6 +28,9 @@ pub struct Connection {
     /// Held: the live connection is not a row of the config.
     pub name: ConnectionName,
     pub posture: Posture,
+    /// Seeded from `driver.consistency` on connect; `ctrl-l` changes it for
+    /// this connection alone.
+    pub consistency: Consistency,
     pub schema: SchemaState,
 }
 

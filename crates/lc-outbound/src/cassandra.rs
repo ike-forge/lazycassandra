@@ -130,6 +130,8 @@ fn consistency(consistency: Consistency) -> scylla::statement::Consistency {
         Consistency::LocalQuorum => Driver::LocalQuorum,
         Consistency::EachQuorum => Driver::EachQuorum,
         Consistency::LocalOne => Driver::LocalOne,
+        Consistency::Serial => Driver::Serial,
+        Consistency::LocalSerial => Driver::LocalSerial,
     }
 }
 
@@ -254,7 +256,7 @@ impl Cluster for CassandraCluster {
         let session = self.session(conn).await?;
 
         let result = session
-            .query_unpaged(stmt.cql.as_str(), &[])
+            .query_unpaged(unpaged(stmt), &[])
             .await
             .map_err(|error| DbError::Invalid(error.to_string()))?;
 
@@ -295,7 +297,7 @@ impl Cluster for CassandraCluster {
         let session = self.session(conn).await?;
 
         let (result, next) = if stmt.mutates() {
-            let mut statement = scylla::statement::unprepared::Statement::new(stmt.cql.as_str());
+            let mut statement = unpaged(stmt);
             statement.set_tracing(true);
             let result = session
                 .query_unpaged(statement, &[])
@@ -349,10 +351,16 @@ impl Cluster for CassandraCluster {
     }
 }
 
+/// The statement's level overrides the profile's `driver.consistency`.
+fn unpaged(stmt: &Statement) -> scylla::statement::unprepared::Statement {
+    let mut statement = scylla::statement::unprepared::Statement::new(stmt.cql.as_str());
+    statement.set_consistency(consistency(stmt.consistency));
+    statement
+}
+
 fn paged(stmt: &Statement, page_size: PageSize) -> scylla::statement::unprepared::Statement {
     // scylla panics on a non-positive page size.
-    scylla::statement::unprepared::Statement::new(stmt.cql.as_str())
-        .with_page_size(i32::try_from(page_size.get()).unwrap_or(i32::MAX))
+    unpaged(stmt).with_page_size(i32::try_from(page_size.get()).unwrap_or(i32::MAX))
 }
 
 fn next_page(response: scylla::response::PagingStateResponse) -> Option<PagingState> {

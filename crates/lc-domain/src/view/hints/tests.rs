@@ -668,6 +668,7 @@ fn connected(posture: Posture, schema: SchemaState) -> State {
         id: crate::model::ConnId::next(),
         name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
         posture,
+        consistency: crate::config::Consistency::default(),
         schema,
     });
     state

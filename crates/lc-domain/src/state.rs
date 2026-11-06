@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::clock::Stamp;
-use crate::config::Config;
+use crate::config::{Config, Consistency};
 use crate::connection::{Connection, ConnectionState, SchemaState};
 use crate::contents::ContentsPanel;
 use crate::ddl::DdlPanel;
@@ -126,6 +126,18 @@ impl State {
             | ConnectionState::Disconnected
             | ConnectionState::Connecting { .. }
             | ConnectionState::Failed(_) => Posture::ReadOnly,
+        }
+    }
+
+    /// The level the next statement runs at.
+    #[must_use]
+    pub const fn consistency(&self) -> Consistency {
+        match &self.connection {
+            ConnectionState::Connected(connection) => connection.consistency,
+            ConnectionState::Unchosen
+            | ConnectionState::Disconnected
+            | ConnectionState::Connecting { .. }
+            | ConnectionState::Failed(_) => self.config.driver.consistency,
         }
     }
 
@@ -290,6 +302,7 @@ mod tests {
                 id: ConnId::next(),
                 name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
                 posture: Posture::Writable,
+                consistency: crate::config::Consistency::default(),
                 schema,
             }),
             ..State::default()

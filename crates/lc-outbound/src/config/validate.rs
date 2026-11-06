@@ -239,22 +239,16 @@ fn driver(layer: Option<DriverLayer>, report: &mut Report) -> DriverConfig {
     let consistency = layer
         .consistency
         .and_then(|value| {
-            let parsed = match value.value.as_str() {
-                "any" => Ok(Consistency::Any),
-                "one" => Ok(Consistency::One),
-                "two" => Ok(Consistency::Two),
-                "three" => Ok(Consistency::Three),
-                "quorum" => Ok(Consistency::Quorum),
-                "all" => Ok(Consistency::All),
-                "local-quorum" => Ok(Consistency::LocalQuorum),
-                "each-quorum" => Ok(Consistency::EachQuorum),
-                "local-one" => Ok(Consistency::LocalOne),
-                other => Err(OutOfRange {
+            // The kebab spelling, or cqlsh's: `local-quorum` and `LOCAL_QUORUM`.
+            let spelled = value.value.replace('-', "_");
+            let parsed = Consistency::ALL
+                .into_iter()
+                .find(|level| level.label().eq_ignore_ascii_case(&spelled))
+                .ok_or_else(|| OutOfRange {
                     what: "driver.consistency",
-                    value: other.to_owned(),
-                    expected: "any|one|two|three|quorum|all|local-quorum|each-quorum|local-one",
-                }),
-            };
+                    value: value.value.clone(),
+                    expected: "any|one|two|three|quorum|all|local-quorum|each-quorum|local-one|serial|local-serial",
+                });
             report.keep(parsed, &value, "driver.consistency")
         })
         .unwrap_or_default();
@@ -877,6 +871,8 @@ mod tests {
             ("local-quorum", Consistency::LocalQuorum),
             ("each-quorum", Consistency::EachQuorum),
             ("local-one", Consistency::LocalOne),
+            ("serial", Consistency::Serial),
+            ("local-serial", Consistency::LocalSerial),
         ];
 
         for (word, expected) in table {
@@ -888,6 +884,18 @@ mod tests {
                 "`{word}` must parse to {expected:?}"
             );
             assert!(diagnostics.is_empty(), "{word}: {diagnostics:?}");
+        }
+    }
+
+    #[test]
+    fn the_spelling_the_border_shows_is_one_the_config_accepts() {
+        for level in Consistency::ALL {
+            let label = level.label();
+            let (config, diagnostics) =
+                config_of(&[format!("[driver]\nconsistency = \"{label}\"\n").as_str()]);
+
+            assert_eq!(config.driver.consistency, level, "`{label}`");
+            assert!(diagnostics.is_empty(), "{label}: {diagnostics:?}");
         }
     }
 

@@ -125,15 +125,29 @@ fn thousands(count: usize) -> String {
     out
 }
 
-pub(super) fn title(state: &State) -> Vec<Segment> {
+/// With the level the rows were read at, and without it for a narrow border.
+pub(super) fn title(state: &State) -> (Vec<Segment>, Vec<Segment>) {
     const BASE: &str = "Table contents";
 
     match state.contents.state() {
-        ContentsState::Empty => vec![Segment::plain(BASE)],
+        ContentsState::Empty => (vec![Segment::plain(BASE)], vec![Segment::plain(BASE)]),
         ContentsState::Loading { subject, .. } | ContentsState::Failed { subject, .. } => {
-            named(BASE, subject, None)
+            let named = named(BASE, subject, None);
+            (named.clone(), named)
         }
-        ContentsState::Loaded { subject, page, .. } => named(BASE, subject, Some(count(page))),
+        ContentsState::Loaded {
+            subject,
+            page,
+            consistency,
+            ..
+        } => (
+            named(
+                BASE,
+                subject,
+                Some(format!("{} at {}", count(page), consistency.label())),
+            ),
+            named(BASE, subject, Some(count(page))),
+        ),
     }
 }
 
@@ -494,6 +508,7 @@ mod tests {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
@@ -741,6 +756,7 @@ mod tests {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
@@ -867,6 +883,7 @@ mod tests {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Loaded(Schema::default()),
         });
 
@@ -899,6 +916,7 @@ mod tests {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Loaded(schema),
         });
         let query = QueryId::next();
@@ -939,6 +957,7 @@ mod tests {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Loaded(Schema::default()),
         });
 
@@ -956,10 +975,13 @@ mod tests {
             &[&[CqlValue::Int(1)], &[CqlValue::Int(2)]],
         ));
 
-        assert_eq!(contents_title(&one), "Table contents — shop.orders (1 row)");
+        assert_eq!(
+            contents_title(&one),
+            "Table contents — shop.orders (1 row at LOCAL_QUORUM)"
+        );
         assert_eq!(
             contents_title(&two),
-            "Table contents — shop.orders (2 rows)"
+            "Table contents — shop.orders (2 rows at LOCAL_QUORUM)"
         );
     }
 

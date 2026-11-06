@@ -144,6 +144,7 @@ fn a_writable_posture_wears_its_own_colour_on_the_border() {
         id: ConnId::next(),
         name: lc_domain::config::ConnectionName::try_new("local").expect("a valid name"),
         posture: Posture::Writable,
+        consistency: lc_domain::config::Consistency::default(),
         schema: SchemaState::Loaded(schema_of(&["shop"])),
     });
 

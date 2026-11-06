@@ -18,6 +18,9 @@ pub struct PanelTitle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tab {
     text: Vec<Segment>,
+    /// The rung between: what the name can lose before it loses everything
+    /// `short` drops. Equal to `text` for a tab with nothing to drop.
+    compact: Vec<Segment>,
     /// Equal to `text` for a tab with nothing to drop.
     short: Vec<Segment>,
     /// Always true for a single-tab panel.
@@ -33,16 +36,28 @@ pub(crate) struct TabSpec {
 }
 
 impl PanelTitle {
-    pub(crate) fn styled(number: char, segments: Vec<Segment>) -> Self {
-        Self::abbreviated(number, segments.clone(), segments)
-    }
-
     /// The same fallback rung [`PanelTitle::tabbed`] gives, spent on one
     /// growing name.
     pub(crate) fn abbreviated(number: char, text: Vec<Segment>, short: Vec<Segment>) -> Self {
+        Self::laddered(number, text.clone(), text, short)
+    }
+
+    /// [`Self::abbreviated`] with a rung between, so standing context goes
+    /// before the part of it that matters most.
+    pub(crate) fn laddered(
+        number: char,
+        text: Vec<Segment>,
+        compact: Vec<Segment>,
+        short: Vec<Segment>,
+    ) -> Self {
         Self {
             number,
-            tabs: vec![Tab::new(text, short, true)],
+            tabs: vec![Tab {
+                text,
+                compact,
+                short,
+                active: true,
+            }],
         }
     }
 
@@ -100,6 +115,7 @@ fn prefix(number: char) -> String {
 impl Tab {
     fn new(text: Vec<Segment>, short: Vec<Segment>, active: bool) -> Self {
         Self {
+            compact: text.clone(),
             text,
             short,
             active,
@@ -109,6 +125,16 @@ impl Tab {
     #[must_use]
     pub fn text(&self) -> String {
         crate::style::text(&self.text)
+    }
+
+    #[must_use]
+    pub fn compact(&self) -> String {
+        crate::style::text(&self.compact)
+    }
+
+    #[must_use]
+    pub fn compact_segments(&self) -> &[Segment] {
+        &self.compact
     }
 
     #[must_use]
@@ -153,7 +179,11 @@ mod tests {
 
     #[test]
     fn a_title_opens_with_the_key_that_reaches_its_panel() {
-        let title = PanelTitle::styled('1', vec![Segment::plain("Tables")]);
+        let title = PanelTitle::abbreviated(
+            '1',
+            vec![Segment::plain("Tables")],
+            vec![Segment::plain("Tables")],
+        );
 
         assert_eq!(title.prefix(), "[1]-");
         assert_eq!(title.text(), "[1]-Tables");

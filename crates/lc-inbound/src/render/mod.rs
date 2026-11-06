@@ -136,16 +136,11 @@ pub fn render(frame: &mut Frame, view: &ViewModel, theme: Theme) -> Rendered {
     }
 
     Rendered {
-        geometry: Geometry::new(heights, ddl_lines, room.command_rows)
+        geometry: room
+            .bound(Geometry::new(heights, ddl_lines, room.command_rows))
             .with_ddl_selection(ddl_selection)
             .with_log(log_lines, log_selection)
-            .with_export_fits(room.export_fits)
-            .with_drop_fits(room.drop_fits)
             .with_grid_width(grid_width)
-            .with_theme_rows(room.theme_rows)
-            .with_connection_rows(room.connection_rows)
-            .with_history_rows(room.history_rows)
-            .with_health_rows(room.health_rows)
             .with_inspector(
                 room.inspector_rows,
                 wrapped.inspector_lines,
@@ -162,6 +157,7 @@ struct Room {
     theme_rows: usize,
     connection_rows: usize,
     history_rows: usize,
+    consistency_rows: usize,
     health_rows: usize,
     export_fits: bool,
     drop_fits: bool,
@@ -170,12 +166,26 @@ struct Room {
 }
 
 impl Room {
+    /// What every overlay's gate reads; the inspector and commit blocks also
+    /// need what this frame wrapped, so they are set beside it.
+    const fn bound(&self, geometry: Geometry) -> Geometry {
+        geometry
+            .with_export_fits(self.export_fits)
+            .with_drop_fits(self.drop_fits)
+            .with_theme_rows(self.theme_rows)
+            .with_connection_rows(self.connection_rows)
+            .with_history_rows(self.history_rows)
+            .with_consistency_rows(self.consistency_rows)
+            .with_health_rows(self.health_rows)
+    }
+
     fn of(area: Rect) -> Self {
         Self {
             command_rows: crate::palette::visible_rows(area, lc_domain::commands::row_count(None)),
             theme_rows: crate::themes::visible_rows(area),
             connection_rows: crate::connections::visible_rows(area),
             history_rows: crate::history::visible_rows(area),
+            consistency_rows: crate::consistency::visible_rows(area),
             health_rows: crate::health::visible_rows(area),
             export_fits: crate::export::fits(area),
             drop_fits: crate::drop::fits(area),
@@ -251,6 +261,9 @@ fn render_overlay(frame: &mut Frame, view: &ViewModel, hint_bar: Rect, theme: Th
                 theme,
             );
             render_sift(frame, hint_bar, sift.as_ref(), view, theme);
+        }
+        Some(OverlayView::Consistency { rows, selected }) => {
+            crate::consistency::render(frame, rows, *selected, theme);
         }
         Some(OverlayView::History {
             labels,
@@ -373,6 +386,7 @@ fn dims_the_panels(overlay: Option<&OverlayView>) -> bool {
             | OverlayView::Commands { .. }
             | OverlayView::Themes { .. }
             | OverlayView::Connections { .. }
+            | OverlayView::Consistency { .. }
             | OverlayView::History { .. }
             | OverlayView::Diagnostics { .. }
             | OverlayView::Health(_)
@@ -465,7 +479,8 @@ fn tab_bands(
 
         let width = columns(match form {
             Strip::Short => tab.short().chars().count(),
-            Strip::Full | Strip::Active => tab.text().chars().count(),
+            Strip::Compact | Strip::Active => tab.compact().chars().count(),
+            Strip::Full => tab.text().chars().count(),
         });
         let end = start.saturating_add(width).min(limit);
 
@@ -542,7 +557,8 @@ fn panel_title<'a>(
         let style = if tab.active { active } else { inactive };
         let segments = match form {
             Strip::Short => tab.short_segments(),
-            Strip::Full | Strip::Active => tab.segments(),
+            Strip::Compact | Strip::Active => tab.compact_segments(),
+            Strip::Full => tab.segments(),
         };
 
         for segment in segments {
@@ -572,7 +588,9 @@ struct Drawn {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Strip {
     Full,
+    Compact,
     Short,
+    /// The active tab alone, compact: past every rung, it clips.
     Active,
 }
 
@@ -588,7 +606,7 @@ fn drawn_tabs<'a>(
     let prefix = title.prefix();
 
     for beside in [marker, None] {
-        for form in [Strip::Full, Strip::Short] {
+        for form in [Strip::Full, Strip::Compact, Strip::Short] {
             if spent(&strip(&prefix, &all, form), beside) <= usize::from(width) {
                 return (
                     all,
@@ -615,7 +633,8 @@ fn strip(prefix: &str, tabs: &[&Tab], form: Strip) -> String {
         .iter()
         .map(|tab| match form {
             Strip::Short => tab.short(),
-            Strip::Full | Strip::Active => tab.text(),
+            Strip::Compact | Strip::Active => tab.compact(),
+            Strip::Full => tab.text(),
         })
         .collect::<Vec<_>>()
         .join(lc_domain::view::TAB_SEPARATOR);

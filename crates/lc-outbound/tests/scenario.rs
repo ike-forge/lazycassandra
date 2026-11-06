@@ -3,7 +3,8 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use lc_domain::clock::Stamp;
-use lc_domain::config::{PageRows, PageSize};
+use lc_domain::config::{Consistency, PageRows, PageSize};
+use lc_domain::geometry::Geometry;
 use lc_domain::log::Outcome;
 use lc_domain::model::{
     Column, CqlValue, DbError, Index, IndexKind, IndexTarget, Key, KeyPress, Page, PagingState,
@@ -200,7 +201,7 @@ async fn pressing_enter_on_a_table_fills_the_contents_panel() {
     let view = view_model(&state);
     assert_eq!(
         view.panels[2].title.text(),
-        "[3]-Table contents — shop.orders (2 rows)"
+        "[3]-Table contents — shop.orders (2 rows at LOCAL_QUORUM)"
     );
 
     let PanelBody::Grid {
@@ -326,7 +327,7 @@ async fn reading_a_second_table_cancels_the_first_and_drops_its_late_page() {
     );
     assert_eq!(
         view_model(&state).panels[2].title.text(),
-        "[3]-Table contents — shop.users (2 rows)",
+        "[3]-Table contents — shop.users (2 rows at LOCAL_QUORUM)",
         "a late page for a read the user left must not resurrect it"
     );
 }
@@ -829,5 +830,38 @@ async fn a_trace_the_cluster_never_finished_says_why_and_keeps_the_page() {
         matches!(state.trace.tracing(), Tracing::Failed { reason, .. } if reason.contains("system_traces is empty")),
         "{:?}",
         state.trace.tracing()
+    );
+}
+
+#[tokio::test]
+async fn a_level_chosen_with_ctrl_l_reaches_the_cluster_and_the_titles() {
+    let cluster = FakeCluster::new(
+        tabled_schema_of(&[("shop", &["orders"])]),
+        Posture::ReadOnly,
+    )
+    .returning(customers());
+    let mut state = on_a_table(&cluster).await;
+    state.geometry = Geometry::new([8, 14, 20, 1], 37, 14).with_consistency_rows(20);
+
+    update(&mut state, Msg::Input(KeyPress::ctrl(Key::Char('l'))));
+    press(&mut state, Key::Home);
+    press(&mut state, Key::Char('j'));
+    press(&mut state, Key::Enter);
+
+    assert!(
+        view_model(&state).panels[0]
+            .title
+            .text()
+            .ends_with("read-only, ONE)"),
+        "the border says what the next statement runs at"
+    );
+
+    let effects = press(&mut state, Key::Enter);
+    run(&cluster, &mut state, effects).await;
+
+    assert_eq!(cluster.executed()[0].consistency, Consistency::One);
+    assert_eq!(
+        view_model(&state).panels[2].title.text(),
+        "[3]-Table contents — shop.orders (2 rows at ONE)"
     );
 }

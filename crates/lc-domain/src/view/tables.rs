@@ -33,8 +33,9 @@ impl RowKind {
 }
 
 /// The connection in the picker's spelling and colours, so the posture reads
-/// the same everywhere. Too narrow for the badge, it drops whole: half a
-/// posture can read as another.
+/// the same everywhere, then the level the next statement runs at. The level
+/// goes first on a narrow border; the badge then drops whole: half a posture
+/// can read as another.
 pub(super) fn title(state: &State, number: char) -> PanelTitle {
     const BASE: &str = "Tables";
     let short = vec![Segment::plain(BASE)];
@@ -43,14 +44,18 @@ pub(super) fn title(state: &State, number: char) -> PanelTitle {
         return PanelTitle::abbreviated(number, short.clone(), short);
     };
     let posture = connection.posture;
-
-    PanelTitle::abbreviated(
-        number,
+    let badge = |level: Option<&str>| {
         vec![
             Segment::plain(format!("{BASE} ({}, ", connection.name.as_str())),
             Segment::styled(posture.label(), Token::Posture(posture)),
-            Segment::plain(")"),
-        ],
+            Segment::plain(level.map_or_else(|| ")".to_owned(), |level| format!(", {level})"))),
+        ]
+    };
+
+    PanelTitle::laddered(
+        number,
+        badge(Some(connection.consistency.label())),
+        badge(None),
         short,
     )
 }
@@ -132,6 +137,7 @@ fn tree_row(node: &Node<'_>, followed: bool) -> TreeRow {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::Consistency;
     use crate::connection::{Connection, ConnectionState, SchemaState};
     use crate::model::{ConnId, DbError};
     use crate::posture::Posture;
@@ -157,15 +163,29 @@ mod tests {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new(name).expect("a valid name"),
             posture,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Loading,
         }))
     }
 
     #[test]
-    fn the_border_names_the_connection_and_its_posture() {
+    fn the_border_names_the_connection_its_posture_and_its_level() {
         let title = tables_title(&open("local", Posture::ReadOnly));
 
-        assert_eq!(title.text(), "[1]-Tables (local, read-only)");
+        assert_eq!(title.text(), "[1]-Tables (local, read-only, LOCAL_QUORUM)");
+    }
+
+    #[test]
+    fn the_border_follows_the_level_the_session_moved_to() {
+        let mut state = open("local", Posture::ReadOnly);
+        if let ConnectionState::Connected(connection) = &mut state.connection {
+            connection.consistency = Consistency::LocalOne;
+        }
+
+        assert_eq!(
+            tables_title(&state).text(),
+            "[1]-Tables (local, read-only, LOCAL_ONE)"
+        );
     }
 
     #[test]
@@ -175,7 +195,7 @@ mod tests {
 
             assert_eq!(
                 title.text(),
-                format!("[1]-Tables (prod, {})", posture.label()),
+                format!("[1]-Tables (prod, {}, LOCAL_QUORUM)", posture.label()),
                 "a border that renamed a posture would be teaching a key that does not parse"
             );
         }
@@ -243,6 +263,7 @@ mod tests {
                 id: ConnId::next(),
                 name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
                 posture: Posture::ReadOnly,
+                consistency: crate::config::Consistency::default(),
                 schema: SchemaState::Loading,
             }))),
             PanelBody::Notice {
@@ -407,6 +428,7 @@ mod tests {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: Posture::ReadOnly,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Failed(DbError::Invalid("unauthorized".to_owned())),
         }));
 

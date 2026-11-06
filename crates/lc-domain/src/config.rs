@@ -236,6 +236,8 @@ pub enum Mouse {
     Off,
 }
 
+/// The regular consistency level of a request. `Serial` and `LocalSerial`
+/// here are a Paxos read, not the serial level a conditional write commits at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Consistency {
     Any,
@@ -248,6 +250,63 @@ pub enum Consistency {
     LocalQuorum,
     EachQuorum,
     LocalOne,
+    Serial,
+    LocalSerial,
+}
+
+impl Consistency {
+    /// Weakest to strongest, local beside its cluster-wide form: the picker's
+    /// order.
+    pub const ALL: [Self; 11] = [
+        Self::Any,
+        Self::One,
+        Self::LocalOne,
+        Self::Two,
+        Self::Three,
+        Self::Quorum,
+        Self::LocalQuorum,
+        Self::EachQuorum,
+        Self::All,
+        Self::Serial,
+        Self::LocalSerial,
+    ];
+
+    /// Cassandra's spelling: cqlsh's `CONSISTENCY` takes it, error messages
+    /// use it, and the config accepts it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Any => "ANY",
+            Self::One => "ONE",
+            Self::Two => "TWO",
+            Self::Three => "THREE",
+            Self::Quorum => "QUORUM",
+            Self::All => "ALL",
+            Self::LocalQuorum => "LOCAL_QUORUM",
+            Self::EachQuorum => "EACH_QUORUM",
+            Self::LocalOne => "LOCAL_ONE",
+            Self::Serial => "SERIAL",
+            Self::LocalSerial => "LOCAL_SERIAL",
+        }
+    }
+
+    /// Who has to answer, and what the coordinator refuses.
+    #[must_use]
+    pub const fn meaning(self) -> &'static str {
+        match self {
+            Self::Any => "any node, a hint counts; writes only",
+            Self::One => "one replica",
+            Self::LocalOne => "one replica in the local datacenter",
+            Self::Two => "two replicas",
+            Self::Three => "three replicas",
+            Self::Quorum => "a majority of all replicas",
+            Self::LocalQuorum => "a majority in the local datacenter",
+            Self::EachQuorum => "a majority in every datacenter",
+            Self::All => "every replica",
+            Self::Serial => "a Paxos read across datacenters; reads only",
+            Self::LocalSerial => "a Paxos read in the local datacenter; reads only",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

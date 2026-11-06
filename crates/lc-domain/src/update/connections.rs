@@ -233,6 +233,7 @@ pub(super) fn connected(
         id: conn,
         name,
         posture,
+        consistency: state.config.driver.consistency,
         schema: SchemaState::Loading,
     });
     state.log.complete(

@@ -1151,6 +1151,7 @@ mod tests {
             id: ConnId::next(),
             name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
             posture: crate::posture::Posture::ReadOnly,
+            consistency: crate::config::Consistency::default(),
             schema: SchemaState::Loaded(Schema {
                 keyspaces: BTreeMap::from([(
                     "shop".to_owned(),
@@ -1429,6 +1430,7 @@ mod tests {
                 id: ConnId::next(),
                 name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
                 posture: crate::posture::Posture::ReadOnly,
+                consistency: crate::config::Consistency::default(),
                 schema: SchemaState::Loading,
             })),
             connected(schema_of(&[])),

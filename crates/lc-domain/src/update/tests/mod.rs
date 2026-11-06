@@ -37,6 +37,7 @@ use crate::viewport::{Cursor, Span};
 mod columns;
 mod commit;
 mod connections;
+mod consistency;
 mod drop;
 mod edit;
 mod editor;
@@ -81,6 +82,7 @@ fn connected(posture: Posture) -> State {
         id: ConnId::next(),
         name: crate::config::ConnectionName::try_new("local").expect("a valid name"),
         posture,
+        consistency: crate::config::Consistency::default(),
         schema: SchemaState::Loading,
     });
     state
@@ -97,6 +99,7 @@ fn statement(kind: StatementKind) -> Statement {
     Statement {
         cql: "SELECT * FROM ks.t".to_owned(),
         kind,
+        consistency: crate::config::Consistency::default(),
     }
 }
 
@@ -157,6 +160,7 @@ fn palette(state: &State) -> Option<&CommandsPanel> {
         | Overlay::Search(_)
         | Overlay::Themes { .. }
         | Overlay::Connections { .. }
+        | Overlay::Consistency { .. }
         | Overlay::History { .. }
         | Overlay::Health(_)
         | Overlay::Diagnostics(_)
