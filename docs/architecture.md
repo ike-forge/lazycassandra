@@ -273,7 +273,7 @@ for `P`; export pages at `driver.page_size` to the end. `execute` stays
 `query_unpaged` for mutations and DDL, which return no rows to page.
 
 **The consistency level travels on the `Statement`, not the port.** A
-connection starts at `driver.consistency` and `ctrl-l` moves it;
+connection starts at `driver.consistency` and `ctrl-x` moves it;
 `submit` stamps the connection's level on each statement, and the adapter
 sets it per request over the execution profile's. On the statement, a
 page that follows, a trace and a whole-table export run at the level the

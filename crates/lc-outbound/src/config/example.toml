@@ -56,7 +56,7 @@
 # consistency        = "local-quorum"   # any | one | two | three | quorum |
 #                                       # all | local-quorum | each-quorum |
 #                                       # local-one | serial | local-serial;
-#                                       # ctrl-l changes it for the session
+#                                       # ctrl-x changes it for the session
 # compression        = "lz4"            # none | lz4 | snappy
 
 # ── export ────────────────────────────────────────────────────
