@@ -17,8 +17,8 @@ const MIN_W: u16 = 32;
 const MIN_H: u16 = 6;
 const MAX_W: u16 = 90;
 const PAD: u16 = 1;
-/// Wide enough for "warning".
-const SEVERITY: usize = 7;
+/// "warning" plus a separating space.
+const SEVERITY: usize = 8;
 
 fn rect(area: Rect, rows: usize) -> Option<Rect> {
     let width = percent(area.width, WIDTH_PERCENT).min(MAX_W);
