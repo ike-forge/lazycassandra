@@ -348,6 +348,21 @@ fn each_wait_belongs_to_the_panel_it_will_fill() {
     );
 }
 
+#[test]
+fn reading_the_schema_animates_tables_and_not_the_query_log() {
+    let mut state = connected(Posture::ReadOnly);
+    let conn = current_conn(&state);
+    state.log.push(crate::log::Entry::new(
+        Stamp::default(),
+        crate::log::Subject::Sentence("Reading schema".to_owned()),
+        crate::log::Outcome::Pending {
+            trace: crate::log::Trace::Schema(conn),
+        },
+    ));
+
+    assert_eq!(working_panels(&state), vec![Panel::Tables]);
+}
+
 fn working_panels(state: &State) -> Vec<Panel> {
     Panel::ALL
         .into_iter()
