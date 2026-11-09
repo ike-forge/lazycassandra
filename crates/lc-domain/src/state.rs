@@ -13,7 +13,7 @@ use crate::feedback::{Flash, Loader, Toast};
 use crate::geometry::Geometry;
 use crate::history::Histories;
 use crate::jobs::{Committing, Dropping, ExportJob};
-use crate::log::{Log, Outcome};
+use crate::log::{Log, Outcome, Trace};
 use crate::model::{ConnId, QueryId, Schema, Statement};
 use crate::overlay::Overlay;
 use crate::panel::Panel;
@@ -222,7 +222,8 @@ impl State {
 
     /// The wait belongs to the panel its result fills: Queries' statements land
     /// in Contents. Queries itself waits on its trail, so the Logs tab animates
-    /// every pending entry.
+    /// every pending entry except connecting and the schema read, which fill
+    /// Tables.
     #[must_use]
     pub fn is_working_in(&self, panel: Panel) -> bool {
         match panel {
@@ -238,10 +239,14 @@ impl State {
             Panel::Contents => !self.in_flight.is_empty(),
             Panel::Queries => {
                 self.trace.waiting().is_some()
-                    || self
-                        .log
-                        .entries()
-                        .any(|entry| matches!(entry.outcome(), Outcome::Pending { .. }))
+                    || self.log.entries().any(|entry| {
+                        matches!(
+                            entry.outcome(),
+                            Outcome::Pending {
+                                trace: Trace::Query(_) | Trace::Export(_)
+                            }
+                        )
+                    })
             }
             Panel::Ddl => false,
         }
